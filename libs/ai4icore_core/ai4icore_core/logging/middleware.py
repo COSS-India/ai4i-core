@@ -10,7 +10,6 @@ import time
 import logging
 from typing import Optional
 
-import jwt
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -30,24 +29,6 @@ def _to_trace_id(raw: str) -> Optional[str]:
     """Normalise a header value to 32-hex. Returns None if the value is not usable."""
     normalized = raw.strip().replace("-", "").lower()
     return normalized if _HEX32.match(normalized) else None
-
-
-def _extract_tenant_id(request: Request) -> Optional[str]:
-    """Pull tenant_id from a Bearer JWT (unverified — labeling only).
-
-    The signature is *not* verified here; tenant_id is used only for log
-    enrichment and metric labeling. Auth/permission enforcement is the
-    gateway's job. Returns None when no usable claim is present.
-    """
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    try:
-        claims = jwt.decode(auth_header[7:], options={"verify_signature": False})
-    except Exception:
-        return None
-    tid = claims.get("tenant_id")
-    return str(tid) if tid not in (None, "") else None
 
 
 class RequestMiddleware(BaseHTTPMiddleware):
@@ -86,12 +67,14 @@ class RequestMiddleware(BaseHTTPMiddleware):
         set_trace_id(trace_id)
         request.state.correlation_id = trace_id
 
-        # Seed tenant_id from the JWT (unverified — labeling only). Must
-        # happen before call_next so downstream middlewares (observability,
-        # etc.) and handlers can read it from the contextvar / request.state
-        # rather than each re-decoding the token.
-        tenant_id = _extract_tenant_id(request)
-        if tenant_id is not None:
+        # Seed tenant_id from the gateway-injected X-Tenant-ID header (set by
+        # auth-service /validate after verifying the bearer token; the gateway
+        # forwards it upstream). Must happen before call_next so downstream
+        # middlewares (observability, etc.) and handlers can read it from the
+        # contextvar / request.state. HTTP header names are case-insensitive,
+        # so this matches X-Tenant-Id / X-Tenant-ID / x-tenant-id.
+        tenant_id = (request.headers.get("X-Tenant-Id") or "").strip()
+        if tenant_id:
             set_tenant_id(tenant_id)
             request.state.tenant_id = tenant_id
 

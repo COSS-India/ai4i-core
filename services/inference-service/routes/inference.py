@@ -5,16 +5,25 @@ Integrates orchestration, factory, and telemetry.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Body, HTTPException, Depends
+from fastapi.responses import JSONResponse
 import logging
 
 from orchestrator import Orchestrator, OrchestratorError
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
+from services.llm_service import OpenAIProxyService
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
+
+
+_CHAT_EXAMPLE = {
+    "model": "google/gemma-4-E4B-it",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": False,
+}
 
 
 class InferenceRouterError(Exception):
@@ -53,7 +62,7 @@ async def run_inference(
 
     Request payload structure:
     {
-        "task_type": "NMT|ASR|OCR|NER|LLM|...",
+        "task_type": "NMT|ASR|OCR|NER|...",
         "input"|"audio"|"image": [...],  # Polymorphic input array
         "config": {...},                  # Task-specific config
         "control_config": {...}          # Optional control parameters
@@ -323,6 +332,44 @@ async def run_asr_inference(
 
 
 @router.post(
+    "/tts/inference",
+    summary="TTS Inference Endpoint",
+    description="Route inference requests to TTS TaskService",
+)
+async def run_tts_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for TTS inference requests.
+    Sets task_type to TTS if not provided in payload, then routes via Orchestrator.
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "TTS"}
+        else:
+            request_payload = payload
+
+        task_type = request_payload["task_type"].upper()
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
     "/audio-lang-detection/inference",
     response_model=None,
     summary="Audio Language Detection Inference Endpoint",
@@ -504,6 +551,30 @@ async def run_ocr_inference(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post(
+    "/chat/completions",
+    summary="OpenAI-compatible Chat Completions",
+    description="Forwards the request to the upstream LLM at /v1/chat/completions",
+)
+async def chat_completions(
+    payload: Dict[str, Any] = Body(..., example=_CHAT_EXAMPLE),
+) -> JSONResponse:
+    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat/completions", payload=payload)
+    return JSONResponse(status_code=status_code, content=body)
+
+
+@router.post(
+    "/chat",
+    summary="LLM Chat",
+    description="Forwards the request to the upstream LLM at /v1/chat",
+)
+async def chat(
+    payload: Dict[str, Any] = Body(..., example=_CHAT_EXAMPLE),
+) -> JSONResponse:
+    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
+    return JSONResponse(status_code=status_code, content=body)
+
+
 @router.get(
     "/inference/health",
     summary="Health Check",
@@ -536,7 +607,7 @@ async def list_available_tasks(
     Returns:
         Dict with list of available task types
     """
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
 
 async def get_task_info(
     task_type: str,

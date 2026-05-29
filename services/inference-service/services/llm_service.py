@@ -1,146 +1,79 @@
-"""LLM (Large Language Model) TaskService implementation."""
+"""OpenAI-compatible LLM proxy service."""
 
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any, Dict, Optional, Tuple
 
-from interfaces.task_service import BaseTaskService
-from models.schemas.llm import (
-    LLMInferenceRequest,
-    LLMInferenceResponse,
-    LLMConfig,
-)
+import httpx
+
+from config import settings
 
 
-class LLMTaskService(BaseTaskService):
+logger = logging.getLogger(__name__)
+
+
+class OpenAIProxyService:
     """
-    TaskService for Large Language Model inference.
-    Handles text generation and LLM processing requests.
+    Thin proxy to an OpenAI-compatible upstream LLM server.
+
+    Resolves the upstream base URL from ``LLM_MODEL_ENDPOINTS[model]`` (if set)
+    or ``LLM_DEFAULT_ENDPOINT``, appends the OpenAI-compatible path, and forwards
+    the JSON payload unchanged.
     """
 
-    def __init__(self, **dependencies: Any):
+    def __init__(self) -> None:
+        self.timeout = float(settings.LLM_INFERENCE_TIMEOUT)
+        self.model_endpoints: Dict[str, str] = settings.LLM_MODEL_ENDPOINTS or {}
+        self.default_endpoint: str = (settings.LLM_DEFAULT_ENDPOINT or "").strip()
+
+    def resolve_upstream_url(self, model: Optional[str], path: str) -> str:
+        base = self.model_endpoints.get(model) if model else None
+        base = (base or self.default_endpoint or "").strip()
+        if not base:
+            raise ValueError(
+                "No upstream LLM endpoint configured. Set LLM_DEFAULT_ENDPOINT "
+                "or LLM_MODEL_ENDPOINTS for the requested model."
+            )
+        return f"{base.rstrip('/')}{path}"
+
+    async def forward(self, upstream_url: str, payload: Any) -> Tuple[int, Any]:
         """
-        Initialize LLM task service.
-
-        Args:
-            **dependencies: Injected dependencies
-                - redis_client: Redis client for caching
-                - model_management_client: Client for model/endpoint resolution
-                - inference_server_resolver: Resolver for Triton endpoints
-                - inference_model_factory: Factory for InferenceModel converters
+        POST ``payload`` to ``upstream_url`` and return (status_code, body).
+        Body is parsed as JSON when possible, otherwise returned as
+        ``{"raw": <text>}``.
         """
-        pass
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                upstream_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
 
-    async def validate_request(self, request: LLMInferenceRequest) -> None:
+        try:
+            body = response.json()
+        except Exception:
+            body = {"raw": response.text}
+
+        return response.status_code, body
+
+    async def proxy(self, path: str, payload: Any) -> Tuple[int, Any]:
         """
-        Validate LLM inference request.
-        Checks input size, generation parameters, etc.
+        Resolve upstream from ``payload['model']`` and forward.
 
-        Args:
-            request: LLM request to validate
-
-        Raises:
-            ValueError: If request is invalid
+        Maps known failure modes to OpenAI-style error responses:
+          - misconfiguration (no endpoint set) -> 503
+          - upstream network/transport error    -> 502
+        Any other 4xx/5xx from the upstream is passed through unchanged.
         """
-        pass
+        model = payload.get("model") if isinstance(payload, dict) else None
+        try:
+            url = self.resolve_upstream_url(model=model, path=path)
+        except ValueError as exc:
+            logger.error("LLM proxy misconfiguration: %s", exc)
+            return 503, {"detail": str(exc)}
 
-    async def preprocess_input(self, input_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Preprocess text inputs for LLM.
-        Handles text normalization, prompt templating, etc.
-
-        Args:
-            input_data: List of text inputs
-
-        Returns:
-            Preprocessed input data
-        """
-        pass
-
-    async def run_inference(
-        self,
-        request: LLMInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
-    ) -> LLMInferenceResponse:
-        """
-        Execute end-to-end LLM inference pipeline.
-        Resolves service -> preprocesses -> calls Triton -> postprocesses -> returns response.
-
-        Args:
-            request: LLM inference request
-            user_id: Optional user ID
-            api_key_id: Optional API key ID
-            session_id: Optional session ID
-
-        Returns:
-            LLM inference response with generated text
-        """
-        pass
-
-    async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton output for LLM.
-        Decodes generated text, formats output, etc.
-
-        Args:
-            raw_triton_output: Raw output from Triton server
-
-        Returns:
-            Formatted output dictionary
-        """
-        pass
-
-    async def _resolve_service_and_model(
-        self, config: LLMConfig, session_id: Optional[str]
-    ) -> tuple:
-        """
-        Resolve inference service and model information.
-
-        Args:
-            config: LLM config with required service_id
-            session_id: Optional session ID for tracing
-
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, triton_api_key)
-        """
-        pass
-
-    async def _prepare_prompt(
-        self, input_text: str, config: LLMConfig
-    ) -> str:
-        """
-        Prepare final prompt with system message and input.
-
-        Args:
-            input_text: User input text
-            config: LLM config with optional system_prompt
-
-        Returns:
-            Prepared prompt string
-        """
-        pass
-
-    async def _call_triton_inference(
-        self,
-        triton_endpoint: str,
-        model_name: str,
-        triton_inputs: Dict[str, Any],
-        triton_outputs: List[str],
-        api_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Call Triton inference server with prepared inputs.
-
-        Args:
-            triton_endpoint: Triton server URL
-            model_name: Model name in Triton
-            triton_inputs: Formatted inputs for Triton
-            triton_outputs: Expected output names
-            api_key: Optional Triton API key
-
-        Returns:
-            Raw output from Triton
-        """
-        pass
+        logger.info("LLM proxy -> %s (model=%s)", url, model)
+        try:
+            return await self.forward(url, payload)
+        except httpx.RequestError as exc:
+            logger.warning("LLM upstream request failed (path=%s): %s", path, exc)
+            return 502, {"error": {"message": str(exc), "type": "upstream_error"}}

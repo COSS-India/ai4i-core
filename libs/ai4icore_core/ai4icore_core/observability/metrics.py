@@ -39,13 +39,16 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # LLM input-token tracking (approximated from input characters: chars/4,
-        # OpenAI's English-prompt rule of thumb; for multilingual workloads
-        # this is a rough lower bound, not exact tokenizer output).
-        self.enterprise_llm_tokens_processed = Counter(
-            "telemetry_obsv_llm_tokens_processed_total",
-            "Total LLM input tokens processed (approximated from input characters)",
-            ["model", "tenant"],
+        # LLM token tracking — observations come from the inference engine's
+        # `usage` block (vLLM / OpenAI-compatible response shape). One request
+        # produces up to three observations (token_type=prompt|completion|total)
+        # so dashboards can break down by either dimension. The `endpoint`
+        # label lets queries distinguish e.g. /chat vs /chat/completions volumes.
+        self.enterprise_llm_tokens_processed = Histogram(
+            "telemetry_obsv_llm_tokens_processed",
+            "LLM tokens processed per request, as reported by the inference engine (vLLM 'usage' block)",
+            ["model", "tenant", "service_id", "endpoint", "token_type"],
+            buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, float("inf")),
             registry=self.registry,
         )
 
@@ -169,16 +172,36 @@ class MetricsCollector:
             method=method, endpoint=endpoint, tenant=tenant, service_id=service_id
         ).observe(duration)
 
-    def track_llm_tokens(self, model: str, tokens: int, tenant: str = "unknown"):
-        """Track LLM input token processing.
+    def track_llm_tokens(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        tenant: str = "unknown",
+        service_id: str = "",
+        endpoint: str = "",
+    ):
+        """Track LLM token usage from the inference engine's ``usage`` block.
 
-        ``tokens`` should be a real measurement from the request input
-        (e.g. char-based approximation in middleware, or exact tokenizer
-        output if the llm-service emits it post-inference).
+        Emits up to three series per request — ``token_type=prompt``,
+        ``completion``, and ``total`` — so PromQL can break down by either
+        dimension. Counts ≤ 0 are skipped (so a streaming response with no
+        usage block contributes nothing).
         """
-        self.enterprise_llm_tokens_processed.labels(
-            model=model, tenant=tenant
-        ).inc(tokens)
+        for token_type, count in (
+            ("prompt", prompt_tokens),
+            ("completion", completion_tokens),
+            ("total", total_tokens),
+        ):
+            if count > 0:
+                self.enterprise_llm_tokens_processed.labels(
+                    model=model,
+                    tenant=tenant,
+                    service_id=service_id,
+                    endpoint=endpoint,
+                    token_type=token_type,
+                ).observe(count)
 
     def track_tts_characters(
         self, language: str, characters: int, tenant: str = "unknown", service_id: str = ""

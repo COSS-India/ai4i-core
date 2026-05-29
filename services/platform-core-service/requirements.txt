@@ -1,5 +1,5 @@
 # ── Shared platform library (consolidated) ──
-ai4icore-core>=1.1.6
+ai4icore-core>=1.1.7
 
 # ── Core framework ──
 fastapi>=0.104.0
@@ -15,11 +15,14 @@ alembic>=1.13.0
 # ── Redis ──
 redis>=5.0.0
 
-# ── HTTP client (endpoint validation probing) ──
+# ── HTTP client (endpoint validation probing + alert-sync reloads) ──
 httpx>=0.25.0
 
 # ── Metrics (policy evaluation) ──
 prometheus-client>=0.19.0
+
+# ── YAML rendering (alert-sync Prometheus/Alertmanager config files) ──
+pyyaml>=6.0
 
 # ── Observability (optional) ──
 opentelemetry-api>=1.20.0
