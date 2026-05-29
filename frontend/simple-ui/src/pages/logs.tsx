@@ -1,14 +1,12 @@
-// Logs Dashboard - View and search logs from OpenSearch
+// Logs Dashboard - View telemetry traces via unified traces/search API
 
 import {
   Box,
   Button,
   FormControl,
   FormLabel,
-  Heading,
   HStack,
   Input,
-  Select,
   Switch,
   Text,
   Tooltip,
@@ -22,7 +20,6 @@ import {
   Stat,
   StatLabel,
   StatNumber,
-  StatHelpText,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -30,27 +27,31 @@ import {
 import Head from "next/head";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { SearchIcon, RepeatIcon } from "@chakra-ui/icons";
+import { RepeatIcon, ViewIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth, forceFrontendSessionEnd } from "../hooks/useAuth";
 import { useRouter } from "next/router";
-import { getJwtToken } from "../services/api";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
-  searchLogs,
-  getLogAggregations,
-  LogEntry,
-  LogSearchResponse,
-  LogAggregationResponse,
+  searchTelemetryTraces,
+  TelemetryTraceRecord,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
-import { isTenantStatus, TENANT } from "../config/constants";
-import { listTenants, getViewTenant } from "../services/tenantService";
-import { useAdminTableSurface } from "../components/common/TableControls";
+import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { listTenants } from "../services/tenantService";
+import {
+  useAdminTableSurface,
+  TableSearchField,
+  TableSelectField,
+} from "../components/common/TableControls";
 import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
+import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
+
+/** Auto-refresh interval when enabled (within 30–45s range). */
+const AUTO_REFRESH_MS = 37_000;
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -97,27 +98,18 @@ const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
 
-  // Filter input values (what user types/selects - not applied until Search is clicked)
-  const [service, setService] = useState<string>("");
+  const [taskType, setTaskType] = useState<string>("");
   const [level, setLevel] = useState<string>("");
-  const [searchText, setSearchText] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
-  const [selectedTenantId, setSelectedTenantId] = useState<string>(""); // Admin-only tenant filter
-
-  // Applied filter values (what's actually used in the query)
-  const [appliedService, setAppliedService] = useState<string>("");
-  const [appliedLevel, setAppliedLevel] = useState<string>("");
-  const [appliedSearchText, setAppliedSearchText] = useState<string>("");
-  const [appliedStartTime, setAppliedStartTime] = useState<string>("");
-  const [appliedEndTime, setAppliedEndTime] = useState<string>("");
-  const [appliedTenantId, setAppliedTenantId] = useState<string>("");
-
-  // Auto-refresh state
+  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [refreshIntervalSecs, setRefreshIntervalSecs] = useState(30);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [countdown, setCountdown] = useState(30);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
   // Check if user is admin (full ADMIN role — sees all tenants)
   const isAdmin = user?.roles?.includes('ADMIN') || false;
@@ -127,10 +119,12 @@ const LogsPage: React.FC = () => {
   const isGuest = user?.roles?.includes('GUEST') || false;
   // Check if user is a TENANT ADMIN — scoped to their own tenant only
   const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
-  // Kept for reference (e.g. display purposes); no longer drives access logic
-  const tenantIdFromToken = getTenantIdFromToken();
-
   const { cardBg, borderColor } = useAdminTableSurface();
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -176,55 +170,10 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, router, toast]);
 
-  // Static list of all services (not dependent on OpenSearch logs)
-  // This ensures all services are always available in the dropdown
-  const ALL_SERVICES = [
-    'asr-service',
-    'audio-lang-detection-service',
-    'language-detection-service',
-    'language-diarization-service',
-    'llm-service',
-    'ner-service',
-    'nmt-service',
-    'ocr-service',
-    'pipeline-service',
-    'speaker-diarization-service',
-    'transliteration-service',
-    'tts-service',
-    'auth-service',
-  ];
-
-
-  // No longer fetching services from OpenSearch - using static list
-  const services = ALL_SERVICES;
-  const servicesLoading = false;
-  const servicesError = null;
-
   // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
     queryKey: ["tenants-list"],
-    queryFn: async () => {
-      try {
-        console.log('Fetching tenants list...');
-        const result = await listTenants();
-        console.log('Tenants list fetched successfully:', {
-          count: result?.count,
-          tenantsCount: result?.tenants?.length || 0,
-          tenants: result?.tenants,
-        });
-        return result;
-      } catch (error: any) {
-        console.error('Error in listTenants queryFn:', error);
-        console.error('Error details:', {
-          message: error?.message,
-          response: error?.response?.data,
-          status: error?.response?.status,
-          statusText: error?.response?.statusText,
-          url: error?.config?.url,
-        });
-        throw error; // Re-throw to let React Query handle it
-      }
-    },
+    queryFn: () => listTenants(),
     enabled: isAuthenticated && isAdmin && !isTenantAdmin, // Fetch only for full ADMIN role (not TENANT ADMIN)
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: 1, // Retry once on failure
@@ -241,300 +190,69 @@ const LogsPage: React.FC = () => {
     );
   }, [tenantsData]);
 
-  // Debug: Log admin status, tenant data, and errors
-  useEffect(() => {
-    if (isAuthenticated && isAdmin) {
-      console.log('Logs page - Admin status:', {
-        isAdmin,
-        userRoles: user?.roles,
-        tenantsData: tenantsData,
-        tenantsCount: tenantsData?.tenants?.length || 0,
-        activeTenantsCount: activeTenants.length,
-        tenantsError: tenantsError,
-      });
-    }
-    if (tenantsError) {
-      console.error('Error fetching tenants:', tenantsError);
-    }
-  }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
-
-  const filteredServices = useMemo(() => {
-    const sorted = [...services].sort();
-    console.log('Filtered services for dropdown:', {
-      total: sorted.length,
-      services: sorted,
-      isTenantAdmin,
-      selectedTenantId: selectedTenantId || 'All Tenants',
-    });
-    return sorted;
-  }, [services]);
-
-  // No longer needed - services are static, no error handling required
-
-  // Fetch aggregations (only if authenticated and ADMIN)
-  const { data: aggregations, isLoading: aggregationsLoading, error: aggregationsError } = useQuery({
-    queryKey: ["logs-aggregations", appliedStartTime, appliedEndTime],
-    queryFn: () => {
-      // Convert datetime-local format to ISO format for API
-      const apiStartTime = appliedStartTime && appliedStartTime.trim() !== "" ? convertToISOFormat(appliedStartTime) : undefined;
-      const apiEndTime = appliedEndTime && appliedEndTime.trim() !== "" ? convertToISOFormat(appliedEndTime) : undefined;
-      return getLogAggregations({
-        start_time: apiStartTime,
-        end_time: apiEndTime,
-      });
-    },
-    enabled: isAuthenticated,
-    staleTime: 1 * 60 * 1000, // 1 minute
-  });
-
-  // Handle aggregations error — auth/tenant failures end the session (telemetry uses a separate client)
-  useEffect(() => {
-    const status = (aggregationsError as any)?.response?.status;
-    if (aggregationsError && (status === 401 || status === 403)) {
-      forceFrontendSessionEnd();
-    }
-  }, [aggregationsError]);
-
-  // Fetch logs (only if authenticated)
+  // Unified traces/search (list + aggregations in one response)
   const {
-    data: logsData,
-    isLoading: logsLoading,
-    refetch: refetchLogs,
-    error: logsError,
+    data: tracesData,
+    isLoading: tracesLoading,
+    error: tracesError,
   } = useQuery({
     queryKey: [
-      "logs-search",
-      appliedService,
-      appliedLevel,
-      appliedSearchText,
-      appliedStartTime,
-      appliedEndTime,
-      appliedTenantId, // Include tenant_id for admin filtering
+      "telemetry-traces-search",
+      taskType,
+      level,
+      debouncedSearch,
+      startTime,
+      endTime,
+      selectedTenantId,
+      page,
+      pageSize,
     ],
-    queryFn: async () => {
-      // API has a maximum limit of 100 for size parameter
-      // Fetch multiple pages to get all available logs, then filter and paginate client-side
-      const fetchSize = 100; // API maximum limit
+    queryFn: () => {
+      const apiStartDate =
+        startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
+      const apiEndDate =
+        endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
 
-      // Prepare API parameters (using applied values)
-      const apiService = appliedService && appliedService.trim() !== "" ? appliedService : undefined;
-      const apiLevel = appliedLevel && appliedLevel.trim() !== "" ? appliedLevel : undefined;
-
-      console.log('Fetching logs with filters:', {
-        service: apiService || 'All Services',
-        level: apiLevel || 'All Levels',
-        fetchSize,
-        startTime: appliedStartTime || 'not set',
-        endTime: appliedEndTime || 'not set',
+      return searchTelemetryTraces({
+        taskType: taskType && taskType.trim() !== "" ? taskType : undefined,
+        level: level && level.trim() !== "" ? level : undefined,
+        search: debouncedSearch || undefined,
+        startDate: apiStartDate,
+        endDate: apiEndDate,
+        page,
+        pageSize,
+        tenant_id:
+          isAdmin && !isTenantAdmin && selectedTenantId && selectedTenantId.trim() !== ""
+            ? selectedTenantId
+            : undefined,
       });
-
-      // Convert datetime-local format to ISO format for API
-      const apiStartTime = appliedStartTime && appliedStartTime.trim() !== "" ? convertToISOFormat(appliedStartTime) : undefined;
-      const apiEndTime = appliedEndTime && appliedEndTime.trim() !== "" ? convertToISOFormat(appliedEndTime) : undefined;
-
-      console.log('Time conversion:', {
-        startTime_local: appliedStartTime,
-        startTime_iso: apiStartTime,
-        endTime_local: appliedEndTime,
-        endTime_iso: apiEndTime,
-      });
-
-      // First, fetch page 1 to get total count
-      // Only ADMIN role (not TENANT ADMIN) can send the tenant_id filter param;
-      // TENANT ADMIN is automatically scoped by the backend via their JWT.
-      const firstPage = await searchLogs({
-        page: 1,
-        size: fetchSize,
-        service: apiService,
-        level: apiLevel,
-        search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
-        start_time: apiStartTime,
-        end_time: apiEndTime,
-        tenant_id: isAdmin && !isTenantAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
-      });
-
-      // Ensure logs is always an array
-      if (firstPage && !Array.isArray(firstPage.logs)) {
-        console.warn('API returned non-array logs, converting:', firstPage);
-        firstPage.logs = [];
-      }
-
-      const allLogs = firstPage.logs || [];
-      const totalPages = firstPage.total_pages || 1;
-
-      console.log('First page fetched:', {
-        total: firstPage.total,
-        logsCount: allLogs.length,
-        totalPages,
-      });
-
-      // Fetch all remaining pages to get all available logs
-      if (totalPages > 1) {
-        console.log(`Fetching all ${totalPages} pages to get all available logs...`);
-
-        // Fetch pages in parallel batches to speed up loading
-        const batchSize = 5; // Fetch 5 pages at a time to avoid overwhelming the API
-        for (let batchStart = 2; batchStart <= totalPages; batchStart += batchSize) {
-          const batchEnd = Math.min(batchStart + batchSize - 1, totalPages);
-          const batchPromises = [];
-
-          for (let page = batchStart; page <= batchEnd; page++) {
-              batchPromises.push(
-                searchLogs({
-                  page,
-                  size: fetchSize,
-                  service: apiService,
-                  level: apiLevel,
-                  search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
-                  start_time: apiStartTime,
-                  end_time: apiEndTime,
-                  tenant_id: isAdmin && !isTenantAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
-                }).catch((error) => {
-                console.error(`Error fetching page ${page}:`, error);
-                return { logs: [] }; // Return empty logs on error
-              })
-            );
-          }
-
-          const batchResults = await Promise.all(batchPromises);
-          batchResults.forEach((pageResult) => {
-            if (pageResult && Array.isArray(pageResult.logs)) {
-              allLogs.push(...pageResult.logs);
-            }
-          });
-
-          console.log(`Fetched pages ${batchStart}-${batchEnd}: ${allLogs.length} total logs so far (${Math.round((batchEnd / totalPages) * 100)}% complete)`);
-        }
-
-        console.log(`Completed fetching: ${allLogs.length} total logs from ${totalPages} pages`);
-      }
-
-      // Return combined result
-      return {
-        ...firstPage,
-        logs: allLogs,
-        total: allLogs.length, // Use actual fetched count
-        total_pages: Math.ceil(allLogs.length / fetchSize),
-      };
     },
     enabled: isAuthenticated,
-    staleTime: 30 * 1000, // 30 seconds
-    // NOTE: auto-refresh is driven by handleRefresh() via setInterval (not refetchInterval)
-    // because handleRefresh shifts the time window to "now" — which is required to fetch new logs.
+    staleTime: 30 * 1000,
   });
 
-  // Handle logs error
+  // Handle traces error
   useEffect(() => {
-    if (logsError) {
-      const error = logsError as any;
-      console.error('Logs query error:', {
-        status: error?.response?.status,
-        statusText: error?.response?.statusText,
-        data: error?.response?.data,
-        message: error?.message,
-        url: error?.config?.url,
-      });
-
-      if (error?.response?.status === 401 || error?.response?.status === 403) {
+    if (tracesError) {
+      const error = tracesError as { message?: string };
+      const message = error?.message || "Failed to load traces";
+      if (message.toLowerCase().includes("unauthorized") || message.toLowerCase().includes("forbidden")) {
         forceFrontendSessionEnd();
         return;
-      } else {
-        // Show other errors as toast
-        let errorMessage = 'Failed to load logs';
-        if (error?.response?.data?.detail) {
-          const detail = error?.response?.data?.detail;
-          if (typeof detail === 'string') {
-            errorMessage = detail;
-          } else if (typeof detail === 'object') {
-            // Handle structured error response
-            errorMessage = detail.message || detail.detail || JSON.stringify(detail);
-          } else {
-            errorMessage = String(detail);
-          }
-        } else if (error?.message) {
-          errorMessage = error.message;
-        }
-        toast({
-          title: "Error Loading Logs",
-          description: errorMessage,
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
       }
-    }
-  }, [logsError, toast]);
-
-  // Debug: Log successful responses
-  useEffect(() => {
-    if (logsData) {
-      console.log('Logs data received:', {
-        total: logsData.total,
-        logsCount: Array.isArray(logsData.logs) ? logsData.logs.length : 0,
-        logsType: typeof logsData.logs,
-        isArray: Array.isArray(logsData.logs),
-        page: logsData.page,
-        total_pages: logsData.total_pages,
-        hasLogs: !!logsData.logs,
-        service: service || 'All Services',
-        sampleLog: Array.isArray(logsData.logs) ? logsData.logs[0] : null,
-        fullData: JSON.stringify(logsData).substring(0, 500),
+      toast({
+        title: "Error Loading Traces",
+        description: message,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
       });
     }
-    if (services) {
-      console.log('Services data received:', {
-        servicesCount: Array.isArray(services) ? services.length : 0,
-        servicesType: typeof services,
-        isArray: Array.isArray(services),
-        services: services,
-      });
-    }
-  }, [logsData, services, appliedService]);
+  }, [tracesError, toast]);
 
-  // Debug: Log authentication state (uses decrypted token from getJwtToken)
+  // Set default time range (last 1 hour) on initial load
   useEffect(() => {
-    // Auth state effect - no token data logged (security)
-    if (typeof window !== 'undefined') {
-      getJwtToken(); // ensure token is available for requests
-    }
-  }, [isAuthenticated, authLoading]);
-
-  // Track last updated timestamp when fresh data arrives
-  useEffect(() => {
-    if (logsData) {
-      setLastUpdated(new Date());
-    }
-  }, [logsData]);
-
-  // Auto-refresh engine — calls handleRefresh() (same as the Refresh button) at the chosen
-  // interval. handleRefresh shifts the time window to "now" so new logs are always in range.
-  useEffect(() => {
-    if (!autoRefresh) {
-      setCountdown(refreshIntervalSecs);
-      return;
-    }
-    setCountdown(refreshIntervalSecs);
-    const refreshTimer = setInterval(() => {
-      handleRefreshRef.current(); // shift time window + trigger fetch — same as clicking Refresh
-      setCountdown(refreshIntervalSecs); // reset visual countdown
-    }, refreshIntervalSecs * 1000);
-    return () => clearInterval(refreshTimer);
-  }, [autoRefresh, refreshIntervalSecs]);
-
-  // Visual countdown ticker — counts down every second (display only, no fetch)
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const ticker = setInterval(() => {
-      setCountdown((prev) => (prev <= 1 ? refreshIntervalSecs : prev - 1));
-    }, 1000);
-    return () => clearInterval(ticker);
-  }, [autoRefresh, refreshIntervalSecs]);
-
-  // Set default time range (last 1 hour) - update when page loads or when both are empty
-  useEffect(() => {
-    // Only set default if both startTime and endTime are empty
-    // This ensures we set it once on initial load, but don't override user's manual selections
-    if (!startTime && !endTime && !appliedStartTime && !appliedEndTime) {
+    if (!startTime && !endTime) {
       const now = new Date();
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       // Format as YYYY-MM-DDTHH:mm for datetime-local input
@@ -550,23 +268,9 @@ const LogsPage: React.FC = () => {
       const formattedOneHourAgo = formatDateTime(oneHourAgo);
       setEndTime(formattedNow);
       setStartTime(formattedOneHourAgo);
-      // Also set applied values so initial query runs
-      setAppliedEndTime(formattedNow);
-      setAppliedStartTime(formattedOneHourAgo);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleSearch = () => {
-    // Apply all filter values to the query
-    setAppliedService(service);
-    setAppliedLevel(level);
-    setAppliedSearchText(searchText);
-    setAppliedStartTime(startTime);
-    setAppliedEndTime(endTime);
-    setAppliedTenantId(selectedTenantId);
-    // Note: React Query will automatically refetch when applied values change
-  };
 
   const handleRefresh = useCallback(() => {
     // Update time range to include latest logs
@@ -580,91 +284,64 @@ const LogsPage: React.FC = () => {
       return `${year}-${month}-${day}T${hours}:${minutes}`;
     };
 
-    // Use applied time range if available, otherwise use current filter values
-    const currentStartTime = appliedStartTime || startTime;
-    const currentEndTime = appliedEndTime || endTime;
-
-    // If both startTime and endTime are set, maintain the time range but shift it to now
-    if (currentStartTime && currentEndTime) {
+    if (startTime && endTime) {
       try {
-        const startDate = new Date(currentStartTime);
-        const endDate = new Date(currentEndTime);
+        const startDate = new Date(startTime);
+        const endDate = new Date(endTime);
         const timeRangeMs = endDate.getTime() - startDate.getTime();
-
-        // Set new endTime to now, and startTime to maintain the same range
-        const newEndTime = formatDateTime(now);
-        const newStartTime = formatDateTime(new Date(now.getTime() - timeRangeMs));
-
-        setEndTime(newEndTime);
-        setStartTime(newStartTime);
-        // Also update applied values to trigger immediate refresh
-        setAppliedEndTime(newEndTime);
-        setAppliedStartTime(newStartTime);
+        setEndTime(formatDateTime(now));
+        setStartTime(formatDateTime(new Date(now.getTime() - timeRangeMs)));
       } catch (error) {
-        // If parsing fails, just update endTime to now and keep startTime as is
-        console.warn('Error parsing time range, updating endTime only:', error);
-        const newEndTime = formatDateTime(now);
-        setEndTime(newEndTime);
-        setAppliedEndTime(newEndTime);
+        console.warn("Error parsing time range, updating endTime only:", error);
+        setEndTime(formatDateTime(now));
       }
     } else {
-      // If time range is not set, set default 1 hour range
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      const formattedNow = formatDateTime(now);
-      const formattedOneHourAgo = formatDateTime(oneHourAgo);
-      setEndTime(formattedNow);
-      setStartTime(formattedOneHourAgo);
-      // Also update applied values
-      setAppliedEndTime(formattedNow);
-      setAppliedStartTime(formattedOneHourAgo);
+      setEndTime(formatDateTime(now));
+      setStartTime(formatDateTime(oneHourAgo));
     }
+  }, [startTime, endTime]);
 
-    // Note: React Query will automatically refetch when applied values change
-  }, [appliedStartTime, appliedEndTime, startTime, endTime]);
-
-  // Keep a ref to always point to the latest handleRefresh.
-  // The auto-refresh setInterval captures this ref, so it never has a stale closure.
   const handleRefreshRef = useRef(handleRefresh);
   useEffect(() => {
     handleRefreshRef.current = handleRefresh;
   }, [handleRefresh]);
 
-  const handleClear = () => {
-    // Clear filter inputs
-    setService("");
+  // Auto-refresh: shift time window and refetch on the same interval as manual Refresh
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const refreshTimer = setInterval(() => {
+      handleRefreshRef.current();
+    }, AUTO_REFRESH_MS);
+    return () => clearInterval(refreshTimer);
+  }, [autoRefresh]);
+
+  const clearAllFilters = () => {
+    setTaskType("");
     setLevel("");
-    setSearchText("");
-    setSelectedTenantId(""); // Clear tenant filter
+    setSearchQuery("");
+    setSelectedTenantId("");
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    // Format as YYYY-MM-DDTHH:mm for datetime-local input
     const formatDateTime = (date: Date) => {
       const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      const hours = String(date.getHours()).padStart(2, "0");
+      const minutes = String(date.getMinutes()).padStart(2, "0");
       return `${year}-${month}-${day}T${hours}:${minutes}`;
     };
-    const formattedNow = formatDateTime(now);
-    const formattedOneHourAgo = formatDateTime(oneHourAgo);
-    setEndTime(formattedNow);
-    setStartTime(formattedOneHourAgo);
-    // Also clear applied values and set default time range
-    setAppliedService("");
-    setAppliedLevel("");
-    setAppliedSearchText("");
-    setAppliedTenantId("");
-    setAppliedEndTime(formattedNow);
-    setAppliedStartTime(formattedOneHourAgo);
+    setEndTime(formatDateTime(now));
+    setStartTime(formatDateTime(oneHourAgo));
+    setPage(1);
   };
 
-  const getLevelColor = (level: string) => {
-    const levelUpper = level.toUpperCase();
-    if (levelUpper === "ERROR") return "red";
-    if (levelUpper === "WARN" || levelUpper === "WARNING") return "orange";
-    if (levelUpper === "INFO") return "blue";
-    if (levelUpper === "DEBUG") return "gray";
+  const getStatusColor = (status: string) => {
+    const statusUpper = status.toUpperCase();
+    if (statusUpper === "FAIL" || statusUpper === "FAILURE" || statusUpper === "ERROR") {
+      return "red";
+    }
+    if (statusUpper === "SUCCESS") return "green";
     return "gray";
   };
 
@@ -676,219 +353,120 @@ const LogsPage: React.FC = () => {
     }
   };
 
-  // Filter out irrelevant health check, metrics endpoint, infrastructure errors, and Jaeger trace URLs
-  const shouldFilterLog = (log: LogEntry): boolean => {
-    const message = (log.message || '').toLowerCase();
+  const traceRows = tracesData?.data ?? [];
 
-    // Filter patterns for health/metrics endpoints
-    const healthMetricsPatterns = [
-      // Patterns for /enterprise/metrics and /metrics endpoints
-      /\bget\s+\/enterprise\/metrics\b/i,
-      /\bget\s+\/metrics\b/i,
-      // Patterns for /health endpoints (including /api/v1/*/health)
-      /\bget\s+.*\/health\b/i, // Matches /health, /api/v1/llm/health, etc.
-      // Patterns for these paths at start of line or after whitespace
-      /\/enterprise\/metrics(\s|$|\?|#|\d|-\s*\d)/i,
-      /\/metrics(\s|$|\?|#|\d|-\s*\d)/i,
-      /\/health(\s|$|\?|#|\d|-\s*\d)/i, // Matches /health anywhere in path
-      // Patterns in HTTP log format: "GET /api/v1/llm/health - 200" or "GET /health - 200"
-      /\b(get|post|put|delete|patch)\s+.*\/enterprise\/metrics\s+-\s+\d+/i,
-      /\b(get|post|put|delete|patch)\s+.*\/metrics\s+-\s+\d+/i,
-      /\b(get|post|put|delete|patch)\s+.*\/health\s+-\s+\d+/i, // Matches any path ending in /health
-    ];
+  const aggregationStats = tracesData?.aggregations;
 
-    // Filter patterns for Jaeger trace URLs
-    const jaegerPatterns = [
-      /\/jaeger\/api\/traces\//i, // Matches /jaeger/api/traces/...
-      /jaeger.*trace/i, // Matches any mention of jaeger trace
-    ];
+  const openTraceDetail = useCallback((traceId: string) => {
+    if (!traceId?.trim()) return;
+    setSelectedTraceId(traceId.trim());
+    setIsTraceModalOpen(true);
+  }, []);
 
-    // Filter patterns for infrastructure/health check errors
-    const infrastructureErrorPatterns = [
-      /failed to check server readiness/i,
-      /redis health check failed/i,
-      /connection closed by server/i,
-      /network is unreachable/i,
-      /health check failed/i,
-      /server readiness/i,
-      /connection.*closed/i,
-      /network.*unreachable/i,
-    ];
+  const closeTraceDetail = useCallback(() => {
+    setIsTraceModalOpen(false);
+    setSelectedTraceId(null);
+  }, []);
 
-    // Filter patterns for feature-flags endpoint
-    const featureFlagsPatterns = [
-      /\/api\/v1\/feature-flags\/evaluate/i,
-      /feature-flags\/evaluate/i,
-      /\b(get|post|put|delete|patch)\s+.*\/feature-flags\/evaluate/i,
-    ];
-
-    // Check if message matches any filter pattern
-    return healthMetricsPatterns.some(pattern => pattern.test(message)) ||
-           jaegerPatterns.some(pattern => pattern.test(message)) ||
-           infrastructureErrorPatterns.some(pattern => pattern.test(message)) ||
-           featureFlagsPatterns.some(pattern => pattern.test(message));
-  };
-
-  // Step 1: First filter out noise (health, metrics, infrastructure errors, feature-flags, etc.)
-  // Service/level filters are already applied at API level, so we just need to remove noise
-  const allFilteredLogs = useMemo(() => {
-    if (!logsData || !logsData.logs || !Array.isArray(logsData.logs)) {
-      console.log('No logs data available for filtering');
-      return [];
-    }
-
-    console.log('Filtering logs:', {
-      totalFromAPI: logsData.logs.length,
-      service: appliedService || 'All Services',
-      level: appliedLevel || 'All Levels',
-    });
-
-    const filtered = logsData.logs.filter((log: LogEntry) => !shouldFilterLog(log));
-
-    // Debug logging
-    if (logsData.logs.length > 0) {
-      const filteredCount = logsData.logs.length - filtered.length;
-      console.log(`Filtered logs result:`, {
-        originalCount: logsData.logs.length,
-        filteredCount: filtered.length,
-        noiseRemoved: filteredCount,
-        service: appliedService || 'All Services',
-        level: appliedLevel || 'All Levels',
-      });
-
-      if (filtered.length === 0 && logsData.logs.length > 0) {
-        console.warn('All logs were filtered out as noise! Sample log messages:',
-          logsData.logs.slice(0, 3).map((log: LogEntry) => log.message?.substring(0, 100))
-        );
-      }
-    }
-
-    return filtered;
-  }, [logsData, appliedService, appliedLevel]);
-
-  // Calculate filtered statistics for display
-  const filteredStats = useMemo(() => {
-    const stats = {
-      total: allFilteredLogs.length,
-      error: 0,
-      warn: 0,
-      info: 0,
-    };
-
-    allFilteredLogs.forEach((log: LogEntry) => {
-      const logLevel = (log.level || '').toUpperCase();
-      if (logLevel === 'ERROR') stats.error++;
-      else if (logLevel === 'WARN' || logLevel === 'WARNING') stats.warn++;
-      else if (logLevel === 'INFO') stats.info++;
-    });
-
-    return stats;
-  }, [allFilteredLogs]);
-
-  const totalFilteredLogs = allFilteredLogs.length;
-
-  const logsTableKey = `${appliedService}-${appliedLevel}-${appliedSearchText}-${appliedStartTime}-${appliedEndTime}-${appliedTenantId}`;
-
-  const logColumns = useMemo((): AdminTableColumn<LogEntry>[] => {
+  const traceColumns = useMemo((): AdminTableColumn<TelemetryTraceRecord>[] => {
     return [
       {
         id: "timestamp",
         header: "Timestamp",
         thProps: { fontWeight: "semibold", color: "gray.700", py: 3 },
-        cell: (log) => {
-          const timestamp = log.timestamp || log["@timestamp"] || log.time || "";
-          return (
-            <Text fontSize="sm" color="gray.600" py={3}>
-              {formatTimestamp(typeof timestamp === "string" ? timestamp : String(timestamp ?? ""))}
-            </Text>
-          );
-        },
-      },
-      {
-        id: "level",
-        header: "Level",
-        thProps: { fontWeight: "semibold", color: "gray.700" },
-        cell: (log) => {
-          const level = log.level || "INFO";
-          return (
-            <Badge
-              colorScheme={getLevelColor(level)}
-              fontSize="xs"
-              px={2}
-              py={1}
-              borderRadius="md"
-              fontWeight="semibold"
-            >
-              {level}
-            </Badge>
-          );
-        },
-      },
-      {
-        id: "service",
-        header: "Service",
-        thProps: { fontWeight: "semibold", color: "gray.700" },
-        cell: (log) => (
-          <Text fontSize="sm" fontWeight="medium" color="gray.700">
-            {log.service || "unknown"}
+        cell: (row) => (
+          <Text fontSize="sm" color="gray.600" py={3}>
+            {formatTimestamp(row.timestamp)}
           </Text>
         ),
       },
       {
-        id: "message",
-        header: "Message",
+        id: "status",
+        header: "Status",
         thProps: { fontWeight: "semibold", color: "gray.700" },
-        cell: (log) => (
-          <Text
-            noOfLines={2}
-            maxW="500px"
-            fontSize="sm"
-            color="gray.700"
-            fontFamily="mono"
+        cell: (row) => (
+          <Badge
+            colorScheme={getStatusColor(row.status)}
+            fontSize="xs"
+            px={2}
+            py={1}
+            borderRadius="md"
+            fontWeight="semibold"
           >
-            {log.message || ""}
+            {row.status}
+          </Badge>
+        ),
+      },
+      {
+        id: "task_type",
+        header: "Task Type",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (row) => (
+          <Text fontSize="sm" fontWeight="medium" color="gray.700">
+            {row.task_type}
           </Text>
         ),
       },
       {
-        id: "trace",
-        header: "Trace",
+        id: "url",
+        header: "URL",
         thProps: { fontWeight: "semibold", color: "gray.700" },
-        cell: (log) => {
-          const traceId = log.trace_id || log["trace_id"] || "";
-          return traceId ? (
-            <Button
-              size="sm"
-              colorScheme="blue"
-              variant="link"
-              onClick={() => router.push(`/traces?traceId=${traceId}`)}
-              fontSize="sm"
-              fontWeight="medium"
-              _hover={{ textDecoration: "underline" }}
-            >
-              View Trace
-            </Button>
+        cell: (row) => (
+          <Text noOfLines={2} maxW="400px" fontSize="sm" color="gray.700" fontFamily="mono">
+            {row.url}
+          </Text>
+        ),
+      },
+      {
+        id: "tenant_id",
+        header: "Tenant",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (row) => (
+          <Text fontSize="sm" color="gray.600">
+            {row.tenant_id || "-"}
+          </Text>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (row) =>
+          row.trace_id ? (
+            <Tooltip label="View trace" placement="top" hasArrow>
+              <IconButton
+                aria-label="View trace"
+                icon={<ViewIcon />}
+                size="sm"
+                variant="ghost"
+                color="gray.700"
+                _hover={{ color: "blue.500", bg: "blue.50" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openTraceDetail(row.trace_id);
+                }}
+              />
+            </Tooltip>
           ) : (
             <Text color="gray.400" fontSize="sm">
-              -
+              —
             </Text>
-          );
-        },
+          ),
       },
     ];
-  }, [router]);
+  }, [openTraceDetail]);
 
   const hasAppliedFilters =
-    appliedService !== "" ||
-    appliedLevel !== "" ||
-    appliedSearchText.trim() !== "" ||
-    appliedTenantId !== "";
+    taskType !== "" ||
+    level !== "" ||
+    selectedTenantId !== "" ||
+    searchQuery.trim() !== "";
 
   return (
     <>
       <Head>
         <title>Logs Dashboard - AI4Inclusion Console</title>
-        <meta name="description" content="View and search logs from OpenSearch" />
+        <meta name="description" content="View telemetry traces and request outcomes" />
       </Head>
 
       <ContentLayout>
@@ -911,7 +489,7 @@ const LogsPage: React.FC = () => {
             <>
               <ManagementPageHeader
                 title="Logs Dashboard"
-                description="View and search logs from OpenSearch"
+                description="View telemetry traces and request outcomes"
               />
 
               {/* Show auth warning if not authenticated */}
@@ -931,64 +509,17 @@ const LogsPage: React.FC = () => {
                 </Alert>
               )}
 
-          {/* Show error messages (401/403 trigger forceFrontendSessionEnd — no inline banner) */}
-          {logsError && (() => {
-            const error = logsError as any;
-            const st = error?.response?.status;
-            if (st === 401 || st === 403) return null;
-            return (
-            <Alert status="error">
-              <AlertIcon />
-              <AlertDescription>
-                {(() => {
-                  let errorMsg = 'Unknown error';
-                  if (error?.response?.data?.detail) {
-                    const detail = error?.response?.data?.detail;
-                    if (typeof detail === 'string') {
-                      errorMsg = detail;
-                    } else if (typeof detail === 'object') {
-                      errorMsg = detail.message || detail.detail || JSON.stringify(detail);
-                    } else {
-                      errorMsg = String(detail);
-                    }
-                  } else if (error?.message) {
-                    errorMsg = error.message;
-                  }
-                  return `Error loading logs: ${errorMsg}`;
-                })()}
-              </AlertDescription>
-            </Alert>
-            );
-          })()}
+              {tracesError && (
+                <Alert status="error">
+                  <AlertIcon />
+                  <AlertDescription>
+                    {((tracesError as Error)?.message) || "Error loading traces"}
+                  </AlertDescription>
+                </Alert>
+              )}
 
-
-
-
-          {aggregationsError && !aggregationsLoading && (() => {
-            const error = aggregationsError as any;
-            const st = error?.response?.status;
-            if (st === 401 || st === 403) return null;
-            return (
-            <Alert status="warning">
-              <AlertIcon />
-              <AlertDescription>
-                Failed to load aggregations: {(() => {
-                  if (error?.response?.data?.detail) {
-                    const detail = error?.response?.data?.detail;
-                    if (typeof detail === 'string') return detail;
-                    if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
-                    return String(detail);
-                  }
-                  return error?.message || 'Unknown error';
-                })()}
-              </AlertDescription>
-            </Alert>
-            );
-          })()}
-
-          {/* Aggregations */}
-          {aggregations && (
-            <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
+              {aggregationStats && (
+            <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
               <Card
                 bg={cardBg}
                 border="1px"
@@ -999,9 +530,26 @@ const LogsPage: React.FC = () => {
               >
                 <CardBody>
                   <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Total Logs</StatLabel>
+                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Total Requests</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="gray.800">
-                      {filteredStats.total.toLocaleString()}
+                      {aggregationStats.total.toLocaleString()}
+                    </StatNumber>
+                  </Stat>
+                </CardBody>
+              </Card>
+              <Card
+                bg={cardBg}
+                border="1px"
+                borderColor="green.200"
+                boxShadow="sm"
+                _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "green.300" }}
+                transition="all 0.2s"
+              >
+                <CardBody>
+                  <Stat>
+                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Success</StatLabel>
+                    <StatNumber fontSize="2xl" fontWeight="bold" color="green.500">
+                      {aggregationStats.by_level.success.toLocaleString()}
                     </StatNumber>
                   </Stat>
                 </CardBody>
@@ -1016,250 +564,156 @@ const LogsPage: React.FC = () => {
               >
                 <CardBody>
                   <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Errors</StatLabel>
+                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Failures</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="red.500">
-                      {filteredStats.error.toLocaleString()}
-                    </StatNumber>
-                  </Stat>
-                </CardBody>
-              </Card>
-              <Card
-                bg={cardBg}
-                border="1px"
-                borderColor="orange.200"
-                boxShadow="sm"
-                _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "orange.300" }}
-                transition="all 0.2s"
-              >
-                <CardBody>
-                  <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Warnings</StatLabel>
-                    <StatNumber fontSize="2xl" fontWeight="bold" color="orange.500">
-                      {filteredStats.warn.toLocaleString()}
-                    </StatNumber>
-                  </Stat>
-                </CardBody>
-              </Card>
-              <Card
-                bg={cardBg}
-                border="1px"
-                borderColor="blue.200"
-                boxShadow="sm"
-                _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "blue.300" }}
-                transition="all 0.2s"
-              >
-                <CardBody>
-                  <Stat>
-                    <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Info</StatLabel>
-                    <StatNumber fontSize="2xl" fontWeight="bold" color="blue.500">
-                      {filteredStats.info.toLocaleString()}
+                      {aggregationStats.by_level.failure.toLocaleString()}
                     </StatNumber>
                   </Stat>
                 </CardBody>
               </Card>
             </SimpleGrid>
-          )}
+              )}
 
-          {/* Logs table with filters */}
-          <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
+              <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
             <CardBody>
-              {logsError && (() => {
-                const error = logsError as { response?: { status?: number } };
-                if (error?.response?.status === 401 || error?.response?.status === 403) {
-                  return null;
-                }
-                return (
-                  <VStack spacing={2} py={4} mb={4}>
-                    <Text textAlign="center" color="red.500" fontWeight="bold">
-                      Error Loading Logs
-                    </Text>
-                    <Text textAlign="center" color="red.400" fontSize="sm">
-                      {(() => {
-                        const err = logsError as {
-                          response?: { data?: { detail?: unknown } };
-                          message?: string;
-                        };
-                        if (err?.response?.data?.detail) {
-                          const detail = err.response.data.detail;
-                          if (typeof detail === "string") return detail;
-                          if (typeof detail === "object" && detail !== null) {
-                            const d = detail as { message?: string; detail?: string };
-                            return d.message || d.detail || JSON.stringify(detail);
-                          }
-                          return String(detail);
-                        }
-                        return err?.message || "Unknown error";
-                      })()}
-                    </Text>
-                    <Button size="sm" colorScheme="blue" onClick={handleRefresh}>
-                      Retry
-                    </Button>
-                  </VStack>
-                );
-              })()}
-
-              {!logsError && (
+              {!tracesError && (
                 <>
-                  {logsData &&
-                    Array.isArray(logsData.logs) &&
-                    logsData.logs.length > allFilteredLogs.length && (
-                      <Alert status="info" borderRadius="md" mb={4}>
-                        <AlertIcon />
-                        <AlertDescription fontSize="sm">
-                          {totalFilteredLogs.toLocaleString()} logs after filtering (
-                          {logsData.logs.length.toLocaleString()} fetched). Health check, metrics
-                          endpoint, feature-flags, infrastructure errors, and Jaeger trace URL logs
-                          are hidden.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-
                   <AdminDataTable
-                    key={logsTableKey}
-                    items={allFilteredLogs}
-                    columns={logColumns}
-                    getRowKey={(log) =>
-                      `${log.timestamp || log["@timestamp"] || ""}-${log.service || ""}-${log.message || ""}-${log.trace_id || log["trace_id"] || ""}`
+                    items={traceRows}
+                    columns={traceColumns}
+                    getRowKey={(row) =>
+                      `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
                     }
-                    paginate="client"
-                    initialPageSize={10}
-                    pageSizeOptions={[10, 25, 50, 100]}
+                    onRowClick={(row) => {
+                      if (row.trace_id) openTraceDetail(row.trace_id);
+                    }}
+                    paginate="server"
+                    serverPagination={{
+                      page,
+                      pageSize,
+                      totalItems: tracesData?.total ?? 0,
+                      onPageChange: setPage,
+                      onPageSizeChange: (size) => {
+                        setPageSize(size);
+                        setPage(1);
+                      },
+                      pageSizeOptions: [10, 15, 25, 50, 100],
+                    }}
                     size="md"
-                    isLoading={logsLoading}
-                    loadingMessage="Loading logs..."
-                    emptyMessage={
-                      logsData &&
-                      Array.isArray(logsData.logs) &&
-                      logsData.logs.length > 0 &&
-                      allFilteredLogs.length === 0
-                        ? "All logs were filtered out (health checks and metrics endpoints are hidden). Try adjusting your filters or time range."
-                        : logsData?.total === 0
-                          ? "No logs found for the selected filters. Try adjusting the time range or removing filters."
-                          : "No logs data available. Make sure OpenSearch has logs indexed and your time range includes log entries."
-                    }
-                    noResultsMessage="No logs match the current filters."
+                    isLoading={tracesLoading}
+                    loadingMessage="Loading traces..."
+                    emptyMessage="No traces found for the selected filters. Try adjusting the time range or removing filters."
+                    noResultsMessage="No traces match the current filters."
                     hasActiveFilters={hasAppliedFilters}
-                    showFiltersHeading
-                    filtersHeading="Filters"
+                    onClearFilters={clearAllFilters}
                     filters={
-                      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
-                        {isAdmin && !isTenantAdmin && (
-                          <FormControl>
-                            <FormLabel fontWeight="medium">Tenant</FormLabel>
-                            <Select
-                              value={selectedTenantId || ""}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                setSelectedTenantId(value === "" ? "" : value);
-                                setService("");
-                              }}
-                              bg="white"
-                              isDisabled={tenantsLoading}
+                      <VStack align="stretch" spacing={3} flex="1" w="full">
+                        <HStack spacing={3} align="flex-end" flexWrap="wrap" rowGap={3} w="full">
+                          <TableSearchField
+                            label="Search"
+                            value={searchQuery}
+                            onChange={setSearchQuery}
+                            placeholder="Trace ID, URL, task type…"
+                            formControlProps={{ w: { base: "full", md: "280px" } }}
+                          />
+                          {isAdmin && !isTenantAdmin && (
+                            <TableSelectField
+                              label="Tenant"
+                              value={selectedTenantId}
+                              onChange={setSelectedTenantId}
+                              formControlProps={{ w: { base: "full", sm: "200px" } }}
+                              selectProps={{ isDisabled: tenantsLoading }}
                             >
                               <option value="">All Tenants</option>
                               {tenantsLoading ? (
                                 <option value="" disabled>
-                                  Loading tenants...
+                                  Loading tenants…
                                 </option>
                               ) : tenantsError ? (
                                 <option value="" disabled>
                                   Error loading tenants
                                 </option>
                               ) : activeTenants.length > 0 ? (
-                                activeTenants.map((tenant: { tenant_id: string; organisation?: string }) => (
-                                  <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                                    {tenant.organisation || tenant.tenant_id}
-                                  </option>
-                                ))
+                                activeTenants.map(
+                                  (tenant: { tenant_id: string; organisation?: string }) => (
+                                    <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                                      {tenant.organisation || tenant.tenant_id}
+                                    </option>
+                                  )
+                                )
                               ) : (
                                 <option value="" disabled>
-                                  No active tenants found
+                                  No active tenants
                                 </option>
                               )}
-                            </Select>
-                          </FormControl>
-                        )}
-
-                        <FormControl>
-                          <FormLabel fontWeight="medium">Service</FormLabel>
-                          <Select
-                            value={service || ""}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setService(value === "" ? "" : value);
-                            }}
-                            bg="white"
+                            </TableSelectField>
+                          )}
+                          <TableSelectField
+                            label="Task Type"
+                            value={taskType}
+                            onChange={setTaskType}
+                            formControlProps={{ w: { base: "full", sm: "160px" } }}
                           >
-                            <option value="">All Services</option>
-                            {filteredServices.map((svc) => (
-                              <option key={svc} value={svc}>
-                                {svc}
+                            <option value="">All Task Types</option>
+                            {MODEL_TASK_TYPE_LIST.map((tt) => (
+                              <option key={tt} value={tt}>
+                                {formatModelTaskTypeLabel(tt)}
                               </option>
                             ))}
-                          </Select>
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel fontWeight="medium">Level</FormLabel>
-                          <Select
-                            value={level || ""}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setLevel(value === "" ? "" : value);
-                            }}
-                            bg="white"
+                          </TableSelectField>
+                          <TableSelectField
+                            label="Status"
+                            value={level}
+                            onChange={setLevel}
+                            formControlProps={{ w: { base: "full", sm: "140px" } }}
                           >
-                            <option value="">All Levels</option>
-                            <option value="ERROR">ERROR</option>
-                            <option value="WARN">WARN</option>
-                            <option value="INFO">INFO</option>
-                            <option value="DEBUG">DEBUG</option>
-                          </Select>
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel fontWeight="medium">Search Text</FormLabel>
-                          <Input
-                            placeholder="Search in log messages..."
-                            value={searchText}
-                            onChange={(e) => setSearchText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleSearch();
-                            }}
-                            bg="white"
-                          />
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel fontWeight="medium">Start Time</FormLabel>
-                          <Input
-                            type="datetime-local"
-                            value={startTime}
-                            onChange={(e) => setStartTime(e.target.value)}
-                            bg="white"
-                          />
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel fontWeight="medium">End Time</FormLabel>
-                          <Input
-                            type="datetime-local"
-                            value={endTime}
-                            onChange={(e) => setEndTime(e.target.value)}
-                            bg="white"
-                          />
-                        </FormControl>
-                      </SimpleGrid>
+                            <option value="">All Statuses</option>
+                            <option value="Success">Success</option>
+                            <option value="Fail">Fail</option>
+                          </TableSelectField>
+                          <FormControl w={{ base: "full", sm: "220px" }}>
+                            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                              Start Time
+                            </FormLabel>
+                            <Input
+                              type="datetime-local"
+                              size="sm"
+                              value={startTime}
+                              onChange={(e) => {
+                                setStartTime(e.target.value);
+                                setPage(1);
+                              }}
+                              bg={cardBg}
+                            />
+                          </FormControl>
+                          <FormControl w={{ base: "full", sm: "220px" }}>
+                            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                              End Time
+                            </FormLabel>
+                            <Input
+                              type="datetime-local"
+                              size="sm"
+                              value={endTime}
+                              onChange={(e) => {
+                                setEndTime(e.target.value);
+                                setPage(1);
+                              }}
+                              bg={cardBg}
+                            />
+                          </FormControl>
+                          <Box flex="1" minW={0} display={{ base: "none", lg: "block" }} />
+                        </HStack>
+                      </VStack>
                     }
-                    filterToolbarAlign="flex-start"
+                    filterToolbarAlign="flex-end"
                     filterToolbarRightContent={
-                      <HStack spacing={4} flexWrap="wrap">
+                      <HStack spacing={3} flexWrap="wrap">
                         <FormControl display="flex" alignItems="center" w="auto">
                           <FormLabel
                             htmlFor="auto-refresh-toggle"
                             mb="0"
-                            fontWeight="medium"
                             fontSize="sm"
+                            fontWeight="medium"
                             mr={2}
                             whiteSpace="nowrap"
                           >
@@ -1272,26 +726,13 @@ const LogsPage: React.FC = () => {
                             onChange={(e) => setAutoRefresh(e.target.checked)}
                           />
                         </FormControl>
-                        <Button
-                          leftIcon={<SearchIcon />}
-                          colorScheme="blue"
-                          onClick={handleSearch}
-                          isLoading={logsLoading}
-                          size="md"
-                          fontWeight="medium"
-                        >
-                          Search
-                        </Button>
-                        <Button variant="outline" onClick={handleClear} size="md" fontWeight="medium">
-                          Clear
-                        </Button>
                         <Tooltip label="Refresh now" placement="top" hasArrow>
                           <IconButton
                             aria-label="Refresh"
                             icon={<RepeatIcon />}
                             onClick={handleRefresh}
-                            isLoading={logsLoading}
-                            size="md"
+                            isLoading={tracesLoading}
+                            size="sm"
                             variant="outline"
                           />
                         </Tooltip>
@@ -1302,7 +743,13 @@ const LogsPage: React.FC = () => {
                 </>
               )}
             </CardBody>
-          </Card>
+              </Card>
+
+              <TelemetryTraceDetailModal
+                traceId={selectedTraceId}
+                isOpen={isTraceModalOpen}
+                onClose={closeTraceDetail}
+              />
             </>
           )}
         </VStack>

@@ -77,6 +77,55 @@ export const traceSearchResponseSchema = z.object({
   offset: z.number(),
 });
 
+export const telemetryTraceRecordSchema = z.object({
+  trace_id: z.string(),
+  task_type: z.string(),
+  status: z.string(),
+  url: z.string(),
+  tenant_id: z.string(),
+  timestamp: z.string(),
+});
+
+export const telemetryTraceSearchResponseSchema = z.object({
+  data: z.array(telemetryTraceRecordSchema),
+  total: z.number(),
+  page: z.number(),
+  pageSize: z.number(),
+  aggregations: z.object({
+    total: z.number(),
+    by_level: z.object({
+      success: z.number(),
+      failure: z.number(),
+    }),
+  }),
+});
+
+export const telemetrySpanSchema = z
+  .object({
+    name: z.string(),
+    context: z.object({
+      trace_id: z.string(),
+      span_id: z.string(),
+      trace_state: z.string(),
+    }),
+    kind: z.string(),
+    attributes: z.record(z.string(), z.unknown()),
+    timestamp: z.string(),
+    logger: z.string().optional(),
+    taskName: z.string().optional(),
+  })
+  .passthrough();
+
+export const telemetryTraceDetailSchema = z.object({
+  trace_id: z.string(),
+  service: z.string(),
+  tenant_id: z.string(),
+  service_version: z.string(),
+  environment: z.string(),
+  hostname: z.string(),
+  spans: z.array(telemetrySpanSchema),
+});
+
 /** Telemetry may return `string[]` or `{ services: string[] }`. */
 export const telemetryServicesNamesSchema = z.preprocess((raw: unknown) => {
   if (Array.isArray(raw)) return raw;

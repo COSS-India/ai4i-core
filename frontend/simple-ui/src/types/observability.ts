@@ -81,3 +81,55 @@ export interface TraceSearchResponse {
   limit: number;
   offset: number;
 }
+
+/** Row from GET /telemetry/traces/search (unified search + aggregations). */
+export interface TelemetryTraceRecord {
+  trace_id: string;
+  task_type: string;
+  status: string;
+  url: string;
+  tenant_id: string;
+  timestamp: string;
+}
+
+export interface TelemetryTraceSearchAggregations {
+  total: number;
+  by_level: {
+    success: number;
+    failure: number;
+  };
+}
+
+export interface TelemetryTraceSearchResponse {
+  data: TelemetryTraceRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  aggregations: TelemetryTraceSearchAggregations;
+}
+
+export interface TelemetrySpanContext {
+  trace_id: string;
+  span_id: string;
+  trace_state: string;
+}
+
+export interface TelemetrySpan {
+  name: string;
+  context: TelemetrySpanContext;
+  kind: string;
+  attributes: Record<string, unknown>;
+  timestamp: string;
+  logger?: string;
+  taskName?: string;
+}
+
+export interface TelemetryTraceDetail {
+  trace_id: string;
+  service: string;
+  tenant_id: string;
+  service_version: string;
+  environment: string;
+  hostname: string;
+  spans: TelemetrySpan[];
+}
