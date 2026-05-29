@@ -29,22 +29,17 @@ export interface LLMHookState {
   outputLanguage: string;
   inputText: string;
   outputText: string;
-  nmtOutputText?: string;
   fetching: boolean;
   fetched: boolean;
-  isDualMode: boolean;
   requestWordCount: number;
   responseWordCount: number;
-  nmtResponseWordCount?: number;
   requestTime: string;
-  nmtRequestTime?: string;
   error: string | null;
 }
 
 // LLM Hook Methods
 export interface LLMHookMethods {
   performInference: (text: string) => Promise<void>;
-  performDualInference: (text: string) => Promise<void>;
   setInputText: (text: string) => void;
   setInputLanguage: (lang: string) => void;
   setOutputLanguage: (lang: string) => void;

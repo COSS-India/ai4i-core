@@ -25,6 +25,23 @@ export const inferenceAudioResponseSchema = z
 export const asrInferenceResponseSchema = inferenceOutputResponseSchema;
 export const nmtInferenceResponseSchema = inferenceOutputResponseSchema;
 export const llmInferenceResponseSchema = inferenceOutputResponseSchema;
+
+/** OpenAI-style chat completion from POST /api/v1/chat */
+export const chatCompletionResponseSchema = z
+  .object({
+    choices: z.array(
+      z
+        .object({
+          message: z
+            .object({
+              content: z.string(),
+            })
+            .passthrough(),
+        })
+        .passthrough()
+    ),
+  })
+  .passthrough();
 export const ocrInferenceResponseSchema = inferenceOutputResponseSchema;
 export const nerInferenceResponseSchema = inferenceOutputResponseSchema;
 export const languageDetectionInferenceResponseSchema = inferenceOutputResponseSchema;
