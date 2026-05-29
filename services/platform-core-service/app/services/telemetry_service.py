@@ -186,13 +186,3 @@ class TelemetryService:
         if spans:
             return spans[0].get("timestamp")
         return None
-
-    # ── COMMENTED OUT: All mock functions (no longer needed - using real OpenSearch) ──
-    #
-    # - _get_mock_traces_aggregated() - returns mock aggregated traces
-    # - _generate_aggregations() - generates aggregation statistics (unused)
-    # - _get_mock_trace_data() - returns complete mock trace data
-    # - _get_mock_traces_for_search() - searches mock traces with filtering
-    #
-    # These functions were used by the /traces/mock/search endpoint which is now commented out.
-    # The real endpoints (/traces/search and /traces/{trace_id}) use OpenSearch directly.

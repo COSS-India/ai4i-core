@@ -135,22 +135,27 @@ async def search_traces_opensearch(
         # Transform aggregated traces to response format
         data = []
         for trace_id, spans in traces_dict.items():
-            # Extract metadata from spans
             task_type = None
-            status = "Pass"
+            status = None
+            url = None
             timestamp = None
 
-            # Iterate through all spans to find task_type and latest timestamp
+            # Extract metadata directly from span attributes (from OpenSearch message)
             for span in spans:
                 attrs = span.get("attributes", {})
-                # Get task_type from any span that has it
-                if not task_type:
+                span_name = span.get("name")
+
+                if span_name == "model" and not task_type:
                     task_type = attrs.get("task_type")
-                # Get the latest timestamp
-                span_timestamp = span.get("timestamp")
-                if span_timestamp:
-                    if not timestamp or span_timestamp > timestamp:
-                        timestamp = span_timestamp
+
+                if not status:
+                    status = attrs.get("status")
+
+                if span_name == "request" and not url:
+                    url = attrs.get("url")
+
+                if not timestamp:
+                    timestamp = span.get("timestamp")
 
             if trace_id:
                 data.append({
@@ -158,7 +163,7 @@ async def search_traces_opensearch(
                     "service": "ai4x-inference",
                     "task_type": task_type,
                     "status": status,
-                    "url": "/api/v1/inference",
+                    "url": url,
                     "tenant_id": tenant_filter or "system",
                     "timestamp": timestamp,
                 })
@@ -184,100 +189,6 @@ async def search_traces_opensearch(
             detail=f"Error searching OpenSearch: {str(e)}",
         )
 
-
-# ── COMMENTED OUT: Mock search endpoint (use /traces/search instead) ──
-# @router.get("/traces/mock/search", response_model=SearchTracesResponse)
-# async def search_traces(
-#     request: Request,
-#     TaskType: Optional[str] = Query(
-#         None, description="Filter by task type (NMT, ASR, OCR, etc.)"
-#     ),
-#     Level: Optional[str] = Query(
-#         None, description="Filter by status/level (Pass/Fail)"
-#     ),
-#     startDate: Optional[str] = Query(
-#         None, description="Start date in ISO format (e.g., 2026-05-28T18:15:00Z)"
-#     ),
-#     endDate: Optional[str] = Query(
-#         None, description="End date in ISO format (e.g., 2026-05-28T18:16:00Z)"
-#     ),
-#     PageCount: int = Query(1, ge=1, description="Page number for pagination (default: 1)"),
-#     pageSize: int = Query(20, ge=1, le=100, description="Number of traces per page (default: 20)"),
-#     service: TelemetryService = Depends(get_telemetry_service),
-# ) -> SearchTracesResponse:
-#     """
-#     Search traces in OpenSearch with filters.
-#
-#     Requires 'traces.read' permission.
-#     Returns paginated list of traces matching the filters.
-#
-#     Args:
-#         TaskType: Filter by task type (NMT, ASR, OCR, TTS, NER, etc.)
-#         Level: Filter by status (Pass or Fail)
-#         startDate: Start date in ISO format (e.g., 2026-05-28T18:15:00Z)
-#         endDate: End date in ISO format (e.g., 2026-05-28T18:16:00Z)
-#         PageCount: Page number for pagination (starting from 1)
-#         pageSize: Number of traces per page (1-100, default: 20)
-#
-#     Returns:
-#         Paginated search results with aggregations
-#     """
-#     try:
-#         # Check role types
-#         is_admin = _is_user_admin(request)
-#         is_tenant_admin = _is_user_tenant_admin(request)
-#
-#         # Extract tenant_id from JWT token
-#         jwt_tenant_id = _extract_tenant_id_from_jwt(request)
-#
-#         # Determine tenant filter based on role
-#         tenant_filter = None
-#         if is_admin:
-#             logger.info("ADMIN user - can see all traces")
-#             tenant_filter = None
-#         elif is_tenant_admin:
-#             if not jwt_tenant_id:
-#                 raise HTTPException(
-#                     status_code=status.HTTP_403_FORBIDDEN,
-#                     detail="TENANT ADMIN account has no tenant_id in token",
-#                 )
-#             tenant_filter = jwt_tenant_id
-#         else:
-#             # Regular user
-#             if not jwt_tenant_id:
-#                 logger.warning("Regular user has no tenant_id, denying access")
-#                 raise HTTPException(
-#                     status_code=status.HTTP_403_FORBIDDEN,
-#                     detail="You must have a valid tenant_id to access traces",
-#                 )
-#             tenant_filter = jwt_tenant_id
-#
-#         logger.info(
-#             f"Searching traces - TaskType={TaskType}, Level={Level}, "
-#             f"startDate={startDate}, endDate={endDate}, PageCount={PageCount}, tenant_filter={tenant_filter}"
-#         )
-#
-#         # Call service to search traces
-#         result = service.search_traces(
-#             task_type=TaskType,
-#             level=Level,
-#             start_date=startDate,
-#             end_date=endDate,
-#             page=PageCount,
-#             page_size=pageSize,
-#             tenant_id=tenant_filter,
-#         )
-#
-#         return result
-#
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"Error searching traces: {e}", exc_info=True)
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Error searching traces: {str(e)}",
-#         )
 
 
 @router.get("/traces/{trace_id}", response_model=TraceResponse)
