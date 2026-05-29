@@ -63,8 +63,10 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
 import {
+  MODEL_TASK_TYPE_LIST,
   MODEL_VERSION,
   MODEL_VERSION_FILTER_LIST,
+  formatModelTaskTypeLabel,
   formatModelVersionFilterLabel,
   formatModelVersionStatusLabel,
   isModelVersionStatusActive,
@@ -208,15 +210,6 @@ const ModelManagementPage: React.FC = () => {
   }, []);
 
   const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
-
-  // Unique task types from models (for filter dropdown)
-  const taskTypeOptions = useMemo(() => {
-    const types = new Set<string>();
-    models.forEach((m) => {
-      if (m.task?.type) types.add(m.task.type.toUpperCase());
-    });
-    return Array.from(types).sort();
-  }, [models]);
 
   // Client-side name filter + sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
@@ -988,9 +981,9 @@ const ModelManagementPage: React.FC = () => {
                                 formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
                                 <option value="">All</option>
-                                {taskTypeOptions.map((t) => (
+                                {MODEL_TASK_TYPE_LIST.map((t) => (
                                   <option key={t} value={t}>
-                                    {t}
+                                    {formatModelTaskTypeLabel(t)}
                                   </option>
                                 ))}
                               </TableSelectField>
@@ -1033,7 +1026,7 @@ const ModelManagementPage: React.FC = () => {
                                     onClick={() => setFilterTaskType("")}
                                     _hover={{ opacity: 0.8 }}
                                   >
-                                    Task: {filterTaskType} ×
+                                    Task: {formatModelTaskTypeLabel(filterTaskType)} ×
                                   </Badge>
                                 )}
                               </HStack>

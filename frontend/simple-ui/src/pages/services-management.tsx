@@ -58,6 +58,7 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
+import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel } from "../config/constants";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -130,15 +131,6 @@ const ServicesManagementPage: React.FC = () => {
     if (Number.isNaN(timestampMs)) return "";
     return new Date(timestampMs).toISOString().slice(0, 10);
   };
-
-  const taskTypeOptions = useMemo(() => {
-    const types = new Set<string>();
-    services.forEach((s) => {
-      const t = s.model?.task?.type || s.task?.type || s.task_type;
-      if (t) types.add(String(t).toUpperCase());
-    });
-    return Array.from(types).sort();
-  }, [services]);
 
   // Client-side name filter + sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
@@ -1129,9 +1121,9 @@ const ServicesManagementPage: React.FC = () => {
                                   formControlProps={{ w: { base: "full", sm: "160px" } }}
                                 >
                                   <option value="">All</option>
-                                  {taskTypeOptions.map((t) => (
+                                  {MODEL_TASK_TYPE_LIST.map((t) => (
                                     <option key={t} value={t}>
-                                      {t}
+                                      {formatModelTaskTypeLabel(t)}
                                     </option>
                                   ))}
                                 </TableSelectField>
@@ -1176,7 +1168,7 @@ const ServicesManagementPage: React.FC = () => {
                                       onClick={() => setFilterTaskType("")}
                                       _hover={{ opacity: 0.8 }}
                                     >
-                                      Model Task Type: {filterTaskType} ×
+                                      Model Task Type: {formatModelTaskTypeLabel(filterTaskType)} ×
                                     </Badge>
                                   )}
                                 </HStack>
