@@ -1,5 +1,5 @@
 import { TENANT_USER_ROLE_OPTIONS } from "../components/profile/types";
-import type { TenantUserView } from "../types/tenant";
+import type { TenantAssignableRole, TenantUserView } from "../types/tenant";
 
 /** Static RBAC role values for tenant user list filters. */
 export const TENANT_USER_ROLE_FILTER_LIST = TENANT_USER_ROLE_OPTIONS;
@@ -23,6 +23,15 @@ export function formatTenantUserRoleLabel(role: string): string {
  * Resolve roles from list-users API (frontend-only).
  * Upcoming shape: singular `role`. Also accepts `roles[]` from profile/detail endpoints.
  */
+/** Primary tenant-assignable role for create/edit forms (USER or TENANT ADMIN). */
+export function resolvePrimaryTenantAssignableRole(
+  source: TenantUserRoleSource,
+): TenantAssignableRole {
+  const normalized = resolveTenantUserRoles(source).map(normalizeTenantUserRole);
+  if (normalized.includes("TENANT ADMIN")) return "TENANT ADMIN";
+  return "USER";
+}
+
 export function resolveTenantUserRoles(source: TenantUserRoleSource): string[] {
   const single = source.role;
   if (single != null && String(single).trim()) {

@@ -3,7 +3,7 @@ Platform Core Service — FastAPI application factory.
 No tracing or observability — logging only.
 """
 
-import importlib
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 import time
@@ -11,14 +11,26 @@ import time
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
 from starlette.requests import Request
 from app.core.config import settings
-from app.core.database import close_database, init_database
+from app.core.database import (
+    close_auth_database,
+    close_database,
+    init_auth_database,
+    init_database,
+)
 from app.core.exceptions import register_exception_handlers
 from app.core.pii_database import close_pii_database, init_pii_database, _pii_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
-from app.services.service_service import EndpointValidationFailedError
+from app.services.pay_per_use.pay_per_use_service import warm_pricing_cache
+
+# services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
+import importlib as _importlib
+EndpointValidationFailedError = _importlib.import_module(
+    "app.services.model-management.service_service"
+).EndpointValidationFailedError
 
 from ai4icore_core.logging import configure_logging, RequestMiddleware
 from ai4icore_core.exceptions import ErrorDetail
@@ -37,10 +49,26 @@ async def lifespan(app: FastAPI):
         max_overflow=settings.db_max_overflow,
         echo=settings.debug,
     )
+    # Secondary auth_db engine — no-op if AUTH_DB_NAME is not configured.
+    await init_auth_database()
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
+    await warm_pricing_cache()
+
+    # Alert config sync background loop — only when explicitly enabled, so the
+    # service can run without alerting wired up (and to avoid double-writes
+    # during the side-by-side rollout window).
+    app.state.alert_sync_task = None
+    if settings.alert_sync_enabled:
+        from app.dependencies.services import get_sync_service
+
+        sync_service = get_sync_service()
+        app.state.alert_sync_task = asyncio.create_task(sync_service.run_periodic_loop())
+        logger.info("Alert config sync loop started (interval=%ss)", settings.sync_interval)
+    else:
+        logger.info("Alert config sync disabled (ALERT_SYNC_ENABLED=false)")
 
     # ── PII DB ────────────────────────────────────────────────────────────
     await init_pii_database(
@@ -52,7 +80,7 @@ async def lifespan(app: FastAPI):
 
     # ── PII singletons ────────────────────────────────────────────────────
     # Import via importlib because the services directory uses a hyphenated name.
-    _pii_svc = importlib.import_module("app.services.pii-management")
+    _pii_svc = _importlib.import_module("app.services.pii-management")
     kb_svc        = _pii_svc.KnowledgeBaseService()
     policy_sync   = _pii_svc.PolicySyncService()
     audit_svc     = _pii_svc.AuditService()
@@ -90,9 +118,18 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    sync_task = getattr(app.state, "alert_sync_task", None)
+    if sync_task is not None:
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
+
     # ── Shutdown ──────────────────────────────────────────────────────────
     await policy_sync.stop_listener()
     await close_redis()
+    await close_auth_database()
     await close_pii_database()
     await close_database()
     logger.info("Shutdown complete.")
@@ -128,6 +165,7 @@ def create_app() -> FastAPI:
 
     versioning.register(app)
     app.include_router(api_router)
+    app.mount("/metrics", make_asgi_app())
 
     # OpenAPI security: Bearer JWT lock on all endpoints except health/root.
     _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json"}

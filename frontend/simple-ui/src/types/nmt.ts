@@ -5,32 +5,12 @@ import { LanguagePair } from './common';
 // Re-export LanguagePair for convenience
 export type { LanguagePair };
 
-// NMT Inference Request
-export interface NMTInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    language: {
-      sourceLanguage: string;
-      targetLanguage: string;
-      sourceScriptCode?: string;
-      targetScriptCode?: string;
-    };
-    serviceId: string;
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-// NMT Inference Response
-export interface NMTInferenceResponse {
-  output: Array<{
-    source: string;
-    target: string;
-  }>;
-}
+export type {
+  NMTInferenceRequest,
+  NMTInferenceResponse,
+  NMTBatchInferenceRequest,
+  NMTBatchInferenceResponse,
+} from './inference';
 
 // NMT Model
 export interface NMTModel {
@@ -141,33 +121,6 @@ export interface TranslationHistoryItem {
   languagePair: LanguagePair;
   timestamp: number;
   confidence?: number;
-}
-
-// NMT Batch Translation Request
-export interface NMTBatchInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    language: {
-      sourceLanguage: string;
-      targetLanguage: string;
-      sourceScriptCode?: string;
-      targetScriptCode?: string;
-    };
-    serviceId: string;
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-// NMT Batch Translation Response
-export interface NMTBatchInferenceResponse {
-  output: Array<{
-    source: string;
-    target: string;
-  }>;
 }
 
 // NMT Language Detection

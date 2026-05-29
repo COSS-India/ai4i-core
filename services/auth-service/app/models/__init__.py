@@ -10,6 +10,7 @@ from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 
 from app.models.tenant import Tenant  # noqa: E402
+from app.models.tenant_plan import TenantPlan  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.models.credentials import UserCredentials  # noqa: E402
 from app.models.role_name import RoleName  # noqa: E402
@@ -21,6 +22,7 @@ from app.models.refresh import RefreshToken  # noqa: E402
 __all__ = [
     "Base",
     "Tenant",
+    "TenantPlan",
     "User",
     "UserCredentials",
     "RoleName",

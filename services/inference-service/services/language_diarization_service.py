@@ -57,7 +57,10 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
         output_list = []
 
         for item in response_items:
-            data = self._parse_json(item.get("diarization_json"))
+            # Try the well-known key first; fall back to the first value in the
+            # dict so different adapter_config maps_to names still work.
+            raw = item.get("diarization_json") or next(iter(item.values()), None)
+            data = self._parse_json(raw)
             if not data:
                 output_list.append({"total_segments": 0, "segments": [], "target_language": ""})
                 continue
@@ -86,17 +89,22 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> Dict[str, Any]:
-        service_id = (payload.get("config") or {}).get("serviceId")
-        result = {"taskType": "language-diarization", "output": postprocessed["output"]}
-        if service_id:
-            result["config"] = {"serviceId": service_id}
-        return result
+        cfg = payload.get("config") or {}
+        return {
+            "taskType": "language-diarization",
+            "output": postprocessed["output"],
+            "config": {"serviceId": cfg.get("serviceId")},
+        }
 
     def _parse_json(self, value: Any) -> Dict[str, Any]:
         if value is None:
             return {}
         if isinstance(value, dict):
             return value
+        # Unwrap single-element list nesting from Triton KServe v2 responses
+        # e.g. to_output_items peels [["json"]] → ["json"]; we peel once more → "json"
+        while isinstance(value, (list, tuple)) and len(value) == 1:
+            value = value[0]
         if isinstance(value, bytes):
             value = value.decode("utf-8", errors="replace")
         if isinstance(value, str):

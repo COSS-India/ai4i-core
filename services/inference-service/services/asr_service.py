@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from services.base.audio_base import AudioBase
 from services.base.config_mapper import GenericTritonMapper
-from models.schemas.asr import ASRInferenceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,23 @@ class ASRTaskService(AudioBase):
         input_data: List[Dict[str, Any]],
         config: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Build KServe v2 inputs from preprocessed float PCM samples."""
+        """Build KServe v2 inputs from preprocessed float PCM samples.
+
+        Normalises config.language to always expose source_language (snake_case)
+        so the adapter_config path 'request.config.language.source_language' resolves
+        regardless of whether the frontend sends sourceLanguage (camelCase) or a
+        plain language string.
+        """
+        config = dict(config)
+        language = config.get("language", {})
+        if isinstance(language, dict):
+            source_lang = (
+                language.get("source_language") or language.get("sourceLanguage") or ""
+            )
+            config["language"] = {"source_language": str(source_lang)}
+        elif isinstance(language, str):
+            config["language"] = {"source_language": language}
+
         mapper = GenericTritonMapper(self._adapter_config)
         return mapper.compose_triton_kserve_v2_payload(
             input_data=input_data,
@@ -95,9 +110,11 @@ class ASRTaskService(AudioBase):
     ) -> Dict[str, Any]:
         """Decode bytes → wrap in TranscriptionOutput list."""
         decoded = await self._decode_output_bytes(response_items)
-        return await self._wrap_transcription_output(decoded)
+        return await self._wrap_transcription_output(
+            decoded, source_texts=kwargs.get("source_texts", [])
+        )
 
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
-    ) -> ASRInferenceResponse:
-        return ASRInferenceResponse(output=postprocessed["output"], smr_response=None)
+    ) -> Dict[str, Any]:
+        return postprocessed

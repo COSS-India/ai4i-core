@@ -28,6 +28,7 @@ class CoreSettings(BaseSettings):
     service_version: str
     api_version: str
     debug: bool = False
+    environment: str = "development"
 
     # ── Database (single primary DB) ──
     database_url: Optional[str] = None
@@ -47,6 +48,40 @@ class CoreSettings(BaseSettings):
 
     db_pool_size: int = 20
     db_max_overflow: int = 10
+
+    # ── Secondary auth DB (read-only — used by alert feature for RBAC/tenant lookups) ──
+    # All optional; if auth_db_name is None we skip init_auth_database() entirely and the
+    # alert feature cannot resolve role/tenant emails. Falls back to primary postgres
+    # credentials when the auth_db_* overrides are unset.
+    auth_db_url: Optional[str] = None
+    auth_db_user: Optional[str] = None
+    auth_db_password: Optional[str] = None
+    auth_db_host: Optional[str] = None
+    auth_db_port: Optional[int] = None
+    auth_db_name: Optional[str] = None
+
+    # ── Alert config sync (background reconciliation against Prometheus / Alertmanager) ──
+    # All optional; alert_sync_enabled defaults to False so the merged service can run
+    # without alerting wired up. Step 8 (lifespan) gates the background task on this flag.
+    alert_sync_enabled: bool = False
+    sync_interval: int = 60
+    default_receiver_emails: Optional[str] = None
+    prometheus_url: Optional[str] = None
+    alertmanager_url: Optional[str] = None
+    prometheus_application_alerts_path: Optional[str] = None
+    prometheus_infrastructure_alerts_path: Optional[str] = None
+    alertmanager_config_path: Optional[str] = None
+    # Where Alertmanager forwards every alert for audit logging — typically the
+    # merged service's own endpoint. None → no webhook receiver is generated.
+    alert_history_webhook_url: Optional[str] = None
+
+    # ── SMTP / SES (Alertmanager email delivery) ──
+    # Written into the `global` block of the generated alertmanager.yml. Read from
+    # settings (NOT os.getenv) so they load from .env like everything else.
+    smtp_smarthost: Optional[str] = None
+    smtp_from: Optional[str] = None
+    smtp_auth_username: Optional[str] = None
+    smtp_auth_password: Optional[str] = None
 
     # ── PII database (ai4i_platform DB — separate from core DB) ──
     # Full URL takes precedence; otherwise built from individual fields.
@@ -93,6 +128,10 @@ class CoreSettings(BaseSettings):
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
 
+    # ── External services ──
+    auth_service_url: str = ""
+    model_management_url: str = ""
+
     # ── Logging / Observability ──
     log_level: str = "INFO"
     jaeger_endpoint: Optional[str] = None
@@ -109,6 +148,23 @@ class CoreSettings(BaseSettings):
         host = self.app_db_host or self.postgres_host
         port = self.app_db_port or self.postgres_port
         db = self.core_db_name or self.app_db_name or self.postgres_db
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
+
+    def get_auth_db_url(self) -> Optional[str]:
+        """Build a postgres+asyncpg URL for the secondary auth_db engine.
+
+        Returns None if auth_db is not configured (alert feature unavailable).
+        Each auth_db_* override falls back to the primary postgres value when unset.
+        """
+        if self.auth_db_url:
+            return self.auth_db_url
+        db = self.auth_db_name
+        if not db:
+            return None
+        user = self.auth_db_user or self.app_db_user or self.postgres_user
+        password = self.auth_db_password or self.app_db_password or self.postgres_password
+        host = self.auth_db_host or self.app_db_host or self.postgres_host
+        port = self.auth_db_port or self.app_db_port or self.postgres_port
         return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
 
     def get_pii_database_url(self) -> str:

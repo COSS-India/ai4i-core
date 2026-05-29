@@ -17,7 +17,12 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
-/** Tenant Admin without platform ADMIN — model/service registry is read-only. */
+/** Tenant Admin without platform ADMIN — model registry is read-only. */
 export function isRegistryReadOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !isPlatformAdminUser(roles);
+}
+
+/** Services Management is not available to tenant-scoped admins (platform ADMIN still can). */
+export function canAccessServicesManagement(roles?: string[]): boolean {
+  return !isRegistryReadOnlyUser(roles);
 }

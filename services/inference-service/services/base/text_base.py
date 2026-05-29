@@ -11,7 +11,6 @@ Child classes only add service-specific logic on top of super().validate_request
 
 from typing import Any, Dict, List, Optional
 from interfaces.task_service import BaseTaskService
-from ai4icore_core.telemetry import async_trace_stage
 import json, logging
 
 
@@ -33,6 +32,14 @@ class TextBase(BaseTaskService):
 
     def _extract_target_lang(self, language: Dict[str, Any]) -> Optional[str]:
         return language.get("target_language") or language.get("targetLanguage")
+
+    # ------------------------------------------------------------------
+    # Payload key
+    # ------------------------------------------------------------------
+
+    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
+        """Text input list lives under payload['input']."""
+        return payload.get("input") or []
 
     # ------------------------------------------------------------------
     # Common validate_request
@@ -186,7 +193,25 @@ class TextBase(BaseTaskService):
                  "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
                 for idx, wi in enumerate(word_positions)]
 
-    @async_trace_stage("ai_inference")
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Override to use ai_inference stage name for text-based task tracing."""
-        return await super().execute_triton_inference(payload)
+    def _chunk_text(self, text: str, max_length: int = 400) -> List[str]:
+        """Split text into chunks ≤ max_length chars at sentence/clause boundaries."""
+        text = self._normalize_text(text)
+        if not text:
+            return [""]
+        if len(text) <= max_length:
+            return [text]
+
+        chunks: List[str] = []
+        while len(text) > max_length:
+            split_pos = max_length
+            for sep in ('.', '?', '!', '।', ',', ' '):
+                pos = text.rfind(sep, 0, max_length)
+                if pos > 0:
+                    split_pos = pos + 1
+                    break
+            chunks.append(text[:split_pos].strip())
+            text = text[split_pos:].strip()
+
+        if text:
+            chunks.append(text)
+        return [c for c in chunks if c]
