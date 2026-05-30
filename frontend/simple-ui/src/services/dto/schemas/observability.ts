@@ -77,6 +77,75 @@ export const traceSearchResponseSchema = z.object({
   offset: z.number(),
 });
 
+export const telemetryTraceRecordSchema = z.object({
+  trace_id: z.string(),
+  task_type: z.string().nullable().optional(),
+  status: z.string(),
+  url: z.string().nullable().optional(),
+  tenant_id: z.string().nullable().optional(),
+  timestamp: z.string().nullable().optional(),
+  service: z.string().nullable().optional(),
+});
+
+const telemetryByLevelSchema = z.preprocess((raw: unknown) => {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, number>;
+    return {
+      success: Number(o.success ?? o.Success ?? 0),
+      failure: Number(o.failure ?? o.Failure ?? o.fail ?? o.Fail ?? 0),
+    };
+  }
+  return { success: 0, failure: 0 };
+}, z.object({ success: z.number(), failure: z.number() }));
+
+export const telemetryTraceSearchResponseSchema = z.preprocess((raw: unknown) => {
+  if (!raw || typeof raw !== 'object') return raw;
+  const r = raw as Record<string, unknown>;
+  return {
+    ...r,
+    pageSize: r.pageSize ?? r.page_size ?? 15,
+    data: r.data ?? [],
+  };
+}, z.object({
+  data: z.array(telemetryTraceRecordSchema),
+  total: z.number(),
+  page: z.number(),
+  pageSize: z.number(),
+  aggregations: z.object({
+    total: z.number(),
+    by_level: telemetryByLevelSchema,
+    by_task: z.record(z.string(), z.number()).optional(),
+  }),
+}));
+
+export const telemetrySpanSchema = z
+  .object({
+    name: z.string(),
+    context: z
+      .object({
+        trace_id: z.string().optional(),
+        span_id: z.string().optional(),
+        trace_state: z.string().optional(),
+      })
+      .passthrough(),
+    kind: z.string().nullish(),
+    attributes: z.record(z.string(), z.unknown()).optional().default({}),
+    timestamp: z.string().nullable().optional(),
+    logger: z.string().optional(),
+    taskName: z.string().optional(),
+  })
+  .passthrough();
+
+export const telemetryTraceDetailSchema = z.object({
+  trace_id: z.string(),
+  service: z.string().optional().default(''),
+  tenant_id: z.string().nullable().optional(),
+  service_version: z.string().nullable().optional(),
+  environment: z.string().nullable().optional(),
+  hostname: z.string().nullable().optional(),
+  spans: z.array(telemetrySpanSchema),
+});
+
 /** Telemetry may return `string[]` or `{ services: string[] }`. */
 export const telemetryServicesNamesSchema = z.preprocess((raw: unknown) => {
   if (Array.isArray(raw)) return raw;

@@ -2,12 +2,15 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import { getTenantIdFromToken } from '../utils/helpers';
 import {
   logAggregationResponseSchema,
   logSearchResponseSchema,
   telemetryServicesNamesSchema,
   traceSchema,
   traceSearchResponseSchema,
+  telemetryTraceSearchResponseSchema,
+  telemetryTraceDetailSchema,
 } from './dto/schemas/observability';
 import type {
   LogAggregationResponse,
@@ -15,6 +18,9 @@ import type {
   LogSearchResponse,
   Process,
   Span,
+  TelemetryTraceDetail,
+  TelemetryTraceRecord,
+  TelemetryTraceSearchResponse,
   Trace,
   TraceSearchResponse,
 } from '../types/observability';
@@ -25,6 +31,12 @@ export type {
   LogSearchResponse,
   Process,
   Span,
+  TelemetrySpan,
+  TelemetrySpanContext,
+  TelemetryTraceDetail,
+  TelemetryTraceRecord,
+  TelemetryTraceSearchAggregations,
+  TelemetryTraceSearchResponse,
   Trace,
   TraceSearchResponse,
 } from '../types/observability';
@@ -33,6 +45,45 @@ export type {
 const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ?? '';
 
 const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`;
+
+/** Path segment for GET /telemetry/traces/{id} (keep 0x prefix as returned by search). */
+export function telemetryTraceIdForApi(traceId: string): string {
+  return encodeURIComponent(traceId.trim());
+}
+
+/** Headers expected by platform-core telemetry routes (gateway also injects these from JWT). */
+async function getTelemetryAuthHeaders(
+  tenantIdOverride?: string
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  try {
+    const { default: authService } = await import('./authService');
+    const user = authService.getStoredUser();
+    if (user?.roles?.length) {
+      headers['X-Roles'] = user.roles.join(',');
+    }
+    const tenantId =
+      tenantIdOverride?.trim() ||
+      user?.tenant_id?.trim() ||
+      getTenantIdFromToken() ||
+      undefined;
+    if (tenantId) {
+      headers['X-Tenant-Id'] = tenantId;
+    }
+  } catch {
+    // optional — Bearer auth still required via api client
+  }
+  return headers;
+}
+
+/** Map UI status filter to OpenSearch `attributes.status` values. */
+function mapStatusFilter(level?: string): string | undefined {
+  if (!level?.trim()) return undefined;
+  const v = level.trim().toLowerCase();
+  if (v === 'success') return 'success';
+  if (v === 'fail' || v === 'failure') return 'failure';
+  return v;
+}
 
 /**
  * Search logs with filters
@@ -189,7 +240,86 @@ export const getServicesWithLogs = async (): Promise<string[]> => {
 };
 
 /**
- * Search traces
+ * Resolve `tenant_id` query param from role:
+ * - TENANT ADMIN: always scope to their tenant (from auth).
+ * - ADMIN: optional filter when a tenant is selected in the UI.
+ * - Other allowed roles: scope to their tenant when present.
+ */
+export function resolveTelemetryTenantId(params: {
+  isAdmin: boolean;
+  isTenantAdmin: boolean;
+  selectedTenantId?: string;
+  authTenantId?: string | null;
+}): string | undefined {
+  const authTenant = params.authTenantId?.trim();
+
+  if (params.isTenantAdmin) {
+    return authTenant || undefined;
+  }
+
+  if (params.isAdmin) {
+    const selected = params.selectedTenantId?.trim();
+    return selected || undefined;
+  }
+
+  return authTenant || undefined;
+}
+
+/**
+ * Search telemetry traces (unified list + aggregations).
+ * GET /api/v1/telemetry/traces/search
+ */
+export const searchTelemetryTraces = async (
+  params: {
+    taskType?: string;
+    level?: string;
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    pageSize?: number;
+    tenant_id?: string;
+  }
+): Promise<TelemetryTraceSearchResponse> => {
+  try {
+    const queryParams = new URLSearchParams();
+    if (params.taskType) queryParams.append('task_type', params.taskType.toUpperCase());
+    const statusFilter = mapStatusFilter(params.level);
+    if (statusFilter) queryParams.append('status_filter', statusFilter);
+    if (params.startDate) queryParams.append('start_date', params.startDate);
+    if (params.endDate) queryParams.append('end_date', params.endDate);
+    if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
+    queryParams.append('page', String(params.page ?? 1));
+    queryParams.append('page_size', String(params.pageSize ?? 15));
+
+    const telemetryHeaders = await getTelemetryAuthHeaders(params.tenant_id);
+
+    const response = await apiService.get(
+      telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
+      { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema, headers: telemetryHeaders }
+    );
+
+    return response.data;
+  } catch (error: any) {
+    console.error('Failed to search telemetry traces:', error);
+    let errorMessage = 'Failed to search traces';
+    const detail = error?.response?.data?.detail;
+    if (detail) {
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
+  }
+};
+
+/**
+ * Search traces (Jaeger-style; legacy)
  */
 export const searchTraces = async (
   params: {
@@ -241,7 +371,41 @@ export const searchTraces = async (
 };
 
 /**
- * Get trace by ID
+ * Get telemetry trace detail by ID.
+ * GET /api/v1/telemetry/traces/{traceId}
+ */
+export const getTelemetryTraceById = async (traceId: string): Promise<TelemetryTraceDetail> => {
+  const apiTraceId = telemetryTraceIdForApi(traceId);
+
+  try {
+    const telemetryHeaders = await getTelemetryAuthHeaders();
+
+    const response = await apiService.get(
+      telemetryUrl(apiEndpoints.telemetry.traceById(apiTraceId)),
+      { timeout: 30000, responseSchema: telemetryTraceDetailSchema, headers: telemetryHeaders }
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error('Failed to get telemetry trace:', error);
+    let errorMessage = 'Failed to get trace';
+    const detail = error?.response?.data?.detail;
+    if (detail) {
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
+  }
+};
+
+/**
+ * Get trace by ID (Jaeger-style; legacy)
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
