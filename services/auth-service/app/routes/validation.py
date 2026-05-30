@@ -129,6 +129,10 @@ async def _validate_api_key(
     response.headers["X-Auth-Type"] = "api_key"
     if tenant_id:
         response.headers["X-Tenant-ID"] = str(tenant_id)
+    # Permission id 1 is the "admin" sentinel (only the ADMIN role holds it).
+    # Forward a trusted flag so upstream services can widen scope (e.g. cross-tenant
+    # trace access) without re-resolving roles or hitting the DB.
+    response.headers["X-Is-Admin"] = "true" if 1 in permission_ids else "false"
     return ValidateAPIKeyResponse(valid=True, user_id=user_id, permission_ids=permission_ids)
 
 
@@ -160,6 +164,10 @@ async def _validate_jwt(
     response.headers["X-Auth-Type"] = claims.token_type
     if claims.tenant_id:
         response.headers["X-Tenant-ID"] = str(claims.tenant_id)
+    # Permission id 1 is the "admin" sentinel (only the ADMIN role holds it).
+    # Forward a trusted flag so upstream services can widen scope (e.g. cross-tenant
+    # trace access) without re-resolving roles or hitting the DB.
+    response.headers["X-Is-Admin"] = "true" if 1 in claims.permission_ids else "false"
     return TokenValidationResponse(
         valid=True,
         user_id=claims.user_id,

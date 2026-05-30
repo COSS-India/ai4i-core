@@ -13,21 +13,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
 
-def _extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
-    """Extract tenant_id from X-Tenant-Id header."""
+def _is_admin(request: Request) -> bool:
+    """Admin flag injected by the gateway (auth-service /validate) from the validated token.
+
+    Trusted because the gateway strips any client-supplied X-Is-Admin and sets it
+    itself. Drives breadth only — access is already gated by traces.read at the gateway.
+    """
+    return request.headers.get("X-Is-Admin", "").strip().lower() == "true"
+
+
+def _get_tenant_id(request: Request) -> Optional[str]:
+    """Caller's tenant from X-Tenant-Id (injected by the gateway from the validated JWT)."""
     return request.headers.get("X-Tenant-Id")
-
-
-def _is_user_admin(request: Request) -> bool:
-    """Check if user has ADMIN role."""
-    roles = request.headers.get("X-Roles", "").split(",") if request.headers.get("X-Roles") else []
-    return "ADMIN" in roles
-
-
-def _is_user_tenant_admin(request: Request) -> bool:
-    """Check if user has TENANT ADMIN role."""
-    roles = request.headers.get("X-Roles", "").split(",") if request.headers.get("X-Roles") else []
-    return "TENANT ADMIN" in roles
 
 
 def _get_opensearch_client(request: Request) -> OpenSearchTraceClient:
@@ -57,37 +54,29 @@ async def search_traces_opensearch(
     Search traces from OpenSearch using direct queries on nested fields.
     """
     try:
-        is_admin = _is_user_admin(request)
-        is_tenant_admin = _is_user_tenant_admin(request)
-        jwt_tenant_id = _extract_tenant_id_from_jwt(request)
+        is_admin = _is_admin(request)
 
-        # Authorization: only ADMIN and TENANT_ADMIN can see traces
-        if not is_admin and not is_tenant_admin:
-            logger.warning("Regular user attempted to access traces - access denied")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Regular users cannot access traces. Only ADMIN and TENANT_ADMIN roles are allowed.",
-            )
-
-        # Determine tenant filter based on role
-        tenant_filter = None
+        # Access is already gated at the gateway (traces.read). Here we only decide
+        # breadth: admin sees all tenants (optionally narrowed by ?tenant_id); everyone
+        # else is scoped to their own tenant and the client tenant_id is ignored.
         if is_admin:
-            if tenant_id:
-                tenant_filter = tenant_id
-                logger.info(f"ADMIN user - filtering by tenant_id={tenant_id}")
+            tenant_filter = tenant_id
+            if tenant_filter:
+                logger.info(f"ADMIN trace read - filtering by tenant_id={tenant_filter}")
         else:
-            if not jwt_tenant_id:
+            tenant_filter = _get_tenant_id(request)
+            if not tenant_filter:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_ADMIN account has no tenant_id in token",
+                    detail="No tenant_id in token for tenant-scoped trace access",
                 )
-            tenant_filter = jwt_tenant_id
+            logger.info(f"Tenant-scoped trace read - tenant_id={tenant_filter}")
 
         # Build OpenSearch query with direct nested field queries
         must_clauses = []
 
         if tenant_filter:
-            must_clauses.append({"match_phrase": {"tenant_id": tenant_filter}})
+            must_clauses.append({"match_phrase": {"attributes.tenantId": tenant_filter}})
 
         if task_type:
             must_clauses.append({"match_phrase": {"attributes.task_type": task_type}})
@@ -203,20 +192,12 @@ async def get_trace_by_id(
         Complete trace with all spans
     """
     try:
-        is_admin = _is_user_admin(request)
-        is_tenant_admin = _is_user_tenant_admin(request)
-        jwt_tenant_id = _extract_tenant_id_from_jwt(request)
-
-        if not is_admin and not is_tenant_admin:
+        is_admin = _is_admin(request)
+        tenant_scope = None if is_admin else _get_tenant_id(request)
+        if not is_admin and not tenant_scope:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to access traces",
-            )
-
-        if not is_admin and not jwt_tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="TENANT_ADMIN account has no tenant_id in token",
+                detail="No tenant_id in token for tenant-scoped trace access",
             )
 
         logger.info(f"Getting trace {trace_id} from OpenSearch")
@@ -239,6 +220,22 @@ async def get_trace_by_id(
                 detail=f"Trace {trace_id} not found",
             )
 
+        # Tenant scoping: a non-admin may only read traces in their own tenant.
+        # Return 404 (not 403) so trace existence isn't revealed across tenants.
+        # Untenanted traces are treated as not-found for tenant-scoped callers.
+        if not is_admin:
+            span_tenants = {
+                hit.get("_source", {}).get("attributes", {}).get("tenantId")
+                for hit in hits
+            }
+            span_tenants.discard(None)
+            if tenant_scope not in span_tenants:
+                logger.warning(f"Tenant {tenant_scope} denied access to trace {trace_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Trace {trace_id} not found",
+                )
+
         # Transform spans from response
         spans = []
         for hit in hits:
@@ -254,7 +251,7 @@ async def get_trace_by_id(
         trace_response = TraceResponse(
             trace_id=trace_id,
             service="ai4x-inference",
-            tenant_id=jwt_tenant_id or "system",
+            tenant_id=tenant_scope or "system",
             service_version="1.0.0",
             environment="development",
             hostname="unknown",
