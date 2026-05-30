@@ -63,6 +63,9 @@ class OpenSearchTraceClient:
         size: int = 100,
         from_: int = 0,
         source_fields: Optional[list] = None,
+        sort: Optional[list] = None,
+        collapse: Optional[Dict[str, Any]] = None,
+        aggs: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Search traces in OpenSearch.
@@ -72,6 +75,9 @@ class OpenSearchTraceClient:
             size: Number of results
             from_: Offset for pagination
             source_fields: Fields to include in response
+            sort: OpenSearch sort clause; defaults to newest-first by @timestamp
+            collapse: OpenSearch field-collapsing clause (e.g. group by trace_id)
+            aggs: OpenSearch aggregations clause
 
         Returns:
             Raw OpenSearch response
@@ -84,9 +90,18 @@ class OpenSearchTraceClient:
             if query is None:
                 query = {"match_all": {}}
 
-            body = {"query": query, "size": size, "from": from_}
+            body = {
+                "query": query,
+                "size": size,
+                "from": from_,
+                "sort": sort or [{"@timestamp": {"order": "desc"}}],
+            }
             if source_fields:
                 body["_source"] = source_fields
+            if collapse:
+                body["collapse"] = collapse
+            if aggs:
+                body["aggs"] = aggs
 
             logger.debug(f"Executing OpenSearch query: {body}")
             response = self.client.search(index=self.index, body=body)

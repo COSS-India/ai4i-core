@@ -98,84 +98,79 @@ async def search_traces_opensearch(
         else:
             filter_query = {"match_all": {}}
 
-        # Get unique trace_ids from matching spans
-        matching_traces_response = opensearch_client.search_traces(
-            query=filter_query,
-            size=10000,  # Get all matching spans to extract unique trace_ids
-            source_fields=["context.trace_id"]
-        )
-
-        matching_spans = matching_traces_response.get("hits", {}).get("hits", [])
-        matching_trace_ids = set()
-        for hit in matching_spans:
-            trace_id = hit.get("_source", {}).get("context", {}).get("trace_id")
-            if trace_id:
-                matching_trace_ids.add(trace_id)
-
         logger.info(f"Searching traces - task_type={task_type}, status={status_filter}, tenant={tenant_filter}")
 
-        # Total count is the number of matching traces (not spans)
-        total = len(matching_trace_ids)
-
-        # Apply pagination on trace_ids
-        paginated_trace_ids = list(matching_trace_ids)[(page - 1) * page_size : page * page_size]
-
-        # Query all spans for paginated traces
-        if paginated_trace_ids:
-            trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in paginated_trace_ids]
-            paginated_query = {"bool": {"should": trace_id_clauses, "minimum_should_match": 1}}
-        else:
-            paginated_query = {"match_all": {}}
-
-        response = opensearch_client.search_traces(
-            query=paginated_query,
-            size=len(paginated_trace_ids) * 10,  # Assume ~10 spans per trace max
-            source_fields=[
-                "@timestamp",
-                "name",
-                "context.trace_id",
-                "attributes"
-            ]
+        # Step 2: page the matching traces at the TRACE level, newest-first.
+        # Collapsing on trace_id makes each result row one trace (not one span), so
+        # from/size paginate over traces; sorting by @timestamp desc (the client
+        # default) orders them by recency; the cardinality agg yields the distinct
+        # trace count so page math reflects traces, not spans.
+        offset = (page - 1) * page_size
+        ids_response = opensearch_client.search_traces(
+            query=filter_query,
+            size=page_size,
+            from_=offset,
+            source_fields=["context.trace_id"],
+            collapse={"field": "context.trace_id.keyword"},
+            aggs={"trace_count": {"cardinality": {"field": "context.trace_id.keyword"}}},
         )
 
-        # Transform response to match expected format
-        hits = response.get("hits", {}).get("hits", [])
+        # Total count is the number of matching traces (not spans)
+        total = ids_response.get("aggregations", {}).get("trace_count", {}).get("value", 0)
 
-        # Aggregate spans by trace_id to extract metadata from different span types
+        # Preserve the newest-first order from the collapse result
+        paginated_trace_ids = []
+        for hit in ids_response.get("hits", {}).get("hits", []):
+            trace_id = hit.get("_source", {}).get("context", {}).get("trace_id")
+            if trace_id and trace_id not in paginated_trace_ids:
+                paginated_trace_ids.append(trace_id)
+
+        # Step 3: fetch ALL spans for the paged traces. Filters target single span
+        # types (task_type on the 'model' span, url on 'request'), so we re-fetch the
+        # full set per trace — unfiltered — to assemble complete metadata.
         traces_map = {}
-        for hit in hits:
-            source = hit.get("_source", {})
-            trace_id = source.get("context", {}).get("trace_id")
-            if not trace_id:
-                continue
+        if paginated_trace_ids:
+            trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in paginated_trace_ids]
+            spans_response = opensearch_client.search_traces(
+                query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
+                size=len(paginated_trace_ids) * 50,  # generous per-trace span ceiling
+                source_fields=["@timestamp", "name", "context.trace_id", "attributes"],
+            )
 
-            if trace_id not in traces_map:
-                traces_map[trace_id] = {
-                    "trace_id": trace_id,
-                    "service": "ai4x-inference",
-                    "task_type": None,
-                    "status": "unknown",
-                    "url": None,
-                    "tenant_id": tenant_filter or "system",
-                    "timestamp": source.get("@timestamp") or source.get("timestamp"),
-                }
+            for hit in spans_response.get("hits", {}).get("hits", []):
+                source = hit.get("_source", {})
+                trace_id = source.get("context", {}).get("trace_id")
+                if not trace_id:
+                    continue
 
-            span_name = source.get("name")
-            attrs = source.get("attributes", {})
+                if trace_id not in traces_map:
+                    traces_map[trace_id] = {
+                        "trace_id": trace_id,
+                        "service": "ai4x-inference",
+                        "task_type": None,
+                        "status": "unknown",
+                        "url": None,
+                        "tenant_id": tenant_filter or "system",
+                        "timestamp": source.get("@timestamp") or source.get("timestamp"),
+                    }
 
-            # Extract task_type from model span
-            if span_name == "model" and not traces_map[trace_id]["task_type"]:
-                traces_map[trace_id]["task_type"] = attrs.get("task_type")
+                span_name = source.get("name")
+                attrs = source.get("attributes", {})
 
-            # Extract url from request span
-            if span_name == "request" and not traces_map[trace_id]["url"]:
-                traces_map[trace_id]["url"] = attrs.get("url")
+                # Extract task_type from model span
+                if span_name == "model" and not traces_map[trace_id]["task_type"]:
+                    traces_map[trace_id]["task_type"] = attrs.get("task_type")
 
-            # Extract status from any span
-            if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
-                traces_map[trace_id]["status"] = attrs.get("status", "unknown")
+                # Extract url from request span
+                if span_name == "request" and not traces_map[trace_id]["url"]:
+                    traces_map[trace_id]["url"] = attrs.get("url")
 
-        data = list(traces_map.values())
+                # Extract status from any span
+                if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
+                    traces_map[trace_id]["status"] = attrs.get("status", "unknown")
+
+        # Emit in the newest-first order established by the collapse page
+        data = [traces_map[tid] for tid in paginated_trace_ids if tid in traces_map]
 
         # Calculate aggregations
         by_level = {}
