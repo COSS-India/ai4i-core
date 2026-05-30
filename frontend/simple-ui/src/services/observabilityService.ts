@@ -345,6 +345,32 @@ export const getServicesWithLogs = async (): Promise<string[]> => {
 };
 
 /**
+ * Resolve `tenant_id` query param from role:
+ * - TENANT ADMIN: always scope to their tenant (from auth).
+ * - ADMIN: optional filter when a tenant is selected in the UI.
+ * - Other allowed roles: scope to their tenant when present.
+ */
+export function resolveTelemetryTenantId(params: {
+  isAdmin: boolean;
+  isTenantAdmin: boolean;
+  selectedTenantId?: string;
+  authTenantId?: string | null;
+}): string | undefined {
+  const authTenant = params.authTenantId?.trim();
+
+  if (params.isTenantAdmin) {
+    return authTenant || undefined;
+  }
+
+  if (params.isAdmin) {
+    const selected = params.selectedTenantId?.trim();
+    return selected || undefined;
+  }
+
+  return authTenant || undefined;
+}
+
+/**
  * Search telemetry traces (unified list + aggregations).
  * GET /api/v1/telemetry/traces/search
  */

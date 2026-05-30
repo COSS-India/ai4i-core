@@ -35,6 +35,7 @@ import { useRouter } from "next/router";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchTelemetryTraces,
+  resolveTelemetryTenantId,
   TelemetryTraceRecord,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -119,7 +120,24 @@ const LogsPage: React.FC = () => {
   const isGuest = user?.roles?.includes('GUEST') || false;
   // Check if user is a TENANT ADMIN — scoped to their own tenant only
   const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+  const canPickTenant = isAdmin && !isTenantAdmin;
   const { cardBg, borderColor } = useAdminTableSurface();
+
+  const authTenantId = useMemo(
+    () => user?.tenant_id?.trim() || getTenantIdFromToken() || null,
+    [user?.tenant_id]
+  );
+
+  const apiTenantId = useMemo(
+    () =>
+      resolveTelemetryTenantId({
+        isAdmin,
+        isTenantAdmin,
+        selectedTenantId,
+        authTenantId,
+      }),
+    [isAdmin, isTenantAdmin, selectedTenantId, authTenantId]
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
@@ -155,9 +173,18 @@ const LogsPage: React.FC = () => {
         router.push("/");
         return;
       }
-      // Also check tenant_id for non-admin users
-      const tenantId = getTenantIdFromToken();
-      if (!tenantId && !isAdmin) {
+      if (isTenantAdmin && !authTenantId) {
+        toast({
+          title: "Access Denied",
+          description: "Your account is not linked to a tenant. Contact an administrator.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+        router.push("/");
+        return;
+      }
+      if (!authTenantId && !isAdmin) {
         toast({
           title: "Access Denied",
           description: "You need to be assigned to a tenant to view logs.",
@@ -168,13 +195,13 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, isTenantAdmin, authTenantId, router, toast]);
 
   // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
     queryKey: ["tenants-list"],
     queryFn: () => listTenants(),
-    enabled: isAuthenticated && isAdmin && !isTenantAdmin, // Fetch only for full ADMIN role (not TENANT ADMIN)
+    enabled: isAuthenticated && canPickTenant,
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: 1, // Retry once on failure
   });
@@ -203,7 +230,9 @@ const LogsPage: React.FC = () => {
       debouncedSearch,
       startTime,
       endTime,
-      selectedTenantId,
+      apiTenantId,
+      isAdmin,
+      isTenantAdmin,
       page,
       pageSize,
     ],
@@ -221,13 +250,10 @@ const LogsPage: React.FC = () => {
         endDate: apiEndDate,
         page,
         pageSize,
-        tenant_id:
-          isAdmin && !isTenantAdmin && selectedTenantId && selectedTenantId.trim() !== ""
-            ? selectedTenantId
-            : undefined,
+        tenant_id: apiTenantId,
       });
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && (!isTenantAdmin || !!apiTenantId),
     staleTime: 30 * 1000,
   });
 
@@ -459,7 +485,7 @@ const LogsPage: React.FC = () => {
   const hasAppliedFilters =
     taskType !== "" ||
     level !== "" ||
-    selectedTenantId !== "" ||
+    (canPickTenant && selectedTenantId !== "") ||
     searchQuery.trim() !== "";
 
   return (
@@ -616,7 +642,7 @@ const LogsPage: React.FC = () => {
                             placeholder="Trace ID, URL, task type…"
                             formControlProps={{ w: { base: "full", md: "280px" } }}
                           />
-                          {isAdmin && !isTenantAdmin && (
+                          {canPickTenant && (
                             <TableSelectField
                               label="Tenant"
                               value={selectedTenantId}
