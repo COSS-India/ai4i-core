@@ -82,7 +82,7 @@ class Orchestrator:
         """
         # Start root span with parentID=null (empty context)
         start_time = time.time()
-        ctx_attrs = get_context_attributes()
+        ctx_attrs = get_context_attributes(request)
         end_point = str(request.url.path) if request else get_endpoint_path()
         request_method = request.method if request else ""
 
@@ -98,7 +98,7 @@ class Orchestrator:
                 await self._validate_task_type(task_type)
 
                 # Resolve service and model BEFORE creating task service
-                service_info = await self._resolve_service_and_model(payload)
+                service_info = await self._resolve_service_and_model(payload, request=request)
 
                 # Get task service for this task type, injecting resolved service info
                 task_service = await self._get_task_service(task_type, service_info)
@@ -215,7 +215,7 @@ class Orchestrator:
             raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}")
 
     async def _resolve_service_and_model(
-        self, payload: Dict[str, Any]
+        self, payload: Dict[str, Any], request: Optional[Request] = None
     ) -> Dict[str, Any]:
         """
         Resolve the model service details from the raw request payload.
@@ -234,7 +234,7 @@ class Orchestrator:
             RuntimeError: If the service cannot be resolved
         """
         start_time = time.time()
-        ctx_attrs = get_context_attributes()
+        ctx_attrs = get_context_attributes(request)
         task_type = payload.get("task_type", "").upper()
 
         with tracer.start_as_current_span("model") as model_span:
