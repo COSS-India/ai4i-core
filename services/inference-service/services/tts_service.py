@@ -48,102 +48,149 @@ class TTSTaskService(TextBase):
             → concatenate FP32 arrays → int16 → resample → duration-adjust
             → encode to audioFormat → base64
         """
-        triton_endpoint = self.service_info.get("endpoint", "")
-        api_key         = self.service_info.get("api_key")
-        adapter_config  = self.service_info.get("adapter_config")
+        import time
+        from trace.request_span import tracer, compute_total_time_ms, log_span_attributes
+        from trace.span_attributes import get_input_type, count_input_tokens
 
-        if not triton_endpoint:
-            raise RuntimeError(
-                f"{self.task_name}: service_info is missing 'endpoint'. "
-                "Ensure the Orchestrator resolved the service before creating this task service."
-            )
-        if not adapter_config:
-            raise RuntimeError(
-                f"{self.task_name}: adapter_config missing from service_info. "
-                "Every TTS service must have an adapter_config seeded in mm_services."
-            )
+        start_time = time.time()
 
-        input_items: List[Dict[str, Any]] = payload.get("input", [])
-        config: Dict[str, Any] = payload.get("config") or {}
+        # ai-inference span mirrors the text/image base (task_service.py) and the
+        # audio base. TTS overrides run_inference with its own Triton loop, so the
+        # span must be opened here too — otherwise TTS traces lack ai-inference.
+        with tracer.start_as_current_span("ai-inference") as inference_span:
+            try:
+                triton_endpoint = self.service_info.get("endpoint", "")
+                api_key         = self.service_info.get("api_key")
+                adapter_config  = self.service_info.get("adapter_config")
 
-        # Use TextBase helpers for language extraction
-        language     = self._get_language(payload)
-        source_lang  = self._extract_source_lang(language) or ""
-        gender       = config.get("gender", "female")
-        target_rate  = int(config.get("samplingRate") or config.get("sampling_rate") or _TRITON_SAMPLE_RATE)
-        audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
+                if not triton_endpoint:
+                    raise RuntimeError(
+                        f"{self.task_name}: service_info is missing 'endpoint'. "
+                        "Ensure the Orchestrator resolved the service before creating this task service."
+                    )
+                if not adapter_config:
+                    raise RuntimeError(
+                        f"{self.task_name}: adapter_config missing from service_info. "
+                        "Every TTS service must have an adapter_config seeded in mm_services."
+                    )
 
-        # Normalise config for GenericTritonMapper path resolution
-        triton_config = {
-            "language": {"source_language": source_lang},
-            "gender": gender,
-        }
+                input_items: List[Dict[str, Any]] = payload.get("input", [])
+                config: Dict[str, Any] = payload.get("config") or {}
 
-        audio_outputs: List[Dict[str, Any]] = []
+                # Compute input metrics for ai-inference span (TTS input is text)
+                input_type = get_input_type(payload)
+                input_tokens = count_input_tokens(input_items, input_type)
 
-        for item in input_items:
-            item_dict = item if isinstance(item, dict) else item.model_dump(by_alias=False)
-            source_text    = item_dict.get("source", "")
-            audio_duration = item_dict.get("audioDuration") or item_dict.get("audio_duration")
+                # Use TextBase helpers for language extraction
+                language     = self._get_language(payload)
+                source_lang  = self._extract_source_lang(language) or ""
+                gender       = config.get("gender", "female")
+                target_rate  = int(config.get("samplingRate") or config.get("sampling_rate") or _TRITON_SAMPLE_RATE)
+                audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
 
-            chunks = self._chunk_text(source_text, _MAX_CHUNK_LENGTH)
-            chunk_arrays: List[np.ndarray] = []
+                # Normalise config for GenericTritonMapper path resolution
+                triton_config = {
+                    "language": {"source_language": source_lang},
+                    "gender": gender,
+                }
 
-            for chunk in chunks:
-                chunk_item = {"source": chunk, "gender": gender, "language_id": source_lang}
-                triton_inputs, triton_outputs = self._build_triton_inputs(
-                    adapter_config, [chunk_item], triton_config
-                )
-                raw_output = await self._call_triton_inference(
-                    triton_endpoint=triton_endpoint,
-                    triton_inputs=triton_inputs,
-                    triton_outputs=triton_outputs,
-                    api_key=api_key,
-                )
-                audio_array = self._extract_audio_array(raw_output)
-                chunk_arrays.append(audio_array)
+                audio_outputs: List[Dict[str, Any]] = []
 
-            # Assemble chunks
-            combined = np.concatenate(chunk_arrays) if len(chunk_arrays) > 1 else chunk_arrays[0]
+                for item in input_items:
+                    item_dict = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+                    source_text    = item_dict.get("source", "")
+                    audio_duration = item_dict.get("audioDuration") or item_dict.get("audio_duration")
 
-            # Resample to requested rate
-            if target_rate != _TRITON_SAMPLE_RATE:
-                combined = self._resample_audio(combined, _TRITON_SAMPLE_RATE, target_rate)
+                    chunks = self._chunk_text(source_text, _MAX_CHUNK_LENGTH)
+                    chunk_arrays: List[np.ndarray] = []
 
-            # Duration adjustment
-            if audio_duration is not None:
-                actual_duration = len(combined) / target_rate
-                if actual_duration > audio_duration:
-                    combined = self._stretch_audio(combined, target_rate, audio_duration)
-                elif actual_duration < audio_duration:
-                    combined = self._append_silence(combined, target_rate, audio_duration)
+                    for chunk in chunks:
+                        chunk_item = {"source": chunk, "gender": gender, "language_id": source_lang}
+                        triton_inputs, triton_outputs = self._build_triton_inputs(
+                            adapter_config, [chunk_item], triton_config
+                        )
+                        raw_output = await self._call_triton_inference(
+                            triton_endpoint=triton_endpoint,
+                            triton_inputs=triton_inputs,
+                            triton_outputs=triton_outputs,
+                            api_key=api_key,
+                        )
+                        audio_array = self._extract_audio_array(raw_output)
+                        chunk_arrays.append(audio_array)
 
-            actual_duration = len(combined) / target_rate
+                    # Assemble chunks
+                    combined = np.concatenate(chunk_arrays) if len(chunk_arrays) > 1 else chunk_arrays[0]
 
-            # Format conversion + base64
-            audio_bytes = self._to_audio_bytes(combined, target_rate, audio_format)
-            audio_b64   = base64.b64encode(audio_bytes).decode("utf-8")
+                    # Resample to requested rate
+                    if target_rate != _TRITON_SAMPLE_RATE:
+                        combined = self._resample_audio(combined, _TRITON_SAMPLE_RATE, target_rate)
 
-            audio_outputs.append({
-                "audioContent":   audio_b64,
-                "_audioDuration": actual_duration,
-            })
+                    # Duration adjustment
+                    if audio_duration is not None:
+                        actual_duration = len(combined) / target_rate
+                        if actual_duration > audio_duration:
+                            combined = self._stretch_audio(combined, target_rate, audio_duration)
+                        elif actual_duration < audio_duration:
+                            combined = self._append_silence(combined, target_rate, audio_duration)
 
-        postprocessed = {
-            "audio":  [{"audioContent": o["audioContent"], "audioUri": None} for o in audio_outputs],
-            "config": {
-                "language": {
-                    "sourceLanguage":    source_lang,
-                    "sourceScriptCode":  None,
-                },
-                "audioFormat":   audio_format,
-                "encoding":      "base64",
-                "samplingRate":  target_rate,
-                "audioDuration": audio_outputs[0]["_audioDuration"] if audio_outputs else 0,
-            },
-            "smr_response": None,
-        }
-        return self._build_response(payload, postprocessed)
+                    actual_duration = len(combined) / target_rate
+
+                    # Format conversion + base64
+                    audio_bytes = self._to_audio_bytes(combined, target_rate, audio_format)
+                    audio_b64   = base64.b64encode(audio_bytes).decode("utf-8")
+
+                    audio_outputs.append({
+                        "audioContent":   audio_b64,
+                        "_audioDuration": actual_duration,
+                    })
+
+                postprocessed = {
+                    "audio":  [{"audioContent": o["audioContent"], "audioUri": None} for o in audio_outputs],
+                    "config": {
+                        "language": {
+                            "sourceLanguage":    source_lang,
+                            "sourceScriptCode":  None,
+                        },
+                        "audioFormat":   audio_format,
+                        "encoding":      "base64",
+                        "samplingRate":  target_rate,
+                        "audioDuration": audio_outputs[0]["_audioDuration"] if audio_outputs else 0,
+                    },
+                    "smr_response": None,
+                }
+                response = self._build_response(payload, postprocessed)
+
+                # Set ai-inference span attributes (TTS output is audio)
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "input_tokens": input_tokens,
+                    "output_tokens": len(audio_outputs),
+                    "input_type": input_type,
+                    "output_type": "audio",
+                    "status": "success",
+                    "status_code": 200,
+                }
+                for k, v in span_attrs.items():
+                    inference_span.set_attribute(k, v)
+                log_span_attributes("ai-inference", inference_span, span_attrs)
+
+                return response
+            except Exception as e:
+                self.logger.error(f"{self.task_name}: TTS inference failed: {e}", exc_info=True)
+                # Set error status on span
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "input_type": get_input_type(payload),
+                    "output_type": "audio",
+                    "status": "failure",
+                    "status_code": 500,
+                }
+                for k, v in span_attrs.items():
+                    inference_span.set_attribute(k, v)
+                log_span_attributes("ai-inference", inference_span, span_attrs)
+                raise
 
     # ------------------------------------------------------------------
     # Triton helpers
