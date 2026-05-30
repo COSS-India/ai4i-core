@@ -217,6 +217,20 @@ const LogsPage: React.FC = () => {
     );
   }, [tenantsData]);
 
+  const tenantById = useMemo(
+    () => new Map(activeTenants.map((tenant) => [tenant.tenant_id, tenant])),
+    [activeTenants]
+  );
+
+  const resolveTenantName = useCallback(
+    (tenantId: string | null | undefined) => {
+      if (!tenantId) return "-";
+      const tenant = tenantById.get(tenantId);
+      return tenant?.organisation || tenantId;
+    },
+    [tenantById]
+  );
+
   // Unified traces/search (list + aggregations in one response)
   const {
     data: tracesData,
@@ -460,7 +474,7 @@ const LogsPage: React.FC = () => {
         thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) => (
           <Text fontSize="sm" color="gray.600">
-            {row.tenant_id || "-"}
+            {resolveTenantName(row.tenant_id)}
           </Text>
         ),
       },
@@ -491,7 +505,7 @@ const LogsPage: React.FC = () => {
           ),
       },
     ];
-  }, [openTraceDetail]);
+  }, [openTraceDetail, resolveTenantName]);
 
   const hasAppliedFilters =
     taskType !== "" ||

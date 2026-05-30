@@ -7,7 +7,7 @@ import type {
   AlertDefinitionUpdate,
   AlertAnnotation,
 } from "../../../types/alerting";
-import { TARGET_SERVICES } from "../../../types/alerting";
+import { TARGET_SERVICES, UI_VALUE_TO_INFERENCE_TASK, INFERENCE_TASK_TO_UI_VALUE, SUB_CATEGORIES_BY_CATEGORY } from "../../../types/alerting";
 
 const DEFAULT_THRESHOLD_UNIT = "%"; // overridden to "ms" when signal is latency
 
@@ -50,47 +50,46 @@ function normalizeServiceForUi(raw: string): string {
   const v0 = String(raw ?? "").trim().toLowerCase();
   if (!v0) return v0;
 
-  const allowed = TARGET_SERVICES.map((s) => s.value);
-  const allowedSet = new Set(allowed);
+  const allowedSet = new Set(TARGET_SERVICES.map((s) => s.value));
+  const bare = v0.replace(/-service$/, "").replace(/_service$/, "");
+  const hyphen = bare.replace(/_+/g, "-");
 
-  // Normalize separators/suffixes commonly seen in backend identifiers
-  const base = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
-  const baseNoService = base.endsWith("-service") ? base.slice(0, -"-service".length) : base;
-  if (baseNoService === "audio-lang-detection" || baseNoService === "audio-language-detection") {
-    return "audio-language-detection";
-  }
-  const candidates = [
-    base,
-    base.endsWith("-service") ? base.slice(0, -"-service".length) : base,
-    base.endsWith("-svc") ? base.slice(0, -"-svc".length) : base,
-    base.replace(/-lang-/g, "-language-"),
-    base.replace(/-language-/g, "-lang-"),
-  ];
+  if (allowedSet.has(hyphen)) return hyphen;
+  if (allowedSet.has(bare)) return bare;
 
-  for (const c of candidates) {
-    if (allowedSet.has(c)) return c;
+  const canonical = bare.replace(/-/g, "_");
+  if (INFERENCE_TASK_TO_UI_VALUE[canonical]) {
+    return INFERENCE_TASK_TO_UI_VALUE[canonical];
   }
 
-  // Heuristic: if the backend string contains an allowed token, pick it.
-  // Example: "asr-service" => "asr"
-  for (const token of allowed) {
-    const re = new RegExp(`(^|[-_/])${token}($|[-_/])`);
-    if (re.test(base)) return token;
-  }
+  if (hyphen === "audio-lang-detection") return "audio-language-detection";
 
-  // Fallback: keep the best-effort normalized value.
-  return candidates[0];
+  return hyphen;
 }
 
 function normalizeServiceForApi(raw: string): string {
-  const v0 = String(raw ?? "").trim().toLowerCase();
-  if (!v0 || v0 === "all") return v0;
-  const v = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
-  const base = v.endsWith("-service") ? v.slice(0, -"-service".length) : v;
-  if (base === "audio-language-detection" || base === "audio-lang-detection") {
-    return "audio-lang-detection-service";
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v || v === "all") return v;
+
+  if (UI_VALUE_TO_INFERENCE_TASK[v]) {
+    return UI_VALUE_TO_INFERENCE_TASK[v];
   }
-  return v.endsWith("-service") ? v : `${v}-service`;
+
+  const bare = v.replace(/-service$/, "").replace(/_service$/, "");
+  if (UI_VALUE_TO_INFERENCE_TASK[bare]) {
+    return UI_VALUE_TO_INFERENCE_TASK[bare];
+  }
+
+  const canonical = bare.replace(/-/g, "_");
+  if (Object.values(UI_VALUE_TO_INFERENCE_TASK).includes(canonical)) {
+    return canonical;
+  }
+
+  if (!bare.includes("-") && !bare.includes("_")) {
+    return bare;
+  }
+
+  return canonical;
 }
 
 function extractServicesFromPromql(expr: string | null | undefined): string[] {
@@ -107,6 +106,17 @@ function extractServicesFromPromql(expr: string | null | undefined): string[] {
 }
 
 const ALL_SERVICE_PAYLOAD_VALUES = TARGET_SERVICES.map((s) => normalizeServiceForApi(s.value));
+
+function resolveUpdateField<T>(
+  form: AlertDefinitionUpdate,
+  item: AlertDefinition | null,
+  key: keyof AlertDefinitionUpdate & keyof AlertDefinition
+): T | null | undefined {
+  if (key in form && form[key] !== undefined) {
+    return form[key] as T | null | undefined;
+  }
+  return item?.[key] as T | null | undefined;
+}
 
 export function useAlertDefinitions() {
   const toast = useToast();
@@ -384,27 +394,34 @@ export function useAlertDefinitions() {
   const validateUpdateForm = useCallback(
     (form: AlertDefinitionUpdate, item: AlertDefinition | null, effectiveUiServices: string[]): Record<string, string> => {
       const errors: Record<string, string> = {};
-      const category = (form.category ?? item?.category ?? "").trim();
+      const category = String(resolveUpdateField(form, item, "category") ?? "").trim();
       if (!category) errors.category = "Category is required";
-      const severity = (form.severity ?? item?.severity ?? "").trim();
+      const severity = String(resolveUpdateField(form, item, "severity") ?? "").trim();
       if (!severity) errors.severity = "Severity is required";
-      const subCategory = (form.sub_category ?? item?.sub_category ?? "").trim();
-      if (!subCategory) errors.sub_category = "Subcategory is required";
-      const signal = (form.signal ?? item?.signal ?? "").trim();
+      const subCategory = String(resolveUpdateField(form, item, "sub_category") ?? "").trim();
+      if (!subCategory) {
+        errors.sub_category = "Subcategory is required";
+      } else {
+        const allowedSubs = (SUB_CATEGORIES_BY_CATEGORY[category] ?? []).map((s) => s.value);
+        if (!allowedSubs.includes(subCategory)) {
+          errors.sub_category = `Select a subcategory valid for ${category} alerts`;
+        }
+      }
+      const signal = String(resolveUpdateField(form, item, "signal") ?? "").trim();
       if (!signal) errors.signal = "Signal is required";
-      const signalMetric = (form.signal_metric ?? item?.signal_metric ?? "").trim();
+      const signalMetric = String(resolveUpdateField(form, item, "signal_metric") ?? "").trim();
       if (!signalMetric) errors.signal_metric = "Signal metric is required";
-      const conditionOp = (form.condition_operator ?? item?.condition_operator ?? "").trim();
+      const conditionOp = String(resolveUpdateField(form, item, "condition_operator") ?? "").trim();
       if (!conditionOp) errors.condition_operator = "Condition is required";
-      const thresholdVal = form.threshold_value ?? item?.threshold_value;
+      const thresholdVal = resolveUpdateField<number | null>(form, item, "threshold_value");
       if (thresholdVal == null || (typeof thresholdVal === "number" && Number.isNaN(thresholdVal))) {
         errors.threshold_value = "Threshold value is required";
       } else if (typeof thresholdVal === "number" && thresholdVal < 0) {
         errors.threshold_value = "Must be 0 or greater";
       }
-      const evalInterval = (form.evaluation_interval ?? item?.evaluation_interval ?? "").trim();
+      const evalInterval = String(resolveUpdateField(form, item, "evaluation_interval") ?? "").trim();
       if (!evalInterval) errors.evaluation_interval = "Evaluation interval is required";
-      const forDuration = (form.for_duration ?? item?.for_duration ?? "").trim();
+      const forDuration = String(resolveUpdateField(form, item, "for_duration") ?? "").trim();
       if (!forDuration) errors.for_duration = "For duration is required";
       if (category !== "infrastructure" && effectiveUiServices.length === 0) {
         errors.service = "Select at least one target";
@@ -442,6 +459,12 @@ export function useAlertDefinitions() {
 
     setIsUpdating(true);
     try {
+      const effectiveCategory = String(
+        resolveUpdateField(updateForm, updateItem, "category") ?? "application"
+      );
+      const categoryChanged =
+        updateForm.category !== undefined && updateForm.category !== updateItem.category;
+
       const payload: AlertDefinitionUpdate = {};
       if (updateForm.description !== undefined) payload.description = updateForm.description;
       if (updateForm.category !== undefined) payload.category = updateForm.category;
@@ -450,13 +473,25 @@ export function useAlertDefinitions() {
       if (updateForm.sub_category !== undefined) payload.sub_category = updateForm.sub_category;
       if (updateForm.signal !== undefined) payload.signal = updateForm.signal;
       if (updateForm.signal_metric !== undefined) payload.signal_metric = updateForm.signal_metric;
-      if (updateForm.condition_operator !== undefined) payload.condition_operator = updateForm.condition_operator;
+      if (updateForm.condition_operator !== undefined) {
+        payload.condition_operator = updateForm.condition_operator;
+      }
+      if (categoryChanged) {
+        payload.sub_category = updateForm.sub_category ?? null;
+        payload.signal = updateForm.signal ?? null;
+        payload.signal_metric = updateForm.signal_metric ?? null;
+        payload.condition_operator = updateForm.condition_operator ?? null;
+      }
       if (updateForm.threshold_value !== undefined) payload.threshold_value = updateForm.threshold_value;
       if (updateForm.threshold_unit !== undefined) payload.threshold_unit = updateForm.threshold_unit;
-      const svc = effectiveUiServices;
-      if (updateForm.service !== undefined || svc.length > 0) {
-        const list = svc.filter((s) => s !== "all").map(normalizeServiceForApi);
-        payload.service = svc.includes("all") ? ALL_SERVICE_PAYLOAD_VALUES : list;
+      if (effectiveCategory === "infrastructure") {
+        payload.service = [];
+      } else {
+        const svc = effectiveUiServices;
+        if (updateForm.service !== undefined || svc.length > 0) {
+          const list = svc.filter((s) => s !== "all").map(normalizeServiceForApi);
+          payload.service = svc.includes("all") ? ALL_SERVICE_PAYLOAD_VALUES : list;
+        }
       }
       if (updateForm.evaluation_interval !== undefined) payload.evaluation_interval = updateForm.evaluation_interval;
       if (updateForm.for_duration !== undefined) payload.for_duration = updateForm.for_duration;

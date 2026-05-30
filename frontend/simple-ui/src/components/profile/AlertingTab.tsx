@@ -543,6 +543,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "actions",
       header: "Actions",
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (d) => (
         <HStack spacing={1} className="row-actions">
           <Tooltip label="View" placement="top" hasArrow>
@@ -633,6 +634,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "actions",
       header: "Actions",
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (r) => (
         <HStack spacing={1} className="row-actions">
           <Tooltip label="View" placement="top" hasArrow>
@@ -698,6 +700,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "actions",
       header: "Actions",
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (rule) => (
         <HStack spacing={1} className="row-actions">
           <Tooltip label="View" placement="top" hasArrow>
@@ -773,6 +776,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     {
       id: "actions",
       header: "Actions",
+      tdProps: { onClick: (e) => e.stopPropagation() },
       cell: (row) => (
         <HStack spacing={1} className="row-actions">
           <Tooltip label="View" placement="top" hasArrow>
@@ -802,6 +806,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             items={sortedDefinitions}
             columns={definitionColumns}
             getRowKey={(d) => String(d.id)}
+            onRowClick={defs.openView}
             paginate="client"
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             isLoading={defs.isLoading}
@@ -1381,7 +1386,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.updateForm.category ?? "application"}
-                  onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, sub_category: undefined, signal: undefined, signal_metric: undefined })}
+                  onChange={(v) => defs.setUpdateForm({
+                    ...defs.updateForm,
+                    category: v,
+                    sub_category: null,
+                    signal: null,
+                    signal_metric: null,
+                    condition_operator: null,
+                    service: v === "infrastructure" ? undefined : defs.updateForm.service,
+                  })}
                 />
                 <FormErrorMessage>{defs.updateErrors.category}</FormErrorMessage>
               </FormControl>
@@ -1394,9 +1407,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   value={defs.updateForm.sub_category ?? ""}
                   onChange={(e) => defs.setUpdateForm({
                     ...defs.updateForm,
-                    sub_category: e.target.value || undefined,
-                    signal: undefined,
-                    signal_metric: undefined,
+                    sub_category: e.target.value || null,
+                    signal: null,
+                    signal_metric: null,
                     threshold_value: undefined,
                     threshold_unit: undefined,
                   })}
@@ -1417,11 +1430,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Select
                   value={defs.updateForm.signal ?? ""}
                   onChange={(e) => {
-                    const sig = e.target.value || undefined;
+                    const sig = e.target.value || null;
                     defs.setUpdateForm({
                       ...defs.updateForm,
                       signal: sig,
-                      signal_metric: undefined,
+                      signal_metric: null,
                       threshold_value: undefined,
                       threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
                     });
@@ -1442,7 +1455,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormLabel>
                 <Select
                   value={defs.updateForm.signal_metric ?? ""}
-                  onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, signal_metric: e.target.value || undefined })}
+                  onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, signal_metric: e.target.value || null })}
                   bg="white"
                   placeholder={defs.updateForm.signal ? "Select metric..." : "Select a signal first"}
                   isDisabled={!defs.updateForm.signal}
@@ -1770,6 +1783,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             items={sortedReceivers}
             columns={receiverColumns}
             getRowKey={(r) => String(r.id)}
+            onRowClick={recvs.openView}
             paginate="client"
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
             filterToolbarAlign="flex-end"
@@ -2018,6 +2032,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           items={sortedRules}
           columns={routingRuleColumns}
           getRowKey={(rule) => String(rule.id)}
+          onRowClick={(rule) => {
+            defs.fetchDefinitions();
+            rules.openView(rule);
+          }}
           paginate="client"
           pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
           isLoading={rules.isLoading}
@@ -2784,6 +2802,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             items={sortedHistoryItems}
             columns={historyColumns}
             getRowKey={(row) => String(row.id)}
+            onRowClick={history.openView}
             paginate="server"
             paginationPosition="top"
             pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}

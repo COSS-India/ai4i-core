@@ -276,6 +276,25 @@ export const TARGET_SERVICES: { value: string; label: string }[] = [
   { value: "ner", label: "NER (Named Entity Recognition)" },
 ];
 
+/** UI checkbox values → platform-core inference task keys (see promql_builder.INFERENCE_TASKS). */
+export const UI_VALUE_TO_INFERENCE_TASK: Record<string, string> = {
+  asr: "asr",
+  nmt: "nmt",
+  tts: "tts",
+  llm: "llm",
+  ocr: "ocr",
+  ner: "ner",
+  transliteration: "transliteration",
+  "language-detection": "language_detection",
+  "language-diarization": "language_diarization",
+  "speaker-diarization": "speaker_diarization",
+  "audio-language-detection": "audio_language_detection",
+};
+
+export const INFERENCE_TASK_TO_UI_VALUE: Record<string, string> = Object.fromEntries(
+  Object.entries(UI_VALUE_TO_INFERENCE_TASK).map(([ui, task]) => [task, ui])
+) as Record<string, string>;
+
 export const CONDITION_OPERATORS: { value: string; label: string }[] = [
   { value: "<", label: "<" },
   { value: "<=", label: "<=" },
