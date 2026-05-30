@@ -354,10 +354,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     if (!q) return recvs.filteredReceivers;
     return recvs.filteredReceivers.filter((r) => {
       const name = (r.receiver_name ?? "").toLowerCase();
-      const org = (r.organization ?? "").toLowerCase();
+      const description = (r.description ?? "").toLowerCase();
       const role = (r.rbac_role ?? "").toLowerCase();
       const emails = (r.email_to ?? []).join(" ").toLowerCase();
-      return name.includes(q) || org.includes(q) || role.includes(q) || emails.includes(q);
+      return name.includes(q) || description.includes(q) || role.includes(q) || emails.includes(q);
     });
   }, [recvs.filteredReceivers, receiversSearchQuery]);
 
@@ -394,8 +394,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
   const sortedHistoryItems = React.useMemo(() => {
     return [...history.items].sort((a, b) => {
-      const aName = a.name ?? "";
-      const bName = b.name ?? "";
+      const aName = a.alert_name ?? "";
+      const bName = b.alert_name ?? "";
       const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
       if (nameCmp !== 0) return historyNameSortDirection === "asc" ? nameCmp : -nameCmp;
       const timeA = new Date(a.triggered_at ?? a.created_at ?? "").getTime();
@@ -626,11 +626,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       cell: (r) => <Switch size="sm" colorScheme="green" isChecked={r.enabled} isReadOnly />,
     },
     {
-      id: "organization",
-      header: "Organization",
-      cell: (r) => <Text fontSize="sm">{r.organization}</Text>,
-    },
-    {
       id: "created",
       header: "Created",
       cell: (r) => <Text fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Text>,
@@ -738,8 +733,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         descAriaLabel: "Sort alert history by name descending",
       },
       cell: (row) => (
-        <Text fontWeight="semibold" noOfLines={2} title={row.name} maxW="260px">
-          {row.name}
+        <Text fontWeight="semibold" noOfLines={2} title={row.alert_name} maxW="260px">
+          {row.alert_name}
         </Text>
       ),
     },
@@ -770,8 +765,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       id: "notified",
       header: "Notified",
       cell: (row) => (
-        <Text fontSize="sm" noOfLines={2} title={row.notified} maxW="220px">
-          {row.notified || "—"}
+        <Text fontSize="sm" noOfLines={2} title={row.notified_display ?? undefined} maxW="220px">
+          {row.notified_display || "—"}
         </Text>
       ),
     },
@@ -1909,9 +1904,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         {recvs.viewItem && (
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Receiver Name</Text><Text fontSize="sm">{recvs.viewItem.receiver_name}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Organization</Text><Text>{recvs.viewItem.organization}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Status</Text><Badge colorScheme={recvs.viewItem.enabled ? "green" : "red"} fontSize="sm" p={1}>{recvs.viewItem.enabled ? "Enabled" : "Disabled"}</Badge></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Created By</Text><Text fontSize="sm">{recvs.viewItem.created_by}</Text></Box>
                 <Box gridColumn={{ base: "span 1", md: "span 2" }}>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Recipient</Text>
                   {recvs.viewItem.rbac_role ? (
@@ -2879,7 +2872,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Alert event</Text>
             {history.viewItem ? (
               <Text fontSize="sm" fontWeight="normal" color="gray.600" mt={1} noOfLines={2}>
-                {history.viewItem.name}
+                {history.viewItem.alert_name}
               </Text>
             ) : null}
           </>
@@ -2898,9 +2891,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ["Triggered", history.viewItem.triggered_at ?? "—"],
                   ["Resolved", history.viewItem.resolved_at ?? "—"],
                   ["Receiver", history.viewItem.receiver ?? "—"],
-                  ["Notified", history.viewItem.notified || "—"],
+                  ["Notified", history.viewItem.notified_display || "—"],
                   ["Tenant", history.viewItem.tenant ?? "—"],
-                  ["Organization", history.viewItem.organization ?? "—"],
                   ["Recorded", history.viewItem.created_at ?? "—"],
                   ["Id", String(history.viewItem.id)],
                 ].map(([label, val]) => (
