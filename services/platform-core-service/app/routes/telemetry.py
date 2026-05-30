@@ -72,17 +72,17 @@ async def search_traces_opensearch(
                 )
             logger.info(f"Tenant-scoped trace read - tenant_id={tenant_filter}")
 
-        # Build OpenSearch query with direct nested field queries
-        must_clauses = []
+        # Build OpenSearch query to find matching traces, then return ALL spans for those traces
+        filter_clauses = []
 
         if tenant_filter:
-            must_clauses.append({"match_phrase": {"attributes.tenantId": tenant_filter}})
+            filter_clauses.append({"match_phrase": {"attributes.tenantId": tenant_filter}})
 
         if task_type:
-            must_clauses.append({"match_phrase": {"attributes.task_type": task_type}})
+            filter_clauses.append({"match_phrase": {"attributes.task_type": task_type}})
 
         if status_filter:
-            must_clauses.append({"match_phrase": {"attributes.status": status_filter}})
+            filter_clauses.append({"match_phrase": {"attributes.status": status_filter}})
 
         if start_date or end_date:
             range_query = {}
@@ -90,21 +90,46 @@ async def search_traces_opensearch(
                 range_query["gte"] = start_date
             if end_date:
                 range_query["lte"] = end_date
-            must_clauses.append({"range": {"@timestamp": range_query}})
+            filter_clauses.append({"range": {"@timestamp": range_query}})
 
-        if must_clauses:
-            query = {"bool": {"must": must_clauses}}
+        # Step 1: Find trace_ids that match the filters
+        if filter_clauses:
+            filter_query = {"bool": {"must": filter_clauses}}
         else:
-            query = {"match_all": {}}
+            filter_query = {"match_all": {}}
+
+        # Get unique trace_ids from matching spans
+        matching_traces_response = opensearch_client.search_traces(
+            query=filter_query,
+            size=10000,  # Get all matching spans to extract unique trace_ids
+            source_fields=["context.trace_id"]
+        )
+
+        matching_spans = matching_traces_response.get("hits", {}).get("hits", [])
+        matching_trace_ids = set()
+        for hit in matching_spans:
+            trace_id = hit.get("_source", {}).get("context", {}).get("trace_id")
+            if trace_id:
+                matching_trace_ids.add(trace_id)
 
         logger.info(f"Searching traces - task_type={task_type}, status={status_filter}, tenant={tenant_filter}")
 
-        # Execute search with pagination
-        offset = (page - 1) * page_size
+        # Total count is the number of matching traces (not spans)
+        total = len(matching_trace_ids)
+
+        # Apply pagination on trace_ids
+        paginated_trace_ids = list(matching_trace_ids)[(page - 1) * page_size : page * page_size]
+
+        # Query all spans for paginated traces
+        if paginated_trace_ids:
+            trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in paginated_trace_ids]
+            paginated_query = {"bool": {"should": trace_id_clauses, "minimum_should_match": 1}}
+        else:
+            paginated_query = {"match_all": {}}
+
         response = opensearch_client.search_traces(
-            query=query,
-            size=page_size,
-            from_=offset,
+            query=paginated_query,
+            size=len(paginated_trace_ids) * 10,  # Assume ~10 spans per trace max
             source_fields=[
                 "@timestamp",
                 "name",
@@ -115,7 +140,6 @@ async def search_traces_opensearch(
 
         # Transform response to match expected format
         hits = response.get("hits", {}).get("hits", [])
-        total = response.get("hits", {}).get("total", {}).get("value", 0)
 
         # Aggregate spans by trace_id to extract metadata from different span types
         traces_map = {}
