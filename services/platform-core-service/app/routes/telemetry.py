@@ -153,15 +153,25 @@ async def search_traces_opensearch(
 
         data = list(traces_map.values())
 
+        # Calculate aggregations
+        by_level = {}
+        by_task = {}
+        for trace in data:
+            status = trace.get("status", "unknown")
+            task_type = trace.get("task_type", "unknown")
+
+            by_level[status] = by_level.get(status, 0) + 1
+            by_task[task_type] = by_task.get(task_type, 0) + 1
+
         return SearchTracesResponse(
             data=data,
             total=total,
             page=page,
             pageSize=page_size,
             aggregations={
-                "total": total,
-                "by_level": {},
-                "by_task": {},
+                "total": len(data),
+                "by_level": by_level,
+                "by_task": by_task,
             }
         )
 
