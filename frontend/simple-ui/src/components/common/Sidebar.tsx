@@ -432,7 +432,7 @@ const Sidebar: React.FC = () => {
         if (item.id === TABS.tenantManagement && !showTenantManagement) return false;
         if (item.id === TABS.alertsManagement && !isAdmin) return false;
         if (item.id === TABS.piiManagement && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === TABS.policyManagement && !isAdmin) return false;
+        if (item.id === TABS.policyManagement) return false;
         if (item.id === TABS.apiKeyManagement && !(isAdmin || isTenantAdmin)) return false;
         if (item.id === TABS.logs && (isUser || isGuest)) return false;
         if (item.id === TABS.logs && !tenantId && !isAdmin) return false;

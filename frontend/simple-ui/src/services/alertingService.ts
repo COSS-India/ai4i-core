@@ -7,12 +7,14 @@ import { z } from 'zod';
 import { API_BASE_URL, apiService } from './api';
 import {
   alertDefinitionSchema,
-  alertHistoryListResponseSchema,
-  deleteMessageSchema,
+  alertHistoryItemSchema,
+  alertSuccessEnvelopeSchema,
+  deleteIdSchema,
   notificationReceiverSchema,
   routingRuleSchema,
   routingRuleTimingPatchResponseSchema,
 } from './dto/schemas/alerting';
+import { ApiValidationError } from './dto/apiValidationError';
 import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 
@@ -76,13 +78,16 @@ class AlertingService {
         {
           headers: config.headers as Record<string, string>,
           timeout: timeoutMs,
-          responseSchema: schema,
+          responseSchema: alertSuccessEnvelopeSchema(schema),
         }
       );
-      return response.data as z.infer<S>;
+      return response.data.data as z.infer<S>;
     } catch (error: any) {
       if (error?.code === 'ECONNABORTED') {
         throw new Error('Request timeout: Alerting service is not responding');
+      }
+      if (error instanceof ApiValidationError) {
+        throw error;
       }
       const status = error?.response?.status;
       const errorData = error?.response?.data ?? {};
@@ -99,6 +104,10 @@ class AlertingService {
         }
       } else if (errorData?.message) {
         errorMessage = String(errorData.message);
+      } else if (errorData?.error?.message) {
+        errorMessage = String(errorData.error.message);
+      } else if (error?.message) {
+        errorMessage = String(error.message);
       }
       const normalizedError = new Error(errorMessage);
       (normalizedError as any).status = status;
@@ -166,8 +175,8 @@ class AlertingService {
     });
   }
 
-  async deleteDefinition(alertId: number): Promise<{ message: string }> {
-    return this.request(alertPath.definition(alertId), deleteMessageSchema, {
+  async deleteDefinition(alertId: number): Promise<{ id: number }> {
+    return this.request(alertPath.definition(alertId), deleteIdSchema, {
       method: 'DELETE',
     });
   }
@@ -206,8 +215,8 @@ class AlertingService {
     });
   }
 
-  async deleteReceiver(receiverId: number): Promise<{ message: string }> {
-    return this.request(alertPath.receiver(receiverId), deleteMessageSchema, {
+  async deleteReceiver(receiverId: number): Promise<{ id: number }> {
+    return this.request(alertPath.receiver(receiverId), deleteIdSchema, {
       method: 'DELETE',
     });
   }
@@ -242,15 +251,15 @@ class AlertingService {
     });
   }
 
-  async deleteRoutingRule(ruleId: number): Promise<{ message: string }> {
-    return this.request(alertPath.routingRule(ruleId), deleteMessageSchema, {
+  async deleteRoutingRule(ruleId: number): Promise<{ id: number }> {
+    return this.request(alertPath.routingRule(ruleId), deleteIdSchema, {
       method: 'DELETE',
     });
   }
 
   async bulkUpdateRoutingRuleTiming(
     data: RoutingRuleTimingUpdate
-  ): Promise<any> {
+  ): Promise<{ affected: number }> {
     return this.request(alertPath.routingRulesTiming, routingRuleTimingPatchResponseSchema, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -277,11 +286,52 @@ class AlertingService {
     if (params?.limit != null) q.set('limit', String(params.limit));
     if (params?.offset != null) q.set('offset', String(params.offset));
     const qs = q.toString();
-    return this.request(
-      qs ? `${alertPath.history}?${qs}` : alertPath.history,
-      alertHistoryListResponseSchema,
-      { method: 'GET' }
-    );
+    const endpoint = qs ? `${alertPath.history}?${qs}` : alertPath.history;
+    const url = `${this.baseUrl}${endpoint}`;
+
+    const defaultHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const token = this.getAccessToken();
+    if (token) {
+      defaultHeaders.Authorization = `Bearer ${token}`;
+    }
+
+    try {
+      const response = await apiService.request(
+        'GET',
+        url,
+        undefined,
+        {
+          headers: defaultHeaders,
+          timeout: 15000,
+          responseSchema: alertSuccessEnvelopeSchema(z.array(alertHistoryItemSchema)),
+        }
+      );
+      const envelope = response.data;
+      const meta = envelope.meta ?? {};
+      const limit = params?.limit ?? 50;
+      const offset = params?.offset ?? 0;
+      return {
+        items: envelope.data,
+        total: typeof meta.total === 'number' ? meta.total : envelope.data.length,
+        limit: typeof meta.limit === 'number' ? meta.limit : limit,
+        offset: typeof meta.offset === 'number' ? meta.offset : offset,
+      };
+    } catch (error: any) {
+      if (error instanceof ApiValidationError) {
+        throw error;
+      }
+      const status = error?.response?.status;
+      const errorData = error?.response?.data ?? {};
+      let errorMessage = status ? `HTTP error! status: ${status}` : 'Request failed';
+      if (errorData?.detail?.message) {
+        errorMessage = String(errorData.detail.message);
+      } else if (error?.message) {
+        errorMessage = String(error.message);
+      }
+      throw new Error(errorMessage);
+    }
   }
 }
 
