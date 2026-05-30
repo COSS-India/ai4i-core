@@ -101,11 +101,11 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
           </Box>
 
           <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
-            <MetaField label="Service" value={data.service} />
-            <MetaField label="Tenant" value={data.tenant_id} />
-            <MetaField label="Environment" value={data.environment} />
-            <MetaField label="Version" value={data.service_version} />
-            <MetaField label="Hostname" value={data.hostname} />
+            <MetaField label="Service" value={data.service || "—"} />
+            <MetaField label="Tenant" value={data.tenant_id || "—"} />
+            <MetaField label="Environment" value={data.environment || "—"} />
+            <MetaField label="Version" value={data.service_version || "—"} />
+            <MetaField label="Hostname" value={data.hostname || "—"} />
             <MetaField label="Spans" value={String(data.spans.length)} />
           </SimpleGrid>
 
@@ -120,18 +120,20 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
                 </Tr>
               </Thead>
               <Tbody>
-                {data.spans.map((span) => (
-                  <Tr key={span.context.span_id}>
+                {data.spans.map((span, index) => (
+                  <Tr key={span.context?.span_id ?? `${span.name}-${index}`}>
                     <Td>
                       <Text fontWeight="medium" fontSize="sm">
                         {span.name}
                       </Text>
-                      <Text fontSize="xs" color="gray.500" fontFamily="mono">
-                        {span.context.span_id}
-                      </Text>
+                      {span.context?.span_id ? (
+                        <Text fontSize="xs" color="gray.500" fontFamily="mono">
+                          {span.context.span_id}
+                        </Text>
+                      ) : null}
                     </Td>
                     <Td fontSize="sm" color="gray.600">
-                      {formatTimestamp(span.timestamp)}
+                      {span.timestamp ? formatTimestamp(span.timestamp) : "—"}
                     </Td>
                     <Td isNumeric fontSize="sm">
                       {span.attributes?.total_time_ms != null
@@ -161,8 +163,8 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
             <Text fontSize="sm" fontWeight="semibold" color="gray.700">
               Span attributes
             </Text>
-            {data.spans.map((span) => (
-              <Box key={`attrs-${span.context.span_id}`}>
+            {data.spans.map((span, index) => (
+              <Box key={`attrs-${span.context?.span_id ?? index}`}>
                 <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
                   {span.name}
                 </Text>
@@ -176,7 +178,7 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
                   maxH="200px"
                   overflowY="auto"
                 >
-                  {formatAttributes(span.attributes)}
+                  {formatAttributes(span.attributes ?? {})}
                 </Code>
               </Box>
             ))}

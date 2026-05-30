@@ -98,6 +98,7 @@ export interface TelemetryTraceSearchAggregations {
     success: number;
     failure: number;
   };
+  by_task?: Record<string, number>;
 }
 
 export interface TelemetryTraceSearchResponse {

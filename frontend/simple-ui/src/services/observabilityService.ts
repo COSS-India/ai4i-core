@@ -2,6 +2,7 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import { getTenantIdFromToken } from '../utils/helpers';
 import {
   logAggregationResponseSchema,
   logSearchResponseSchema,
@@ -45,149 +46,43 @@ const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ?? '
 
 const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`;
 
-/** Remove when GET /telemetry/traces/search is live on dev. */
-const USE_MOCK_TELEMETRY_TRACES =
-  process.env.NEXT_PUBLIC_MOCK_TELEMETRY_TRACES !== 'false';
-
-const MOCK_TELEMETRY_TRACE_RECORDS: TelemetryTraceRecord[] = [
-  {
-    trace_id: '0xf1e2d3c4b5a6978869584736a5b4c3d2',
-    task_type: 'NMT',
-    status: 'Fail',
-    url: '/api/v1/nmt/inference',
-    tenant_id: '2',
-    timestamp: '2026-05-28T18:16:00.416613+00:00',
-  },
-  {
-    trace_id: '0xe8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3',
-    task_type: 'OCR',
-    status: 'Success',
-    url: '/api/v1/ocr/inference',
-    tenant_id: '2',
-    timestamp: '2026-05-28T18:17:00.416613+00:00',
-  },
-];
-
-const MOCK_TELEMETRY_AGGREGATIONS = {
-  total: 4567,
-  by_level: { success: 3766, failure: 234 },
-};
-
-const MOCK_TELEMETRY_TRACE_DETAIL: TelemetryTraceDetail = {
-  trace_id: '0xc78a7cde764dd2b4022ff59a0b3d91a7',
-  service: 'ai4x-inference',
-  tenant_id: 'system',
-  service_version: '1.0.0',
-  environment: 'development',
-  hostname: 'TI-MAC-085-VINU.local',
-  spans: [
-    {
-      name: 'request',
-      context: {
-        trace_id: '0xc78a7cde764dd2b4022ff59a0b3d91a7',
-        span_id: '0x7a11003141837e89',
-        trace_state: '',
-      },
-      kind: 'SpanKind.INTERNAL',
-      attributes: {
-        total_time_ms: 23224.33,
-        url: '/api/v1/nmt/inference',
-        method: 'POST',
-        status: 'success',
-        status_code: 200,
-      },
-      timestamp: '2026-05-28T18:14:35.416613+00:00',
-      logger: 'trace.request_span',
-      taskName: 'Task-5',
-    },
-    {
-      name: 'model',
-      context: {
-        trace_id: '0xc78a7cde764dd2b4022ff59a0b3d91a7',
-        span_id: '0xb25c5da63541b5ba',
-        trace_state: '',
-      },
-      kind: 'SpanKind.INTERNAL',
-      attributes: {
-        total_time_ms: 1345.37,
-        model_name: 'indictrans-gpu-t4',
-        model_version: 'unknown',
-        task_type: 'NMT',
-      },
-      timestamp: '2026-05-28T18:14:13.538874+00:00',
-      logger: 'trace.request_span',
-      taskName: 'Task-5',
-    },
-    {
-      name: 'ai-inference',
-      context: {
-        trace_id: '0xc78a7cde764dd2b4022ff59a0b3d91a7',
-        span_id: '0x911666d83430d521',
-        trace_state: '',
-      },
-      kind: 'SpanKind.INTERNAL',
-      attributes: {
-        total_time_ms: 8525.23,
-        input_tokens: 1,
-        output_tokens: 4,
-        input_type: 'text',
-        output_type: 'text',
-        status: 'success',
-        status_code: 200,
-      },
-      timestamp: '2026-05-28T18:14:28.811737+00:00',
-      logger: 'trace.request_span',
-      taskName: 'Task-5',
-    },
-  ],
-};
-
-/** Path segment for GET /telemetry/traces/{id} (strip optional 0x prefix). */
+/** Path segment for GET /telemetry/traces/{id} (keep 0x prefix as returned by search). */
 export function telemetryTraceIdForApi(traceId: string): string {
-  return traceId.trim().replace(/^0x/i, '');
+  return encodeURIComponent(traceId.trim());
 }
 
-function buildMockTelemetryTracesResponse(params: {
-  taskType?: string;
-  level?: string;
-  search?: string;
-  tenant_id?: string;
-  page?: number;
-  pageSize?: number;
-}): TelemetryTraceSearchResponse {
-  let rows = [...MOCK_TELEMETRY_TRACE_RECORDS];
-  if (params.taskType) {
-    const taskType = params.taskType.toUpperCase();
-    rows = rows.filter((row) => row.task_type.toUpperCase() === taskType);
+/** Headers expected by platform-core telemetry routes (gateway also injects these from JWT). */
+async function getTelemetryAuthHeaders(
+  tenantIdOverride?: string
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  try {
+    const { default: authService } = await import('./authService');
+    const user = authService.getStoredUser();
+    if (user?.roles?.length) {
+      headers['X-Roles'] = user.roles.join(',');
+    }
+    const tenantId =
+      tenantIdOverride?.trim() ||
+      user?.tenant_id?.trim() ||
+      getTenantIdFromToken() ||
+      undefined;
+    if (tenantId) {
+      headers['X-Tenant-Id'] = tenantId;
+    }
+  } catch {
+    // optional — Bearer auth still required via api client
   }
-  if (params.level) {
-    const level = params.level.toLowerCase();
-    rows = rows.filter((row) => row.status.toLowerCase() === level);
-  }
-  if (params.search) {
-    const q = params.search.toLowerCase();
-    rows = rows.filter(
-      (row) =>
-        row.trace_id.toLowerCase().includes(q) ||
-        row.url.toLowerCase().includes(q) ||
-        row.task_type.toLowerCase().includes(q)
-    );
-  }
-  if (params.tenant_id) {
-    rows = rows.filter((row) => row.tenant_id === params.tenant_id);
-  }
+  return headers;
+}
 
-  const page = params.page ?? 1;
-  const pageSize = params.pageSize ?? 15;
-  const start = (page - 1) * pageSize;
-
-  return {
-    data: rows.slice(start, start + pageSize),
-    total: rows.length,
-    page,
-    pageSize,
-    aggregations: MOCK_TELEMETRY_AGGREGATIONS,
-  };
+/** Map UI status filter to OpenSearch `attributes.status` values. */
+function mapStatusFilter(level?: string): string | undefined {
+  if (!level?.trim()) return undefined;
+  const v = level.trim().toLowerCase();
+  if (v === 'success') return 'success';
+  if (v === 'fail' || v === 'failure') return 'failure';
+  return v;
 }
 
 /**
@@ -378,7 +273,6 @@ export const searchTelemetryTraces = async (
   params: {
     taskType?: string;
     level?: string;
-    search?: string;
     startDate?: string;
     endDate?: string;
     page?: number;
@@ -386,24 +280,22 @@ export const searchTelemetryTraces = async (
     tenant_id?: string;
   }
 ): Promise<TelemetryTraceSearchResponse> => {
-  if (USE_MOCK_TELEMETRY_TRACES) {
-    return Promise.resolve(buildMockTelemetryTracesResponse(params));
-  }
-
   try {
     const queryParams = new URLSearchParams();
-    if (params.taskType) queryParams.append('TaskType', params.taskType.toUpperCase());
-    if (params.level) queryParams.append('Level', params.level);
-    if (params.search) queryParams.append('search', params.search);
-    if (params.startDate) queryParams.append('startDate', params.startDate);
-    if (params.endDate) queryParams.append('endDate', params.endDate);
+    if (params.taskType) queryParams.append('task_type', params.taskType.toUpperCase());
+    const statusFilter = mapStatusFilter(params.level);
+    if (statusFilter) queryParams.append('status_filter', statusFilter);
+    if (params.startDate) queryParams.append('start_date', params.startDate);
+    if (params.endDate) queryParams.append('end_date', params.endDate);
     if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
     queryParams.append('page', String(params.page ?? 1));
-    queryParams.append('pageSize', String(params.pageSize ?? 15));
+    queryParams.append('page_size', String(params.pageSize ?? 15));
+
+    const telemetryHeaders = await getTelemetryAuthHeaders(params.tenant_id);
 
     const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
-      { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema }
+      { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema, headers: telemetryHeaders }
     );
 
     return response.data;
@@ -485,17 +377,12 @@ export const searchTraces = async (
 export const getTelemetryTraceById = async (traceId: string): Promise<TelemetryTraceDetail> => {
   const apiTraceId = telemetryTraceIdForApi(traceId);
 
-  if (USE_MOCK_TELEMETRY_TRACES) {
-    return Promise.resolve({
-      ...MOCK_TELEMETRY_TRACE_DETAIL,
-      trace_id: traceId.trim() || MOCK_TELEMETRY_TRACE_DETAIL.trace_id,
-    });
-  }
-
   try {
+    const telemetryHeaders = await getTelemetryAuthHeaders();
+
     const response = await apiService.get(
       telemetryUrl(apiEndpoints.telemetry.traceById(apiTraceId)),
-      { timeout: 30000, responseSchema: telemetryTraceDetailSchema }
+      { timeout: 30000, responseSchema: telemetryTraceDetailSchema, headers: telemetryHeaders }
     );
     return response.data;
   } catch (error: any) {

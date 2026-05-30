@@ -227,7 +227,6 @@ const LogsPage: React.FC = () => {
       "telemetry-traces-search",
       taskType,
       level,
-      debouncedSearch,
       startTime,
       endTime,
       apiTenantId,
@@ -245,7 +244,6 @@ const LogsPage: React.FC = () => {
       return searchTelemetryTraces({
         taskType: taskType && taskType.trim() !== "" ? taskType : undefined,
         level: level && level.trim() !== "" ? level : undefined,
-        search: debouncedSearch || undefined,
         startDate: apiStartDate,
         endDate: apiEndDate,
         page,
@@ -363,11 +361,12 @@ const LogsPage: React.FC = () => {
   };
 
   const getStatusColor = (status: string) => {
-    const statusUpper = status.toUpperCase();
-    if (statusUpper === "FAIL" || statusUpper === "FAILURE" || statusUpper === "ERROR") {
+    const statusLower = status.toLowerCase();
+    if (statusLower === "fail" || statusLower === "failure" || statusLower === "error") {
       return "red";
     }
-    if (statusUpper === "SUCCESS") return "green";
+    if (statusLower === "success") return "green";
+    if (statusLower === "unknown") return "orange";
     return "gray";
   };
 
@@ -380,6 +379,18 @@ const LogsPage: React.FC = () => {
   };
 
   const traceRows = tracesData?.data ?? [];
+
+  const displayedTraceRows = useMemo(() => {
+    if (!debouncedSearch) return traceRows;
+    const q = debouncedSearch.toLowerCase();
+    return traceRows.filter(
+      (row) =>
+        row.trace_id.toLowerCase().includes(q) ||
+        (row.url ?? "").toLowerCase().includes(q) ||
+        (row.task_type ?? "").toLowerCase().includes(q) ||
+        row.status.toLowerCase().includes(q)
+    );
+  }, [traceRows, debouncedSearch]);
 
   const aggregationStats = tracesData?.aggregations;
 
@@ -429,7 +440,7 @@ const LogsPage: React.FC = () => {
         thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) => (
           <Text fontSize="sm" fontWeight="medium" color="gray.700">
-            {row.task_type}
+            {row.task_type || "—"}
           </Text>
         ),
       },
@@ -605,7 +616,7 @@ const LogsPage: React.FC = () => {
               {!tracesError && (
                 <>
                   <AdminDataTable
-                    items={traceRows}
+                    items={displayedTraceRows}
                     columns={traceColumns}
                     getRowKey={(row) =>
                       `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
@@ -694,8 +705,8 @@ const LogsPage: React.FC = () => {
                             formControlProps={{ w: { base: "full", sm: "140px" } }}
                           >
                             <option value="">All Statuses</option>
-                            <option value="Success">Success</option>
-                            <option value="Fail">Fail</option>
+                            <option value="success">Success</option>
+                            <option value="failure">Failure</option>
                           </TableSelectField>
                           <FormControl w={{ base: "full", sm: "220px" }}>
                             <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
