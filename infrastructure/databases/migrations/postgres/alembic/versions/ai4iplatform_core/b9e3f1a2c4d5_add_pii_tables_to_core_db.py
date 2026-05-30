@@ -5,8 +5,13 @@ the separate ai4i_platform database).  Table names carry the pii_ prefix to
 co-exist cleanly with mm_* and alert_* tables.
 
 Revision ID: b9e3f1a2c4d5
-Revises: 31d7bc3f4379
+Revises: 7d2f9a4e1c08
 Create Date: 2026-05-29
+
+Note: re-parented from 31d7bc3f4379 onto 7d2f9a4e1c08 (add_alert_tables) to
+linearize the two ai4iplatform_core heads that both branched off 31d7bc3f4379.
+Both are additive and order-independent; this makes `alembic upgrade head`
+unambiguous so the deploy migration job can run.
 
 """
 
@@ -22,7 +27,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "b9e3f1a2c4d5"
-down_revision: Union[str, None] = "31d7bc3f4379"
+down_revision: Union[str, None] = "7d2f9a4e1c08"
 branch_labels = None
 depends_on = None
 
@@ -206,18 +211,22 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
     )
 
-    op.create_table(
-        "pii_audit_logs",
-        sa.Column("id",             sa.Integer(),                    primary_key=True, autoincrement=True),
-        sa.Column("trace_id",       postgresql.UUID(as_uuid=False),  nullable=True),
-        sa.Column("tenant_id",      sa.String(50),                   nullable=True),
-        sa.Column("domain_id",      sa.String(50),                   nullable=True),
-        sa.Column("target_context", sa.String(20),                   nullable=True),
-        sa.Column("pii_count",      sa.Integer(),                    nullable=True),
-        sa.Column("processing_ms",  sa.Integer(),                    nullable=True),
-        sa.Column("trace_json",     postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at",     sa.DateTime(),                   server_default=sa.text("current_timestamp"), nullable=True),
-    )
+    # pii_audit_logs is also created by the older policy_db migration
+    # (eeb2648f856c); after the "PII into primary DB" consolidation both target
+    # the same physical DB, so guard against the duplicate to stay idempotent.
+    if "pii_audit_logs" not in set(sa.inspect(op.get_bind()).get_table_names()):
+        op.create_table(
+            "pii_audit_logs",
+            sa.Column("id",             sa.Integer(),                    primary_key=True, autoincrement=True),
+            sa.Column("trace_id",       postgresql.UUID(as_uuid=False),  nullable=True),
+            sa.Column("tenant_id",      sa.String(50),                   nullable=True),
+            sa.Column("domain_id",      sa.String(50),                   nullable=True),
+            sa.Column("target_context", sa.String(20),                   nullable=True),
+            sa.Column("pii_count",      sa.Integer(),                    nullable=True),
+            sa.Column("processing_ms",  sa.Integer(),                    nullable=True),
+            sa.Column("trace_json",     postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            sa.Column("created_at",     sa.DateTime(),                   server_default=sa.text("current_timestamp"), nullable=True),
+        )
 
     # ── 2. Seed pattern_library ───────────────────────────────────────────
     conn = op.get_bind()
@@ -277,7 +286,9 @@ def upgrade() -> None:
 # ---------------------------------------------------------------------------
 
 def downgrade() -> None:
-    op.drop_table("pii_audit_logs")
+    # pii_audit_logs is also owned by the older policy_db migration
+    # (eeb2648f856c); only drop it here if the upgrade actually created it,
+    # mirroring the guarded create above. Otherwise leave it to its owner.
     op.drop_table("pii_tenant_domain_map")
     op.drop_table("pii_geo_library")
     op.drop_table("pii_pattern_library")
