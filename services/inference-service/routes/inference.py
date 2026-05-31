@@ -5,7 +5,7 @@ Integrates orchestration, factory, and telemetry.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Body, HTTPException, Depends
+from fastapi import APIRouter, Body, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 import logging
 
@@ -357,6 +357,7 @@ async def run_asr_inference(
     }}}}},
 )
 async def run_tts_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -376,7 +377,7 @@ async def run_tts_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")

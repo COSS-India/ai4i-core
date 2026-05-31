@@ -363,6 +363,17 @@ class AuthService:
     async def _assert_user_tenant_active(self, user: User) -> None:
         if user.tenant_id is None:
             return
+        # Per-user tenant access flag. Cleared (is_tenant_active=False) when the
+        # tenant is suspended/deactivated — either tenant-wide via
+        # sync_tenant_users_for_status, or for a single user via
+        # PATCH /tenants/{tenant_id}/users/{user_id}/status. The latter does not
+        # change tenant.status, so it must be enforced here independently of the
+        # tenant-status check below. None/True (legacy default) means allowed.
+        if user.is_tenant_active is False:
+            raise AuthorizationError(
+                message="Your account access has been suspended. Please contact support.",
+                code="TENANT_SUSPENDED",
+            )
         tenant = await self._tenants.get_by_id(user.tenant_id)
         assert_tenant_allows_authentication(tenant)
 

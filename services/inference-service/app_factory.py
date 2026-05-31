@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, Any
 import logging
 from ai4icore_core.observability import setup_observability
+from ai4icore_core.logging import RequestMiddleware
 from routes import router
 from config import settings
 from trace.setup import setup_tracing
@@ -61,7 +62,7 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up middleware...")
-        
+
         # CORS middleware
         app.add_middleware(
             CORSMiddleware,
@@ -77,6 +78,12 @@ class InferenceServiceFactory:
         # metrics from inside route handlers (e.g. tokenizer-accurate
         # LLM token counts post-inference).
         setup_observability(app)
+
+        # Request context middleware — seeds trace_id and tenant_id (from the
+        # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so
+        # inference spans carry attributes.tenantId (read via get_context_attributes).
+        # Added last → outermost → runs first, seeding the context for everything below.
+        app.add_middleware(RequestMiddleware)
 
         logger.info("✓ Middleware setup complete")
 
@@ -159,7 +166,7 @@ async def create_inference_app() -> FastAPI:
     Returns:
         Configured FastAPI application ready to serve inference requests
     """
-    
+
     factory = InferenceServiceFactory()
 
     # Create FastAPI app with OpenAPI docs

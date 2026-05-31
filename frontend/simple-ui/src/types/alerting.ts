@@ -13,7 +13,6 @@ export interface AlertAnnotation {
 
 export interface AlertDefinition {
   id: number;
-  organization: string;
   name: string;
   description: string | null;
   promql_expr: string;
@@ -34,7 +33,6 @@ export interface AlertDefinition {
   enabled: boolean;
   created_at: string;
   updated_at: string;
-  created_by: string;
   annotations: AlertAnnotation[];
 }
 
@@ -81,7 +79,6 @@ export interface AlertDefinitionUpdate {
 
 export interface NotificationReceiver {
   id: number;
-  organization: string;
   receiver_name: string;
   rule_name: string | null;
   description: string | null;
@@ -97,7 +94,6 @@ export interface NotificationReceiver {
   enabled: boolean;
   created_at: string;
   updated_at: string;
-  created_by: string | null;
 }
 
 export interface NotificationReceiverCreate {
@@ -133,12 +129,13 @@ export interface NotificationReceiverUpdate {
 
 export interface RoutingRule {
   id: number;
-  organization: string;
   rule_name: string;
   receiver_id: number;
   match_severity: string | null;
   match_category: string | null;
   match_alert_type: string | null;
+  match_alert_names?: string[] | null;
+  match_tenant_id?: string | null;
   group_by: string[];
   group_wait: string;
   group_interval: string;
@@ -148,7 +145,6 @@ export interface RoutingRule {
   enabled: boolean;
   created_at: string;
   updated_at: string;
-  created_by: string;
 }
 
 export interface RoutingRuleCreate {
@@ -194,17 +190,19 @@ export interface RoutingRuleTimingUpdate {
 
 export interface AlertHistoryItem {
   id: number;
-  name: string;
+  alert_name: string;
   category: string;
   severity: string;
-  triggered_at: string | null;
-  resolved_at: string | null;
+  triggered_at: string;
+  resolved_at?: string | null;
   status: string;
-  receiver: string | null;
-  notified: string;
-  tenant: string | null;
-  organization: string | null;
-  created_at: string | null;
+  receiver: string;
+  notified_display?: string | null;
+  tenant?: string | null;
+  labels?: Record<string, unknown> | null;
+  annotations?: Record<string, unknown> | null;
+  fingerprint?: string | null;
+  created_at: string;
 }
 
 export interface AlertHistoryListResponse {
@@ -216,7 +214,6 @@ export interface AlertHistoryListResponse {
 
 // ---- Allowed values ----
 
-export const ORGANIZATIONS = ["irctc", "kisanmitra", "bashadaan", "beml"] as const;
 export const CATEGORIES = ["application", "infrastructure"] as const;
 export const SEVERITIES = ["critical", "warning", "info"] as const;
 export const URGENCIES = ["high", "medium", "low"] as const;
@@ -278,6 +275,25 @@ export const TARGET_SERVICES: { value: string; label: string }[] = [
   { value: "transliteration", label: "Transliteration" },
   { value: "ner", label: "NER (Named Entity Recognition)" },
 ];
+
+/** UI checkbox values → platform-core inference task keys (see promql_builder.INFERENCE_TASKS). */
+export const UI_VALUE_TO_INFERENCE_TASK: Record<string, string> = {
+  asr: "asr",
+  nmt: "nmt",
+  tts: "tts",
+  llm: "llm",
+  ocr: "ocr",
+  ner: "ner",
+  transliteration: "transliteration",
+  "language-detection": "language_detection",
+  "language-diarization": "language_diarization",
+  "speaker-diarization": "speaker_diarization",
+  "audio-language-detection": "audio_language_detection",
+};
+
+export const INFERENCE_TASK_TO_UI_VALUE: Record<string, string> = Object.fromEntries(
+  Object.entries(UI_VALUE_TO_INFERENCE_TASK).map(([ui, task]) => [task, ui])
+) as Record<string, string>;
 
 export const CONDITION_OPERATORS: { value: string; label: string }[] = [
   { value: "<", label: "<" },

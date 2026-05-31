@@ -5,8 +5,13 @@ the separate ai4i_platform database).  Table names carry the pii_ prefix to
 co-exist cleanly with mm_* and alert_* tables.
 
 Revision ID: b9e3f1a2c4d5
-Revises: 31d7bc3f4379
+Revises: 7d2f9a4e1c08
 Create Date: 2026-05-29
+
+Note: re-parented from 31d7bc3f4379 onto 7d2f9a4e1c08 (add_alert_tables) to
+linearize the two ai4iplatform_core heads that both branched off 31d7bc3f4379.
+Both are additive and order-independent; this makes `alembic upgrade head`
+unambiguous so the deploy migration job can run.
 
 """
 
@@ -22,7 +27,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "b9e3f1a2c4d5"
-down_revision: Union[str, None] = "31d7bc3f4379"
+down_revision: Union[str, None] = "7d2f9a4e1c08"
 branch_labels = None
 depends_on = None
 
@@ -169,55 +174,65 @@ _DOMAINS: List[Tuple[str, str, List[Dict]]] = [
 
 def upgrade() -> None:
     # ── 1. Create tables ──────────────────────────────────────────────────
+    # Every pii_* table below is also created by the older policy_db migrations
+    # (the ai4i_platform DB before the "PII into primary DB" consolidation).
+    # After consolidation both paths target the same physical DB, so each
+    # create is guarded against the pre-existing table to stay idempotent.
+    existing_tables = set(sa.inspect(op.get_bind()).get_table_names())
 
-    op.create_table(
-        "pii_domain_policies",
-        sa.Column("domain_id",   sa.String(50),  primary_key=True),
-        sa.Column("is_active",   sa.Boolean(),   server_default=sa.text("false"), nullable=True),
-        sa.Column("policy_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("created_at",  sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
-    )
+    if "pii_domain_policies" not in existing_tables:
+        op.create_table(
+            "pii_domain_policies",
+            sa.Column("domain_id",   sa.String(50),  primary_key=True),
+            sa.Column("is_active",   sa.Boolean(),   server_default=sa.text("false"), nullable=True),
+            sa.Column("policy_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+            sa.Column("created_at",  sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
+        )
 
-    op.create_table(
-        "pii_pattern_library",
-        sa.Column("id",            sa.Integer(),    primary_key=True, autoincrement=True),
-        sa.Column("entity_label",  sa.String(50),   nullable=False),
-        sa.Column("lang_code",     sa.String(10),   nullable=False),
-        sa.Column("regex_pattern", sa.Text(),        nullable=False),
-        sa.Column("risk_score",    sa.Float(),       server_default=sa.text("1.0"), nullable=True),
-        sa.Column("is_active",     sa.Boolean(),    server_default=sa.text("true"), nullable=True),
-        sa.UniqueConstraint("entity_label", "lang_code", name="uq_pii_pattern_entity_lang"),
-    )
+    if "pii_pattern_library" not in existing_tables:
+        op.create_table(
+            "pii_pattern_library",
+            sa.Column("id",            sa.Integer(),    primary_key=True, autoincrement=True),
+            sa.Column("entity_label",  sa.String(50),   nullable=False),
+            sa.Column("lang_code",     sa.String(10),   nullable=False),
+            sa.Column("regex_pattern", sa.Text(),        nullable=False),
+            sa.Column("risk_score",    sa.Float(),       server_default=sa.text("1.0"), nullable=True),
+            sa.Column("is_active",     sa.Boolean(),    server_default=sa.text("true"), nullable=True),
+            sa.UniqueConstraint("entity_label", "lang_code", name="uq_pii_pattern_entity_lang"),
+        )
 
-    op.create_table(
-        "pii_geo_library",
-        sa.Column("id",        sa.Integer(),    primary_key=True, autoincrement=True),
-        sa.Column("term_text", sa.String(100),  nullable=False),
-        sa.Column("lang_code", sa.String(10),   nullable=False),
-        sa.Column("term_type", sa.String(20),   nullable=False),
-        sa.Column("is_active", sa.Boolean(),    server_default=sa.text("true"), nullable=True),
-    )
+    if "pii_geo_library" not in existing_tables:
+        op.create_table(
+            "pii_geo_library",
+            sa.Column("id",        sa.Integer(),    primary_key=True, autoincrement=True),
+            sa.Column("term_text", sa.String(100),  nullable=False),
+            sa.Column("lang_code", sa.String(10),   nullable=False),
+            sa.Column("term_type", sa.String(20),   nullable=False),
+            sa.Column("is_active", sa.Boolean(),    server_default=sa.text("true"), nullable=True),
+        )
 
-    op.create_table(
-        "pii_tenant_domain_map",
-        sa.Column("tenant_id",  sa.String(255), primary_key=True),
-        sa.Column("domain_id",  sa.String(50),  nullable=False),
-        sa.Column("created_at", sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
-        sa.Column("updated_at", sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
-    )
+    if "pii_tenant_domain_map" not in existing_tables:
+        op.create_table(
+            "pii_tenant_domain_map",
+            sa.Column("tenant_id",  sa.String(255), primary_key=True),
+            sa.Column("domain_id",  sa.String(50),  nullable=False),
+            sa.Column("created_at", sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
+            sa.Column("updated_at", sa.DateTime(),  server_default=sa.text("current_timestamp"), nullable=True),
+        )
 
-    op.create_table(
-        "pii_audit_logs",
-        sa.Column("id",             sa.Integer(),                    primary_key=True, autoincrement=True),
-        sa.Column("trace_id",       postgresql.UUID(as_uuid=False),  nullable=True),
-        sa.Column("tenant_id",      sa.String(50),                   nullable=True),
-        sa.Column("domain_id",      sa.String(50),                   nullable=True),
-        sa.Column("target_context", sa.String(20),                   nullable=True),
-        sa.Column("pii_count",      sa.Integer(),                    nullable=True),
-        sa.Column("processing_ms",  sa.Integer(),                    nullable=True),
-        sa.Column("trace_json",     postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at",     sa.DateTime(),                   server_default=sa.text("current_timestamp"), nullable=True),
-    )
+    if "pii_audit_logs" not in existing_tables:
+        op.create_table(
+            "pii_audit_logs",
+            sa.Column("id",             sa.Integer(),                    primary_key=True, autoincrement=True),
+            sa.Column("trace_id",       postgresql.UUID(as_uuid=False),  nullable=True),
+            sa.Column("tenant_id",      sa.String(50),                   nullable=True),
+            sa.Column("domain_id",      sa.String(50),                   nullable=True),
+            sa.Column("target_context", sa.String(20),                   nullable=True),
+            sa.Column("pii_count",      sa.Integer(),                    nullable=True),
+            sa.Column("processing_ms",  sa.Integer(),                    nullable=True),
+            sa.Column("trace_json",     postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            sa.Column("created_at",     sa.DateTime(),                   server_default=sa.text("current_timestamp"), nullable=True),
+        )
 
     # ── 2. Seed pattern_library ───────────────────────────────────────────
     conn = op.get_bind()
@@ -277,8 +292,12 @@ def upgrade() -> None:
 # ---------------------------------------------------------------------------
 
 def downgrade() -> None:
-    op.drop_table("pii_audit_logs")
-    op.drop_table("pii_tenant_domain_map")
-    op.drop_table("pii_geo_library")
-    op.drop_table("pii_pattern_library")
-    op.drop_table("pii_domain_policies")
+    # Drops are idempotent (IF EXISTS) to mirror the guarded creates in
+    # upgrade(): the tables may have been left in place because the older
+    # policy_db migrations own them. pii_audit_logs is intentionally not
+    # dropped here — it is owned by the older policy_db migration
+    # (eeb2648f856c), so we leave it to its owner.
+    op.execute("DROP TABLE IF EXISTS pii_tenant_domain_map")
+    op.execute("DROP TABLE IF EXISTS pii_geo_library")
+    op.execute("DROP TABLE IF EXISTS pii_pattern_library")
+    op.execute("DROP TABLE IF EXISTS pii_domain_policies")

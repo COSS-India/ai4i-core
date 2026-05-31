@@ -5,10 +5,17 @@ const alertAnnotationSchema = z.object({
   value: z.string(),
 });
 
+/** Platform-core success envelope for all alert-management endpoints. */
+export const alertSuccessEnvelopeSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+  z.object({
+    success: z.boolean(),
+    data: dataSchema,
+    meta: z.record(z.unknown()).optional(),
+  });
+
 export const alertDefinitionSchema = z
   .object({
     id: z.number(),
-    organization: z.string(),
     name: z.string(),
     description: z.string().nullable(),
     promql_expr: z.string(),
@@ -29,7 +36,6 @@ export const alertDefinitionSchema = z
     enabled: z.boolean(),
     created_at: z.string(),
     updated_at: z.string(),
-    created_by: z.string(),
     annotations: z.array(alertAnnotationSchema),
   })
   .passthrough();
@@ -37,13 +43,11 @@ export const alertDefinitionSchema = z
 export const notificationReceiverSchema = z
   .object({
     id: z.number(),
-    organization: z.string(),
     receiver_name: z.string(),
     rule_name: z.string().nullable(),
     description: z.string().nullable(),
     category: z.string().nullable().optional(),
     severity: z.string().nullable().optional(),
-    alert_type: z.string().nullable().optional(),
     alert_names: z.array(z.string()).nullable(),
     tenant: z.string().nullable(),
     email_to: z.array(z.string()),
@@ -53,19 +57,19 @@ export const notificationReceiverSchema = z
     enabled: z.boolean(),
     created_at: z.string(),
     updated_at: z.string(),
-    created_by: z.string().nullable(),
   })
   .passthrough();
 
 export const routingRuleSchema = z
   .object({
     id: z.number(),
-    organization: z.string(),
     rule_name: z.string(),
     receiver_id: z.number(),
     match_severity: z.string().nullable(),
     match_category: z.string().nullable(),
     match_alert_type: z.string().nullable(),
+    match_alert_names: z.array(z.string()).nullable().optional(),
+    match_tenant_id: z.string().nullable().optional(),
     group_by: z.array(z.string()),
     group_wait: z.string(),
     group_interval: z.string(),
@@ -75,24 +79,25 @@ export const routingRuleSchema = z
     enabled: z.boolean(),
     created_at: z.string(),
     updated_at: z.string(),
-    created_by: z.string(),
   })
   .passthrough();
 
 export const alertHistoryItemSchema = z
   .object({
     id: z.number(),
-    name: z.string(),
+    alert_name: z.string(),
     category: z.string(),
     severity: z.string(),
-    triggered_at: z.string().nullable(),
-    resolved_at: z.string().nullable(),
+    triggered_at: z.string(),
+    resolved_at: z.string().nullable().optional(),
     status: z.string(),
-    receiver: z.string().nullable(),
-    notified: z.string(),
-    tenant: z.string().nullable(),
-    organization: z.string().nullable(),
-    created_at: z.string().nullable(),
+    receiver: z.string(),
+    notified_display: z.string().nullable().optional(),
+    tenant: z.string().nullable().optional(),
+    labels: z.record(z.unknown()).nullable().optional(),
+    annotations: z.record(z.unknown()).nullable().optional(),
+    fingerprint: z.string().nullable().optional(),
+    created_at: z.string(),
   })
   .passthrough();
 
@@ -103,8 +108,10 @@ export const alertHistoryListResponseSchema = z.object({
   offset: z.number(),
 });
 
-export const deleteMessageSchema = z.object({
-  message: z.string(),
+export const deleteIdSchema = z.object({
+  id: z.number(),
 });
 
-export const routingRuleTimingPatchResponseSchema = z.record(z.unknown());
+export const routingRuleTimingPatchResponseSchema = z.object({
+  affected: z.number(),
+});
