@@ -2,49 +2,18 @@
 // Allows users to try NMT service without authentication
 // Rate limited to 5 requests per hour per user/IP
 
-import axios, { AxiosInstance } from 'axios';
-import { API_BASE_URL } from './api';
+import { apiService } from './api';
+import { apiEndpoints } from './apiEndpoints';
+import { nmtInferenceResponseSchema } from './dto/schemas/inference';
+import { tryItServiceListSchema } from './dto/schemas/platform';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
+import type { Service } from '../types/platform';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
-// Create a dedicated axios instance for try-it (no auth required)
-const tryItClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 300000, // 5 minutes
-  headers: {
-    'Content-Type': 'application/json',
-  },
+const getTryItHeaders = () => ({
+  'X-Anonymous-Session-Id': getAnonymousSessionId(),
+  'X-Try-It': 'true',
 });
-
-// Add request interceptor to add anonymous session ID
-tryItClient.interceptors.request.use(
-  (config) => {
-    // Add anonymous session ID for rate limiting
-    const sessionId = getAnonymousSessionId();
-    config.headers['X-Anonymous-Session-Id'] = sessionId;
-    // Add request start time for timing calculation
-    config.headers['request-startTime'] = new Date().getTime().toString();
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// Add response interceptor for timing
-tryItClient.interceptors.response.use(
-  (response) => {
-    const startTime = response.config.headers['request-startTime'];
-    if (startTime) {
-      const duration = new Date().getTime() - parseInt(startTime);
-      response.headers['request-duration'] = duration.toString();
-    }
-    return response;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
 
 /**
  * Try-It request payload structure
@@ -56,17 +25,16 @@ export interface TryItRequest {
 
 /**
  * Fetch NMT services for try-it (anonymous) users.
- * Uses GET /api/v1/model-management/services/try-it-service-list?task_type=nmt (no auth).
+ * Uses the centralized try-it service-list endpoint with no auth.
  * @returns Promise with raw list of services from the API
  */
-export const listTryItNMTServices = async (): Promise<any[]> => {
-  const response = await tryItClient.get<any[]>(
-    '/api/v1/model-management/services/try-it-service-list',
-    {
-      params: { task_type: 'nmt' },
-    }
-  );
-  return Array.isArray(response.data) ? response.data : [];
+export const listTryItNMTServices = async (): Promise<Service[]> => {
+  const response = await apiService.get(apiEndpoints.platform.services.tryItList, {
+    params: { task_type: 'nmt' },
+    headers: getTryItHeaders(),
+    responseSchema: tryItServiceListSchema,
+  });
+  return response.data;
 };
 
 /**
@@ -89,8 +57,8 @@ export const performTryItNMTInference = async (
     const tryItConfig: NMTInferenceRequest['config'] = {
       ...config,
       language: {
-        sourceLanguage: config.language.sourceLanguage,
-        targetLanguage: config.language.targetLanguage,
+        sourceLanguage: config.language?.sourceLanguage ?? '',
+        targetLanguage: config.language?.targetLanguage ?? '',
       },
     };
 
@@ -107,9 +75,10 @@ export const performTryItNMTInference = async (
       payload: nmtPayload,
     };
 
-    const response = await tryItClient.post<NMTInferenceResponse>(
-      '/api/v1/try-it',
-      tryItPayload
+    const response = await apiService.post(
+      apiEndpoints.platform.tryIt.execute,
+      tryItPayload,
+      { headers: getTryItHeaders(), responseSchema: nmtInferenceResponseSchema }
     );
 
     // Extract response time from headers
@@ -122,19 +91,19 @@ export const performTryItNMTInference = async (
   } catch (error: any) {
     console.error('Try-It NMT inference error:', error);
 
-    if (error.response?.status === 403 || error.response?.status === 429) {
+    if (error?.response?.status === 403 || error?.response?.status === 429) {
       // Extract message from either FastAPI format (data.detail) or APISIX gateway format (data.error_msg)
       const rawMessage: string =
-        (typeof error.response?.data?.detail === 'string' ? error.response.data.detail : '') ||
-        error.response?.data?.detail?.message ||
-        error.response?.data?.error_msg ||
-        error.response?.data?.message ||
+        (typeof error?.response?.data?.detail === 'string' ? error?.response?.data?.detail : '') ||
+        error?.response?.data?.detail?.message ||
+        error?.response?.data?.error_msg ||
+        error?.response?.data?.message ||
         '';
 
       if (
         rawMessage.toLowerCase().includes('login') ||
         rawMessage.toLowerCase().includes('rate') ||
-        error.response?.status === 429
+        error?.response?.status === 429
       ) {
         throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.');
       }
@@ -142,7 +111,7 @@ export const performTryItNMTInference = async (
       throw new Error('Access denied. Please login to access this service.');
     }
 
-    if (error.message) {
+    if (error?.message) {
       throw error;
     }
     throw new Error('Failed to perform translation. Please try again.');
@@ -157,22 +126,22 @@ export const performTryItNMTInference = async (
 export const shouldWarnAboutRateLimit = (): boolean => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
-  
+
   if (typeof window === 'undefined') return false;
-  
+
   try {
-    const count = parseInt(localStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(localStorage.getItem(timestampKey) || '0');
+    const count = parseInt(sessionStorage.getItem(key) || '0');
+    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    
+
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour) {
-      localStorage.setItem(key, '0');
-      localStorage.removeItem(timestampKey);
+      sessionStorage.setItem(key, '0');
+      sessionStorage.removeItem(timestampKey);
       return false;
     }
-    
+
     // Warn if approaching limit (4 or more requests)
     return count >= 4;
   } catch (e) {
@@ -186,24 +155,24 @@ export const shouldWarnAboutRateLimit = (): boolean => {
 export const trackTryItRequest = (): void => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
-  
+
   if (typeof window === 'undefined') return;
-  
+
   try {
-    const count = parseInt(localStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(localStorage.getItem(timestampKey) || '0');
+    const count = parseInt(sessionStorage.getItem(key) || '0');
+    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    
+
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour || !firstRequestTime) {
-      localStorage.setItem(key, '1');
-      localStorage.setItem(timestampKey, now.toString());
+      sessionStorage.setItem(key, '1');
+      sessionStorage.setItem(timestampKey, now.toString());
     } else {
-      localStorage.setItem(key, (count + 1).toString());
+      sessionStorage.setItem(key, (count + 1).toString());
     }
   } catch (e) {
-    // Ignore localStorage errors
+    // Ignore sessionStorage errors
   }
 };
 
@@ -215,24 +184,23 @@ export const getRemainingTryItRequests = (): number => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
   const limit = 5;
-  
+
   if (typeof window === 'undefined') return limit;
-  
+
   try {
-    const count = parseInt(localStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(localStorage.getItem(timestampKey) || '0');
+    const count = parseInt(sessionStorage.getItem(key) || '0');
+    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    
+
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour || !firstRequestTime) {
       return limit;
     }
-    
+
     const remaining = Math.max(0, limit - count);
     return remaining;
   } catch (e) {
     return limit;
   }
 };
-

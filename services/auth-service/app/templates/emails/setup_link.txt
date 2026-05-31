@@ -1,0 +1,16 @@
+AI4I Platform
+================================
+
+Welcome to AI4I!
+----------------
+
+Your account has been set up successfully. Click the button below to
+set your password and get started.
+
+  {{ setup_url }}
+
+This link expires in {{ expires_hours }} hours. If you did not request
+this, please ignore this email.
+
+--
+This is an automated message, please do not reply.

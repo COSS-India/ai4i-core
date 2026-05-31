@@ -1,6 +1,11 @@
 // Audio Language Detection service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import { audioLanguageDetectionInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  AudioLanguageDetectionInferenceRequest,
+  AudioLanguageDetectionInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
@@ -13,23 +18,10 @@ export interface AudioLanguageDetectionServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface AudioLanguageDetectionInferenceRequest {
-  audio: Array<{
-    audioContent: string;
-  }>;
-  config: {
-    serviceId: string;
-    [key: string]: any;
-  };
-}
-
-export interface AudioLanguageDetectionInferenceResponse {
-  output: Array<{
-    detectedLanguage?: string;
-    confidence?: number;
-    [key: string]: any;
-  }>;
-}
+export type {
+  AudioLanguageDetectionInferenceRequest,
+  AudioLanguageDetectionInferenceResponse,
+} from '../types/inference';
 
 /**
  * List all available audio language detection services
@@ -37,7 +29,7 @@ export interface AudioLanguageDetectionInferenceResponse {
 export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguageDetectionServiceDetailsResponse[]> => {
   try {
     const services = await listServices('audio-lang-detection', true);
-    
+
     // Transform to AudioLanguageDetectionServiceDetailsResponse format
     const transformedServices = services.map((service: any) => {
       // Extract languages from service.languages array
@@ -55,13 +47,9 @@ export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguag
           }
         });
       }
-      
-      // Extract endpoint and clean it
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace('http://', '').replace('https://', '');
-      }
-      
+
+      const endpoint = service.endpoint || '';
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id || '',
@@ -101,9 +89,10 @@ export const performAudioLanguageDetectionInference = async (
       },
     };
 
-    const response = await apiClient.post<AudioLanguageDetectionInferenceResponse>(
+    const response = await apiService.post(
       apiEndpoints['audio-language-detection'].inference,
-      payload
+      payload,
+      { responseSchema: audioLanguageDetectionInferenceResponseSchema }
     );
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -117,4 +106,3 @@ export const performAudioLanguageDetectionInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

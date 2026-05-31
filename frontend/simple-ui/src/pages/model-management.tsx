@@ -11,16 +11,8 @@ import {
   Heading,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftElement,
   Select,
   Switch,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
   Badge,
   Text,
   VStack,
@@ -44,82 +36,53 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { SearchIcon, ViewIcon } from "@chakra-ui/icons";
+import { ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
-import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
+import {
+  fetchAllModelsMatchingFilters,
+  createModel,
+  getModelById,
+  updateModel,
+} from "../services/modelManagementService";
+import type { ModelCreateRequest, ModelDetails, ModelUpdateRequest, TaskSpec } from "../types/platform";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
+import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import { useAdminTableSurface } from "../components/common/TableControls";
+import AdminDataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
+  TableSearchField,
+  TableSelectField,
+  type AdminTableColumn,
+} from "../components/common/AdminDataTable";
 import {
-  TableFilterToolbar,
-  TablePaginationBar,
-  TableSortHeader,
-  useAdminTableSurface,
-} from "../components/common/TableControls";
+  MODEL_TASK_TYPE_LIST,
+  MODEL_VERSION,
+  MODEL_VERSION_FILTER_LIST,
+  formatModelTaskTypeLabel,
+  formatModelVersionFilterLabel,
+  formatModelVersionStatusLabel,
+  isModelVersionStatusActive,
+} from "../config/constants";
 
-// TypeScript interfaces for model data
-interface OAuthId {
-  oauthId: string;
-  provider: string;
-}
-
-interface TeamMember {
-  name: string;
-  aboutMe: string;
-  oauthId: OAuthId;
-}
-
-interface Submitter {
-  name: string;
-  aboutMe: string;
-  team: TeamMember[];
-}
-
-interface ModelProcessingType {
-  type: string;
-}
-
-interface InferenceSchema {
-  modelProcessingType: ModelProcessingType;
-  request: Record<string, any>;
-  response: Record<string, any>;
-}
-
-interface InferenceEndPoint {
-  schema: InferenceSchema;
-}
-
-interface Task {
-  type: string;
-}
-
-interface Model {
-  modelId: string;
+/** Registry UI model row — requires fields used in forms/tables. */
+type Model = ModelDetails & {
   name: string;
   description: string;
-  languages: Record<string, any>[];
+  languages: Record<string, unknown>[];
   domain: string[];
-  submitter: Submitter;
   license: string;
-  inferenceEndPoint: InferenceEndPoint;
+  inferenceEndPoint: NonNullable<ModelDetails["inferenceEndPoint"]>;
   source: string;
-  task: Task;
-  version?: string;
-  versionStatus?: "active" | "deprecated" | "ACTIVE" | "DEPRECATED";
-  refUrl?: string;
-  /** ISO timestamp when version status was last updated; used for list ordering */
-  versionStatusUpdatedAt?: string;
-  /** Epoch (seconds or ms) when model was created; fallback for ordering */
-  submittedOn?: number;
-  /** Epoch (seconds or ms) when model was last updated; fallback for ordering */
-  updatedOn?: number;
-}
+  task: NonNullable<ModelDetails["task"]>;
+};
 
 const ModelManagementPage: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
@@ -141,8 +104,6 @@ const ModelManagementPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
-  const [listPage, setListPage] = useState(1);
-  const [listPageSize, setListPageSize] = useState(25);
   const [uploadedModelData, setUploadedModelData] = useState<any>(null);
   const [parsedModelData, setParsedModelData] = useState<any>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -163,11 +124,14 @@ const ModelManagementPage: React.FC = () => {
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToastWithDeduplication();
-  const {  user } = useAuth();
+  const { user } = useAuth();
+  const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
+  /** View tab index shifts when the create/register tab is hidden (tenant admin read-only). */
+  const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
   const { checkSessionExpiry } = useSessionExpiry();
   const router = useRouter();
-  
+
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
     if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
@@ -185,40 +149,46 @@ const ModelManagementPage: React.FC = () => {
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
     const t = router.query.tab;
-    if (t === "2") setActiveTab(2);
+    if (isRegistryReadOnly && (t === "1" || t === "create")) {
+      setActiveTab(0);
+      if (router.query.tab) {
+        const q = { ...router.query } as Record<string, string>;
+        delete q.tab;
+        router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
+      }
+      return;
+    }
+    if (t === "2") setActiveTab(viewTabIndex);
     else if (t === "1") setActiveTab(1);
     else if (t !== "1" && t !== "2") setActiveTab(0);
-  }, [router.query.tab]);
+  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex]);
 
-  // Fetch models on component mount
-  useEffect(() => {
-    const fetchModels = async () => {
-      setIsLoading(true);
-      try {
-        const fetchedModels = await getAllModels();
-        setModels(fetchedModels as unknown as Model[]);
-      } catch (error: any) {
-        console.error("Failed to fetch models:", error);
-        
-        // Use centralized error handler
-        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-        
-          toast({
-          title: showOnlyMessage ? undefined : errorTitle,
-          description: errorMessage,
-            status: "error",
-            duration: 5000,
-            isClosable: true,
-          });
-        // On error, set empty array
-          setModels([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Fetch all models for current task/status filters (paginated API walk) for client search + pagination
+  const fetchModels = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const result = await fetchAllModelsMatchingFilters({
+        taskType: filterTaskType || undefined,
+        versionStatus: filterVersionStatus || undefined,
+      });
+      setModels(result.items as unknown as Model[]);
+    } catch (error: any) {
+      console.error("Failed to fetch models:", error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      setModels([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filterTaskType, filterVersionStatus, toast]);
 
-    fetchModels();
-  }, [toast]);
+  useEffect(() => { fetchModels(); }, [fetchModels]);
 
   // Fetch services: deprecate is only disabled when the model has at least one published service
   useEffect(() => {
@@ -239,80 +209,27 @@ const ModelManagementPage: React.FC = () => {
     fetchServices();
   }, []);
 
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
-    useAdminTableSurface();
+  const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
 
-  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
-
-  // Unique task types from models (for filter dropdown)
-  const taskTypeOptions = useMemo(() => {
-    const types = new Set<string>();
-    models.forEach((m) => {
-      if (m.task?.type) types.add(m.task.type.toUpperCase());
-    });
-    return Array.from(types).sort();
-  }, [models]);
-
-  // Sort key: prefer versionStatusUpdatedAt (latest update), fallback to submittedOn/updatedOn (created/updated)
-  const getModelSortTime = (m: Model): number => {
-    if (m.versionStatusUpdatedAt) {
-      const t = new Date(m.versionStatusUpdatedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    const submitted = m.submittedOn != null ? (m.submittedOn > 1e12 ? m.submittedOn : m.submittedOn * 1000) : 0;
-    const updated = m.updatedOn != null ? (m.updatedOn > 1e12 ? m.updatedOn : m.updatedOn * 1000) : 0;
-    return updated || submitted;
-  };
-
-  // Apply search (model name only) and filters (version status, task type), then sort by selected mode.
-  const filteredModels = useMemo(() => {
+  // Client-side name filter + sort over the full fetched registry list.
+  const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const filtered = models.filter((m) => {
-      if (q) {
-        if (!(m.name ?? "").toLowerCase().includes(q)) return false;
-      }
-      if (filterVersionStatus) {
-        const status = m.versionStatus?.toLowerCase() || "active";
-        if (filterVersionStatus === "active" && status !== "active") return false;
-        if (filterVersionStatus === "deprecated" && status === "active") return false;
-      }
-      if (filterTaskType && (m.task?.type ?? "").toUpperCase() !== filterTaskType) return false;
-      return true;
-    });
-    // Default mode is newest-first; users can switch to explicit name sorting.
+    const filtered = q
+      ? models.filter((m) => (m.name ?? "").toLowerCase().includes(q))
+      : models;
+    if (sortBy === "time") return filtered;
     return [...filtered].sort((a, b) => {
-      const timeA = getModelSortTime(a);
-      const timeB = getModelSortTime(b);
       const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-
-      if (sortBy === "time") {
-        if (timeB !== timeA) return timeB - timeA;
-        return 0;
-      }
-
       if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      if (timeB !== timeA) return timeB - timeA;
       return 0;
     });
-  }, [models, searchQuery, filterVersionStatus, filterTaskType, nameSortDirection, sortBy]);
-
-  const totalModels = filteredModels.length;
-  const totalPages = Math.max(1, Math.ceil(totalModels / listPageSize));
-  const startRow = totalModels === 0 ? 0 : (listPage - 1) * listPageSize + 1;
-  const endRow = Math.min(listPage * listPageSize, totalModels);
-  const paginatedModels = filteredModels.slice((listPage - 1) * listPageSize, listPage * listPageSize);
-
-  // Keep page in valid range when list length changes (e.g. after search/filter)
-  useEffect(() => {
-    if (listPage > totalPages && totalPages >= 1) setListPage(totalPages);
-  }, [totalModels, listPageSize, listPage, totalPages]);
+  }, [models, searchQuery, sortBy, nameSortDirection]);
 
   const hasActiveFilters = filterVersionStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterVersionStatus("");
     setFilterTaskType("");
-    setListPage(1);
   };
 
   const getTaskColor = (taskType: string) => {
@@ -330,7 +247,7 @@ const ModelManagementPage: React.FC = () => {
 
   const handleInputChange = (
     field: keyof Model,
-    value: string | Task | string[]
+    value: string | TaskSpec | string[]
   ) => {
     setFormData((prev) => ({
       ...prev,
@@ -352,7 +269,6 @@ const ModelManagementPage: React.FC = () => {
 
   const handleDownloadSample = () => {
     const sampleModel = {
-      modelId: "example/example-model",
       version: "1.0.0",
       name: "example-model",
       description: "A sample model for demonstration purposes",
@@ -446,44 +362,45 @@ const ModelManagementPage: React.FC = () => {
 
   const validateModelData = (data: any): string[] => {
     const errors: string[] = [];
-    
-    // Required fields
-    if (!data.modelId || typeof data.modelId !== 'string' || data.modelId.trim() === '') {
-      errors.push('modelId is required and must be a non-empty string');
-    }
-    
+
+    // modelId is server-generated from name + version; not required in upload JSON
+
     if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
       errors.push('name is required and must be a non-empty string');
     }
-    
+
+    if (!data.version || typeof data.version !== 'string' || data.version.trim() === '') {
+      errors.push('version is required and must be a non-empty string');
+    }
+
     if (!data.description || typeof data.description !== 'string' || data.description.trim() === '') {
       errors.push('description is required and must be a non-empty string');
     }
-    
+
     if (!data.task || typeof data.task !== 'object' || !data.task.type) {
       errors.push('task is required and must be an object with a type field');
     }
-    
+
     if (!data.languages || !Array.isArray(data.languages) || data.languages.length === 0) {
       errors.push('languages is required and must be a non-empty array');
     }
-    
+
     if (!data.license || typeof data.license !== 'string' || data.license.trim() === '') {
       errors.push('license is required and must be a non-empty string');
     }
-    
+
     if (!data.domain || !Array.isArray(data.domain) || data.domain.length === 0) {
       errors.push('domain is required and must be a non-empty array');
     }
-    
+
     if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== 'object') {
       errors.push('inferenceEndPoint is required and must be an object');
     }
-    
+
     if (!data.submitter || typeof data.submitter !== 'object' || !data.submitter.name) {
       errors.push('submitter is required and must be an object with a name field');
     }
-    
+
     // Validate model name format (alphanumeric, hyphens, forward slashes only)
     if (data.name) {
       const namePattern = /^[a-zA-Z0-9/-]+$/;
@@ -491,27 +408,27 @@ const ModelManagementPage: React.FC = () => {
         errors.push('name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). Example: "example-model" or "org/model-name"');
       }
     }
-    
+
     return errors;
   };
 
   const handleCreateModel = async () => {
     if (!parsedModelData) return;
-    
+
     // Check session expiry before creating
     if (!checkSessionExpiry()) return;
-    
+
     setIsUploading(true);
     setUploadError(null);
-    
+
     try {
       // Prepare model data with timestamps if not present
       const currentTimestamp = Math.floor(Date.now() / 1000);
+      const { modelId: _ignoredModelId, ...rest } = parsedModelData;
       const modelData: any = {
-        ...parsedModelData,
+        ...rest,
         submittedOn: parsedModelData.submittedOn || currentTimestamp,
         updatedOn: parsedModelData.updatedOn || currentTimestamp,
-        version: parsedModelData.version || "1.0",
       };
 
       // Create model via API
@@ -530,8 +447,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
 
       // Reset file input
       if (fileInputRef.current) {
@@ -540,9 +456,9 @@ const ModelManagementPage: React.FC = () => {
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      
+
       setUploadError(errorMessage);
-      
+
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
@@ -621,10 +537,10 @@ const ModelManagementPage: React.FC = () => {
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      
+
       setUploadError(errorMessage);
       setValidationErrors([]);
-      
+
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
@@ -640,7 +556,7 @@ const ModelManagementPage: React.FC = () => {
   const handleViewModel = async (modelId: string) => {
     // Check session expiry before viewing model
     if (!checkSessionExpiry()) return;
-    
+
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
@@ -650,7 +566,7 @@ const ModelManagementPage: React.FC = () => {
         task: { type: model.task?.type ?? model.task_type ?? model.taskType ?? "" },
       });
       setIsViewingModel(true);
-      setActiveTab(2); // Switch to View Model tab
+      setActiveTab(viewTabIndex);
       router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
     } catch (error) {
       toast({
@@ -666,7 +582,7 @@ const ModelManagementPage: React.FC = () => {
   const handleUpdateModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedModel) return;
-    
+
     // Check session expiry before updating
     if (!checkSessionExpiry()) return;
 
@@ -694,8 +610,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
       const updatedModel = await getModelById(selectedModel.modelId);
       setSelectedModel(updatedModel as unknown as Model);
       setUpdateFormData(updatedModel as unknown as Partial<Model>);
@@ -716,7 +631,7 @@ const ModelManagementPage: React.FC = () => {
   const handleDeprecateModel = async (model: Model) => {
     // Check session expiry before deprecating
     if (!checkSessionExpiry()) return;
-    
+
     if (!model.modelId || !model.version) {
       toast({
         title: "Deprecate Failed",
@@ -734,7 +649,7 @@ const ModelManagementPage: React.FC = () => {
       await updateModel({
         modelId: model.modelId,
         version: model.version,
-        versionStatus: "DEPRECATED",
+        versionStatus: MODEL_VERSION.STATUS.DEPRECATED,
       });
 
       toast({
@@ -744,10 +659,9 @@ const ModelManagementPage: React.FC = () => {
         duration: 5000,
         isClosable: true,
       });
-      
+
       // Refresh models list and selected model
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -770,7 +684,7 @@ const ModelManagementPage: React.FC = () => {
   const handleActivateModel = async (model: Model) => {
     // Check session expiry before activating
     if (!checkSessionExpiry()) return;
-    
+
     if (!model.modelId || !model.version) {
       toast({
         title: "Activate Failed",
@@ -788,7 +702,7 @@ const ModelManagementPage: React.FC = () => {
       await updateModel({
         modelId: model.modelId,
         version: model.version,
-        versionStatus: "ACTIVE",
+        versionStatus: MODEL_VERSION.STATUS.ACTIVE,
       });
 
       toast({
@@ -800,8 +714,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -845,6 +758,123 @@ const ModelManagementPage: React.FC = () => {
     setConfirmAction(null);
   };
 
+  const modelColumns = useMemo((): AdminTableColumn<Model>[] => {
+    return [
+      {
+        id: "name",
+        header: "Name",
+        sortable: {
+          label: "Name",
+          direction: nameSortDirection,
+          onAsc: () => {
+            setSortBy("name");
+            setNameSortDirection("asc");
+          },
+          onDesc: () => {
+            setSortBy("name");
+            setNameSortDirection("desc");
+          },
+          ascAriaLabel: "Sort models by name ascending",
+          descAriaLabel: "Sort models by name descending",
+        },
+        cell: (model) => (
+          <Text fontSize="sm" noOfLines={1} title={model.name}>
+            {model.name}
+          </Text>
+        ),
+      },
+      {
+        id: "version",
+        header: "Version",
+        cell: (model) => (
+          <Text fontSize="sm" fontWeight="medium">
+            {model.version || "1.0"}
+          </Text>
+        ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: (model) => (
+          <Badge
+            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
+            fontSize="xs"
+          >
+            {formatModelVersionStatusLabel(model.versionStatus)}
+          </Badge>
+        ),
+      },
+      {
+        id: "task",
+        header: "Task Type",
+        cell: (model) => (
+          <Badge colorScheme={getTaskColor(model.task.type)} fontSize="xs">
+            {model.task.type.toUpperCase()}
+          </Badge>
+        ),
+      },
+      {
+        id: "created",
+        header: "Created At",
+        cell: (model) => (
+          <Text fontSize="sm" color="gray.600">
+            {model.createdAt ? new Date(model.createdAt).toLocaleDateString() : "N/A"}
+          </Text>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        tdProps: { onClick: (e) => e.stopPropagation() },
+        cell: (model) => (
+          <HStack spacing={3} align="center">
+            <Tooltip label="View" placement="top" hasArrow>
+              <IconButton
+                aria-label="View"
+                icon={<ViewIcon />}
+                size="sm"
+                variant="ghost"
+                colorScheme="blue"
+                _hover={{ bg: "blue.50" }}
+                onClick={() => handleViewModel(model.modelId)}
+              />
+            </Tooltip>
+            {!isRegistryReadOnly &&
+              ((model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) &&
+              !modelIdsWithPublishedService.has(model.modelId) ? (
+                <Tooltip label="Deprecate model" placement="top" hasArrow>
+                  <Box as="span" display="inline-flex" alignItems="center">
+                    <Switch
+                      size="md"
+                      colorScheme="green"
+                      isChecked={true}
+                      onChange={() => openConfirmDialog("deprecate", model)}
+                      isDisabled={updatingModelId !== null}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Box>
+                </Tooltip>
+              ) : model.versionStatus?.toLowerCase() !== "active" && model.versionStatus ? (
+                <Tooltip label="Activate model" placement="top" hasArrow>
+                  <Box as="span" display="inline-flex" alignItems="center">
+                    <Switch
+                      size="md"
+                      colorScheme="green"
+                      isChecked={false}
+                      onChange={() => openConfirmDialog("activate", model)}
+                      isDisabled={updatingModelId !== null}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Box>
+                </Tooltip>
+              ) : null)}
+          </HStack>
+        ),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nameSortDirection, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
+
   return (
     <>
       <Head>
@@ -856,22 +886,27 @@ const ModelManagementPage: React.FC = () => {
            <VStack spacing={6} w="full">
                   <ManagementPageHeader
                     title="Model Management"
-                    description="Manage and configure AI models"
+                    description={
+                      isRegistryReadOnly
+                        ? "View models in the registry (read-only)"
+                        : "Manage and configure AI models"
+                    }
                   />
-        
+
                   <Grid
                     gap={8}
                     w="full"
                     mx="auto"
                   >
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs 
-              colorScheme="blue" 
-              variant="enclosed" 
+            <Tabs
+              colorScheme="blue"
+              variant="enclosed"
               index={activeTab}
               onChange={(index) => {
+                if (isRegistryReadOnly && index === 1) return;
                 setActiveTab(index);
-                if (index !== 2) {
+                if (index !== viewTabIndex) {
                   setIsViewingModel(false);
                   setSelectedModel(null);
                 }
@@ -883,7 +918,9 @@ const ModelManagementPage: React.FC = () => {
             >
               <TabList>
                 <Tab fontWeight="semibold">Model Registry</Tab>
-                <Tab fontWeight="semibold">Register Model</Tab>
+                {!isRegistryReadOnly && (
+                  <Tab fontWeight="semibold">Register Model</Tab>
+                )}
                 {isViewingModel && selectedModel && (
                   <Tab fontWeight="semibold">View Model</Tab>
                 )}
@@ -899,269 +936,110 @@ const ModelManagementPage: React.FC = () => {
                       </Heading>
                     </CardHeader>
                     <CardBody>
-                      {isLoading ? (
-                        <Box textAlign="center" py={8}>
-                          <Text color="gray.500">Loading models...</Text>
-                        </Box>
-                      ) : (
-                        <>
-                        {/* Search and filters - consistent with portal patterns */}
-                        <VStack align="stretch" spacing={4} mb={4}>
-                          <TableFilterToolbar
-                            hasActiveFilters={hasActiveFilters}
-                            onClear={clearAllFilters}
-                            align="flex-end"
-                          >
-                            <FormControl w={{ base: "full", md: "280px" }}>
-                              <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                                Search
-                              </FormLabel>
-                              <InputGroup>
-                                <InputLeftElement pointerEvents="none">
-                                  <SearchIcon color="gray.400" />
-                                </InputLeftElement>
-                                <Input
-                                  placeholder="Search by model name..."
-                                  value={searchQuery}
-                                  onChange={(e) => setSearchQuery(e.target.value)}
-                                  bg={cardBg}
-                                  pl={10}
-                                  size="sm"
-                                />
-                              </InputGroup>
-                            </FormControl>
-                            <FormControl w={{ base: "full", sm: "140px" }}>
-                              <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                                Status
-                              </FormLabel>
-                              <Select
-                                size="sm"
+                      <AdminDataTable
+                        key={`${filterTaskType}-${filterVersionStatus}`}
+                        items={registryTableItems}
+                        columns={modelColumns}
+                        getRowKey={(model) => model.modelId}
+                        onRowClick={(model) => handleViewModel(model.modelId)}
+                        paginate="client"
+                        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                        isLoading={isLoading}
+                        loadingMessage="Loading models..."
+                        emptyMessage="No models in the registry yet."
+                        noResultsMessage="No results found. Try adjusting your search or filters."
+                        unfilteredCount={models.length}
+                        hasActiveFilters={hasActiveFilters}
+                        onClearFilters={clearAllFilters}
+                        filters={
+                          <VStack align="stretch" spacing={3} w="full">
+                            <HStack flexWrap="wrap" spacing={3} align="flex-end">
+                              <TableSearchField
+                                label="Search"
+                                value={searchQuery}
+                                onChange={setSearchQuery}
+                                placeholder="Search by model name..."
+                                formControlProps={{ w: { base: "full", md: "280px" } }}
+                              />
+                              <TableSelectField
+                                label="Status"
                                 value={filterVersionStatus}
-                                onChange={(e) => {
-                                  setFilterVersionStatus(e.target.value);
-                                  setListPage(1);
-                                }}
-                                bg={cardBg}
+                                onChange={setFilterVersionStatus}
+                                formControlProps={{ w: { base: "full", sm: "140px" } }}
                               >
-                                <option value="">All</option>
-                                <option value="active">Active</option>
-                                <option value="deprecated">Deprecated</option>
-                              </Select>
-                            </FormControl>
-                            <FormControl w={{ base: "full", sm: "160px" }}>
-                              <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                                Task type
-                              </FormLabel>
-                              <Select
-                                size="sm"
-                                value={filterTaskType}
-                                onChange={(e) => {
-                                  setFilterTaskType(e.target.value);
-                                  setListPage(1);
-                                }}
-                                bg={cardBg}
-                              >
-                                <option value="">All</option>
-                                {taskTypeOptions.map((t) => (
-                                  <option key={t} value={t}>{t}</option>
+                                <option value={MODEL_VERSION.FILTER.ALL}>All</option>
+                                {MODEL_VERSION_FILTER_LIST.map((s) => (
+                                  <option key={s} value={s}>
+                                    {formatModelVersionFilterLabel(s)}
+                                  </option>
                                 ))}
-                              </Select>
-                            </FormControl>
-                          </TableFilterToolbar>
-                          {hasActiveFilters && (
-                            <HStack spacing={2} flexWrap="wrap">
-                              {searchQuery.trim() && (
-                                <Badge
-                                  colorScheme="blue"
-                                  fontSize="xs"
-                                  px={2}
-                                  py={1}
-                                  cursor="pointer"
-                                  onClick={() => { setSearchQuery(""); setListPage(1); }}
-                                  _hover={{ opacity: 0.8 }}
-                                >
-                                  Search: &quot;{searchQuery.trim()}&quot; ×
-                                </Badge>
-                              )}
-                              {filterVersionStatus && (
-                                <Badge
-                                  colorScheme="gray"
-                                  fontSize="xs"
-                                  px={2}
-                                  py={1}
-                                  cursor="pointer"
-                                  onClick={() => { setFilterVersionStatus(""); setListPage(1); }}
-                                  _hover={{ opacity: 0.8 }}
-                                >
-                                  Status: {filterVersionStatus === "active" ? "Active" : "Deprecated"} ×
-                                </Badge>
-                              )}
-                              {filterTaskType && (
-                                <Badge
-                                  colorScheme="gray"
-                                  fontSize="xs"
-                                  px={2}
-                                  py={1}
-                                  cursor="pointer"
-                                  onClick={() => { setFilterTaskType(""); setListPage(1); }}
-                                  _hover={{ opacity: 0.8 }}
-                                >
-                                  Task: {filterTaskType} ×
-                                </Badge>
-                              )}
-                            </HStack>
-                          )}
-                        </VStack>
-
-                        {filteredModels.length === 0 ? (
-                          <Box textAlign="center" py={8}>
-                            <Text color="gray.500">
-                              No results found.
-                              {models.length === 0
-                                ? " No models in the registry yet."
-                                : " Try adjusting your search or filters."}
-                            </Text>
-                          </Box>
-                        ) : (
-                        <Box maxH="60vh" overflowY="auto" overflowX="hidden">
-                          <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                            <Thead bg={tableHeaderBg}>
-                              <Tr>
-                                <Th>
-                                  <TableSortHeader
-                                    label="Name"
-                                    direction={nameSortDirection}
-                                    onAsc={() => {
-                                      setSortBy("name");
-                                      setNameSortDirection("asc");
-                                      setListPage(1);
-                                    }}
-                                    onDesc={() => {
-                                      setSortBy("name");
-                                      setNameSortDirection("desc");
-                                      setListPage(1);
-                                    }}
-                                    ascAriaLabel="Sort models by name ascending"
-                                    descAriaLabel="Sort models by name descending"
-                                  />
-                                </Th>
-                                <Th>Version</Th>
-                                <Th> Status</Th>
-                                <Th>Task Type</Th>
-                                <Th>Actions</Th>
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {paginatedModels.map((model) => (
-                              <Tr 
-                                key={model.modelId} 
-                                _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
-                                onClick={() => handleViewModel(model.modelId)}
+                              </TableSelectField>
+                              <TableSelectField
+                                label="Task type"
+                                value={filterTaskType}
+                                onChange={setFilterTaskType}
+                                formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
-                                <Td>
-                                  <Text fontSize="sm" noOfLines={1} title={model.name}>
-                                    {model.name}
-                                  </Text>
-                                </Td>
-                                <Td>
-                                  <Text fontSize="sm" fontWeight="medium">
-                                    {model.version || "1.0"}
-                                  </Text>
-                                </Td>
-                                <Td>
+                                <option value="">All</option>
+                                {MODEL_TASK_TYPE_LIST.map((t) => (
+                                  <option key={t} value={t}>
+                                    {formatModelTaskTypeLabel(t)}
+                                  </option>
+                                ))}
+                              </TableSelectField>
+                            </HStack>
+                            {hasActiveFilters && (
+                              <HStack spacing={2} flexWrap="wrap">
+                                {searchQuery.trim() && (
                                   <Badge
-                                    colorScheme={model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? "green" : "gray"}
+                                    colorScheme="blue"
                                     fontSize="xs"
+                                    px={2}
+                                    py={1}
+                                    cursor="pointer"
+                                    onClick={() => setSearchQuery("")}
+                                    _hover={{ opacity: 0.8 }}
                                   >
-                                    {model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? "ACTIVE" : "DEPRECATED"}
+                                    Search: &quot;{searchQuery.trim()}&quot; ×
                                   </Badge>
-                                </Td>
-                                <Td>
+                                )}
+                                {filterVersionStatus && (
                                   <Badge
-                                    colorScheme={getTaskColor(model.task.type)}
+                                    colorScheme="gray"
                                     fontSize="xs"
+                                    px={2}
+                                    py={1}
+                                    cursor="pointer"
+                                    onClick={() => setFilterVersionStatus("")}
+                                    _hover={{ opacity: 0.8 }}
                                   >
-                                    {model.task.type.toUpperCase()}
+                                    Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
                                   </Badge>
-                                </Td>
-                                <Td onClick={(e) => e.stopPropagation()}>
-                                  <HStack spacing={3} align="center">
-                                    <Tooltip label="View" placement="top" hasArrow>
-                                      <IconButton
-                                        aria-label="View"
-                                        icon={<ViewIcon />}
-                                        size="sm"
-                                        variant="ghost"
-                                        colorScheme="blue"
-                                        _hover={{ bg: "blue.50" }}
-                                        onClick={() => handleViewModel(model.modelId)}
-                                      />
-                                    </Tooltip>
-                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithPublishedService.has(model.modelId) ? (
-                                      <Tooltip label="Deprecate model" placement="top" hasArrow>
-                                        <Box as="span" display="inline-flex" alignItems="center">
-                                          <Switch
-                                            size="md"
-                                            colorScheme="green"
-                                            isChecked={true}
-                                            onChange={() => openConfirmDialog("deprecate", model)}
-                                            isDisabled={updatingModelId !== null}
-                                            onClick={(e) => e.stopPropagation()}
-                                          />
-                                        </Box>
-                                      </Tooltip>
-                                    ) : (model.versionStatus?.toLowerCase() !== "active" && model.versionStatus) ? (
-                                      <Tooltip label="Activate model" placement="top" hasArrow>
-                                        <Box as="span" display="inline-flex" alignItems="center">
-                                          <Switch
-                                            size="md"
-                                            colorScheme="green"
-                                            isChecked={false}
-                                            onChange={() => openConfirmDialog("activate", model)}
-                                            isDisabled={updatingModelId !== null}
-                                            onClick={(e) => e.stopPropagation()}
-                                          />
-                                        </Box>
-                                      </Tooltip>
-                                    ) : null}
-                                  </HStack>
-                                </Td>
-                              </Tr>
-                              ))}
-                            </Tbody>
-                          </Table>
-                        </Box>
-                        )}
-                      {!isLoading && filteredModels.length > 0 && (
-                        <TablePaginationBar
-                          startRow={startRow}
-                          endRow={endRow}
-                          totalItems={totalModels}
-                          page={listPage}
-                          totalPages={totalPages}
-                          pageSize={listPageSize}
-                          pageSizeOptions={PAGE_SIZE_OPTIONS}
-                          onPageSizeChange={(value) => {
-                            setListPageSize(value);
-                            setListPage(1);
-                          }}
-                          onFirst={() => setListPage(1)}
-                          onPrev={() => setListPage((p) => Math.max(1, p - 1))}
-                          onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
-                          onLast={() => setListPage(totalPages)}
-                          canPrev={listPage > 1}
-                          canNext={listPage < totalPages}
-                          borderColor={cardBorder}
-                          bg={cardBg}
-                        />
-                      )}
-                        </>
-                      )}
+                                )}
+                                {filterTaskType && (
+                                  <Badge
+                                    colorScheme="gray"
+                                    fontSize="xs"
+                                    px={2}
+                                    py={1}
+                                    cursor="pointer"
+                                    onClick={() => setFilterTaskType("")}
+                                    _hover={{ opacity: 0.8 }}
+                                  >
+                                    Task: {formatModelTaskTypeLabel(filterTaskType)} ×
+                                  </Badge>
+                                )}
+                              </HStack>
+                            )}
+                          </VStack>
+                        }
+                      />
                     </CardBody>
                   </Card>
                 </TabPanel>
 
                 {/* Create Model Tab */}
+                {!isRegistryReadOnly && (
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
@@ -1202,7 +1080,7 @@ const ModelManagementPage: React.FC = () => {
                                 Required Fields:
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to &quot;1.0&quot;), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                name, version, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: refUrl, benchmarks. modelId is auto-generated from name and version. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
                               </Text>
                             </Box>
                             </FormControl>
@@ -1384,6 +1262,7 @@ const ModelManagementPage: React.FC = () => {
                     </CardBody>
                   </Card>
                 </TabPanel>
+                )}
 
                 {/* View Model Tab */}
                 {isViewingModel && selectedModel && (
@@ -1395,7 +1274,8 @@ const ModelManagementPage: React.FC = () => {
                            {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
-                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
+                            {!isRegistryReadOnly &&
+                              (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
                               <Button
                                 size="sm"
                                 colorScheme="blue"
@@ -1406,7 +1286,8 @@ const ModelManagementPage: React.FC = () => {
                                 Create Service
                               </Button>
                             )}
-                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
+                            {!isRegistryReadOnly &&
+                            (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
                               <Tooltip label="Deprecate model" placement="top" hasArrow>
                                 <Box as="span" display="inline-flex" alignItems="center">
                                   <Switch
@@ -1437,6 +1318,11 @@ const ModelManagementPage: React.FC = () => {
                       <CardBody>
                         {!isEditingModel && (
                           <VStack spacing={6} align="stretch">
+                            {isRegistryReadOnly && (
+                              <Badge colorScheme="gray" alignSelf="flex-start" fontSize="sm" px={2} py={1}>
+                                Read-only
+                              </Badge>
+                            )}
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <Box>
                                 <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
@@ -1461,11 +1347,15 @@ const ModelManagementPage: React.FC = () => {
                                   Status
                                 </Text>
                                 <Badge
-                                  colorScheme={selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "green" : "gray"}
+                                  colorScheme={
+                                    isModelVersionStatusActive(selectedModel.versionStatus)
+                                      ? "green"
+                                      : "gray"
+                                  }
                                   fontSize="sm"
                                   p={2}
                                 >
-                                  {selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "ACTIVE" : "DEPRECATED"}
+                                  {formatModelVersionStatusLabel(selectedModel.versionStatus)}
                                 </Badge>
                               </Box>
                               <Box>
@@ -1565,4 +1455,3 @@ const ModelManagementPage: React.FC = () => {
 };
 
 export default ModelManagementPage;
-

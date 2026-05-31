@@ -30,7 +30,6 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "api-gateway-service:8080"
           - "auth-service:8081"
           - "config-service:8082"
           - "metrics-service:8083"
@@ -65,7 +64,6 @@ scrape_configs:
     metrics_path: /enterprise/metrics
     static_configs:
       - targets:
-          - "api-gateway-service:8080"
           - "auth-service:8081"
           - "config-service:8082"
           - "metrics-service:8083"
@@ -84,6 +82,8 @@ scrape_configs:
           - "speaker-diarization-service:8095"
           - "language-diarization-service:8090"
           - "audio-lang-detection-service:8096"
+          # - "host.docker.internal:8090"
+          - "inference-service:8090"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -106,4 +106,3 @@ scrape_configs:
     static_configs:
       - targets:
           - "node-exporter:9100"
-

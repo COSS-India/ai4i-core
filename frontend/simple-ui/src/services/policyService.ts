@@ -1,7 +1,16 @@
-import api, { apiEndpoints } from "./api";
-
-/** Matches Postman `POLICY_BASE_URL` + path (e.g. `/pii-types`), no `/v1` segment. */
-const POLICY_API = apiEndpoints.policy.base;
+import { z } from "zod";
+import { apiService } from "./api";
+import { apiEndpoints } from "./apiEndpoints";
+import {
+  auditLogDetailOutSchema,
+  auditLogListResponseSchema,
+  piiTypeListResponseSchema,
+  piiTypeOutSchema,
+  policyHealthSchema,
+  policyListResponseSchema,
+  policyOutSchema,
+  policyStatusPatchSchema,
+} from "./dto/schemas/policy";
 
 export interface PolicyListMeta {
   total: number;
@@ -68,23 +77,27 @@ export interface AuditLogListResponse {
 
 export type MaskFormat = "full" | "partial" | "redact";
 
+const ep = apiEndpoints.policy;
+
 export const policyService = {
-  health: () => api.get<{ status: string }>(`${POLICY_API}/health`),
+  health: () =>
+    apiService.get(ep.health, { responseSchema: policyHealthSchema }),
 
   listPiiTypes: (params?: {
     search?: string;
     page?: number;
     limit?: number;
-  }) => api.get<PiiTypeListResponse>(`${POLICY_API}/pii-types`, { params }),
+  }) => apiService.get(ep.piiTypes, { params, responseSchema: piiTypeListResponseSchema }),
 
-  getPiiType: (id: string) => api.get<PiiTypeOut>(`${POLICY_API}/pii-types/${id}`),
+  getPiiType: (id: string) =>
+    apiService.get(ep.piiTypeById(id), { responseSchema: piiTypeOutSchema }),
 
   createPiiType: (body: {
     pii_type_label: string;
     regex_pattern: string;
     example_values: string[];
     mask_format: MaskFormat;
-  }) => api.post<PiiTypeOut>(`${POLICY_API}/pii-types`, body),
+  }) => apiService.post(ep.piiTypes, body, { responseSchema: piiTypeOutSchema }),
 
   updatePiiType: (
     id: string,
@@ -94,9 +107,10 @@ export const policyService = {
       example_values: string[];
       mask_format: MaskFormat;
     }>
-  ) => api.put<PiiTypeOut>(`${POLICY_API}/pii-types/${id}`, body),
+  ) => apiService.put(ep.piiTypeById(id), body, { responseSchema: piiTypeOutSchema }),
 
-  deletePiiType: (id: string) => api.delete<void>(`${POLICY_API}/pii-types/${id}`),
+  deletePiiType: (id: string) =>
+    apiService.delete(ep.piiTypeById(id), { responseSchema: z.unknown() }),
 
   listPolicies: (params?: {
     is_global?: boolean;
@@ -104,9 +118,10 @@ export const policyService = {
     search?: string;
     page?: number;
     limit?: number;
-  }) => api.get<PolicyListResponse>(`${POLICY_API}/policies`, { params }),
+  }) => apiService.get(ep.policies, { params, responseSchema: policyListResponseSchema }),
 
-  getPolicy: (id: string) => api.get<PolicyOut>(`${POLICY_API}/policies/${id}`),
+  getPolicy: (id: string) =>
+    apiService.get(ep.policyById(id), { responseSchema: policyOutSchema }),
 
   /**
    * API expects `pii_types: [{ pii_type_id }]`, not Postman’s `pii_type_ids`.
@@ -119,7 +134,7 @@ export const policyService = {
     supported_languages: string[];
     tenant_ids?: string[];
     pii_types?: { pii_type_id: string }[];
-  }) => api.post<PolicyOut>(`${POLICY_API}/policies`, body),
+  }) => apiService.post(ep.policies, body, { responseSchema: policyOutSchema }),
 
   updatePolicy: (
     id: string,
@@ -131,14 +146,15 @@ export const policyService = {
       tenant_ids: string[];
       pii_types: { pii_type_id: string }[] | null;
     }>
-  ) => api.put<PolicyOut>(`${POLICY_API}/policies/${id}`, body),
+  ) => apiService.put(ep.policyById(id), body, { responseSchema: policyOutSchema }),
 
-  deletePolicy: (id: string) => api.delete<void>(`${POLICY_API}/policies/${id}`),
+  deletePolicy: (id: string) =>
+    apiService.delete(ep.policyById(id), { responseSchema: z.unknown() }),
 
   setPolicyStatus: (id: string, is_active: boolean) =>
-    api.patch<{ is_active: boolean }>(`${POLICY_API}/policies/${id}/status`, {
+    apiService.patch(ep.policyStatus(id), {
       is_active,
-    }),
+    }, { responseSchema: policyStatusPatchSchema }),
 
   listAuditLogs: (params?: {
     tenant_id?: string;
@@ -149,8 +165,8 @@ export const policyService = {
     min_pii_count?: number;
     page?: number;
     limit?: number;
-  }) => api.get<AuditLogListResponse>(`${POLICY_API}/audit-logs`, { params }),
+  }) => apiService.get(ep.auditLogs, { params, responseSchema: auditLogListResponseSchema }),
 
   getAuditLog: (id: string) =>
-    api.get<AuditLogDetailOut>(`${POLICY_API}/audit-logs/${id}`),
+    apiService.get(ep.auditLogById(id), { responseSchema: auditLogDetailOutSchema }),
 };

@@ -1,6 +1,5 @@
-// Profile-specific types (re-export multi-tenant and extend as needed)
+// Profile-specific types
 
-/** Common timezones for user profile */
 export const TIMEZONES = [
   "UTC",
   "America/New_York",
@@ -16,7 +15,6 @@ export const TIMEZONES = [
   "Australia/Sydney",
 ];
 
-/** Common languages for user profile */
 export const LANGUAGES = [
   { value: "en", label: "English" },
   { value: "hi", label: "Hindi" },
@@ -31,22 +29,20 @@ export const LANGUAGES = [
 ];
 
 export type {
+  TenantAssignableRole,
   TenantView,
   TenantUserView,
   ListTenantsResponse,
   ListUsersResponse,
-} from "../../types/multiTenant";
+} from "../../types/tenant";
 
-export type TenantSubView = "adopter" | "tenant";
+import type { TenantAssignableRole } from "../../types/tenant";
 
 export interface TenantFormState {
-  organization_name: string;
-  domain: string;
+  organisation: string;
   contact_name: string;
-  contact_email: string;
-  contact_phone: string;
-  description: string;
-  requested_subscriptions: string[];
+  email: string;
+  phone_number: string;
 }
 
 export interface TenantUserFormState {
@@ -54,36 +50,32 @@ export interface TenantUserFormState {
   email: string;
   username: string;
   full_name: string;
-  services: string[];
-  is_approved: boolean;
-  role: string;
+  phone_number: string;
+  role: TenantAssignableRole;
 }
 
-/** Role options for Add User and Filter by Role (match backend role names) */
+/** Static tenant user role values for list filters (Tenant Admin, User). */
 export const TENANT_USER_ROLE_OPTIONS = [
-  { value: "USER", label: "User" },
-  { value: "ADMIN", label: "Admin" },
-  { value: "GUEST", label: "Guest" },
-  { value: "MODERATOR", label: "Moderator" },
   { value: "TENANT ADMIN", label: "Tenant Admin" },
-] as const;
+  { value: "USER", label: "User" },
+] as const satisfies ReadonlyArray<{ value: TenantAssignableRole; label: string }>;
 
 export interface EditTenantFormState {
   tenant_id: string;
-  organization_name?: string;
-  contact_email?: string;
-  domain?: string;
-  requested_quotas?: { characters_length?: number; audio_length_in_min?: number };
-  usage_quota?: { characters_length?: number; audio_length_in_min?: number };
+  organisation?: string;
+  contact_name?: string;
+  email?: string;
+  phone_number?: string;
 }
 
 export interface EditUserFormState {
   tenant_id: string;
-  user_id: number;
+  user_id: string;
   username?: string;
   email?: string;
-  is_approved?: boolean;
-  role?: string;
+  full_name?: string;
+  phone_number?: string;
+  role: TenantAssignableRole;
 }
 
 export interface StatusUpdateTarget {
@@ -95,9 +87,8 @@ export interface StatusUpdateTarget {
 export interface StatusUpdateUserTarget {
   type: "user";
   tenant_id: string;
-  user_id: number;
+  user_id: string;
   currentStatus: string;
-  /** Auth role from tenant user list (e.g. TENANT ADMIN); used when applying post-update session rules */
   role?: string;
 }
 
@@ -105,6 +96,6 @@ export type StatusUpdateTargetUnion = StatusUpdateTarget | StatusUpdateUserTarge
 
 export interface DeleteUserTarget {
   tenant_id: string;
-  user_id: number;
+  user_id: string;
   username?: string;
 }

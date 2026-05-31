@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   AlertDescription,
@@ -9,7 +9,6 @@ import {
   Card,
   CardBody,
   Checkbox,
-  Flex,
   FormControl,
   FormLabel,
   GridItem,
@@ -17,40 +16,31 @@ import {
   HStack,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftElement,
   Select,
   SimpleGrid,
-  Spinner,
   Stack,
   Tab,
-  Table,
-  TableContainer,
   TabList,
   TabPanel,
   TabPanels,
   Tabs,
-  Tbody,
-  Td,
   Text,
   Textarea,
-  Th,
-  Thead,
   Tooltip,
-  Tr,
   useColorModeValue,
   useDisclosure,
   useToast,
   VStack,
 } from "@chakra-ui/react";
-import { DeleteIcon, EditIcon, SearchIcon } from "@chakra-ui/icons";
+import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
-import {
-  TableFilterToolbar,
-  TablePaginationBar,
-  TableSortHeader,
-  useAdminTableSurface,
-} from "../common/TableControls";
+import { useAdminTableSurface } from "../common/TableControls";
+import AdminDataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
+  TableSearchField,
+  TableSelectField,
+  type AdminTableColumn,
+} from "../common/AdminDataTable";
 import StandardModal from "../common/StandardModal";
 
 interface Rule {
@@ -98,9 +88,8 @@ function actionBadgeColorScheme(action: string): string {
 }
 
 export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
-  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const toast = useToast();
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
+  const { tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
   const pageBg = useColorModeValue("gray.50", "gray.900");
   const mutedText = useColorModeValue("gray.600", "gray.400");
   const headingColor = useColorModeValue("gray.900", "white");
@@ -131,16 +120,13 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [rulesSortDirection, setRulesSortDirection] = useState<"asc" | "desc">("asc");
-  const [rulesPage, setRulesPage] = useState(1);
-  const [rulesPageSize, setRulesPageSize] = useState(10);
   const [mappingSearch, setMappingSearch] = useState("");
+  const [mappingDomainFilter, setMappingDomainFilter] = useState("all");
   const [mappingSortDirection, setMappingSortDirection] = useState<"asc" | "desc">("asc");
-  const [mappingPage, setMappingPage] = useState(1);
-  const [mappingPageSize, setMappingPageSize] = useState(10);
   const [auditSearch, setAuditSearch] = useState("");
+  const [auditDomainFilter, setAuditDomainFilter] = useState("all");
+  const [auditTenantFilter, setAuditTenantFilter] = useState("all");
   const [auditSortDirection, setAuditSortDirection] = useState<"asc" | "desc">("desc");
-  const [auditPage, setAuditPage] = useState(1);
-  const [auditPageSize, setAuditPageSize] = useState(10);
 
   useEffect(() => {
     if (!isAdmin || activeTab !== "audit") return;
@@ -154,8 +140,9 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const fetchAllDomains = async () => {
     const res = await piiService.getAllDomains();
-    setAllDomains(res.data);
-    const active = new Set(res.data.filter((d: Domain) => d.is_active).map((d: Domain) => d.domain_id));
+    const rows = res.data as Domain[];
+    setAllDomains(rows);
+    const active = new Set(rows.filter((d) => d.is_active).map((d) => d.domain_id));
     setCheckedDomains(active);
   };
 
@@ -389,75 +376,269 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const activeDomainCount = allDomains.filter((d) => d.is_active).length;
 
-  const sortedRules = [...editingRules].sort((a, b) => {
-    const nameCmp = (a.entity_type ?? "").localeCompare(b.entity_type ?? "", undefined, {
-      sensitivity: "base",
+  const sortedRules = useMemo(() => {
+    const copy = [...editingRules];
+    copy.sort((a, b) => {
+      const nameCmp = (a.entity_type ?? "").localeCompare(b.entity_type ?? "", undefined, {
+        sensitivity: "base",
+      });
+      return rulesSortDirection === "asc" ? nameCmp : -nameCmp;
     });
-    return rulesSortDirection === "asc" ? nameCmp : -nameCmp;
-  });
-  const rulesTotal = sortedRules.length;
-  const rulesTotalPages = Math.max(1, Math.ceil(rulesTotal / rulesPageSize));
-  const rulesStartRow = rulesTotal === 0 ? 0 : (rulesPage - 1) * rulesPageSize + 1;
-  const rulesEndRow = Math.min(rulesPage * rulesPageSize, rulesTotal);
-  const paginatedRules = sortedRules.slice((rulesPage - 1) * rulesPageSize, rulesPage * rulesPageSize);
+    return copy;
+  }, [editingRules, rulesSortDirection]);
 
-  const filteredMappings = tenantMappings.filter((row) => {
+  const sortedMappings = useMemo(() => {
     const q = mappingSearch.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (row.tenant_id ?? "").toLowerCase().includes(q) || (row.domain_id ?? "").toLowerCase().includes(q)
-    );
-  });
-  const sortedMappings = [...filteredMappings].sort((a, b) => {
-    const nameCmp = (a.tenant_id ?? "").localeCompare(b.tenant_id ?? "", undefined, {
-      sensitivity: "base",
+    const filtered = tenantMappings.filter((row) => {
+      if (mappingDomainFilter !== "all" && row.domain_id !== mappingDomainFilter) return false;
+      if (!q) return true;
+      return (
+        (row.tenant_id ?? "").toLowerCase().includes(q) ||
+        (row.domain_id ?? "").toLowerCase().includes(q)
+      );
     });
-    return mappingSortDirection === "asc" ? nameCmp : -nameCmp;
-  });
-  const mappingsTotal = sortedMappings.length;
-  const mappingsTotalPages = Math.max(1, Math.ceil(mappingsTotal / mappingPageSize));
-  const mappingsStartRow = mappingsTotal === 0 ? 0 : (mappingPage - 1) * mappingPageSize + 1;
-  const mappingsEndRow = Math.min(mappingPage * mappingPageSize, mappingsTotal);
-  const paginatedMappings = sortedMappings.slice(
-    (mappingPage - 1) * mappingPageSize,
-    mappingPage * mappingPageSize
-  );
+    const copy = [...filtered];
+    copy.sort((a, b) => {
+      const nameCmp = (a.tenant_id ?? "").localeCompare(b.tenant_id ?? "", undefined, {
+        sensitivity: "base",
+      });
+      return mappingSortDirection === "asc" ? nameCmp : -nameCmp;
+    });
+    return copy;
+  }, [tenantMappings, mappingSearch, mappingDomainFilter, mappingSortDirection]);
 
-  const filteredAuditLogs = auditLogs.filter((row) => {
+  const sortedAuditLogs = useMemo(() => {
     const q = auditSearch.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (row.trace_id ?? "").toLowerCase().includes(q) ||
-      (row.tenant_id ?? "").toLowerCase().includes(q) ||
-      (row.domain_id ?? "").toLowerCase().includes(q) ||
-      (row.target_context ?? "").toLowerCase().includes(q)
-    );
-  });
-  const sortedAuditLogs = [...filteredAuditLogs].sort((a, b) => {
-    const timeA = a.created_at ? new Date(a.created_at).getTime() : -Infinity;
-    const timeB = b.created_at ? new Date(b.created_at).getTime() : -Infinity;
-    return auditSortDirection === "asc" ? timeA - timeB : timeB - timeA;
-  });
-  const auditTotal = sortedAuditLogs.length;
-  const auditTotalPages = Math.max(1, Math.ceil(auditTotal / auditPageSize));
-  const auditStartRow = auditTotal === 0 ? 0 : (auditPage - 1) * auditPageSize + 1;
-  const auditEndRow = Math.min(auditPage * auditPageSize, auditTotal);
-  const paginatedAuditLogs = sortedAuditLogs.slice(
-    (auditPage - 1) * auditPageSize,
-    auditPage * auditPageSize
+    const filtered = auditLogs.filter((row) => {
+      if (auditDomainFilter !== "all" && row.domain_id !== auditDomainFilter) return false;
+      if (auditTenantFilter !== "all" && row.tenant_id !== auditTenantFilter) return false;
+      if (!q) return true;
+      return (
+        (row.trace_id ?? "").toLowerCase().includes(q) ||
+        (row.tenant_id ?? "").toLowerCase().includes(q) ||
+        (row.domain_id ?? "").toLowerCase().includes(q) ||
+        (row.target_context ?? "").toLowerCase().includes(q)
+      );
+    });
+    const copy = [...filtered];
+    copy.sort((a, b) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : -Infinity;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : -Infinity;
+      return auditSortDirection === "asc" ? timeA - timeB : timeB - timeA;
+    });
+    return copy;
+  }, [auditLogs, auditSearch, auditDomainFilter, auditTenantFilter, auditSortDirection]);
+
+  const auditDomainOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const row of auditLogs) {
+      if (row.domain_id) ids.add(row.domain_id);
+    }
+    return Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [auditLogs]);
+
+  const auditTenantOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const row of auditLogs) {
+      if (row.tenant_id) ids.add(row.tenant_id);
+    }
+    return Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [auditLogs]);
+
+  const mappingHasActiveFilters =
+    !!mappingSearch.trim() || mappingDomainFilter !== "all";
+
+  const auditHasActiveFilters =
+    !!auditSearch.trim() || auditDomainFilter !== "all" || auditTenantFilter !== "all";
+
+  const rulesColumns: AdminTableColumn<Rule>[] = useMemo(
+    () => [
+      {
+        id: "entity",
+        header: "Entity",
+        sortable: {
+          label: "Entity",
+          direction: rulesSortDirection,
+          onAsc: () => setRulesSortDirection("asc"),
+          onDesc: () => setRulesSortDirection("desc"),
+          ascAriaLabel: "Sort rules by entity ascending",
+          descAriaLabel: "Sort rules by entity descending",
+        },
+        cell: (r) => (
+          <Text fontWeight="bold" fontSize="sm">
+            {r.entity_type}
+          </Text>
+        ),
+      },
+      {
+        id: "action",
+        header: "Action",
+        cell: (r) => (
+          <Badge colorScheme={actionBadgeColorScheme(r.action)} fontSize="xs">
+            {r.action}
+          </Badge>
+        ),
+      },
+      {
+        id: "delete",
+        header: "Delete",
+        thProps: { textAlign: "right" },
+        tdProps: { textAlign: "right" },
+        cell: (r) => (
+          <Tooltip label="Remove rule" hasArrow>
+            <IconButton
+              aria-label="Remove rule"
+              icon={<DeleteIcon />}
+              size="sm"
+              variant="ghost"
+              colorScheme="red"
+              _hover={{ bg: "red.50" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                removeRuleForRow(r);
+              }}
+            />
+          </Tooltip>
+        ),
+      },
+    ],
+    [rulesSortDirection]
   );
 
-  useEffect(() => {
-    if (rulesPage > rulesTotalPages) setRulesPage(rulesTotalPages);
-  }, [rulesPage, rulesTotalPages]);
+  const mappingColumns: AdminTableColumn<TenantDomainMappingRow>[] = useMemo(
+    () => [
+      {
+        id: "tenant",
+        header: "Tenant ID",
+        sortable: {
+          label: "Tenant ID",
+          direction: mappingSortDirection,
+          onAsc: () => setMappingSortDirection("asc"),
+          onDesc: () => setMappingSortDirection("desc"),
+          ascAriaLabel: "Sort mappings by tenant ascending",
+          descAriaLabel: "Sort mappings by tenant descending",
+        },
+        cell: (row) => (
+          <Text fontFamily="mono" fontSize="xs">
+            {row.tenant_id}
+          </Text>
+        ),
+      },
+      {
+        id: "domain",
+        header: "Domain",
+        cell: (row) => (
+          <Text fontWeight="semibold" fontSize="sm">
+            {row.domain_id}
+          </Text>
+        ),
+      },
+      {
+        id: "updated",
+        header: "Updated",
+        cell: (row) => (
+          <Text fontSize="xs" color={mutedText}>
+            {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}
+          </Text>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        thProps: { textAlign: "right" },
+        tdProps: { textAlign: "right" },
+        cell: (row) => (
+          <Tooltip label="Remove mapping" hasArrow>
+            <IconButton
+              aria-label="Remove mapping"
+              icon={<DeleteIcon />}
+              size="sm"
+              variant="ghost"
+              colorScheme="red"
+              _hover={{ bg: "red.50" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleDeleteTenantMapping(row.tenant_id);
+              }}
+            />
+          </Tooltip>
+        ),
+      },
+    ],
+    [mappingSortDirection, mutedText]
+  );
 
-  useEffect(() => {
-    if (mappingPage > mappingsTotalPages) setMappingPage(mappingsTotalPages);
-  }, [mappingPage, mappingsTotalPages]);
-
-  useEffect(() => {
-    if (auditPage > auditTotalPages) setAuditPage(auditTotalPages);
-  }, [auditPage, auditTotalPages]);
+  const auditColumns: AdminTableColumn<AuditLogRow>[] = useMemo(
+    () => [
+      {
+        id: "time",
+        header: "Time",
+        sortable: {
+          label: "Time",
+          direction: auditSortDirection,
+          onAsc: () => setAuditSortDirection("asc"),
+          onDesc: () => setAuditSortDirection("desc"),
+          ascAriaLabel: "Sort audit logs by time ascending",
+          descAriaLabel: "Sort audit logs by time descending",
+        },
+        cell: (row) => (
+          <Text fontSize="xs" color={mutedText} whiteSpace="nowrap">
+            {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+          </Text>
+        ),
+      },
+      {
+        id: "trace",
+        header: "Trace ID",
+        cell: (row) => (
+          <Text fontFamily="mono" fontSize="xs">
+            {row.trace_id || "—"}
+          </Text>
+        ),
+      },
+      {
+        id: "tenant",
+        header: "Tenant",
+        cell: (row) => (
+          <Text fontFamily="mono" fontSize="xs">
+            {row.tenant_id || "—"}
+          </Text>
+        ),
+      },
+      {
+        id: "domain",
+        header: "Domain",
+        cell: (row) => (
+          <Text fontSize="sm">{row.domain_id || "—"}</Text>
+        ),
+      },
+      {
+        id: "target",
+        header: "Target",
+        tdProps: { maxW: "200px" },
+        cell: (row) => (
+          <Text isTruncated title={row.target_context || ""} fontSize="sm">
+            {row.target_context || "—"}
+          </Text>
+        ),
+      },
+      {
+        id: "pii",
+        header: "PII Count",
+        thProps: { isNumeric: true },
+        tdProps: { isNumeric: true },
+        cell: (row) => <Text fontSize="sm">{row.pii_count ?? 0}</Text>,
+      },
+      {
+        id: "latency",
+        header: "Latency",
+        thProps: { isNumeric: true },
+        tdProps: { isNumeric: true },
+        cell: (row) => <Text fontSize="sm">{row.processing_ms ?? 0} ms</Text>,
+      },
+    ],
+    [auditSortDirection, mutedText]
+  );
 
   const tabIndex = activeTab === "admin" ? 0 : 1;
 
@@ -624,93 +805,25 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                       ) : null}
                     </HStack>
 
-                    <TableContainer flex="1" maxH="280px" overflowY="auto" mb={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
-                      <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                        <Thead bg={tableHeaderBg}>
-                          <Tr>
-                            <Th>
-                              <TableSortHeader
-                                label="Entity"
-                                direction={rulesSortDirection}
-                                onAsc={() => {
-                                  setRulesSortDirection("asc");
-                                  setRulesPage(1);
-                                }}
-                                onDesc={() => {
-                                  setRulesSortDirection("desc");
-                                  setRulesPage(1);
-                                }}
-                                ascAriaLabel="Sort rules by entity ascending"
-                                descAriaLabel="Sort rules by entity descending"
-                              />
-                            </Th>
-                            <Th>Action</Th>
-                            <Th textAlign="right">Delete</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {paginatedRules.map((r) => (
-                            <Tr
-                              key={`${r.entity_type}-${r.action}-${r.custom_regex ?? ""}`}
-                              cursor="pointer"
-                              _hover={{ bg: tableRowHoverBg }}
-                              onClick={() => openRuleDetail(r)}
-                            >
-                              <Td fontWeight="bold">{r.entity_type}</Td>
-                              <Td>
-                                <Badge colorScheme={actionBadgeColorScheme(r.action)} fontSize="xs">
-                                  {r.action}
-                                </Badge>
-                              </Td>
-                              <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
-                                <Tooltip label="Remove rule" hasArrow>
-                                  <IconButton
-                                    aria-label="Remove rule"
-                                    icon={<DeleteIcon />}
-                                    size="sm"
-                                    variant="ghost"
-                                    colorScheme="red"
-                                    _hover={{ bg: "red.50" }}
-                                    onClick={() => removeRuleForRow(r)}
-                                  />
-                                </Tooltip>
-                              </Td>
-                            </Tr>
-                          ))}
-                          {rulesTotal === 0 ? (
-                            <Tr>
-                              <Td colSpan={3} textAlign="center" color={mutedText} py={6}>
-                                No rules configured for this domain.
-                              </Td>
-                            </Tr>
-                          ) : null}
-                        </Tbody>
-                      </Table>
-                    </TableContainer>
-
-                    {rulesTotal > 0 ? (
-                      <TablePaginationBar
-                        startRow={rulesStartRow}
-                        endRow={rulesEndRow}
-                        totalItems={rulesTotal}
-                        page={rulesPage}
-                        totalPages={rulesTotalPages}
-                        pageSize={rulesPageSize}
-                        pageSizeOptions={PAGE_SIZE_OPTIONS}
-                        onPageSizeChange={(value) => {
-                          setRulesPageSize(value);
-                          setRulesPage(1);
+                    <Box flex="1" mb={4}>
+                      <AdminDataTable
+                        key={`rules-${editingDomainId ?? "none"}-${rulesSortDirection}`}
+                        items={sortedRules}
+                        columns={rulesColumns}
+                        getRowKey={(r) => `${r.entity_type}-${r.action}-${r.custom_regex ?? ""}`}
+                        paginate="client"
+                        initialPageSize={10}
+                        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                        emptyMessage="No rules configured for this domain."
+                        onRowClick={openRuleDetail}
+                        maxHeight="280px"
+                        tableContainerProps={{
+                          borderWidth: "1px",
+                          borderRadius: "md",
+                          borderColor,
                         }}
-                        onFirst={() => setRulesPage(1)}
-                        onPrev={() => setRulesPage((p) => Math.max(1, p - 1))}
-                        onNext={() => setRulesPage((p) => Math.min(rulesTotalPages, p + 1))}
-                        onLast={() => setRulesPage(rulesTotalPages)}
-                        canPrev={rulesPage > 1}
-                        canNext={rulesPage < rulesTotalPages}
-                        borderColor={borderColor}
-                        bg={cardBg}
                       />
-                    ) : null}
+                    </Box>
 
                     <Box borderWidth="1px" borderRadius="md" borderColor={borderColor} p={4} mb={4} bg={cardBg}>
                       <Text fontSize="sm" fontWeight="bold" color="blue.500" mb={3}>
@@ -832,118 +945,47 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                         <AlertDescription fontSize="xs">{adminDataError}</AlertDescription>
                       </Alert>
                     ) : null}
-                    <TableFilterToolbar
-                      hasActiveFilters={!!mappingSearch.trim()}
-                      onClear={() => {
+                    <AdminDataTable
+                      key={`mappings-${mappingSortDirection}`}
+                      items={sortedMappings}
+                      columns={mappingColumns}
+                      getRowKey={(row) => row.tenant_id}
+                      paginate="client"
+                      initialPageSize={10}
+                      pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                      emptyMessage="No mappings configured."
+                      noResultsMessage="No mappings match the current filters."
+                      unfilteredCount={tenantMappings.length}
+                      onRowClick={openMappingDetail}
+                      maxHeight="50vh"
+                      filters={
+                        <>
+                          <TableSearchField
+                            label="Search"
+                            value={mappingSearch}
+                            onChange={setMappingSearch}
+                            placeholder="Search tenant or domain…"
+                          />
+                          <TableSelectField
+                            label="Domain"
+                            value={mappingDomainFilter}
+                            onChange={setMappingDomainFilter}
+                          >
+                            <option value="all">All domains</option>
+                            {allDomains.map((d) => (
+                              <option key={d.domain_id} value={d.domain_id}>
+                                {d.domain_id}
+                              </option>
+                            ))}
+                          </TableSelectField>
+                        </>
+                      }
+                      hasActiveFilters={mappingHasActiveFilters}
+                      onClearFilters={() => {
                         setMappingSearch("");
-                        setMappingPage(1);
+                        setMappingDomainFilter("all");
                       }}
-                    >
-                      <InputGroup size="sm" maxW="280px">
-                        <InputLeftElement pointerEvents="none">
-                          <SearchIcon color="gray.400" />
-                        </InputLeftElement>
-                        <Input
-                          pl={9}
-                          placeholder="Search tenant or domain…"
-                          value={mappingSearch}
-                          onChange={(e) => {
-                            setMappingSearch(e.target.value);
-                            setMappingPage(1);
-                          }}
-                          bg={cardBg}
-                        />
-                      </InputGroup>
-                    </TableFilterToolbar>
-                    <TableContainer maxH="50vh" overflowY="auto" mt={3}>
-                      <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                        <Thead bg={tableHeaderBg}>
-                          <Tr>
-                            <Th>
-                              <TableSortHeader
-                                label="Tenant ID"
-                                direction={mappingSortDirection}
-                                onAsc={() => {
-                                  setMappingSortDirection("asc");
-                                  setMappingPage(1);
-                                }}
-                                onDesc={() => {
-                                  setMappingSortDirection("desc");
-                                  setMappingPage(1);
-                                }}
-                                ascAriaLabel="Sort mappings by tenant ascending"
-                                descAriaLabel="Sort mappings by tenant descending"
-                              />
-                            </Th>
-                            <Th>Domain</Th>
-                            <Th>Updated</Th>
-                            <Th textAlign="right">Actions</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {mappingsTotal === 0 ? (
-                            <Tr>
-                              <Td colSpan={4} textAlign="center" color={mutedText} py={6}>
-                                No mappings configured.
-                              </Td>
-                            </Tr>
-                          ) : (
-                            paginatedMappings.map((row) => (
-                              <Tr
-                                key={row.tenant_id}
-                                cursor="pointer"
-                                _hover={{ bg: tableRowHoverBg }}
-                                onClick={() => openMappingDetail(row)}
-                              >
-                                <Td fontFamily="mono" fontSize="xs">
-                                  {row.tenant_id}
-                                </Td>
-                                <Td fontWeight="semibold">{row.domain_id}</Td>
-                                <Td fontSize="xs" color={mutedText}>
-                                  {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}
-                                </Td>
-                                <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
-                                  <Tooltip label="Remove mapping" hasArrow>
-                                    <IconButton
-                                      aria-label="Remove mapping"
-                                      icon={<DeleteIcon />}
-                                      size="sm"
-                                      variant="ghost"
-                                      colorScheme="red"
-                                      _hover={{ bg: "red.50" }}
-                                      onClick={() => void handleDeleteTenantMapping(row.tenant_id)}
-                                    />
-                                  </Tooltip>
-                                </Td>
-                              </Tr>
-                            ))
-                          )}
-                        </Tbody>
-                      </Table>
-                    </TableContainer>
-                    {mappingsTotal > 0 ? (
-                      <TablePaginationBar
-                        startRow={mappingsStartRow}
-                        endRow={mappingsEndRow}
-                        totalItems={mappingsTotal}
-                        page={mappingPage}
-                        totalPages={mappingsTotalPages}
-                        pageSize={mappingPageSize}
-                        pageSizeOptions={PAGE_SIZE_OPTIONS}
-                        onPageSizeChange={(value) => {
-                          setMappingPageSize(value);
-                          setMappingPage(1);
-                        }}
-                        onFirst={() => setMappingPage(1)}
-                        onPrev={() => setMappingPage((p) => Math.max(1, p - 1))}
-                        onNext={() => setMappingPage((p) => Math.min(mappingsTotalPages, p + 1))}
-                        onLast={() => setMappingPage(mappingsTotalPages)}
-                        canPrev={mappingPage > 1}
-                        canNext={mappingPage < mappingsTotalPages}
-                        borderColor={borderColor}
-                        bg={cardBg}
-                      />
-                    ) : null}
+                    />
                   </CardBody>
                 </Card>
               </GridItem>
@@ -1003,130 +1045,69 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
               </SimpleGrid>
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
-                  <TableFilterToolbar
-                    hasActiveFilters={!!auditSearch.trim()}
-                    onClear={() => {
-                      setAuditSearch("");
-                      setAuditPage(1);
-                    }}
-                    rightContent={
+                  <AdminDataTable
+                    key={`audit-${auditSortDirection}`}
+                    items={sortedAuditLogs}
+                    columns={auditColumns}
+                    getRowKey={(row) => String(row.id)}
+                    paginate="client"
+                    initialPageSize={10}
+                    pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                    isLoading={auditLoading}
+                    loadingMessage="Loading logs…"
+                    emptyMessage="No audit logs found."
+                    noResultsMessage="No audit logs match the current filters."
+                    unfilteredCount={auditLogs.length}
+                    onRowClick={openAuditTraceDetail}
+                    maxHeight="60vh"
+                    tableContainerProps={{ overflowX: "auto" }}
+                    filterToolbarRightContent={
                       <Button size="sm" variant="outline" onClick={() => void fetchAuditLogs()}>
                         Refresh
                       </Button>
                     }
-                  >
-                    <InputGroup size="sm" maxW="300px">
-                      <InputLeftElement pointerEvents="none">
-                        <SearchIcon color="gray.400" />
-                      </InputLeftElement>
-                      <Input
-                        pl={9}
-                        placeholder="Search trace / tenant / domain / target…"
-                        value={auditSearch}
-                        onChange={(e) => {
-                          setAuditSearch(e.target.value);
-                          setAuditPage(1);
-                        }}
-                        bg={cardBg}
-                      />
-                    </InputGroup>
-                  </TableFilterToolbar>
-                  <TableContainer maxH="60vh" overflowY="auto" overflowX="auto" mt={3}>
-                    <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                      <Thead bg={tableHeaderBg}>
-                        <Tr>
-                          <Th>
-                            <TableSortHeader
-                              label="Time"
-                              direction={auditSortDirection}
-                              onAsc={() => {
-                                setAuditSortDirection("asc");
-                                setAuditPage(1);
-                              }}
-                              onDesc={() => {
-                                setAuditSortDirection("desc");
-                                setAuditPage(1);
-                              }}
-                              ascAriaLabel="Sort audit logs by time ascending"
-                              descAriaLabel="Sort audit logs by time descending"
-                            />
-                          </Th>
-                          <Th>Trace ID</Th>
-                          <Th>Tenant</Th>
-                          <Th>Domain</Th>
-                          <Th>Target</Th>
-                          <Th isNumeric>PII Count</Th>
-                          <Th isNumeric>Latency</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {auditLoading ? (
-                          <Tr>
-                            <Td colSpan={7} textAlign="center" py={8}>
-                              <Spinner mr={2} />
-                              <Text as="span" color={mutedText}>
-                                Loading logs…
-                              </Text>
-                            </Td>
-                          </Tr>
-                        ) : auditTotal === 0 ? (
-                          <Tr>
-                            <Td colSpan={7} textAlign="center" color={mutedText} py={6}>
-                              No audit logs found.
-                            </Td>
-                          </Tr>
-                        ) : (
-                          paginatedAuditLogs.map((row) => (
-                            <Tr
-                              key={row.id}
-                              cursor="pointer"
-                              _hover={{ bg: tableRowHoverBg }}
-                              onClick={() => openAuditTraceDetail(row)}
-                            >
-                              <Td fontSize="xs" color={mutedText} whiteSpace="nowrap">
-                                {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
-                              </Td>
-                              <Td fontFamily="mono" fontSize="xs">
-                                {row.trace_id || "—"}
-                              </Td>
-                              <Td fontFamily="mono" fontSize="xs">
-                                {row.tenant_id || "—"}
-                              </Td>
-                              <Td>{row.domain_id || "—"}</Td>
-                              <Td maxW="200px" isTruncated title={row.target_context || ""}>
-                                {row.target_context || "—"}
-                              </Td>
-                              <Td isNumeric>{row.pii_count ?? 0}</Td>
-                              <Td isNumeric>{row.processing_ms ?? 0} ms</Td>
-                            </Tr>
-                          ))
-                        )}
-                      </Tbody>
-                    </Table>
-                  </TableContainer>
-                  {!auditLoading && auditTotal > 0 ? (
-                    <TablePaginationBar
-                      startRow={auditStartRow}
-                      endRow={auditEndRow}
-                      totalItems={auditTotal}
-                      page={auditPage}
-                      totalPages={auditTotalPages}
-                      pageSize={auditPageSize}
-                      pageSizeOptions={PAGE_SIZE_OPTIONS}
-                      onPageSizeChange={(value) => {
-                        setAuditPageSize(value);
-                        setAuditPage(1);
-                      }}
-                      onFirst={() => setAuditPage(1)}
-                      onPrev={() => setAuditPage((p) => Math.max(1, p - 1))}
-                      onNext={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
-                      onLast={() => setAuditPage(auditTotalPages)}
-                      canPrev={auditPage > 1}
-                      canNext={auditPage < auditTotalPages}
-                      borderColor={borderColor}
-                      bg={cardBg}
-                    />
-                  ) : null}
+                    filters={
+                      <>
+                        <TableSearchField
+                          label="Search"
+                          value={auditSearch}
+                          onChange={setAuditSearch}
+                          placeholder="Search trace / tenant / domain / target…"
+                          formControlProps={{ w: { base: "full", md: "360px" } }}
+                        />
+                        <TableSelectField
+                          label="Domain"
+                          value={auditDomainFilter}
+                          onChange={setAuditDomainFilter}
+                        >
+                          <option value="all">All domains</option>
+                          {auditDomainOptions.map((id) => (
+                            <option key={id} value={id}>
+                              {id}
+                            </option>
+                          ))}
+                        </TableSelectField>
+                        <TableSelectField
+                          label="Tenant"
+                          value={auditTenantFilter}
+                          onChange={setAuditTenantFilter}
+                        >
+                          <option value="all">All tenants</option>
+                          {auditTenantOptions.map((id) => (
+                            <option key={id} value={id}>
+                              {id}
+                            </option>
+                          ))}
+                        </TableSelectField>
+                      </>
+                    }
+                    hasActiveFilters={auditHasActiveFilters}
+                    onClearFilters={() => {
+                      setAuditSearch("");
+                      setAuditDomainFilter("all");
+                      setAuditTenantFilter("all");
+                    }}
+                  />
                 </CardBody>
               </Card>
             </VStack>

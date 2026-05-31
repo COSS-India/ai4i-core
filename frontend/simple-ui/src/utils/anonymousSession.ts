@@ -11,7 +11,7 @@ function generateUUID(): string {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
     return window.crypto.randomUUID();
   }
-  
+
   // Fallback to manual UUID generation
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
@@ -27,22 +27,22 @@ function generateUUID(): string {
  */
 export function getAnonymousSessionId(): string {
   const key = 'anonymous_session_id';
-  
+
   if (typeof window === 'undefined') {
     // Server-side: generate temporary ID
     return generateUUID();
   }
-  
+
   try {
     // Check if we already have a session ID
     let sessionId = sessionStorage.getItem(key);
-    
+
     if (!sessionId) {
       // Generate new session ID
       sessionId = generateUUID();
       sessionStorage.setItem(key, sessionId);
     }
-    
+
     return sessionId;
   } catch (e) {
     // If sessionStorage is not available, generate temporary ID
@@ -57,9 +57,9 @@ export function getAnonymousSessionId(): string {
  */
 export function clearAnonymousSessionId(): void {
   const key = 'anonymous_session_id';
-  
+
   if (typeof window === 'undefined') return;
-  
+
   try {
     sessionStorage.removeItem(key);
   } catch (e) {
@@ -71,14 +71,21 @@ export function clearAnonymousSessionId(): void {
  * Check if current user is anonymous (not authenticated)
  * @returns boolean indicating if user is anonymous
  */
+/**
+ * True when the browser should use public try-it APIs (no JWT).
+ * A leftover access token without a stored user profile is treated as anonymous
+ * so stale sessions do not hit authenticated routes and get 401.
+ */
 export function isAnonymousUser(): boolean {
   if (typeof window === 'undefined') return true;
-  
+
   try {
     const hasAccessToken = getStoredAccessToken();
-    return !hasAccessToken;
-  } catch (e) {
+    if (!hasAccessToken) return true;
+    const hasStoredUser =
+      typeof sessionStorage !== 'undefined' && !!sessionStorage.getItem('user');
+    return !hasStoredUser;
+  } catch {
     return true;
   }
 }
-

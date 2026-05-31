@@ -1,6 +1,12 @@
 // NMT service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import {
+  inferenceConfigJsonSchema,
+  nmtHealthResponseSchema,
+  nmtInferenceResponseSchema,
+  nmtModelsListSchema,
+} from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 import {
   NMTInferenceRequest,
@@ -54,10 +60,9 @@ export const performNMTInference = async (
       },
     };
 
-    const response = await apiClient.post<NMTInferenceResponse>(
-      apiEndpoints.nmt.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.nmt.inference, payload, {
+      responseSchema: nmtInferenceResponseSchema,
+    });
 
     // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -78,9 +83,9 @@ export const performNMTInference = async (
  */
 export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   try {
-    const response = await apiClient.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
-      apiEndpoints.nmt.models
-    );
+    const response = await apiService.get(apiEndpoints.nmt.models, {
+      responseSchema: nmtModelsListSchema,
+    });
 
     return response.data.models;
   } catch (error) {
@@ -180,13 +185,13 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -232,13 +237,13 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
     // Otherwise, use the first service
     let service: any;
     if (modelId) {
-      service = services.find((s: any) => 
+      service = services.find((s: any) =>
         (s.modelId || s.model_id) === modelId
       );
     } else if (services.length > 0) {
       service = services[0];
     }
-    
+
     if (!service) {
       // Return empty response if no service found
       return {
@@ -249,11 +254,11 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
         total_languages: 0,
       };
     }
-    
+
     // Extract languages from service.languages array
     const supportedLanguages: string[] = [];
     const languageDetails: Array<{code: string; name: string}> = [];
-    
+
     if (service.languages && Array.isArray(service.languages)) {
       service.languages.forEach((lang: any) => {
         if (typeof lang === 'string') {
@@ -270,13 +275,13 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
         }
       });
     }
-    
+
     // Remove duplicates
     const uniqueLanguages = Array.from(new Set(supportedLanguages));
     const uniqueLanguageDetails = languageDetails.filter((lang, index, self) =>
       index === self.findIndex((l) => l.code === lang.code)
     );
-    
+
     return {
       model_id: service.modelId || service.model_id || modelId || '',
       provider: service.name || service.serviceId || 'unknown',
@@ -394,9 +399,9 @@ export const getNMTLanguagesForService = async (
  */
 export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
   try {
-    const response = await apiClient.get<NMTHealthResponse>(
-      apiEndpoints.nmt.health
-    );
+    const response = await apiService.get(apiEndpoints.nmt.health, {
+      responseSchema: nmtHealthResponseSchema,
+    });
 
     return response.data;
   } catch (error) {
@@ -411,7 +416,9 @@ export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
  */
 export const getNMTConfig = async () => {
   try {
-    const response = await apiClient.get('/api/v1/nmt/config');
+    const response = await apiService.get(apiEndpoints.nmt.config, {
+      responseSchema: inferenceConfigJsonSchema,
+    });
     return response.data;
   } catch (error) {
     console.error('Failed to fetch NMT config:', error);
@@ -428,10 +435,10 @@ export const getSupportedLanguagePairs = async (modelId?: string): Promise<Langu
   try {
     const languagesResponse = await getNMTLanguages(modelId);
     const languagePairs: LanguagePair[] = [];
-    
+
     // Generate all possible language pairs from supported languages (guard against missing/undefined)
     const supportedLanguages = languagesResponse?.supported_languages ?? [];
-    
+
     for (let i = 0; i < supportedLanguages.length; i++) {
       for (let j = 0; j < supportedLanguages.length; j++) {
         if (i !== j) {
@@ -442,7 +449,7 @@ export const getSupportedLanguagePairs = async (modelId?: string): Promise<Langu
         }
       }
     }
-    
+
     return languagePairs;
   } catch (error) {
     console.error('Failed to fetch supported language pairs:', error);
@@ -465,7 +472,7 @@ export const getSupportedLanguagePairsForService = async (
     if (!service) {
       return [];
     }
-    
+
     // If service has explicit language pairs, use those
     if (service.supported_language_pairs && service.supported_language_pairs.length > 0) {
       return service.supported_language_pairs.map(pair => ({
@@ -475,7 +482,7 @@ export const getSupportedLanguagePairsForService = async (
         targetScriptCode: pair.targetScriptCode,
       }));
     }
-    
+
     // Otherwise, get from model
     return getSupportedLanguagePairs(service.model_id);
   } catch (error) {
@@ -502,15 +509,15 @@ export const validateNMTRequest = (
     return { isValid: false, error: 'Text length exceeds maximum limit of 512 characters' };
   }
 
-  if (!config.language.sourceLanguage) {
+  if (!config.language?.sourceLanguage) {
     return { isValid: false, error: 'Source language is required' };
   }
 
-  if (!config.language.targetLanguage) {
+  if (!config.language?.targetLanguage) {
     return { isValid: false, error: 'Target language is required' };
   }
 
-  if (config.language.sourceLanguage === config.language.targetLanguage) {
+  if (config.language?.sourceLanguage === config.language?.targetLanguage) {
     return { isValid: false, error: 'Source and target languages must be different' };
   }
 
@@ -531,12 +538,12 @@ export const getModelByLanguagePair = async (
 ): Promise<NMTModelDetailsResponse | null> => {
   try {
     const models = await listNMTModels();
-    
+
     const matchingModel = models.find(model =>
       model.supported_languages.includes(languagePair.sourceLanguage) &&
       model.supported_languages.includes(languagePair.targetLanguage)
     );
-    
+
     return matchingModel || null;
   } catch (error) {
     console.error('Failed to find model for language pair:', error);
@@ -554,12 +561,12 @@ export const getServiceByLanguagePair = async (
 ): Promise<NMTServiceDetailsResponse | null> => {
   try {
     const services = await listNMTServices();
-    
+
     const matchingService = services.find(service =>
       service.supported_languages.includes(languagePair.sourceLanguage) &&
       service.supported_languages.includes(languagePair.targetLanguage)
     );
-    
+
     return matchingService || null;
   } catch (error) {
     console.error('Failed to find service for language pair:', error);

@@ -13,31 +13,21 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
-import authService from "../services/authService";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
-import type { User } from "../types/auth";
-import type { APIKeyResponse } from "../types/auth";
-
 const ApiKeyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
   const [activeTabIndex, setActiveTabIndex] = useState(0);
-  const [apiKeys, setApiKeys] = useState<APIKeyResponse[]>([]);
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(null);
+  const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
 
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
-  const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
-
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
 
   const showApiKeyManagement = isAdmin || isTenantAdmin;
@@ -48,52 +38,22 @@ const ApiKeyManagementPage: React.FC = () => {
     }
   }, [authLoading, isAuthenticated, router, showApiKeyManagement]);
 
-  const handleFetchApiKeys = async () => {
-    setIsFetchingApiKey(true);
-    setIsLoadingApiKeys(true);
-    try {
-      const response = await authService.listApiKeys();
-      const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
-      setApiKeys(keys);
-    } catch (error) {
-      console.error("Failed to fetch API keys:", error);
-    } finally {
-      setIsFetchingApiKey(false);
-      setIsLoadingApiKeys(false);
-    }
-  };
-
-  // Fetch users for create/manage tabs (admin + tenant admin)
-  useEffect(() => {
-    if (!isAuthenticated || authLoading || !user) return;
-    if (!showApiKeyManagement) return;
-
-    setIsLoadingUsers(true);
-    authService
-      .getAllUsers()
-      .then((usersList) => setUsers(usersList))
-      .catch((error) => {
-        console.error("Failed to fetch users:", error);
-      })
-      .finally(() => setIsLoadingUsers(false));
-  }, [authLoading, isAuthenticated, showApiKeyManagement, user]);
-
-  useEffect(() => {
-    if (!authLoading && isAuthenticated) {
-      handleFetchApiKeys();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, isAuthenticated]);
-
   const tabs = useMemo(() => {
     const t: { id: "create" | "manage"; label: string; show: boolean }[] = [
       { id: "create", label: "Create API Key", show: isAdmin || isTenantAdmin },
-      { id: "manage", label: "Manage API Keys", show: isAdmin },
+      { id: "manage", label: "Manage API Keys", show: isAdmin || isTenantAdmin },
     ];
     return t.filter((x) => x.show);
   }, [isAdmin, isTenantAdmin]);
 
   const manageTabIndex = tabs.findIndex((t) => t.id === "manage");
+
+  const handleTabChange = (idx: number) => {
+    setActiveTabIndex(idx);
+    if (tabs[idx]?.id === "manage") {
+      void refreshManagedKeysRef.current?.();
+    }
+  };
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -126,23 +86,24 @@ const ApiKeyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>API Key Management - AI4I Platform</title>
+        <title>Manage API - AI4I Platform</title>
         <meta name="description" content="Create and manage API keys" />
       </Head>
 
       <ContentLayout>
         <Box maxW="7xl" mx="auto" py={8} px={4}>
           <ManagementPageHeader
-            title="API Key Management"
-            description="Create and manage API keys"
+            title="Manage API"
+            description="Create and manage API keys for your account"
           />
 
           <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
             <Tabs
               colorScheme="blue"
               variant="enclosed"
+              isLazy={false}
               index={activeTabIndex}
-              onChange={(idx) => setActiveTabIndex(idx)}
+              onChange={handleTabChange}
             >
               <TabList>
                 {tabs.map((t) => (
@@ -157,17 +118,15 @@ const ApiKeyManagementPage: React.FC = () => {
                   <TabPanel key={t.id} px={0} pt={6}>
                     {t.id === "create" && (
                       <CreateApiKeyTab
-                        users={users}
-                        isLoadingUsers={isLoadingUsers}
-                        setApiKeys={setApiKeys}
-                        setSelectedApiKeyId={setSelectedApiKeyId}
+                        onApiKeyCreated={() => void refreshManagedKeysRef.current?.()}
                       />
                     )}
                     {t.id === "manage" && (
                       <ApiKeyManagementTab
-                        users={users}
-                        isLoadingUsers={false}
                         isActive={activeTabIndex === manageTabIndex}
+                        onRegisterRefresh={(refresh) => {
+                          refreshManagedKeysRef.current = refresh;
+                        }}
                       />
                     )}
                   </TabPanel>
@@ -175,9 +134,6 @@ const ApiKeyManagementPage: React.FC = () => {
               </TabPanels>
             </Tabs>
           </Card>
-
-          {/* Hidden fetch activity indicators are intentionally not shown to avoid UX changes */}
-          {(isFetchingApiKey || isLoadingApiKeys) && null}
         </Box>
       </ContentLayout>
     </>
@@ -185,4 +141,3 @@ const ApiKeyManagementPage: React.FC = () => {
 };
 
 export default ApiKeyManagementPage;
-

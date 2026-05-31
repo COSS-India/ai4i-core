@@ -1,0 +1,49 @@
+{% extends "_base.html" %}
+{% block title %}Verify your email — AI4I Platform{% endblock %}
+{% block preheader %}Confirm your email to activate your AI4I Platform account. Link expires in {{ expires_hours }} hours.{% endblock %}
+{% block heading %}Verify your email{% endblock %}
+{% block body %}
+  <p style="margin:0 0 20px 0;">
+    Hi {{ display_name }}, thanks for signing up for AI4I Platform. Confirm
+    this is your email address to activate your account &mdash; you can sign
+    in with the password you chose at signup as soon as it&rsquo;s verified.
+  </p>
+
+  {# ── Bulletproof CTA button (Outlook VML + standard fallback) ── #}
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 8px auto 24px auto;">
+    <tr>
+      <td align="center">
+        <!--[if mso]>
+        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ verify_url }}" style="height:48px;v-text-anchor:middle;width:200px;" arcsize="17%" stroke="f" fillcolor="#0b66ff">
+          <w:anchorlock/>
+          <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:600;">Verify email</center>
+        </v:roundrect>
+        <![endif]-->
+        <!--[if !mso]><!-- -->
+        <a href="{{ verify_url }}"
+           style="display:inline-block; padding:14px 28px; background-color:#0b66ff; color:#ffffff; text-decoration:none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:15px; font-weight:600; line-height:20px; border-radius:8px; mso-hide:all;">
+          Verify email
+        </a>
+        <!--<![endif]-->
+      </td>
+    </tr>
+  </table>
+
+  <p style="margin:0 0 8px 0; font-size:13px; color:#6b7280;">
+    Or paste this link into your browser:
+  </p>
+  <p style="margin:0 0 24px 0; font-size:13px; color:#374151; word-break:break-all; background:#f3f4f6; padding:12px 14px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+    <a href="{{ verify_url }}" style="color:#0b66ff; text-decoration:none; word-break:break-all;">{{ verify_url }}</a>
+  </p>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px 0; border-left:3px solid #fbbf24; background:#fffbeb; border-radius:4px;">
+    <tr>
+      <td style="padding: 12px 14px; font-size:13px; line-height:20px; color:#78350f;">
+        <strong>Heads up:</strong> this link expires in {{ expires_hours }} hours and can be used only once. Until you verify, your account stays inactive and sign-in is blocked.
+      </td>
+    </tr>
+  </table>
+{% endblock %}
+{% block footer_extra %}
+  Didn&rsquo;t sign up? You can safely ignore this email &mdash; the link will expire on its own and the account will remain inactive.
+{% endblock %}

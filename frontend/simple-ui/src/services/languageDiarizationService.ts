@@ -1,6 +1,11 @@
 // Language Diarization service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import { languageDiarizationInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  LanguageDiarizationInferenceRequest,
+  LanguageDiarizationInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface LanguageDiarizationServiceDetailsResponse {
@@ -13,26 +18,10 @@ export interface LanguageDiarizationServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface LanguageDiarizationInferenceRequest {
-  audio: Array<{
-    audioContent: string;
-  }>;
-  config: {
-    serviceId: string;
-    [key: string]: any;
-  };
-}
-
-export interface LanguageDiarizationInferenceResponse {
-  output: Array<{
-    segments?: Array<{
-      start: number;
-      end: number;
-      language: string;
-    }>;
-    [key: string]: any;
-  }>;
-}
+export type {
+  LanguageDiarizationInferenceRequest,
+  LanguageDiarizationInferenceResponse,
+} from '../types/inference';
 
 /**
  * Get list of available Language Diarization services from model management service
@@ -61,13 +50,13 @@ export const listLanguageDiarizationServices = async (): Promise<LanguageDiariza
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -110,9 +99,10 @@ export const performLanguageDiarizationInference = async (
       },
     };
 
-    const response = await apiClient.post<LanguageDiarizationInferenceResponse>(
+    const response = await apiService.post(
       apiEndpoints['language-diarization'].inference,
-      payload
+      payload,
+      { responseSchema: languageDiarizationInferenceResponseSchema }
     );
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -126,4 +116,3 @@ export const performLanguageDiarizationInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

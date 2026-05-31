@@ -1,6 +1,16 @@
 import React from "react";
 import { Button, HStack, IconButton, Select, Text, Tooltip, useColorModeValue } from "@chakra-ui/react";
 
+export {
+  default as AdminDataTable,
+  TableSearchField,
+  TableSelectField,
+  useAdminDataTable,
+  useAdminDataTableServer,
+  DEFAULT_PAGE_SIZE_OPTIONS,
+} from "./AdminDataTable";
+export type { AdminTableColumn, AdminDataTableProps } from "./AdminDataTable";
+
 /** Shared light/dark surface tokens for admin data tables (list pages, profile tabs, etc.). */
 export function useAdminTableSurface() {
   const tableBg = useColorModeValue("white", "gray.800");

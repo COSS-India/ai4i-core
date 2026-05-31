@@ -3,32 +3,27 @@
  */
 
 export interface User {
-  id: number;
+  user_id: string;
   email: string;
   username: string;
-  full_name?: string;
-  phone_number?: string;
-  timezone: string;
-  language: string;
+  full_name?: string | null;
+  phone_number?: string | null;
+  timezone?: string;
   is_active: boolean;
-  is_verified: boolean;
-  is_superuser: boolean;
-  is_tenant?: boolean;
-  created_at: string;
+  created_at?: string;
   updated_at?: string;
   last_login?: string;
   avatar_url?: string;
   preferences?: Record<string, any>;
   roles?: string[];
-  /** Tenant identifier from /api/v1/auth/me when user is a tenant admin or tenant user */
   tenant_id?: string | null;
+  is_tenant_active?: boolean | null;
 }
 
 export interface UserUpdateRequest {
   full_name?: string;
   phone_number?: string;
   timezone?: string;
-  language?: string;
   preferences?: Record<string, any>;
 }
 
@@ -54,8 +49,6 @@ export interface RegisterRequest {
   full_name?: string;
   phone_number?: string;
   timezone?: string;
-  language?: string;
-  is_tenant?: boolean;
 }
 
 export interface TokenRefreshRequest {
@@ -70,7 +63,7 @@ export interface TokenRefreshResponse {
 
 export interface TokenValidationResponse {
   valid: boolean;
-  user_id?: number;
+  user_id?: string;
   username?: string;
   tenant_id?: string;
   permission_ids: number[];
@@ -95,6 +88,26 @@ export interface PasswordResetConfirm {
   confirm_password: string;
 }
 
+export interface SetPasswordRequest {
+  token: string;
+  new_password: string;
+  confirm_password: string;
+}
+
+export interface SetPasswordStatusResponse {
+  valid: boolean;
+  status: "valid" | "expired" | "invalid" | "used";
+  message: string;
+}
+
+export interface VerifyEmailRequest {
+  token: string;
+}
+
+export interface ResendVerificationRequest {
+  email: string;
+}
+
 export interface LogoutRequest {
   refresh_token?: string;
 }
@@ -108,43 +121,42 @@ export interface APIKeyCreate {
   key_name: string;
   permissions: number[]; // Permission IDs
   expires_days?: number;
-  user_id?: number; // Optional: for admin creating keys for other users
+  user_id?: string; // Optional: for admin creating keys for other users (UUID)
 }
 
 export interface APIKeyResponse {
-  id: number;
+  /** Present on some responses; list endpoints identify keys by `api_key` (hex). */
+  id?: number;
   key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  api_key?: string; // JWT token, only returned on creation
-  permissions: string[];
-  is_active: boolean;
-  is_revoked: boolean;
-  created_at: string;
+  /** 32-char hex public identifier; required for PATCH/DELETE on current auth API. */
+  api_key?: string;
+  permissions: number[];
+  is_active?: boolean;
+  is_revoked?: boolean;
+  created_at?: string;
   expires_at?: string;
   last_used?: string;
 }
 
 export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
-  user_id: number;
+  user_id: string;
   user_email: string;
   username: string;
 }
 
+/**
+ * Form state for the admin “update API key” modal only — not sent to the API.
+ * Multi-select uses permission names; convert to IDs via catalog before PATCH.
+ */
 export interface APIKeyUpdate {
   key_name?: string;
   permissions?: string[];
-  is_active?: boolean;
 }
 
 /** Response from GET /api/v1/auth/api-keys */
 export interface APIKeyListResponse {
   api_keys: APIKeyResponse[];
-  selected_api_key_id: number | null;
-}
-
-/** Request body for POST /api/v1/auth/api-keys/select */
-export interface APIKeySelectRequest {
-  api_key_id: number;
 }
 
 export interface OAuth2Provider {

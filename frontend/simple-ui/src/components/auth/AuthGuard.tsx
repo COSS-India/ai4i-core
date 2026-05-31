@@ -28,7 +28,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const isProtectedRoute = protectedRoutes.includes(router.pathname);
   const isAdminOnlyRoute = adminOnlyRoutes.includes(router.pathname);
   const isTryItRoute = tryItRoutes.includes(router.pathname);
-  
+
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
@@ -78,4 +78,3 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 };
 
 export default AuthGuard;
-

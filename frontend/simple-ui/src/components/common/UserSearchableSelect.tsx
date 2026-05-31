@@ -18,22 +18,29 @@ import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
 import authService from "../../services/authService";
 import type { User } from "../../types/auth";
 
-export type UserSearchablePick = Pick<User, "id" | "email" | "username">;
+export type UserSearchablePick = Pick<User, "user_id" | "email" | "username" | "full_name">;
 
 const PAGE_SIZE = 100;
 
 function mergeById(a: User[], b: User[]): User[] {
-  const m = new Map<number, User>();
-  for (const u of a) m.set(u.id, u);
-  for (const u of b) m.set(u.id, u);
+  const m = new Map<string, User>();
+  for (const u of a) m.set(u.user_id, u);
+  for (const u of b) m.set(u.user_id, u);
   return Array.from(m.values());
 }
 
 function formatUserLabel(u: UserSearchablePick): string {
-  const name = (u.username || "").trim();
+  const name = getUserDisplayName(u);
   const email = (u.email || "").trim();
   if (name && email) return `${name} (${email})`;
-  return name || email || `User ${u.id}`;
+  return name || email || `User ${u.user_id}`;
+}
+
+function getUserDisplayName(u: Pick<User, "user_id" | "email" | "username" | "full_name">): string {
+  const fullName = (u.full_name || "").trim();
+  const username = (u.username || "").trim();
+  const email = (u.email || "").trim();
+  return fullName || username || email || `User ${u.user_id}`;
 }
 
 function matchesSearch(u: User, q: string): boolean {
@@ -42,15 +49,14 @@ function matchesSearch(u: User, q: string): boolean {
   return (
     (u.username || "").toLowerCase().includes(s) ||
     (u.email || "").toLowerCase().includes(s) ||
-    (u.full_name || "").toLowerCase().includes(s) ||
-    String(u.id).includes(s)
+    (u.full_name || "").toLowerCase().includes(s)
   );
 }
 
 type PickVariant = {
   variant: "pick";
-  value: number | null;
-  onChange: (userId: number | null, picked?: UserSearchablePick | null) => void;
+  value: string | null;
+  onChange: (userId: string | null, picked?: UserSearchablePick | null) => void;
   allowClear?: boolean;
 };
 
@@ -63,6 +69,8 @@ type FilterVariant = {
 
 type Common = {
   seedUsers?: User[];
+  /** When true, only `seedUsers` are shown (no global /auth/users pagination). */
+  usersFromSeedOnly?: boolean;
   isDisabled?: boolean;
   isLoading?: boolean;
   placeholder?: string;
@@ -75,6 +83,7 @@ export type UserSearchableSelectProps = Common & (PickVariant | FilterVariant);
 export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   const {
     seedUsers = [],
+    usersFromSeedOnly = false,
     isDisabled = false,
     isLoading: isLoadingExternal = false,
     placeholder = "Select a user",
@@ -94,13 +103,23 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   const initialLoadedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-
   const triggerBg = useColorModeValue("white", "gray.900");
   const menuBg = useColorModeValue("white", "gray.800");
   const borderCol = useColorModeValue("gray.200", "gray.600");
   const rowHoverBg = useColorModeValue("gray.50", "gray.700");
 
-  const mergedUsers = useMemo(() => mergeById(seedUsers, fromApi), [seedUsers, fromApi]);
+  const mergedUsers = useMemo(
+    () => (usersFromSeedOnly ? seedUsers : mergeById(seedUsers, fromApi)),
+    [seedUsers, fromApi, usersFromSeedOnly]
+  );
+
+  useEffect(() => {
+    if (!usersFromSeedOnly) return;
+    setFromApi([]);
+    hasMoreRef.current = false;
+    setHasMore(false);
+    initialLoadedRef.current = true;
+  }, [usersFromSeedOnly, seedUsers]);
 
   useEffect(() => {
     const n = seedUsers.length;
@@ -110,6 +129,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   }, [seedUsers.length]);
 
   const fetchAt = useCallback(async (offset: number) => {
+    if (usersFromSeedOnly) return;
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     setLoadingMore(true);
@@ -129,15 +149,19 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
       fetchingRef.current = false;
       setLoadingMore(false);
     }
-  }, []);
+  }, [usersFromSeedOnly]);
 
   const loadMore = useCallback(() => {
+    if (usersFromSeedOnly) return;
     if (!hasMoreRef.current || fetchingRef.current) return;
     return fetchAt(nextOffsetRef.current);
-  }, [fetchAt]);
+  }, [fetchAt, usersFromSeedOnly]);
 
   const handleOpen = () => {
-    if (!initialLoadedRef.current) {
+    if (usersFromSeedOnly) {
+      hasMoreRef.current = false;
+      setHasMore(false);
+    } else if (!initialLoadedRef.current) {
       initialLoadedRef.current = true;
       const start = seedUsers.length;
       nextOffsetRef.current = start;
@@ -154,7 +178,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   };
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || usersFromSeedOnly) return;
     const root = scrollRef.current;
     const target = sentinelRef.current;
     if (!root || !target) return;
@@ -166,14 +190,18 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
     );
     io.observe(target);
     return () => io.disconnect();
-  }, [isOpen, loadMore]);
+  }, [isOpen, loadMore, usersFromSeedOnly]);
 
   const filtered = useMemo(() => {
     const list = mergedUsers.filter((u) => matchesSearch(u, search));
     return list.sort((a, b) => {
-      const ea = (a.email || "").localeCompare(b.email || "", undefined, { sensitivity: "base" });
-      if (ea !== 0) return ea;
-      return (a.username || "").localeCompare(b.username || "", undefined, { sensitivity: "base" });
+      const displayNameOrder = getUserDisplayName(a).localeCompare(getUserDisplayName(b), undefined, {
+        sensitivity: "base",
+      });
+      if (displayNameOrder !== 0) return displayNameOrder;
+      const emailOrder = (a.email || "").localeCompare(b.email || "", undefined, { sensitivity: "base" });
+      if (emailOrder !== 0) return emailOrder;
+      return a.user_id.localeCompare(b.user_id);
     });
   }, [mergedUsers, search]);
 
@@ -182,17 +210,17 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   const displayLabel = useMemo(() => {
     if (props.variant === "filter") {
       if (props.value === "all") return props.allOptionLabel ?? "All Users";
-      const id = parseInt(props.value, 10);
-      if (Number.isNaN(id)) return placeholder;
-      const u = mergedUsers.find((x) => x.id === id);
+      const id = props.value;
+      if (!id) return placeholder;
+      const u = mergedUsers.find((x) => x.user_id === id);
       if (u) return formatUserLabel(u);
-      return `User #${id}`;
+      return `User ${id}`;
     }
     if (pickValue == null) return placeholder;
-    const u = mergedUsers.find((x) => x.id === pickValue);
+    const u = mergedUsers.find((x) => x.user_id === pickValue);
     if (u) return formatUserLabel(u);
-    if (selectedPreview && selectedPreview.id === pickValue) return formatUserLabel(selectedPreview);
-    return `User #${pickValue}`;
+    if (selectedPreview && selectedPreview.user_id === pickValue) return formatUserLabel(selectedPreview);
+    return `User ${pickValue}`;
   }, [props, pickValue, mergedUsers, selectedPreview, placeholder]);
 
   const h = size === "sm" ? "32px" : "40px";
@@ -200,9 +228,9 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
 
   const handlePick = (u: User) => {
     if (props.variant === "pick") {
-      props.onChange(u.id, { id: u.id, email: u.email, username: u.username });
+      props.onChange(u.user_id, { user_id: u.user_id, email: u.email, username: u.username, full_name: u.full_name });
     } else {
-      props.onChange(String(u.id));
+      props.onChange(u.user_id);
     }
     handleClose();
   };
@@ -307,7 +335,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
             )}
             {filtered.map((u) => (
               <Box
-                key={u.id}
+                key={u.user_id}
                 as="button"
                 type="button"
                 w="full"
@@ -317,8 +345,8 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
                 _hover={{ bg: rowHoverBg }}
                 onClick={() => handlePick(u)}
                 bg={
-                  (props.variant === "pick" && pickValue === u.id) ||
-                  (props.variant === "filter" && props.value === String(u.id))
+                  (props.variant === "pick" && pickValue === u.user_id) ||
+                  (props.variant === "filter" && props.value === u.user_id)
                     ? rowHoverBg
                     : undefined
                 }
@@ -347,7 +375,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
             )}
             <Box ref={sentinelRef} h="1px" w="full" aria-hidden />
           </Box>
-          {!search.trim() && hasMore && !loadingMore && (
+            {!usersFromSeedOnly && !search.trim() && hasMore && !loadingMore && (
             <Text fontSize="xs" color="gray.500" mt={1} px={1}>
               Scroll down to load more
             </Text>

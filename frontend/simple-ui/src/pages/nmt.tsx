@@ -41,7 +41,7 @@ const NMTPage: React.FC = () => {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
   const [remainingRequests, setRemainingRequests] = useState(5);
-  
+
   const {
     languagePair,
     selectedServiceId,
@@ -61,10 +61,17 @@ const NMTPage: React.FC = () => {
   } = useNMT();
 
   // Fetch available services (anonymous: try-it API with X-Try-It: true; logged-in: model management with auth)
-  const { data: services, isLoading: servicesLoading } = useQuery({
+  const {
+    data: services,
+    isLoading: servicesLoading,
+    isError: servicesError,
+    error: servicesLoadError,
+  } = useQuery({
     queryKey: ["nmt-services", isAuthenticated],
     queryFn: listNMTServices,
+    enabled: !authLoading,
     staleTime: 10 * 60 * 1000, // 10 minutes
+    retry: 1,
   });
 
   // Check if user is anonymous and update rate limit info
@@ -92,12 +99,16 @@ const NMTPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
+  const anonymousRateLimitReached =
+    !authLoading && !isAuthenticated && remainingRequests <= 0;
+
   const canTranslate =
     !!selectedServiceId?.trim() &&
     !!languagePair.sourceLanguage?.trim() &&
     !!languagePair.targetLanguage?.trim() &&
     languagePair.sourceLanguage !== languagePair.targetLanguage &&
-    !!inputText?.trim();
+    !!inputText?.trim() &&
+    !anonymousRateLimitReached;
 
   const handleTranslate = () => {
     if (!canTranslate) return;
@@ -129,7 +140,13 @@ const NMTPage: React.FC = () => {
           {/* Anonymous User Alert */}
           {!authLoading && !isAuthenticated && (
             <Alert
-              status={showRateLimitWarning ? "warning" : "info"}
+              status={
+                anonymousRateLimitReached
+                  ? "error"
+                  : showRateLimitWarning
+                    ? "warning"
+                    : "info"
+              }
               variant="left-accent"
               borderRadius="md"
               maxW="1200px"
@@ -138,15 +155,22 @@ const NMTPage: React.FC = () => {
               <AlertIcon />
               <Box flex="1">
                 <AlertTitle>
-                  {showRateLimitWarning
-                    ? "Rate Limit Warning"
-                    : "Try Neural Machine Translation"}
+                  {anonymousRateLimitReached
+                    ? "Rate Limit Reached"
+                    : showRateLimitWarning
+                      ? "Rate Limit Warning"
+                      : "Try Neural Machine Translation"}
                 </AlertTitle>
                 <AlertDescription fontSize="sm">
-                  {showRateLimitWarning ? (
+                  {anonymousRateLimitReached ? (
+                    <>
+                      You have used all <strong>5 translations</strong> for this hour. Sign in for
+                      unlimited access, or try again later.
+                    </>
+                  ) : showRateLimitWarning ? (
                     <>
                       You have approximately <strong>{remainingRequests} translation{remainingRequests !== 1 ? 's' : ''}</strong> remaining.
-                      Sign in to get unlimited access to all services.
+                      Sign in to get access to all services.
                     </>
                   ) : (
                     <>
@@ -156,7 +180,7 @@ const NMTPage: React.FC = () => {
                   )}
                 </AlertDescription>
               </Box>
-              
+
             </Alert>
           )}
 
@@ -170,6 +194,17 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem pt={0} mt={0} alignSelf="flex-start">
               <VStack spacing={6} align="stretch" pt={0} mt={0}>
+                {servicesError && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      Could not load NMT services.{" "}
+                      {servicesLoadError instanceof Error
+                        ? servicesLoadError.message
+                        : "Please refresh the page or try again later."}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {/* Service and Language Selector - same layout for all users (anonymous can change service from try-it API list) */}
                 <Box pt={0} mt={0}>
                   <ModelLanguageSelector

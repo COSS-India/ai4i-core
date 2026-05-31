@@ -1,27 +1,6 @@
 // TypeScript type definitions for LLM service
 
-// LLM Inference Request
-export interface LLMInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    serviceId: string;
-    inputLanguage?: string;
-    outputLanguage?: string;
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-// LLM Inference Response
-export interface LLMInferenceResponse {
-  output: Array<{
-    source: string;
-    target: string;
-  }>;
-}
+export type { LLMInferenceRequest, LLMInferenceResponse } from './inference';
 
 // LLM Model
 export interface LLMModel {
@@ -50,22 +29,17 @@ export interface LLMHookState {
   outputLanguage: string;
   inputText: string;
   outputText: string;
-  nmtOutputText?: string;
   fetching: boolean;
   fetched: boolean;
-  isDualMode: boolean;
   requestWordCount: number;
   responseWordCount: number;
-  nmtResponseWordCount?: number;
   requestTime: string;
-  nmtRequestTime?: string;
   error: string | null;
 }
 
 // LLM Hook Methods
 export interface LLMHookMethods {
   performInference: (text: string) => Promise<void>;
-  performDualInference: (text: string) => Promise<void>;
   setInputText: (text: string) => void;
   setInputLanguage: (lang: string) => void;
   setOutputLanguage: (lang: string) => void;
@@ -104,4 +78,3 @@ export interface LLMResultsProps {
   onCopyOutput?: () => void;
   onSwapTexts?: () => void;
 }
-

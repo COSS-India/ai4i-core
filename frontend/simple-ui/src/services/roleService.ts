@@ -1,8 +1,16 @@
 /**
  * Role management service for RBAC
  */
-import { API_BASE_URL } from './api';
+import type { ZodTypeAny } from 'zod';
+import { z } from 'zod';
+import { API_BASE_URL, apiService } from './api';
+import { ApiValidationError } from './dto/apiValidationError';
+import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
+import { roleActionMessageSchema, roleSchema, userRoleSchema } from './dto/schemas/roles';
+import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
+
+const rolePath = apiEndpoints.auth.rolePaths;
 
 export interface Role {
   id: number;
@@ -11,25 +19,26 @@ export interface Role {
 }
 
 export interface UserRole {
-  user_id: number;
-  username: string;
-  email: string;
+  user_id: string;
   roles: string[];
+  username?: string;
+  email?: string;
 }
 
 class RoleService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/v1/auth/roles`;
+    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.rolesBase}`;
   }
 
-  private async request<T>(
+  private async request<S extends ZodTypeAny>(
     endpoint: string,
+    schema: S,
     options: RequestInit = {}
-  ): Promise<T> {
+  ): Promise<z.infer<S>> {
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     const token = authService.getAccessToken();
     if (!token) {
       throw new Error('Not authenticated');
@@ -45,29 +54,35 @@ class RoleService {
     };
 
     try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const detail = errorData.detail;
-        const message =
-          typeof detail === 'object' && detail !== null && typeof detail.message === 'string'
-            ? detail.message
-            : typeof detail === 'string'
-              ? detail
-              : `HTTP error! status: ${response.status}`;
-        throw new Error(message);
+      const response = await apiService.request(
+        (config.method || 'GET') as any,
+        url,
+        config.body,
+        {
+          headers: config.headers as Record<string, string>,
+          responseSchema: authUnwrappedSchema(schema),
+        }
+      );
+      return response.data as z.infer<S>;
+    } catch (error: unknown) {
+      if (error instanceof ApiValidationError) {
+        console.error('Role service response validation failed:', error.message, error.issues);
+        throw error;
       }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error) {
+      const err = error as { response?: { status?: number; data?: { detail?: unknown } } };
+      const status = err?.response?.status;
+      const errorData = err?.response?.data ?? {};
+      const detail = errorData?.detail;
+      const message =
+        typeof detail === 'object' && detail !== null && typeof (detail as { message?: string }).message === 'string'
+          ? (detail as { message: string }).message
+          : typeof detail === 'string'
+            ? detail
+            : status
+              ? `HTTP error! status: ${status}`
+              : 'Request failed';
       console.error('Role service request failed:', error);
-      throw error;
+      throw new Error(message);
     }
   }
 
@@ -75,21 +90,21 @@ class RoleService {
    * List all available roles
    */
   async listRoles(): Promise<Role[]> {
-    return this.request<Role[]>('/list');
+    return this.request(rolePath.list, z.array(roleSchema), { method: 'GET' });
   }
 
   /**
    * Get roles for a specific user
    */
-  async getUserRoles(userId: number): Promise<UserRole> {
-    return this.request<UserRole>(`/user/${userId}`);
+  async getUserRoles(userId: string): Promise<UserRole> {
+    return this.request(rolePath.user(userId), userRoleSchema, { method: 'GET' });
   }
 
   /**
    * Assign a role to a user
    */
-  async assignRole(userId: number, roleName: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/assign', {
+  async assignRole(userId: string, roleName: string): Promise<{ message: string }> {
+    return this.request(rolePath.assign, roleActionMessageSchema, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
     });
@@ -98,8 +113,8 @@ class RoleService {
   /**
    * Remove a role from a user
    */
-  async removeRole(userId: number, roleName: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/remove', {
+  async removeRole(userId: string, roleName: string): Promise<{ message: string }> {
+    return this.request(rolePath.remove, roleActionMessageSchema, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
     });
@@ -108,4 +123,3 @@ class RoleService {
 
 const roleService = new RoleService();
 export default roleService;
-

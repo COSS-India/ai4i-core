@@ -1,32 +1,14 @@
 // OCR service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import { ocrInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  OCRInferenceRequest,
+  OCRInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
-export interface OCRInferenceRequest {
-  image: Array<{
-    imageContent?: string | null;
-    imageUri?: string | null;
-  }>;
-  config: {
-    serviceId: string;
-    language: {
-      sourceLanguage: string;
-      sourceScriptCode?: string;
-    };
-    textDetection?: boolean;
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-export interface OCRInferenceResponse {
-  output: Array<{
-    source: string;
-    [key: string]: any;
-  }>;
-}
+export type { OCRInferenceRequest, OCRInferenceResponse } from '../types/inference';
 
 export interface OCRServiceDetailsResponse {
   service_id: string;
@@ -65,13 +47,13 @@ export const listOCRServices = async (): Promise<OCRServiceDetailsResponse[]> =>
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -122,10 +104,9 @@ export const performOCRInference = async (
       },
     };
 
-    const response = await apiClient.post<OCRInferenceResponse>(
-      apiEndpoints.ocr.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.ocr.inference, payload, {
+      responseSchema: ocrInferenceResponseSchema,
+    });
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
 
@@ -138,4 +119,3 @@ export const performOCRInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

@@ -1,6 +1,12 @@
 // Language Detection service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import { languageDetectionInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  LanguageDetectionInferenceRequest,
+  LanguageDetectionInferenceResponse,
+  LanguagePrediction,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface LanguageDetectionServiceDetailsResponse {
@@ -13,29 +19,11 @@ export interface LanguageDetectionServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface LanguageDetectionInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    serviceId: string;
-  };
-}
-
-export interface LanguagePrediction {
-  langCode: string;
-  scriptCode: string;
-  langScore: number;
-  language: string;
-}
-
-export interface LanguageDetectionInferenceResponse {
-  output: Array<{
-    source: string;
-    langPrediction: LanguagePrediction[];
-    [key: string]: any;
-  }>;
-}
+export type {
+  LanguageDetectionInferenceRequest,
+  LanguageDetectionInferenceResponse,
+  LanguagePrediction,
+} from '../types/inference';
 
 /**
  * Get list of available Language Detection services from model management service
@@ -64,13 +52,13 @@ export const listLanguageDetectionServices = async (): Promise<LanguageDetection
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -113,9 +101,10 @@ export const performLanguageDetectionInference = async (
       },
     };
 
-    const response = await apiClient.post<LanguageDetectionInferenceResponse>(
+    const response = await apiService.post(
       apiEndpoints['language-detection'].inference,
-      payload
+      payload,
+      { responseSchema: languageDetectionInferenceResponseSchema }
     );
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -129,4 +118,3 @@ export const performLanguageDetectionInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

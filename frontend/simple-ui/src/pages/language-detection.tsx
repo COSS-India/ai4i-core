@@ -27,6 +27,7 @@ import { LANGUAGE_DETECTION_ERRORS, MAX_LANGUAGE_DETECTION_INPUT_LENGTH, MIN_LAN
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
 import { listLanguageDetectionServices, performLanguageDetectionInference } from "../services/languageDetectionService";
+import { parseLanguagePredictions } from "../types/inference";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -130,7 +131,7 @@ const LanguageDiarizationPage: React.FC = () => {
     } catch (err: any) {
       // Prioritize API error message from response
       let errorMessage = "Failed to perform language diarization";
-      
+
       if (err?.response?.data?.detail?.message) {
         errorMessage = err.response.data.detail.message;
       } else if (err?.response?.data?.message) {
@@ -142,7 +143,7 @@ const LanguageDiarizationPage: React.FC = () => {
       } else if (err?.message) {
         errorMessage = err.message;
       }
-      
+
       setError(errorMessage);
       toast({
         title: "Error",
@@ -376,11 +377,11 @@ const LanguageDiarizationPage: React.FC = () => {
                 const segments = data.segments || [];
                 const languages = data.languages || [];
                 // Extract unique languages from segments if not provided directly
-                const uniqueLanguages = languages.length > 0 
-                  ? languages 
+                const uniqueLanguages = languages.length > 0
+                  ? languages
                   : Array.from(new Set(segments.map((s: any) => s.language).filter(Boolean)));
                 const numLanguages = data.num_languages || uniqueLanguages.length || 0;
-                
+
                 const formatTime = (seconds: number) => {
                   const mins = Math.floor(seconds / 60);
                   const secs = (seconds % 60).toFixed(2);
@@ -407,7 +408,7 @@ const LanguageDiarizationPage: React.FC = () => {
                     <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
                       Language Diarization Results:
                     </Text>
-                    
+
                     {hasStructuredData ? (
                       <>
                         {/* Summary */}
@@ -500,8 +501,8 @@ const LanguageDiarizationPage: React.FC = () => {
                                   return sortedSegments.map((segment: any, idx: number) => {
                                     const startTime = segment.start_time !== undefined ? segment.start_time : segment.start;
                                     const endTime = segment.end_time !== undefined ? segment.end_time : segment.end;
-                                    const duration = segment.duration !== undefined 
-                                      ? segment.duration 
+                                    const duration = segment.duration !== undefined
+                                      ? segment.duration
                                       : (endTime - startTime);
                                     const language = segment.language || "Unknown";
                                     const colorScheme = getLanguageColor(language);
@@ -577,11 +578,11 @@ const LanguageDiarizationPage: React.FC = () => {
                   const segments = data.segments || [];
                   const languages = data.languages || [];
                   // Extract unique languages from segments if not provided directly
-                  const uniqueLanguages = languages.length > 0 
-                    ? languages 
+                  const uniqueLanguages = languages.length > 0
+                    ? languages
                     : Array.from(new Set(segments.map((s: any) => s.language).filter(Boolean)));
                   const numLanguages = data.num_languages || uniqueLanguages.length || 0;
-                  
+
                   const formatTime = (seconds: number) => {
                     const mins = Math.floor(seconds / 60);
                     const secs = (seconds % 60).toFixed(2);
@@ -609,7 +610,7 @@ const LanguageDiarizationPage: React.FC = () => {
                         <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
                           Language Diarization Results:
                         </Text>
-                        
+
                         {hasStructuredData ? (
                           <>
                             {/* Summary */}
@@ -702,8 +703,8 @@ const LanguageDiarizationPage: React.FC = () => {
                                       return sortedSegments.map((segment: any, idx: number) => {
                                         const startTime = segment.start_time !== undefined ? segment.start_time : segment.start;
                                         const endTime = segment.end_time !== undefined ? segment.end_time : segment.end;
-                                        const duration = segment.duration !== undefined 
-                                          ? segment.duration 
+                                        const duration = segment.duration !== undefined
+                                          ? segment.duration
                                           : (endTime - startTime);
                                         const language = segment.language || "Unknown";
                                         const colorScheme = getLanguageColor(language);
@@ -887,7 +888,8 @@ const LanguageDetectionPage: React.FC = () => {
     try {
       const response = await performLanguageDetectionInference([text], selectedServiceId);
       setResult(response.data);
-      setResponseTime(response.responseTime);
+      // request-duration is tracked in milliseconds by API interceptors.
+      setResponseTime(response.responseTime / 1000);
       setFetched(true);
     } catch (err: any) {
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(
@@ -921,12 +923,7 @@ const LanguageDetectionPage: React.FC = () => {
   };
 
   const firstOutput = result?.output?.[0];
-  const predictions = (firstOutput?.langPrediction ?? []) as Array<{
-    langCode?: string;
-    scriptCode?: string;
-    langScore?: number;
-    language?: string;
-  }>;
+  const predictions = parseLanguagePredictions(firstOutput?.langPrediction);
   const sortedPredictions = [...predictions].sort(
     (a, b) => (b.langScore ?? 0) - (a.langScore ?? 0)
   );

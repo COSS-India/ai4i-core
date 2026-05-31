@@ -1,10 +1,17 @@
 // TTS service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
-import { 
-  TTSInferenceRequest, 
-  TTSInferenceResponse, 
-  Voice, 
+import { apiService, apiEndpoints } from './api';
+import {
+  inferenceConfigJsonSchema,
+  ttsHealthResponseSchema,
+  ttsInferenceResponseSchema,
+  voiceListResponseSchema,
+  voiceSchema,
+} from './dto/schemas/inference';
+import {
+  TTSInferenceRequest,
+  TTSInferenceResponse,
+  Voice,
   TTSHealthResponse,
   VoiceListResponse,
   VoiceFilterOptions
@@ -48,13 +55,13 @@ export const listTTSServices = async (): Promise<TTSServiceDetailsResponse[]> =>
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -101,10 +108,9 @@ export const performTTSInference = async (
       },
     };
 
-    const response = await apiClient.post<TTSInferenceResponse>(
-      apiEndpoints.tts.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.tts.inference, payload, {
+      responseSchema: ttsInferenceResponseSchema,
+    });
 
     // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -127,7 +133,7 @@ export const performTTSInference = async (
 export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceListResponse> => {
   try {
     const params: Record<string, any> = {};
-    
+
     if (filters?.language) {
       params.language = filters.language;
     }
@@ -141,10 +147,11 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
       params.is_active = filters.isActive;
     }
 
-    const response = await apiClient.get<VoiceListResponse>(
-      apiEndpoints.tts.voices,
-      { params, timeout: 15000 }
-    );
+    const response = await apiService.get(apiEndpoints.tts.voices, {
+      params,
+      timeout: 15000,
+      responseSchema: voiceListResponseSchema,
+    });
 
     return response.data;
   } catch (error) {
@@ -159,9 +166,9 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
  */
 export const checkTTSHealth = async (): Promise<TTSHealthResponse> => {
   try {
-    const response = await apiClient.get<TTSHealthResponse>(
-      apiEndpoints.tts.health
-    );
+    const response = await apiService.get(apiEndpoints.tts.health, {
+      responseSchema: ttsHealthResponseSchema,
+    });
 
     return response.data;
   } catch (error) {
@@ -176,7 +183,9 @@ export const checkTTSHealth = async (): Promise<TTSHealthResponse> => {
  */
 export const getTTSConfig = async () => {
   try {
-    const response = await apiClient.get('/api/v1/tts/config');
+    const response = await apiService.get(apiEndpoints.tts.config, {
+      responseSchema: inferenceConfigJsonSchema,
+    });
     return response.data;
   } catch (error) {
     console.error('Failed to fetch TTS config:', error);
@@ -191,7 +200,9 @@ export const getTTSConfig = async () => {
  */
 export const getVoiceById = async (voiceId: string): Promise<Voice> => {
   try {
-    const response = await apiClient.get<Voice>(`${apiEndpoints.tts.voices}/${voiceId}`);
+    const response = await apiService.get(`${apiEndpoints.tts.voices}/${voiceId}`, {
+      responseSchema: voiceSchema,
+    });
     return response.data;
   } catch (error) {
     console.error('Failed to fetch voice details:', error);
@@ -217,7 +228,7 @@ export const validateTTSRequest = (
     return { isValid: false, error: 'Text length exceeds maximum limit of 512 characters' };
   }
 
-  if (!config.language.sourceLanguage) {
+  if (!config.language?.sourceLanguage) {
     return { isValid: false, error: 'Source language is required' };
   }
 
@@ -248,11 +259,11 @@ export const getSupportedLanguages = async (): Promise<string[]> => {
   try {
     const voices = await listVoices();
     const languages = new Set<string>();
-    
+
     voices.voices.forEach(voice => {
       voice.languages.forEach(lang => languages.add(lang));
     });
-    
+
     return Array.from(languages);
   } catch (error) {
     console.error('Failed to fetch supported languages:', error);

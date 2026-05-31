@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import os
 import sys
-import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -28,11 +26,6 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import declarative_base
-
-# NOTE: app_env must be imported AFTER load_dotenv() below so the singleton
-# picks up all environment variables.  The deferred import is done inside
-# ensure_database_exists().
 
 ALEMBIC_DIR = Path(__file__).resolve().parent
 # PROJECT_ROOT used to be the repository root when Alembic lived at the top level.
@@ -65,15 +58,10 @@ class DatabaseSpec:
 
 
 DATABASE_ORDER = [
-    "alerting_db",
-    "auth_service_v2_db",
+    "ai4iplatform_auth",
     "config_db",
-    "dashboard_db",
     "ai4i_platform_db",
-    "metrics_db",
-    "model_management_db",
-    "policy_db",
-    "multi_tenant_db",
+    "ai4iplatform_core",
     "telemetry_db",
 ]
 
@@ -97,121 +85,13 @@ def _require_env_any(keys: list[str]) -> str:
     raise ValueError(f"Missing required environment variable (any of): {', '.join(keys)}")
 
 
-def _load_module(module_name: str, file_path: Path):
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load module from {file_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _load_module_with_replacements(
-    module_name: str,
-    file_path: Path,
-    replacements: list[tuple[str, str]] | None = None,
-):
-    source = file_path.read_text()
-    for old, new in replacements or []:
-        source = source.replace(old, new)
-
-    module = types.ModuleType(module_name)
-    module.__file__ = str(file_path)
-    sys.modules[module_name] = module
-    exec(compile(source, str(file_path), "exec"), module.__dict__)
-    return module
-
-
-def _with_temp_module(name: str, module: types.ModuleType, loader: Callable[[], object]):
-    previous = sys.modules.get(name)
-    sys.modules[name] = module
-    try:
-        return loader()
-    finally:
-        if previous is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = previous
-
-
-def _ensure_package(name: str) -> None:
-    if name in sys.modules:
-        return
-
-    package = types.ModuleType(name)
-    package.__path__ = []  # type: ignore[attr-defined]
-    sys.modules[name] = package
-
-
-def _load_auth_metadata():
-    # Start from auth-service-v2 core metadata (users/sessions/roles/api keys/oauth)
-    module_metadata = _load_auth_service_v2_metadata()
-    combined_metadata = MetaData()
-    for table in module_metadata.tables.values():
-        table.to_metadata(combined_metadata)
-
-    service_model_files = [
-        ("asr", PROJECT_ROOT / "services" / "asr-service" / "app" / "models" / "asr.py"),
-        ("nmt", PROJECT_ROOT / "services" / "nmt-service" / "app" / "models" / "nmt.py"),
-        ("tts", PROJECT_ROOT / "services" / "tts-service" / "app" / "models" / "tts.py"),
-        ("ner", PROJECT_ROOT / "services" / "ner-service" / "app" / "models" / "ner.py"),
-        ("ocr", PROJECT_ROOT / "services" / "ocr-service" / "app" / "models" / "ocr.py"),
-        (
-            "language_detection",
-            PROJECT_ROOT / "services" / "language-detection-service" / "app" / "models" / "language_detection.py",
-        ),
-        (
-            "language_diarization",
-            PROJECT_ROOT / "services" / "language-diarization-service" / "app" / "models" / "language_diarization.py",
-        ),
-        ("llm", PROJECT_ROOT / "services" / "llm-service" / "app" / "models" / "llm.py"),
-        (
-            "speaker_diarization",
-            PROJECT_ROOT / "services" / "speaker-diarization-service" / "app" / "models" / "speaker_diarization.py",
-        ),
-        (
-            "transliteration",
-            PROJECT_ROOT / "services" / "transliteration-service" / "app" / "models" / "transliteration.py",
-        ),
-        (
-            "audio_lang_detection",
-            PROJECT_ROOT / "services" / "audio-lang-detection-service" / "app" / "models" / "audio_lang_detection.py",
-        ),
-    ]
-
-    replacements = [
-        ('ForeignKey("sessions.id"', 'ForeignKey("user_sessions.id"'),
-        ("ForeignKey('sessions.id'", "ForeignKey('user_sessions.id'"),
-    ]
-
-    # Tables already managed by auth-service-v2; skip stubs/duplicates from
-    # service model files so autogenerate doesn't create spurious tables
-    # (e.g. a "sessions" stub when auth-service-v2 uses "user_sessions").
-    auth_table_names = set(combined_metadata.tables.keys()) | {"sessions"}
-
-    for service_name, file_path in service_model_files:
-        service_module = _load_module_with_replacements(
-            f"ai4i_alembic_dynamic.{service_name}_database_models",
-            file_path,
-            replacements=replacements,
-        )
-        for table in service_module.Base.metadata.tables.values():
-            if table.name in auth_table_names:
-                continue
-            table.to_metadata(combined_metadata)
-
-    return combined_metadata
-
-
-def _load_auth_service_v2_metadata():
-    """Load auth-service-v2 ORM metadata (users/sessions/roles/api keys/oauth)."""
-    auth_v2_root = PROJECT_ROOT / "services" / "auth-service-v2"
-    v2_path = str(auth_v2_root)
-    if v2_path not in sys.path:
-        sys.path.insert(0, v2_path)
-    # Ensure we import auth-service-v2's `app.models` package, not another service's `app`.
+def _load_auth_service_metadata():
+    """Load auth-service ORM metadata (users/passwords/tenants/roles/api keys/oauth/token verification)."""
+    auth_root = PROJECT_ROOT / "services" / "auth-service"
+    auth_path = str(auth_root)
+    if auth_path not in sys.path:
+        sys.path.insert(0, auth_path)
+    # Purge any previously imported `app.*` modules to avoid cross-service collisions.
     for module_name in list(sys.modules.keys()):
         if module_name == "app" or module_name.startswith("app."):
             sys.modules.pop(module_name, None)
@@ -220,112 +100,22 @@ def _load_auth_service_v2_metadata():
     return module.Base.metadata
 
 
-def _load_config_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.config_models",
-        PROJECT_ROOT / "services" / "config-service" / "models" / "database_models.py",
-    )
-    return module.Base.metadata
-
-
-def _load_alerting_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.alerting_models",
-        PROJECT_ROOT / "services" / "alert-management-service" / "models.py",
-    )
-    return module.Base.metadata
-
-
-def _load_telemetry_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.telemetry_models",
-        PROJECT_ROOT / "services" / "telemetry-service" / "models.py",
-    )
-    return module.Base.metadata
-
-
-def _load_model_management_metadata():
-    fake_db_connection = types.ModuleType("db_connection")
-    fake_db_connection.AppDBBase = declarative_base()
-    fake_db_connection.AuthDBBase = declarative_base()
-
-    def loader():
-        _load_module(
-            "ai4i_alembic_dynamic.model_management.db_models",
-            PROJECT_ROOT / "services" / "model-management-service" / "models" / "db_models.py",
-        )
-        return fake_db_connection.AppDBBase.metadata
-
-    return _with_temp_module("db_connection", fake_db_connection, loader)
-
-
-def _load_policy_service_metadata():
-    """
-    Load policy-service ORM metadata (pii types/policies/tenant assignments/audit logs).
-
-    NOTE: policy-service is a FastAPI project that uses the generic package name `app`,
-    which can collide with other services that also use `app`. We therefore:
-      - add the policy-service root to sys.path
-      - purge any previously imported `app` modules from sys.modules
-      - import policy-service's `app.db.base` and return its declarative base metadata
-    """
-    policy_root = PROJECT_ROOT / "services" / "policy-service"
-    policy_path = str(policy_root)
-    if policy_path not in sys.path:
-        sys.path.insert(0, policy_path)
-
-    # Ensure we import policy-service's `app.*`, not another service's `app.*`.
-    # SAFETY: This is only safe because our migration entrypoints run databases
-    # sequentially in a single process (e.g. `scripts/migrate.sh`). If migrations
-    # are ever executed in parallel within the same Python process, purging
-    # `app.*` here can corrupt other services' imports mid-run.
+def _load_core_service_metadata():
+    """Load platform-core-service ORM metadata (mm_models/mm_services in ai4iplatform_core schema)."""
+    core_root = PROJECT_ROOT / "services" / "platform-core-service"
+    core_path = str(core_root)
+    if core_path not in sys.path:
+        sys.path.insert(0, core_path)
     for module_name in list(sys.modules.keys()):
         if module_name == "app" or module_name.startswith("app."):
             sys.modules.pop(module_name, None)
 
-    module = importlib.import_module("app.db.base")
-    return module.AppDBBase.metadata
-
-
-def _load_multi_tenant_metadata():
-    fake_db_connection = types.ModuleType("db_connection")
-    fake_db_connection.TenantDBBase = declarative_base()
-    fake_db_connection.AuthDBBase = declarative_base()
-    fake_db_connection.ServiceSchemaBase = declarative_base()
-
-    def loader():
-        _ensure_package("ai4i_alembic_dynamic")
-        _ensure_package("ai4i_alembic_dynamic.multi_tenant")
-        _ensure_package("ai4i_alembic_dynamic.multi_tenant.models")
-
-        _load_module(
-            "ai4i_alembic_dynamic.multi_tenant.models.enum_tenant",
-            PROJECT_ROOT / "services" / "multi-tenant-feature" / "models" / "enum_tenant.py",
-        )
-        _load_module(
-            "ai4i_alembic_dynamic.multi_tenant.models.db_models",
-            PROJECT_ROOT / "services" / "multi-tenant-feature" / "models" / "db_models.py",
-        )
-        return fake_db_connection.TenantDBBase.metadata
-
-    return _with_temp_module("db_connection", fake_db_connection, loader)
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_ai4i_platform_metadata():
-    # policy-engine service was removed; define all ai4i_platform_db tables
-    # inline so autogenerate sees them and doesn't emit spurious DROPs.
     metadata = MetaData()
-
-    Table(
-        "smr_tenant_policies",
-        metadata,
-        Column("tenant_id", String(length=50), primary_key=True, nullable=False),
-        Column("latency_policy", String(length=20), nullable=False, server_default="medium"),
-        Column("cost_policy", String(length=20), nullable=False, server_default="tier_2"),
-        Column("accuracy_policy", String(length=20), nullable=False, server_default="standard"),
-        Column("created_at", DateTime(), server_default=text("now()"), nullable=False),
-        Column("updated_at", DateTime(), server_default=text("now()"), nullable=False),
-    )
 
     if "pattern_library" not in metadata.tables:
         Table(
@@ -400,23 +190,14 @@ def _load_ai4i_platform_metadata():
 
 
 DATABASE_SPECS = {
-    "alerting_db": DatabaseSpec(
-        name="alerting_db",
-        user_key="POSTGRES_USER",
-        password_key="POSTGRES_PASSWORD",
-        host_key="POSTGRES_HOST",
-        port_key="POSTGRES_PORT",
-        database_name_key="ALERTING_DB_NAME",
-        metadata_loader=_load_alerting_metadata,
-    ),
-    "auth_service_v2_db": DatabaseSpec(
-        name="auth_service_v2_db",
+    "ai4iplatform_auth": DatabaseSpec(
+        name="ai4iplatform_auth",
         user_key="AUTH_DB_USER",
         password_key="AUTH_DB_PASSWORD",
         host_key="AUTH_DB_HOST",
         port_key="AUTH_DB_PORT",
-        database_name_key="AUTH_DB_NAME",
-        metadata_loader=_load_auth_metadata,
+        database_name_key="AUTH_SERVICE_DB_NAME",
+        metadata_loader=_load_auth_service_metadata,
     ),
     "config_db": DatabaseSpec(
         name="config_db",
@@ -425,16 +206,6 @@ DATABASE_SPECS = {
         host_key="POSTGRES_HOST",
         port_key="POSTGRES_PORT",
         database_name_key="CONFIG_DB_NAME",
-        metadata_loader=_load_config_metadata,
-    ),
-    "dashboard_db": DatabaseSpec(
-        name="dashboard_db",
-        user_key="POSTGRES_USER",
-        password_key="POSTGRES_PASSWORD",
-        host_key="POSTGRES_HOST",
-        port_key="POSTGRES_PORT",
-        database_name_key="DASHBOARD_DB_NAME",
-        metadata_loader=None,
     ),
     "ai4i_platform_db": DatabaseSpec(
         name="ai4i_platform_db",
@@ -445,41 +216,14 @@ DATABASE_SPECS = {
         database_name_key="AI4I_PLATFORM_DB_NAME",
         metadata_loader=_load_ai4i_platform_metadata,
     ),
-    "metrics_db": DatabaseSpec(
-        name="metrics_db",
-        user_key="POSTGRES_USER",
-        password_key="POSTGRES_PASSWORD",
-        host_key="POSTGRES_HOST",
-        port_key="POSTGRES_PORT",
-        database_name_key="METRICS_DB_NAME",
-        metadata_loader=None,
-    ),
-    "model_management_db": DatabaseSpec(
-        name="model_management_db",
-        user_key="APP_DB_USER",
-        password_key="APP_DB_PASSWORD",
-        host_key="APP_DB_HOST",
-        port_key="APP_DB_PORT",
-        database_name_key="APP_DB_NAME",
-        metadata_loader=_load_model_management_metadata,
-    ),
-    "policy_db": DatabaseSpec(
-        name="policy_db",
-        user_key="POLICY_DB_USER",
-        password_key="POLICY_DB_PASSWORD",
-        host_key="POLICY_DB_HOST",
-        port_key="POLICY_DB_PORT",
-        database_name_key="POLICY_DB_NAME",
-        metadata_loader=_load_policy_service_metadata,
-    ),
-    "multi_tenant_db": DatabaseSpec(
-        name="multi_tenant_db",
-        user_key="APP_DB_USER",
-        password_key="APP_DB_PASSWORD",
-        host_key="APP_DB_HOST",
-        port_key="APP_DB_PORT",
-        database_name_key="MULTI_TENANT_DB_NAME",
-        metadata_loader=_load_multi_tenant_metadata,
+    "ai4iplatform_core": DatabaseSpec(
+        name="ai4iplatform_core",
+        user_key="CORE_SERVICE_DB_USER",
+        password_key="CORE_SERVICE_DB_PASSWORD",
+        host_key="CORE_SERVICE_DB_HOST",
+        port_key="CORE_SERVICE_DB_PORT",
+        database_name_key="CORE_SERVICE_DB_NAME",
+        metadata_loader=_load_core_service_metadata,
     ),
     "telemetry_db": DatabaseSpec(
         name="telemetry_db",
@@ -488,7 +232,6 @@ DATABASE_SPECS = {
         host_key="POSTGRES_HOST",
         port_key="POSTGRES_PORT",
         database_name_key="TELEMETRY_DB_NAME",
-        metadata_loader=_load_telemetry_metadata,
     ),
 }
 
@@ -512,15 +255,27 @@ def get_database_name(name: str) -> str:
 
 def get_connection_parts(name: str) -> dict[str, str]:
     spec = get_database_spec(name)
-    # policy_db should work in deployed environments without requiring dedicated POLICY_DB_*
-    # variables; if those are absent, fall back to the shared POSTGRES_* (or ALEMBIC_DB_*) vars.
-    if name == "policy_db":
+    # ai4iplatform_core falls back to shared POSTGRES_* vars when CORE_SERVICE_DB_* are absent.
+    if name == "ai4iplatform_core":
+        db_name = os.getenv("CORE_SERVICE_DB_NAME") or "ai4iplatform_core"
         return {
             "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
             "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
             "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
             "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
-            "database": _require_env_any([spec.database_name_key]),
+            "database": db_name,
+        }
+
+    # ai4iplatform_auth falls back to shared AUTH_DB_* vars when AUTH_SERVICE_DB_NAME is absent,
+    # ultimately defaulting to the literal database name "ai4iplatform_auth".
+    if name == "ai4iplatform_auth":
+        db_name = os.getenv("AUTH_SERVICE_DB_NAME") or os.getenv("AUTH_DB_NAME") or "ai4iplatform_auth"
+        return {
+            "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
+            "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
+            "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
+            "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
+            "database": db_name,
         }
 
     return {
@@ -541,9 +296,6 @@ def get_sync_url(name: str) -> str:
 
 
 def get_version_path(name: str) -> Path:
-    # Use the dedicated auth-service-v2 migration folder.
-    if name == "auth_service_v2_db":
-        return ALEMBIC_DIR / "versions" / "auth_service_v2_db"
     return ALEMBIC_DIR / "versions" / name
 
 
@@ -567,19 +319,7 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
-    try:
-        from ai4icore_env import app_env
-    except ModuleNotFoundError:
-        candidate_paths = [
-            PROJECT_ROOT / "libs" / "ai4icore_env",
-            PROJECT_ROOT / "libs",
-        ]
-        for candidate in candidate_paths:
-            candidate_str = str(candidate)
-            if candidate.exists() and candidate_str not in sys.path:
-                sys.path.insert(0, candidate_str)
-        from ai4icore_env import app_env
-    ai4i_platform_db = app_env.ai4i_platform_db_name
+    ai4i_platform_db = os.getenv("AI4I_PLATFORM_DB_NAME", "")
     maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None
 

@@ -4263,7 +4263,7 @@
             "Feature Flags"
           ],
           "summary": "Get Feature Flag",
-          "description": "Get feature flag by name from Unleash. Retrieves flag details from Unleash API (cached in Redis).",
+          "description": "Get feature flag by name. Retrieves flag details (cached in Redis).",
           "operationId": "get_feature_flag_api_v1_feature_flags__name__get",
           "security": [
             {
@@ -4335,7 +4335,7 @@
             "Feature Flags"
           ],
           "summary": "List Feature Flags",
-          "description": "List feature flags from Unleash. Returns paginated list of feature flags from Unleash (cached in Redis).",
+          "description": "List feature flags. Returns paginated list of feature flags (cached in Redis).",
           "operationId": "list_feature_flags_api_v1_feature_flags__get",
           "security": [
             {
@@ -4425,7 +4425,7 @@
             "Feature Flags"
           ],
           "summary": "Sync Feature Flags",
-          "description": "Refresh feature flags cache from Unleash (admin). Invalidates Redis cache and fetches fresh data from Unleash API.",
+          "description": "Refresh feature flags cache (admin). Invalidates Redis cache and fetches fresh data.",
           "operationId": "sync_feature_flags_api_v1_feature_flags_sync_post",
           "security": [
             {
@@ -5815,17 +5815,6 @@
                 }
               ],
               "title": "Target Users"
-            },
-            "unleash_flag_name": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Unleash Flag Name"
             },
             "last_synced_at": {
               "anyOf": [
@@ -9530,7 +9519,7 @@
       },
       {
         "name": "Feature Flags",
-        "description": "Feature flag management endpoints. Evaluate, list, and manage feature flags using Unleash."
+        "description": "Feature flag management endpoints. Evaluate, list, and manage feature flags."
       },
       {
         "name": "Status",

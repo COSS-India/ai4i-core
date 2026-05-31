@@ -1,6 +1,8 @@
 // NER service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import { nerInferenceResponseSchema } from './dto/schemas/inference';
+import type { NERInferenceRequest, NERInferenceResponse } from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface NERServiceDetailsResponse {
@@ -13,30 +15,7 @@ export interface NERServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface NERInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    serviceId: string;
-    language: {
-      sourceLanguage: string;
-    };
-  };
-}
-
-export interface NERInferenceResponse {
-  output: Array<{
-    source: string;
-    entities?: Array<{
-      text: string;
-      label: string;
-      start: number;
-      end: number;
-    }>;
-    [key: string]: any;
-  }>;
-}
+export type { NERInferenceRequest, NERInferenceResponse } from '../types/inference';
 
 /**
  * List all available NER services
@@ -44,7 +23,7 @@ export interface NERInferenceResponse {
 export const listNERServices = async (): Promise<NERServiceDetailsResponse[]> => {
   try {
     const services = await listServices('ner', true);
-    
+
     // Transform to NERServiceDetailsResponse format
     const transformedServices = services.map((service: any) => {
       // Extract languages from service.languages array
@@ -62,13 +41,13 @@ export const listNERServices = async (): Promise<NERServiceDetailsResponse[]> =>
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id || '',
@@ -106,10 +85,9 @@ export const performNERInference = async (
       config,
     };
 
-    const response = await apiClient.post<NERInferenceResponse>(
-      apiEndpoints.ner.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.ner.inference, payload, {
+      responseSchema: nerInferenceResponseSchema,
+    });
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
 
@@ -122,4 +100,3 @@ export const performNERInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

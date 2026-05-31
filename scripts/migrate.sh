@@ -38,21 +38,11 @@ COMMAND="${2:-upgrade}"
 EXTRA_ARGS=("${@:3}")
 
 DATABASES=(
-  "alerting_db"
-  "auth_service_v2_db"
+  "ai4iplatform_auth"
   "config_db"
-  "dashboard_db"
   "ai4i_platform_db"
-  "metrics_db"
-  "model_management_db"
-  "policy_db"
-  "multi_tenant_db"
+  "ai4iplatform_core"
   "telemetry_db"
-)
-
-# External databases: services manage their own schemas, we just ensure DB exists
-EXTERNAL_DATABASES=(
-  "unleash"
 )
 
 print_db_header() {
@@ -88,15 +78,18 @@ Prerequisite:
 
 Examples:
   ./scripts/migrate.sh all upgrade
-  ./scripts/migrate.sh auth_service_v2_db upgrade head
+  ./scripts/migrate.sh ai4iplatform_auth upgrade head
   ./scripts/migrate.sh config_db current
-  ./scripts/migrate.sh model_management_db revision --autogenerate -m "add column"
+  ./scripts/migrate.sh ai4iplatform_core upgrade head
   ./scripts/migrate.sh alerting_db revision -m "manual migration"
 
 Notes:
   - `revision` must target a single database.
   - For `upgrade`, the default Alembic target is `head`.
   - For `downgrade`, the default Alembic target is `-1`.
+  - `model_management_db` is intentionally excluded from this script's managed
+    database list. If it is still in use in your environment, migrate it
+    through its owning service workflow (or add it back explicitly).
 EOF
 }
 
@@ -248,7 +241,7 @@ PY
   local output
   local status
   set +e
-  output="$(alembic -c "$temp_ini" -x "db=$db" "$@" 2>&1)"
+  output="$("$PYTHON_BIN" -m alembic -c "$temp_ini" -x "db=$db" "$@" 2>&1)"
   status=$?
   set -e
   rm -f "$temp_ini"
@@ -301,45 +294,9 @@ format_alembic_output() {
   done <<< "$output"
 }
 
-ensure_external_databases() {
-  # Create databases for external services that manage their own schemas
-  if [[ ${#EXTERNAL_DATABASES[@]} -eq 0 ]]; then
-    return
-  fi
-
-  echo "🔧 Ensuring external service databases exist..."
-
-  # Get connection info from the first registered DB's env vars
-  local pg_user pg_password pg_host pg_port
-  pg_user="${POSTGRES_USER:-ai4i_user}"
-  pg_password="${POSTGRES_PASSWORD:-}"
-  pg_host="${POSTGRES_HOST:-localhost}"
-  pg_port="${POSTGRES_PORT:-5432}"
-
-  for ext_db in "${EXTERNAL_DATABASES[@]}"; do
-    if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
-        -tAc "SELECT 1 FROM pg_database WHERE datname='$ext_db'" 2>/dev/null | grep -q 1; then
-      print_status "info" "$ext_db already exists"
-    else
-      if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
-          -c "CREATE DATABASE $ext_db;" 2>/dev/null; then
-        print_status "applied" "Created database: $ext_db"
-      else
-        print_status "info" "Failed to create $ext_db (may need manual creation)"
-      fi
-    fi
-  done
-  echo
-}
-
 run_for_all_databases() {
   local command="$1"
   shift
-
-  # Ensure external service databases exist before running migrations
-  if [[ "$command" == "upgrade" ]]; then
-    ensure_external_databases
-  fi
 
   local db
   for db in "${DATABASES[@]}"; do

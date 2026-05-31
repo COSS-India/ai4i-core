@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
+import {
+  DEFAULT_TENANT_ASSIGNABLE_ROLES,
+  isDefaultTenantAssignableRole,
+} from "../../../utils/defaultTenant";
 import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseRolesTabOptions {
@@ -11,7 +15,7 @@ export interface UseRolesTabOptions {
 }
 
 export interface SelectedUserInfo {
-  id: number;
+  user_id: string;
   email: string;
   username: string;
 }
@@ -27,9 +31,9 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const [draftRole, setDraftRole] = useState<string>("");
   const [isSavingRoles, setIsSavingRoles] = useState(false);
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isModeratorOnly = Boolean(
-    user?.roles?.includes("MODERATOR") && !user?.roles?.includes("ADMIN") && !user?.is_superuser
+    user?.roles?.includes("MODERATOR") && !user?.roles?.includes("ADMIN")
   );
 
   const handleLoadRoles = async () => {
@@ -57,18 +61,18 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const handleUserSelect = async (userId: number | null, picked?: UserSearchablePick | null) => {
+  const handleUserSelect = async (userId: string | null, picked?: UserSearchablePick | null) => {
     if (userId == null) {
       setSelectedUser(null);
       setSelectedUserRoles([]);
       return;
     }
-    const u = users.find((x) => x.id === userId) ?? picked;
+    const u = users.find((x) => x.user_id === userId) ?? picked;
     if (!u) return;
-    setSelectedUser({ id: u.id, email: u.email, username: u.username || "" });
+    setSelectedUser({ user_id: u.user_id, email: u.email, username: u.username || "" });
     setIsLoadingUserRoles(true);
     try {
-      const userRolesData = await roleService.getUserRoles(u.id);
+      const userRolesData = await roleService.getUserRoles(u.user_id);
       setSelectedUserRoles(userRolesData.roles);
     } catch (error) {
       toast({
@@ -84,10 +88,8 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const availableRoles = roles
-    .map((role) => role.name)
-    .filter((name) => name && name.trim().length > 0)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  /** Adopter / Default tenant: Admin, Moderator, User only. */
+  const availableRoles = useMemo(() => [...DEFAULT_TENANT_ASSIGNABLE_ROLES], []);
 
   const openManageRoles = async () => {
     if (!selectedUser) {
@@ -101,9 +103,6 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       return;
     }
     if (!isAdmin || isModeratorOnly) return;
-    if (roles.length === 0) {
-      await handleLoadRoles();
-    }
     if (selectedUserRoles.length > 1) {
       toast({
         title: "Multiple roles detected",
@@ -142,6 +141,16 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       });
       return;
     }
+    if (!isDefaultTenantAssignableRole(draftRole)) {
+      toast({
+        title: "Invalid role",
+        description: "Only Admin, Moderator, or User can be assigned from Role Assignment.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
     const originalPrimary = selectedUserRoles[0] ?? "";
     const toRemove = selectedUserRoles.filter((role) => role !== draftRole);
     const toAdd =
@@ -164,20 +173,20 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     try {
       for (const roleName of toRemove) {
         try {
-          await roleService.removeRole(selectedUser.id, roleName);
+          await roleService.removeRole(selectedUser.user_id, roleName);
         } catch {
           failedOps.push(`remove:${roleName}`);
         }
       }
       for (const roleName of toAdd) {
         try {
-          await roleService.assignRole(selectedUser.id, roleName);
+          await roleService.assignRole(selectedUser.user_id, roleName);
         } catch {
           failedOps.push(`assign:${roleName}`);
         }
       }
 
-      const refreshed = await roleService.getUserRoles(selectedUser.id);
+      const refreshed = await roleService.getUserRoles(selectedUser.user_id);
       setSelectedUserRoles(refreshed.roles);
 
       if (failedOps.length === 0) {

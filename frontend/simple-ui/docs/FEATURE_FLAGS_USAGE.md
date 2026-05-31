@@ -104,7 +104,7 @@ if (fileSize > maxUploadSize) {
 Evaluates a boolean feature flag.
 
 **Options:**
-- `flagName` (string, required): Name of the feature flag in Unleash
+- `flagName` (string, required): Name of the feature flag
 - `environment` (string, optional): Environment name (default: 'development')
 - `defaultValue` (boolean, optional): Default value if flag doesn't exist (default: false)
 - `enabled` (boolean, optional): Whether to run the query (default: true)

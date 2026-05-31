@@ -1,13 +1,25 @@
-// Tenant Management: state (model) + handlers (controller) for Multi Tenant tab
+// Tenant Management state + handlers, backed by auth-service tenant endpoints.
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
-import * as multiTenantService from "../../../services/multiTenantService";
+import authService from "../../../services/authService";
+import * as tenantService from "../../../services/tenantService";
 import { extractErrorInfo } from "../../../utils/errorHandler";
-import type { TenantView, TenantUserView, ServiceView } from "../../../types/multiTenant";
+import {
+  collectTenantContactEmails,
+  collectUserEmails,
+  normalizeEmail,
+  validateTenantContactEmail,
+  validateTenantUserEmail,
+} from "../../../utils/tenantEmailValidation";
+import {
+  TENANT,
+  TENANT_ADMIN_UPDATABLE_STATUSES,
+  normalizeTenantStatus,
+} from "../../../config/constants";
+import type { TenantStatus, TenantUserStatus, TenantView, TenantUserView } from "../../../types/tenant";
 import type {
-  TenantSubView,
   TenantFormState,
   TenantUserFormState,
   EditTenantFormState,
@@ -15,113 +27,92 @@ import type {
   StatusUpdateTargetUnion,
   DeleteUserTarget,
 } from "../types";
+import {
+  normalizeTenantUserRow,
+  normalizeTenantUserRoles,
+  tenantUserHasRole,
+  TENANT_USER_ROLE_FILTER_LIST,
+} from "../../../utils/tenantUserRoles";
 
-const TENANT_SUBSCRIPTION_OPTIONS = [
-  { value: "tts", label: "TTS" },
-  { value: "asr", label: "ASR" },
-  { value: "nmt", label: "NMT" },
-  { value: "llm", label: "LLM" },
-  { value: "pipeline", label: "Pipeline" },
-  { value: "ocr", label: "OCR" },
-  { value: "ner", label: "NER" },
-  { value: "transliteration", label: "Transliteration" },
-  { value: "language_detection", label: "Language Detection" },
-  { value: "speaker_diarization", label: "Speaker Diarization" },
-  { value: "language_diarization", label: "Language Diarization" },
-  { value: "audio_language_detection", label: "Audio Language Detection" },
-  { value: "speech_to_speech_pipeline", label: "Speech-to-Speech Pipeline" },
-];
+const USER_EMAIL_PAGE_SIZE = 100;
+const DEFAULT_TENANT_USER_ROLE = "USER" as const;
 
-/** Check email has valid format (contains @ and domain with at least one dot). */
-function isValidEmailFormat(email: string): boolean {
-  const trimmed = (email || "").trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+/** Client-side tenant list search: organisation name or tenant ID (substring, case-insensitive). */
+function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
+  const search = rawSearch.trim().toLowerCase();
+  if (!search) return true;
+  const organisation = (t.organisation ?? "").toLowerCase();
+  const tenantId = String(t.tenant_id ?? "").toLowerCase();
+  return organisation.includes(search) || tenantId.includes(search);
 }
 
-/**
- * Tenant status is authoritative for user status display/action gating.
- * If tenant is suspended/deactivated, all users should reflect that state.
- */
-function applyTenantStatusToUsers(users: TenantUserView[], tenantStatus?: string | null): TenantUserView[] {
-  if (tenantStatus !== "SUSPENDED" && tenantStatus !== "DEACTIVATED") return users;
-  return users.map((u) => ({ ...u, status: tenantStatus }));
-}
-
-/** Auth role name for tenant administrators (matches auth-service / tenant list). */
 function isTenantAdminRoleForSessionEnd(role?: string): boolean {
   return (role ?? "").trim().toUpperCase() === "TENANT ADMIN";
 }
 
-/** Keep only active services from /list/services response. */
-function getActiveServices(services: ServiceView[] | null | undefined): ServiceView[] {
-  return (services ?? []).filter((svc) => svc?.is_active === true);
-}
-
 export interface UseTenantManagementOptions {
-  /** Current user from useAuth(); used to set initial sub-view and to filter list users by tenant */
-  user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null; roles?: string[] } | null;
+  user: {
+    user_id?: string;
+    tenant_id?: string | null;
+    roles?: string[];
+  } | null;
 }
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
   const toast = useToastWithDeduplication();
   const isTenantAdmin = Boolean(user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)));
-  const isTenantScopedUser = Boolean((user?.is_tenant || isTenantAdmin) && !user?.is_superuser);
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isTenantScopedUser = isTenantAdmin && !isAdmin;
+  const userIdStr = user?.user_id ?? null;
 
-  // ----- Model (state) -----
+  // ----- State -----
   const [tenants, setTenants] = useState<TenantView[]>([]);
   const [tenantUsers, setTenantUsers] = useState<TenantUserView[]>([]);
   const [isLoadingTenants, setIsLoadingTenants] = useState(false);
   const [isLoadingTenantUsers, setIsLoadingTenantUsers] = useState(false);
-  const [multiTenantSubView, setMultiTenantSubView] = useState<TenantSubView>("adopter");
-  const hasSetInitialMultiTenantView = useRef(false);
 
   const [tenantFilterStatus, setTenantFilterStatus] = useState<string>("all");
-  const [tenantFilterServices, setTenantFilterServices] = useState<string>("all");
   const [tenantSearch, setTenantSearch] = useState("");
   const [userFilterStatus, setUserFilterStatus] = useState<string>("all");
-  const [userFilterServices, setUserFilterServices] = useState<string>("all");
   const [userFilterRole, setUserFilterRole] = useState<string>("all");
   const [userSearch, setUserSearch] = useState("");
 
-  // Create New Tenant modal
+  // Create tenant modal
   const [isTenantModalOpen, setIsTenantModalOpen] = useState(false);
-  const [tenantModalStep, setTenantModalStep] = useState<1 | 2>(1);
   const [tenantForm, setTenantForm] = useState<TenantFormState>({
-    organization_name: "",
-    domain: "",
+    organisation: "",
     contact_name: "",
-    contact_email: "",
-    contact_phone: "",
-    description: "",
-    requested_subscriptions: [],
+    email: "",
+    phone_number: "",
   });
   const [tenantFormErrors, setTenantFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingTenant, setIsSubmittingTenant] = useState(false);
+  const [knownTenantEmails, setKnownTenantEmails] = useState<Set<string>>(() => new Set());
+  const [knownUserEmails, setKnownUserEmails] = useState<Set<string>>(() => new Set());
+  const [isLoadingKnownEmails, setIsLoadingKnownEmails] = useState(false);
 
-  // Add New User modal
+  // Add user modal
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [userForm, setUserForm] = useState<TenantUserFormState>({
     tenant_id: "",
     email: "",
     username: "",
     full_name: "",
-    services: [],
-    is_approved: false,
-    role: "",
+    phone_number: "",
+    role: DEFAULT_TENANT_USER_ROLE,
   });
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
+  /** When set, Add User modal tenant is fixed to this tenant (e.g. tenant detail page). */
+  const [lockedUserFormTenantId, setLockedUserFormTenantId] = useState<string | null>(null);
 
-  // View tenant / view user modals
-  const [viewTenantDetail, setViewTenantDetail] = useState<TenantView | null>(null);
+  // View user modal (tenant detail uses inline panel via tenantDetailView, not a modal)
   const [viewUserDetail, setViewUserDetail] = useState<TenantUserView | null>(null);
-  const [isViewTenantModalOpen, setIsViewTenantModalOpen] = useState(false);
   const [isViewUserModalOpen, setIsViewUserModalOpen] = useState(false);
-  const [isLoadingViewTenant, setIsLoadingViewTenant] = useState(false);
   const [isLoadingViewUser, setIsLoadingViewUser] = useState(false);
 
-  // Tenant detail sub-view (new tab with Overview / Users) — when set, show detail view instead of tenant list
+  // Tenant detail sub-view
   const [tenantDetailView, setTenantDetailView] = useState<TenantView | null>(null);
   const [tenantDetailSubTab, setTenantDetailSubTab] = useState<"overview" | "users">("overview");
 
@@ -133,14 +124,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] = useState<StatusUpdateTargetUnion | null>(null);
-  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<string>("");
+  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>(
+    TENANT.STATUS.ACTIVE
+  );
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
 
   // Edit user modal
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editUserRow, setEditUserRow] = useState<TenantUserView | null>(null);
-  const [editUserForm, setEditUserForm] = useState<EditUserFormState>({ tenant_id: "", user_id: 0, role: "USER" });
+  const [editUserForm, setEditUserForm] = useState<EditUserFormState>({
+    tenant_id: "",
+    user_id: "",
+    role: DEFAULT_TENANT_USER_ROLE,
+  });
+  const [editUserFormErrors, setEditUserFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
 
   // Delete user confirmation
@@ -148,95 +146,77 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [isDeleteUserDialogOpen, setIsDeleteUserDialogOpen] = useState(false);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
 
-  // Manage Services modal (for existing tenant)
-  const [isManageServicesModalOpen, setIsManageServicesModalOpen] = useState(false);
-  const [manageServicesTenant, setManageServicesTenant] = useState<TenantView | null>(null);
-  const [availableServices, setAvailableServices] = useState<ServiceView[]>([]);
-  const [manageServicesSelected, setManageServicesSelected] = useState<string[]>([]);
-  const [isLoadingServices, setIsLoadingServices] = useState(false);
-  const [isSavingManageServices, setIsSavingManageServices] = useState(false);
-
-  // Create Tenant: load services for Requested subscriptions
-  const [availableServicesForCreate, setAvailableServicesForCreate] = useState<ServiceView[] | null>(null);
-  const [isLoadingServicesForCreate, setIsLoadingServicesForCreate] = useState(false);
-
-  // Manage User Services modal (per-user subscriptions)
-  const [manageUserServicesUser, setManageUserServicesUser] = useState<TenantUserView | null>(null);
-  const [isManageUserServicesModalOpen, setIsManageUserServicesModalOpen] = useState(false);
-  const [manageUserServicesSelected, setManageUserServicesSelected] = useState<string[]>([]);
-  const [availableServicesForUser, setAvailableServicesForUser] = useState<ServiceView[]>([]);
-  const [isLoadingUserServices, setIsLoadingUserServices] = useState(false);
-  const [isSavingManageUserServices, setIsSavingManageUserServices] = useState(false);
-
-  // ----- Effect: default Adopter vs Tenant sub-view -----
-  useEffect(() => {
-    if (!user?.id) {
-      hasSetInitialMultiTenantView.current = false;
-      return;
-    }
-    if (hasSetInitialMultiTenantView.current) return;
-    if (user.is_superuser) {
-      setMultiTenantSubView("adopter");
-      hasSetInitialMultiTenantView.current = true;
-    } else if (isTenantScopedUser) {
-      setMultiTenantSubView("tenant");
-      hasSetInitialMultiTenantView.current = true;
-    }
-  }, [isTenantScopedUser, user?.id, user?.is_superuser]);
-
   // ----- Derived (filtered lists) -----
   const filteredTenants = useMemo(
     () =>
       tenants.filter((t) => {
-        if (tenantFilterStatus !== "all" && t.status !== tenantFilterStatus) return false;
-        const search = tenantSearch.trim().toLowerCase();
-        if (search && !t.organization_name?.toLowerCase().includes(search) && !t.tenant_id?.toLowerCase().includes(search)) return false;
-        if (tenantFilterServices !== "all" && !(t.subscriptions || []).some((s) => s.toLowerCase().includes(tenantFilterServices.toLowerCase()))) return false;
-        return true;
+        if (
+          tenantFilterStatus !== "all" &&
+          normalizeTenantStatus(t.status) !== normalizeTenantStatus(tenantFilterStatus)
+        ) {
+          return false;
+        }
+        return tenantMatchesSearch(t, tenantSearch);
       }),
-    [tenants, tenantFilterStatus, tenantFilterServices, tenantSearch]
+    [tenants, tenantFilterStatus, tenantSearch]
   );
 
   const filteredTenantUsers = useMemo(
     () =>
       tenantUsers.filter((u) => {
-        if (userFilterStatus !== "all" && u.status !== userFilterStatus) return false;
-        if (userFilterRole !== "all" && (u.role ?? "") !== userFilterRole) return false;
-        if (userFilterServices !== "all" && !(u.subscriptions || []).some((s) => s.toLowerCase().includes(userFilterServices.toLowerCase()))) return false;
+        if (userFilterStatus !== "all") {
+          const isActive = u.is_active && (u.is_tenant_active ?? true);
+          const matches =
+            userFilterStatus === TENANT.USER_STATUS.ACTIVE ? isActive : !isActive;
+          if (!matches) return false;
+        }
+        if (userFilterRole !== "all" && !tenantUserHasRole(u, userFilterRole)) {
+          return false;
+        }
         const search = userSearch.trim().toLowerCase();
-        if (search && !u.username?.toLowerCase().includes(search) && !u.email?.toLowerCase().includes(search)) return false;
+        if (
+          search &&
+          !u.username?.toLowerCase().includes(search) &&
+          !u.email?.toLowerCase().includes(search)
+        ) {
+          return false;
+        }
         return true;
       }),
-    [tenantUsers, userFilterStatus, userFilterRole, userFilterServices, userSearch]
+    [tenantUsers, userFilterStatus, userFilterRole, userSearch]
   );
 
-  // ----- Controllers (handlers) -----
+  // ----- Fetchers -----
   const handleFetchTenants = async () => {
     setIsLoadingTenants(true);
     try {
-      // Tenant admin must not hit platform-admin-only list endpoint.
-      // Load only their own tenant using the tenant-scoped view endpoint.
       if (isTenantScopedUser) {
         const tenantId = user?.tenant_id?.trim();
         if (!tenantId) {
           setTenants([]);
           return;
         }
-        const tenant = await multiTenantService.getViewTenant(tenantId);
+        const tenant = await tenantService.getViewTenant(tenantId);
         setTenants(tenant ? [tenant] : []);
         return;
       }
-
-      const res = await multiTenantService.listTenants();
-      setTenants(res.tenants || []);
+      const res = await tenantService.listTenants();
+      const rows = res.tenants ?? [];
+      setTenants(rows);
+      setKnownTenantEmails(collectTenantContactEmails(rows));
     } catch (err) {
       console.error("Failed to fetch tenants:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 8000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
       setTenants([]);
     } finally {
       setIsLoadingTenants(false);
     }
+  };
+
+  const loadTenantUsersForTenant = async (tenantId: string): Promise<TenantUserView[]> => {
+    const res = await tenantService.listUsers(tenantId);
+    return normalizeTenantUserRoles(res.users ?? []);
   };
 
   const handleFetchTenantUsers = async (tenantIdOverride?: string) => {
@@ -254,27 +234,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     setIsLoadingTenantUsers(true);
     try {
-      const res = await multiTenantService.listUsers(tenantId);
-      const list = Array.isArray(res) ? (res as TenantUserView[]) : (res?.users ?? []);
-      const parentTenantStatus =
-        tenantDetailView?.tenant_id === tenantId
-          ? tenantDetailView.status
-          : tenants.find((t) => t.tenant_id === tenantId)?.status;
-      setTenantUsers(applyTenantStatusToUsers(list, parentTenantStatus));
+      const users = await loadTenantUsersForTenant(tenantId);
+      setTenantUsers(users);
+      setKnownUserEmails(collectUserEmails(users));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 8000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
       setTenantUsers([]);
     } finally {
       setIsLoadingTenantUsers(false);
     }
   };
 
-  /** Refresh both tenants and users list after mutations for real-time UI updates. */
   const refreshTenantAndUserLists = async (tenantIdOverride?: string) => {
-    // Adopter admin: refresh tenants + users. Tenant admin: refresh only own-tenant users.
-    if (user?.is_superuser) {
+    if (isAdmin) {
       await handleFetchTenants();
     }
     const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
@@ -283,147 +257,148 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const handleResetMultiTenantFilters = () => {
+  const handleResetTenantFilters = () => {
     setTenantFilterStatus("all");
-    setTenantFilterServices("all");
     setTenantSearch("");
     setUserFilterStatus("all");
-    setUserFilterServices("all");
     setUserFilterRole("all");
     setUserSearch("");
   };
 
+  const handleResetUserFilters = () => {
+    setUserFilterStatus("all");
+    setUserFilterRole("all");
+    setUserSearch("");
+  };
+
+  const syncKnownEmailsFromLists = useCallback(
+    (tenantRows: TenantView[], userRows: TenantUserView[]) => {
+      setKnownTenantEmails(collectTenantContactEmails(tenantRows));
+      setKnownUserEmails(collectUserEmails(userRows));
+    },
+    []
+  );
+
+  /** Load tenant contact + user emails for client-side uniqueness checks. */
+  const refreshKnownAccountEmails = useCallback(async () => {
+    setIsLoadingKnownEmails(true);
+    try {
+      let tenantRows: TenantView[] = tenants;
+      if (isAdmin) {
+        tenantRows = (await tenantService.listTenants()).tenants ?? [];
+      } else {
+        const tenantId = user?.tenant_id?.trim();
+        if (tenantId) {
+          const own = await tenantService.getViewTenant(tenantId);
+          tenantRows = own ? [own] : [];
+        }
+      }
+      const tenantEmailSet = collectTenantContactEmails(tenantRows);
+      const userEmailSet = new Set<string>(collectUserEmails(tenantUsers));
+
+      let offset = 0;
+      for (;;) {
+        const batch = await authService.listUsersPage(offset, USER_EMAIL_PAGE_SIZE);
+        for (const u of batch) {
+          const e = (u.email ?? "").trim().toLowerCase();
+          if (e) userEmailSet.add(e);
+        }
+        if (batch.length < USER_EMAIL_PAGE_SIZE) break;
+        offset += USER_EMAIL_PAGE_SIZE;
+      }
+
+      setKnownTenantEmails(tenantEmailSet);
+      setKnownUserEmails(userEmailSet);
+    } catch (err) {
+      console.error("Failed to load emails for uniqueness check:", err);
+      syncKnownEmailsFromLists(tenants, tenantUsers);
+    } finally {
+      setIsLoadingKnownEmails(false);
+    }
+  }, [isAdmin, user?.tenant_id, tenants, tenantUsers, syncKnownEmailsFromLists]);
+
+  // ----- Create tenant -----
   const openTenantModal = () => {
-    setTenantForm({
-    organization_name: "",
-    domain: "",
-    contact_name: "",
-    contact_email: "",
-    contact_phone: "",
-    description: "",
-    requested_subscriptions: [],
-  });
+    setTenantForm({ organisation: "", contact_name: "", email: "", phone_number: "" });
     setTenantFormErrors({});
-    setAvailableServicesForCreate(null);
-    setTenantModalStep(1);
     setIsTenantModalOpen(true);
-    loadServicesForCreateTenant();
+    void refreshKnownAccountEmails();
   };
 
   const closeTenantModal = () => {
     setIsTenantModalOpen(false);
-    setTenantModalStep(1);
-  };
-
-  const handleTenantStepNext = () => {
-    if (tenantModalStep === 1) {
-      const errors: Record<string, string> = {};
-      setTenantFormErrors(errors);
-      if (Object.keys(errors).length > 0) return;
-      setTenantModalStep(2);
-    }
-  };
-
-  const handleTenantStepBack = () => {
-    if (tenantModalStep === 2) setTenantModalStep(1);
   };
 
   const handleRegisterTenant = async () => {
-    if (!tenantForm.organization_name.trim() || !tenantForm.domain.trim() || !tenantForm.contact_email.trim()) {
-      toast({ title: "Validation", description: "Organization name, domain, and contact email are required.", status: "error", isClosable: true });
-      return;
-    }
     const errors: Record<string, string> = {};
-    if (!isValidEmailFormat(tenantForm.contact_email)) {
-      errors.contact_email = "Enter a valid email address (e.g. name@example.com).";
-    }
-
-    // Check uniqueness against existing tenants and tenant users (best-effort using loaded lists)
-    const emailLower = tenantForm.contact_email.trim().toLowerCase();
-    if (emailLower) {
-      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === emailLower);
-      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === emailLower);
-      if (emailTakenByTenant || emailTakenByUser) {
-        errors.contact_email = "This email is already registered with another tenant.";
-      }
-    }
-
-    setTenantFormErrors(errors);
+    if (!tenantForm.organisation.trim()) errors.organisation = "Organisation is required.";
+    if (!tenantForm.contact_name.trim()) errors.contact_name = "Contact name is required.";
+    const emailError = validateTenantContactEmail(
+      tenantForm.email,
+      knownTenantEmails,
+      knownUserEmails
+    );
+    if (emailError) errors.email = emailError;
     if (Object.keys(errors).length > 0) {
+      setTenantFormErrors(errors);
       toast({
         title: "Validation",
-        description: errors.contact_email ?? "Please fix the errors below.",
+        description: Object.values(errors)[0],
         status: "error",
         isClosable: true,
       });
       return;
     }
-    if (!tenantForm.requested_subscriptions?.length) {
-      toast({ title: "Validation", description: "At least one requested subscription is required.", status: "error", isClosable: true });
-      return;
-    }
+    setTenantFormErrors({});
     setIsSubmittingTenant(true);
     try {
-      // When uncommenting HACK below: use registerResponse.tenant_id in sendVerificationEmail
-      const registerResponse = await multiTenantService.registerTenant({
-        organization_name: tenantForm.organization_name.trim(),
-        domain: tenantForm.domain.trim(),
-        contact_email: tenantForm.contact_email.trim(),
-        requested_subscriptions: tenantForm.requested_subscriptions,
+      const created = await tenantService.registerTenant({
+        organisation: tenantForm.organisation.trim(),
+        contact_name: tenantForm.contact_name.trim(),
+        email: tenantForm.email.trim(),
+        phone_number: tenantForm.phone_number.trim() || undefined,
       });
-
-      // -------------------------------------------------------------------------
-      // HACK: Auto-verify tenant right after creation. Remove when proper
-      // verification flow (e.g. user clicks link in email) is in place.
-      // 1) POST admin/email/send/verification → get token
-      // 2) GET email/verify?token=... → verify tenant
-      // -------------------------------------------------------------------------
-      // let autoVerified = false;
-      // try {
-      //   const { token } = await multiTenantService.sendVerificationEmail(registerResponse.tenant_id);
-      //   await multiTenantService.verifyEmailWithToken(token);
-      //   autoVerified = true;
-      // } catch (hackErr) {
-      //   console.warn("Auto-verify after tenant creation failed (tenant was still created):", hackErr);
-      //   const { message: hackMsg } = extractErrorInfo(hackErr);
-      //   toast({
-      //     title: "Tenant created",
-      //     description: `Verification could not be completed automatically: ${hackMsg}. You can resend verification from the tenant list.`,
-      //     status: "warning",
-      //     duration: 6000,
-      //     isClosable: true,
-      //   });
-      // }
-      // -------------------------------------------------------------------------
-
-      const successMessage =
-        typeof registerResponse?.message === "string" && registerResponse.message.trim().length > 0
-          ? registerResponse.message.trim()
-          : "Tenant created successfully.";
       toast({
         title: "Tenant created",
-        description: successMessage,
+        description: `${created.organisation} has been registered.`,
         status: "success",
         duration: 5000,
         isClosable: true,
       });
       closeTenantModal();
-      await refreshTenantAndUserLists(registerResponse?.tenant_id);
+      await refreshTenantAndUserLists(created.tenant_id);
     } catch (err) {
       console.error("Failed to register tenant:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 8000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
     } finally {
       setIsSubmittingTenant(false);
     }
   };
 
+  const checkTenantContactEmailUnique = (email: string) => {
+    if (!(email || "").trim()) {
+      setTenantFormErrors((prev) => {
+        const next = { ...prev };
+        delete next.email;
+        return next;
+      });
+      return;
+    }
+    const emailError = validateTenantContactEmail(email, knownTenantEmails, knownUserEmails);
+    setTenantFormErrors((prev) => {
+      const next = { ...prev };
+      if (emailError) next.email = emailError;
+      else delete next.email;
+      return next;
+    });
+  };
+
+  // ----- Add tenant user -----
   const getDefaultUserTenantId = () => {
-    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct.
-    const defaultTenant = user?.tenant_id?.trim()
-      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user.tenant_id!.trim().toLowerCase()) ?? tenants[0]
-      : tenants[0];
-    return (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "";
+    const fromMe = user?.tenant_id?.trim();
+    if (fromMe) return fromMe;
+    return tenants[0]?.tenant_id ?? "";
   };
 
   const buildDefaultUserForm = (tenantId?: string): TenantUserFormState => ({
@@ -431,182 +406,164 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     email: "",
     username: "",
     full_name: "",
-    services: [],
-    is_approved: false,
-    role: "",
+    phone_number: "",
+    role: DEFAULT_TENANT_USER_ROLE,
   });
 
   const openUserModal = () => {
-    setUserForm({
-      ...buildDefaultUserForm(),
-    });
+    setLockedUserFormTenantId(null);
+    setUserForm(buildDefaultUserForm());
     setUserFormErrors({});
     setIsUserModalOpen(true);
+    void refreshKnownAccountEmails();
   };
 
-  /** When tenant changes in Add User form, clear service selection (all unchecked). */
   const setUserFormTenantId = (tenant_id: string) => {
-    setUserForm((prev) => ({
-      ...prev,
-      tenant_id,
-      services: [],
-    }));
+    setUserForm((prev) => ({ ...prev, tenant_id }));
   };
 
   const closeUserModal = () => {
+    setLockedUserFormTenantId(null);
     setUserForm(buildDefaultUserForm());
     setUserFormErrors({});
     setIsUserModalOpen(false);
   };
 
-  /**
-   * Inline validation: check whether the tenant contact email is syntactically valid
-   * and not already used by an existing tenant or tenant user (based on loaded lists).
-   */
-  const checkTenantContactEmailUnique = (email: string) => {
-    const trimmed = (email || "").trim();
-    const errors: Record<string, string> = {};
-
-    if (!trimmed) {
-      setTenantFormErrors(errors);
+  const checkUserEmailUnique = (email: string) => {
+    if (!(email || "").trim()) {
+      setUserFormErrors((prev) => {
+        const next = { ...prev };
+        delete next.email;
+        return next;
+      });
       return;
     }
-
-    if (!isValidEmailFormat(trimmed)) {
-      errors.contact_email = "Enter a valid email address (e.g. name@example.com).";
-    } else {
-      const lower = trimmed.toLowerCase();
-      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === lower);
-      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === lower);
-      if (emailTakenByTenant || emailTakenByUser) {
-        errors.contact_email = "This email is already registered with another tenant.";
-      }
-    }
-
-    setTenantFormErrors(errors);
+    const emailError = validateTenantUserEmail(email, knownTenantEmails, knownUserEmails);
+    setUserFormErrors((prev) => {
+      const next = { ...prev };
+      if (emailError) next.email = emailError;
+      else delete next.email;
+      return next;
+    });
   };
 
-  /**
-   * Inline validation: check whether the tenant user email is syntactically valid
-   * and not already used by another tenant or tenant user (based on loaded lists).
-   */
-  const checkUserEmailUnique = (email: string) => {
-    const trimmed = (email || "").trim();
-    const errors: Record<string, string> = { ...userFormErrors };
+  const resolveUserFormTenantId = () =>
+    lockedUserFormTenantId ?? userForm.tenant_id?.trim() ?? "";
 
-    if (!trimmed) {
-      delete errors.email;
-      setUserFormErrors(errors);
-      return;
-    }
-
-    if (!isValidEmailFormat(trimmed)) {
-      errors.email = "Enter a valid email address (e.g. name@example.com).";
-    } else {
-      const lower = trimmed.toLowerCase();
-      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === lower);
-      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === lower);
-      if (emailTakenByTenant || emailTakenByUser) {
-        errors.email = "This email is already registered with another tenant user.";
-      } else {
-        delete errors.email;
-      }
-    }
-
-    setUserFormErrors(errors);
+  const getLockedUserFormTenantLabel = (): string => {
+    const tenantId = lockedUserFormTenantId;
+    if (!tenantId) return "";
+    const t =
+      tenantDetailView?.tenant_id === tenantId
+        ? tenantDetailView
+        : tenants.find((row) => row.tenant_id === tenantId);
+    return t?.organisation?.trim() || tenantId;
   };
 
   const handleRegisterUser = async () => {
-    if (!userForm.tenant_id || !userForm.full_name?.trim() || !userForm.email.trim() || !userForm.username.trim()) {
-      toast({ title: "Validation", description: "Tenant, full name, email, and username are required.", status: "error", isClosable: true });
-      return;
+    const tenantId = resolveUserFormTenantId();
+    const errors: Record<string, string> = {};
+    if (!tenantId) errors.tenant_id = "Tenant is required.";
+    if (!userForm.full_name.trim()) errors.full_name = "Full name is required.";
+    const emailError = validateTenantUserEmail(
+      userForm.email,
+      knownTenantEmails,
+      knownUserEmails
+    );
+    if (emailError) errors.email = emailError;
+    if (!userForm.username.trim() || userForm.username.trim().length < 3) {
+      errors.username = "Username must be at least 3 characters.";
     }
-    if (!isValidEmailFormat(userForm.email)) {
-      toast({ title: "Validation", description: "Enter a valid email address (e.g. name@example.com).", status: "error", isClosable: true });
-      return;
-    }
-
-    // Ensure email is unique across all tenants and tenant users (best-effort on loaded data)
-    const emailLower = userForm.email.trim().toLowerCase();
-    if (emailLower) {
-      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === emailLower);
-      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === emailLower);
-      if (emailTakenByTenant || emailTakenByUser) {
-        setUserFormErrors((prev) => ({
-          ...prev,
-          email: "This email is already registered with another tenant user.",
-        }));
-        toast({
-          title: "Validation",
-          description: "This email is already registered with another tenant user.",
-          status: "error",
-          isClosable: true,
-        });
-        return;
-      }
-    }
-    if (userForm.username.trim().length < 3) {
-      toast({ title: "Validation", description: "Username must be at least 3 characters.", status: "error", isClosable: true });
-      return;
-    }
-    const tenant = tenants.find((t) => t.tenant_id === userForm.tenant_id);
-    const allowedServices = tenant?.subscriptions ?? [];
-    if (allowedServices.length > 0 && (userForm.services?.length ?? 0) === 0) {
+    if (Object.keys(errors).length > 0) {
+      setUserFormErrors(errors);
       toast({
         title: "Validation",
-        description: "At least one service must be assigned to the new user.",
+        description: Object.values(errors)[0],
         status: "error",
-        duration: 5000,
         isClosable: true,
       });
       return;
     }
+    setUserFormErrors({});
     setIsSubmittingUser(true);
     try {
-      const servicesToSend = userForm.services.filter((s) => allowedServices.includes(s));
-      await multiTenantService.registerUser({
-        tenant_id: userForm.tenant_id,
+      await tenantService.registerUser({
+        tenant_id: tenantId,
         email: userForm.email.trim(),
         username: userForm.username.trim(),
         full_name: userForm.full_name.trim() || undefined,
-        services: servicesToSend,
-        is_approved: userForm.is_approved,
-        role: userForm.role || "USER",
+        phone_number: userForm.phone_number.trim() || undefined,
       });
-      toast({ title: "User added", description: "User " + userForm.username + " registered under tenant.", status: "success", duration: 4000, isClosable: true });
+      toast({
+        title: "User added",
+        description: `User ${userForm.username} provisioned under tenant.`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
       closeUserModal();
-      await refreshTenantAndUserLists(userForm.tenant_id);
+      await refreshTenantAndUserLists(tenantId);
     } catch (err) {
       console.error("Failed to register user:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 8000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
     } finally {
       setIsSubmittingUser(false);
     }
   };
 
-  /** Open tenant detail sub-view (Overview / Users tab). Fetches full tenant detail and all users for the Users tab. */
+  const openAddUserForTenant = (tenant_id: string) => {
+    setLockedUserFormTenantId(tenant_id);
+    setUserForm(buildDefaultUserForm(tenant_id));
+    setUserFormErrors({});
+    setIsUserModalOpen(true);
+    void refreshKnownAccountEmails();
+  };
+
+  const canSubmitTenantForm = useMemo(() => {
+    if (isSubmittingTenant || isLoadingKnownEmails) return false;
+    if (!tenantForm.organisation.trim() || !tenantForm.contact_name.trim()) return false;
+    return !validateTenantContactEmail(tenantForm.email, knownTenantEmails, knownUserEmails);
+  }, [
+    isSubmittingTenant,
+    isLoadingKnownEmails,
+    tenantForm.organisation,
+    tenantForm.contact_name,
+    tenantForm.email,
+    knownTenantEmails,
+    knownUserEmails,
+  ]);
+
+  const canSubmitUserForm = useMemo(() => {
+    if (isSubmittingUser || isLoadingKnownEmails) return false;
+    const tenantId = lockedUserFormTenantId ?? userForm.tenant_id?.trim() ?? "";
+    if (!tenantId || !userForm.full_name.trim()) return false;
+    if (!userForm.username.trim() || userForm.username.trim().length < 3) return false;
+    return !validateTenantUserEmail(userForm.email, knownTenantEmails, knownUserEmails);
+  }, [
+    isSubmittingUser,
+    isLoadingKnownEmails,
+    lockedUserFormTenantId,
+    userForm.tenant_id,
+    userForm.full_name,
+    userForm.username,
+    userForm.email,
+    knownTenantEmails,
+    knownUserEmails,
+  ]);
+
+  // ----- View tenant / view user -----
   const handleViewTenant = async (t: TenantView) => {
     setTenantDetailView(t);
     setTenantDetailSubTab("overview");
-    setViewTenantDetail(null);
-    setIsLoadingViewTenant(true);
     try {
-      const [detail, usersRes] = await Promise.all([
-        multiTenantService.getViewTenant(t.tenant_id),
-        // Always scope list-users to the tenant being viewed; backend enforces TENANT ADMIN ↔ own tenant only.
-        multiTenantService.listUsers(t.tenant_id),
-      ]);
-      setViewTenantDetail(detail);
-      // Support both { users: [...] } and raw array (e.g. from gateway)
-      const usersList: TenantUserView[] = Array.isArray(usersRes) ? (usersRes as TenantUserView[]) : (usersRes?.users ?? []);
-      setTenantUsers(applyTenantStatusToUsers(usersList, detail?.status ?? t.status));
+      const users = await loadTenantUsersForTenant(t.tenant_id);
+      setTenantUsers(users);
+      setKnownUserEmails(collectUserEmails(users));
     } catch (err) {
-      console.error("Failed to fetch tenant details:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsLoadingViewTenant(false);
+      console.error("Failed to fetch tenant users:", err);
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     }
   };
 
@@ -620,71 +577,101 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsViewUserModalOpen(true);
     setViewUserDetail(null);
     try {
-      const detail = await multiTenantService.getViewUser(u.user_id);
-      setViewUserDetail(detail);
+      const detail = await tenantService.getViewUser(u.user_id);
+      setViewUserDetail(normalizeTenantUserRow(detail));
     } catch (err) {
       console.error("Failed to fetch user details:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     } finally {
       setIsLoadingViewUser(false);
     }
   };
 
+  // ----- Edit tenant -----
   const handleOpenEditTenant = (t: TenantView) => {
     setEditTenantRow(t);
     setEditTenantForm({
       tenant_id: t.tenant_id,
-      organization_name: t.organization_name,
-      contact_email: t.email,
-      domain: t.domain,
+      organisation: t.organisation,
+      contact_name: t.contact_name,
+      email: t.email,
+      phone_number: t.phone_number ?? "",
     });
     setIsEditTenantModalOpen(true);
   };
 
   const handleSaveEditTenant = async () => {
     if (!editTenantForm.tenant_id) return;
-    if (!editTenantForm.organization_name?.trim() || !editTenantForm.contact_email?.trim() || !editTenantForm.domain?.trim()) {
-      toast({ title: "Validation", description: "Organization name, contact email, and domain are required.", status: "error", isClosable: true });
+    if (!editTenantForm.organisation?.trim() || !editTenantForm.email?.trim()) {
+      toast({
+        title: "Validation",
+        description: "Organisation and email are required.",
+        status: "error",
+        isClosable: true,
+      });
       return;
     }
+    const emailChanged =
+      normalizeEmail(editTenantForm.email ?? "") !==
+      normalizeEmail(editTenantRow?.email ?? "");
+
     setIsSubmittingEditTenant(true);
     try {
-      await multiTenantService.updateTenant({
+      await tenantService.updateTenant({
         tenant_id: editTenantForm.tenant_id,
-        organization_name: editTenantForm.organization_name,
-        contact_email: editTenantForm.contact_email,
-        domain: editTenantForm.domain,
-        requested_quotas: editTenantForm.requested_quotas,
-        usage_quota: editTenantForm.usage_quota,
+        organisation: editTenantForm.organisation,
+        contact_name: editTenantForm.contact_name,
+        email: editTenantForm.email,
+        phone_number: editTenantForm.phone_number,
       });
-      toast({ title: "Tenant updated", status: "success", isClosable: true, duration: 4000 });
+      if (emailChanged) {
+        toast({
+          title: "Verification required",
+          description:
+            "A verification link was sent to the new contact email. The tenant contact email will update after it is verified.",
+          status: "info",
+          isClosable: true,
+          duration: 8000,
+        });
+      } else {
+        toast({ title: "Tenant updated", status: "success", isClosable: true, duration: 4000 });
+      }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
       await refreshTenantAndUserLists(editTenantForm.tenant_id);
     } catch (err) {
       console.error("Failed to update tenant:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     } finally {
       setIsSubmittingEditTenant(false);
     }
   };
 
-  const openAddUserForTenant = (tenant_id: string) => {
-    setUserForm(buildDefaultUserForm(tenant_id));
-    setUserFormErrors({});
-    setIsUserModalOpen(true);
+  const closeEditTenantModal = () => {
+    setIsEditTenantModalOpen(false);
+    setEditTenantRow(null);
   };
 
-  const handleOpenTenantStatus = (t: TenantView, newStatus: "ACTIVE" | "SUSPENDED" | "DEACTIVATED") => {
+  // ----- Status update -----
+  const handleOpenTenantStatus = (t: TenantView, newStatus: TenantStatus) => {
     setStatusUpdateTarget({ type: "tenant", tenant_id: t.tenant_id, currentStatus: t.status });
     setStatusUpdateNewStatus(newStatus);
     setIsStatusDialogOpen(true);
   };
 
-  const handleOpenUserStatus = (u: TenantUserView, newStatus: "ACTIVE" | "SUSPENDED" | "DEACTIVATED") => {
-    setStatusUpdateTarget({ type: "user", tenant_id: u.tenant_id, user_id: u.user_id, currentStatus: u.status, role: u.role });
+  const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantUserStatus) => {
+    const currentStatus: TenantUserStatus =
+      u.is_active && (u.is_tenant_active ?? true)
+        ? TENANT.USER_STATUS.ACTIVE
+        : TENANT.USER_STATUS.SUSPENDED;
+    setStatusUpdateTarget({
+      type: "user",
+      tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
+      user_id: u.user_id,
+      currentStatus,
+    });
     setStatusUpdateNewStatus(newStatus);
     setIsStatusDialogOpen(true);
   };
@@ -694,30 +681,33 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsSubmittingStatus(true);
     try {
       if (statusUpdateTarget.type === "tenant") {
-        await multiTenantService.updateTenantStatus({
+        await tenantService.updateTenantStatus({
           tenant_id: statusUpdateTarget.tenant_id,
-          status: statusUpdateNewStatus as "ACTIVE" | "SUSPENDED" | "DEACTIVATED",
+          status: statusUpdateNewStatus as TenantStatus,
         });
         toast({ title: "Tenant status updated", status: "success", isClosable: true });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
-        await multiTenantService.updateUserStatus({
+        const isActive = statusUpdateNewStatus === TENANT.USER_STATUS.ACTIVE;
+        await tenantService.updateUserStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           user_id: statusUpdateTarget.user_id,
-          status: statusUpdateNewStatus as "ACTIVE" | "SUSPENDED" | "DEACTIVATED",
+          is_active: isActive,
+          is_tenant_active: isActive,
         });
         toast({ title: "User status updated", status: "success", isClosable: true });
-        const endedStatus = statusUpdateNewStatus === "SUSPENDED" || statusUpdateNewStatus === "DEACTIVATED";
-        const tenantAdminFromMe = isTenantAdmin;
+
+        const ended = !isActive;
         const isCurrentTenantAdmin =
-          endedStatus &&
-          user?.id != null &&
-          statusUpdateTarget.user_id === user.id &&
-          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) || tenantAdminFromMe);
+          ended &&
+          userIdStr != null &&
+          statusUpdateTarget.user_id === userIdStr &&
+          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) || isTenantAdmin);
         if (isCurrentTenantAdmin) {
           toast({
             title: "Signed out",
-            description: "Your tenant admin account is no longer active. Sign in again when it is reactivated.",
+            description:
+              "Your tenant admin account is no longer active. Sign in again when it is reactivated.",
             status: "warning",
             isClosable: true,
             duration: 6000,
@@ -731,40 +721,57 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setStatusUpdateTarget(null);
     } catch (err) {
       console.error("Failed to update status:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     } finally {
       setIsSubmittingStatus(false);
     }
   };
 
+  const closeStatusDialog = () => {
+    if (!isSubmittingStatus) {
+      setIsStatusDialogOpen(false);
+      setStatusUpdateTarget(null);
+    }
+  };
+
+  // ----- Edit tenant user -----
   const handleOpenEditUser = (u: TenantUserView) => {
+    const normalizedRole = (u.role ?? u.roles?.[0] ?? "").trim().toUpperCase();
+    const role =
+      normalizedRole === "TENANT ADMIN" ? "TENANT ADMIN" : DEFAULT_TENANT_USER_ROLE;
     setEditUserRow(u);
     setEditUserForm({
-      tenant_id: u.tenant_id,
+      tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
       user_id: u.user_id,
       username: u.username ?? "",
-      email: u.email ?? "",
-      is_approved: (u as { is_approved?: boolean }).is_approved ?? false,
-      role: u.role ?? "USER",
+      full_name: u.full_name ?? "",
+      phone_number: u.phone_number ?? "",
+      role,
     });
+    setEditUserFormErrors({});
     setIsEditUserModalOpen(true);
   };
 
   const handleSaveEditUser = async () => {
     if (!editUserForm.tenant_id || !editUserForm.user_id) return;
     if (!editUserForm.username?.trim() || editUserForm.username.trim().length < 3) {
-      toast({ title: "Validation", description: "Username must be at least 3 characters.", status: "error", isClosable: true });
+      toast({
+        title: "Validation",
+        description: "Username must be at least 3 characters.",
+        status: "error",
+        isClosable: true,
+      });
       return;
     }
     setIsSubmittingEditUser(true);
     try {
-      await multiTenantService.updateUser({
+      await tenantService.updateUser({
         tenant_id: editUserForm.tenant_id,
         user_id: editUserForm.user_id,
-        ...(editUserForm.username !== undefined && editUserForm.username.trim().length >= 3 && { username: editUserForm.username.trim() }),
-        ...(editUserForm.is_approved !== undefined && { is_approved: editUserForm.is_approved }),
-        ...(editUserForm.role !== undefined && editUserForm.role.trim() !== "" && { role: editUserForm.role.trim() }),
+        username: editUserForm.username.trim(),
+        full_name: editUserForm.full_name?.trim(),
+        phone_number: editUserForm.phone_number?.trim(),
       });
       toast({ title: "User updated", status: "success", isClosable: true });
       setIsEditUserModalOpen(false);
@@ -772,15 +779,26 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(editUserForm.tenant_id);
     } catch (err) {
       console.error("Failed to update user:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     } finally {
       setIsSubmittingEditUser(false);
     }
   };
 
+  const closeEditUserModal = () => {
+    setIsEditUserModalOpen(false);
+    setEditUserRow(null);
+    setEditUserFormErrors({});
+  };
+
+  // ----- Delete tenant user -----
   const handleOpenDeleteUser = (u: TenantUserView) => {
-    setDeleteUserTarget({ tenant_id: u.tenant_id, user_id: u.user_id, username: u.username ?? u.email });
+    setDeleteUserTarget({
+      tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
+      user_id: u.user_id,
+      username: u.username ?? u.email,
+    });
     setIsDeleteUserDialogOpen(true);
   };
 
@@ -788,36 +806,23 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!deleteUserTarget) return;
     setIsDeletingUser(true);
     try {
-      await multiTenantService.deleteUser({ tenant_id: deleteUserTarget.tenant_id, user_id: deleteUserTarget.user_id });
+      await tenantService.deleteUser({
+        tenant_id: deleteUserTarget.tenant_id,
+        user_id: deleteUserTarget.user_id,
+      });
       toast({ title: "User deleted", status: "success", isClosable: true });
       setIsDeleteUserDialogOpen(false);
       setDeleteUserTarget(null);
       await refreshTenantAndUserLists(deleteUserTarget.tenant_id);
     } catch (err) {
       console.error("Failed to delete user:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     } finally {
       setIsDeletingUser(false);
     }
   };
 
-  const closeViewTenantModal = () => setIsViewTenantModalOpen(false);
-  const closeViewUserModal = () => setIsViewUserModalOpen(false);
-  const closeEditTenantModal = () => {
-    setIsEditTenantModalOpen(false);
-    setEditTenantRow(null);
-  };
-  const closeEditUserModal = () => {
-    setIsEditUserModalOpen(false);
-    setEditUserRow(null);
-  };
-  const closeStatusDialog = () => {
-    if (!isSubmittingStatus) {
-      setIsStatusDialogOpen(false);
-      setStatusUpdateTarget(null);
-    }
-  };
   const closeDeleteUserDialog = () => {
     if (!isDeletingUser) {
       setIsDeleteUserDialogOpen(false);
@@ -825,238 +830,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  // ----- Resend verification email (PENDING tenants) -----
-  const [resendingVerificationTenantId, setResendingVerificationTenantId] = useState<string | null>(null);
-
-  /** Validate email format */
-  const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-
-  /** Resend verification email to a PENDING tenant via POST /email/resend. Validates email first. */
-  const handleResendVerificationEmail = async (tenantId: string, email: string | undefined) => {
-    if (!email || !isValidEmail(email)) {
-      toast({ title: "Invalid Email", description: "Cannot resend verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
-      return;
-    }
-    setResendingVerificationTenantId(tenantId);
-    try {
-      const res = await multiTenantService.resendVerificationEmail(tenantId);
-      const successMessage =
-        typeof res?.message === "string" && res.message.trim().length > 0
-          ? res.message.trim()
-          : `Verification email resent to ${email}.`;
-      toast({ title: "Verification email resent", description: successMessage, status: "success", isClosable: true, duration: 5000 });
-    } catch (err) {
-      console.error("Failed to resend verification email:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setResendingVerificationTenantId(null);
-    }
-  };
-
-  // ----- Manage Services -----
-  const openManageServices = (t: TenantView) => {
-    setManageServicesTenant(t);
-    setManageServicesSelected(t.subscriptions || []);
-    setAvailableServices([]);
-    setIsManageServicesModalOpen(true);
-  };
-
-  const closeManageServices = () => {
-    if (!isSavingManageServices) {
-      setIsManageServicesModalOpen(false);
-      setManageServicesTenant(null);
-      setAvailableServices([]);
-    }
-  };
-
-  const loadServicesForManage = async () => {
-    setIsLoadingServices(true);
-    try {
-      const res = await multiTenantService.listServices();
-      const activeServices = getActiveServices(res.services || []);
-      setAvailableServices(activeServices);
-      const activeNames = new Set(activeServices.map((svc) => svc.service_name));
-      setManageServicesSelected((prev) => prev.filter((name) => activeNames.has(name)));
-    } catch (err) {
-      console.error("Failed to load services:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsLoadingServices(false);
-    }
-  };
-
-  /** Called on check: add subscription API. Called on uncheck: remove subscription API. */
-  const handleTenantServiceCheckChange = async (serviceName: string, checked: boolean) => {
-    if (!manageServicesTenant) return;
-    setIsSavingManageServices(true);
-    try {
-      if (checked) {
-        await multiTenantService.addTenantSubscriptions({
-          tenant_id: manageServicesTenant.tenant_id,
-          subscriptions: [serviceName],
-        });
-        setManageServicesSelected((prev) => (prev.includes(serviceName) ? prev : [...prev, serviceName]));
-        setManageServicesTenant((prev) =>
-          prev ? { ...prev, subscriptions: [...(prev.subscriptions || []), serviceName] } : null
-        );
-      } else {
-        await multiTenantService.removeTenantSubscriptions({
-          tenant_id: manageServicesTenant.tenant_id,
-          subscriptions: [serviceName],
-        });
-        setManageServicesSelected((prev) => prev.filter((s) => s !== serviceName));
-        setManageServicesTenant((prev) =>
-          prev ? { ...prev, subscriptions: (prev.subscriptions || []).filter((s) => s !== serviceName) } : null
-        );
-      }
-    } catch (err) {
-      console.error("Failed to update tenant subscription:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsSavingManageServices(false);
-    }
-  };
-
-  /** Save Changes for tenant Manage Services: validate active tenant has at least one service, then close + refetch. */
-  const saveManageServices = () => {
-    if (manageServicesTenant?.status === "ACTIVE" && manageServicesSelected.length === 0) {
-      toast({
-        title: "Validation",
-        description: "Active tenants must have at least one service assigned.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
-      return;
-    }
-    closeManageServices();
-    void refreshTenantAndUserLists(manageServicesTenant?.tenant_id);
-  };
-
-  const loadServicesForCreateTenant = async () => {
-    setIsLoadingServicesForCreate(true);
-    try {
-      const res = await multiTenantService.listServices();
-      setAvailableServicesForCreate(getActiveServices(res.services || []));
-    } catch (err) {
-      console.error("Failed to load services:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsLoadingServicesForCreate(false);
-    }
-  };
-
-  // ----- Manage User Services -----
-  const openManageUserServices = (u: TenantUserView) => {
-    setManageUserServicesUser(u);
-    setManageUserServicesSelected(u.subscriptions || []);
-    setAvailableServicesForUser([]);
-    setIsManageUserServicesModalOpen(true);
-  };
-
-  const closeManageUserServices = () => {
-    if (!isSavingManageUserServices) {
-      setIsManageUserServicesModalOpen(false);
-      setManageUserServicesUser(null);
-      setAvailableServicesForUser([]);
-    }
-  };
-
-  const loadServicesForUserManage = async () => {
-    if (!manageUserServicesUser) return;
-    setIsLoadingUserServices(true);
-    try {
-      // Get tenant subscriptions: from in-memory list or fetch tenant detail (e.g. when opened from Tenant Admin)
-      let subscriptions: string[] = [];
-      const tenantFromList = tenants.find((t) => t.tenant_id === manageUserServicesUser.tenant_id);
-      if (tenantFromList?.subscriptions?.length) {
-        subscriptions = tenantFromList.subscriptions;
-      } else {
-        try {
-          const tenantDetail = await multiTenantService.getViewTenant(manageUserServicesUser.tenant_id);
-          subscriptions = tenantDetail?.subscriptions ?? [];
-        } catch (e) {
-          console.warn("Could not load tenant detail for subscriptions:", e);
-          toast({ title: "Tenant details unavailable", description: "Could not load tenant subscriptions. Try again or use Tenant Management to open Manage User Services.", status: "warning", duration: 5000, isClosable: true });
-        }
-      }
-      const allottedLower = new Set(subscriptions.map((s) => String(s).toLowerCase()));
-      const res = await multiTenantService.listServices();
-      const allServices = getActiveServices(res?.services ?? (Array.isArray(res) ? res : []));
-      const tenantServicesOnly = allServices.filter((svc) =>
-        allottedLower.has(String(svc.service_name ?? "").toLowerCase())
-      );
-      setAvailableServicesForUser(tenantServicesOnly);
-      const activeNames = new Set(tenantServicesOnly.map((svc) => svc.service_name));
-      setManageUserServicesSelected((prev) => prev.filter((name) => activeNames.has(name)));
-      if (tenantServicesOnly.length === 0 && subscriptions.length === 0) {
-        toast({ title: "No services", description: "This tenant has no allotted services. Add services via Manage Services for the tenant first.", status: "info", duration: 4000, isClosable: true });
-      } else {
-        toast({ title: "Services loaded", description: tenantServicesOnly.length + " service(s) allotted for this tenant", status: "success", duration: 2000, isClosable: true });
-      }
-    } catch (err) {
-      console.error("Failed to load services:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsLoadingUserServices(false);
-    }
-  };
-
-  /** Called on check: add user subscription API. Called on uncheck: remove user subscription API. */
-  const handleUserServiceCheckChange = async (serviceName: string, checked: boolean) => {
-    if (!manageUserServicesUser) return;
-    setIsSavingManageUserServices(true);
-    try {
-      if (checked) {
-        await multiTenantService.addUserSubscriptions({
-          tenant_id: manageUserServicesUser.tenant_id,
-          user_id: manageUserServicesUser.user_id,
-          subscriptions: [serviceName],
-        });
-        setManageUserServicesSelected((prev) => (prev.includes(serviceName) ? prev : [...prev, serviceName]));
-        setManageUserServicesUser((prev) =>
-          prev ? { ...prev, subscriptions: [...(prev.subscriptions || []), serviceName] } : null
-        );
-      } else {
-        await multiTenantService.removeUserSubscriptions({
-          tenant_id: manageUserServicesUser.tenant_id,
-          user_id: manageUserServicesUser.user_id,
-          subscriptions: [serviceName],
-        });
-        setManageUserServicesSelected((prev) => prev.filter((s) => s !== serviceName));
-        setManageUserServicesUser((prev) =>
-          prev ? { ...prev, subscriptions: (prev.subscriptions || []).filter((s) => s !== serviceName) } : null
-        );
-      }
-    } catch (err) {
-      console.error("Failed to update user subscription:", err);
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
-      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsSavingManageUserServices(false);
-    }
-  };
-
-  /** Save Changes for user Manage Services: validate active user has at least one service, then close + refetch. */
-  const saveManageUserServices = () => {
-    if (manageUserServicesUser?.status === "ACTIVE" && manageUserServicesSelected.length === 0) {
-      toast({
-        title: "Validation",
-        description: "Active users must have at least one service assigned.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
-      return;
-    }
-    closeManageUserServices();
-    void refreshTenantAndUserLists(manageUserServicesUser?.tenant_id);
-  };
+  const closeViewUserModal = () => setIsViewUserModalOpen(false);
 
   return {
     // Data
@@ -1064,29 +838,25 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenantUsers,
     filteredTenants,
     filteredTenantUsers,
-    multiTenantSubView,
-    setMultiTenantSubView,
     isLoadingTenants,
     isLoadingTenantUsers,
     // Filters
     tenantFilterStatus,
     setTenantFilterStatus,
-    tenantFilterServices,
-    setTenantFilterServices,
     tenantSearch,
     setTenantSearch,
     userFilterStatus,
     setUserFilterStatus,
-    userFilterServices,
-    setUserFilterServices,
     userFilterRole,
     setUserFilterRole,
     userSearch,
     setUserSearch,
-    handleResetMultiTenantFilters,
+    handleResetTenantFilters,
+    handleResetUserFilters,
+    tenantUserRoleFilterOptions: TENANT_USER_ROLE_FILTER_LIST,
+    TENANT_ADMIN_UPDATABLE_STATUSES,
     // Create tenant
     isTenantModalOpen,
-    tenantModalStep,
     tenantForm,
     setTenantForm,
     tenantFormErrors,
@@ -1094,40 +864,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     isSubmittingTenant,
     openTenantModal,
     closeTenantModal,
-    handleTenantStepNext,
-    handleTenantStepBack,
     handleRegisterTenant,
     checkTenantContactEmailUnique,
-    TENANT_SUBSCRIPTION_OPTIONS,
-    availableServicesForCreate,
-    isLoadingServicesForCreate,
-    loadServicesForCreateTenant,
-    // Manage Services modal (tenant)
-    isManageServicesModalOpen,
-    manageServicesTenant,
-    availableServices,
-    manageServicesSelected,
-    setManageServicesSelected,
-    isLoadingServices,
-    isSavingManageServices,
-    openManageServices,
-    closeManageServices,
-    loadServicesForManage,
-    saveManageServices,
-    handleTenantServiceCheckChange,
-    // Manage User Services modal
-    manageUserServicesUser,
-    isManageUserServicesModalOpen,
-    manageUserServicesSelected,
-    setManageUserServicesSelected,
-    availableServicesForUser,
-    isLoadingUserServices,
-    isSavingManageUserServices,
-    openManageUserServices,
-    closeManageUserServices,
-    loadServicesForUserManage,
-    saveManageUserServices,
-    handleUserServiceCheckChange,
+    canSubmitTenantForm,
+    isLoadingKnownEmails,
     // Add user
     isUserModalOpen,
     userForm,
@@ -1137,22 +877,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     isSubmittingUser,
     openUserModal,
     closeUserModal,
+    lockedUserFormTenantId,
+    getLockedUserFormTenantLabel,
     setUserFormTenantId,
     handleRegisterUser,
     checkUserEmailUnique,
+    canSubmitUserForm,
     openAddUserForTenant,
-    // View tenant/user
-    viewTenantDetail,
+    // View user modal (tenant detail uses inline panel)
     viewUserDetail,
-    isViewTenantModalOpen,
     isViewUserModalOpen,
-    isLoadingViewTenant,
     isLoadingViewUser,
     handleViewTenant,
     handleViewUser,
-    closeViewTenantModal,
     closeViewUserModal,
-    // Tenant detail sub-view (Overview / Users tab)
+    // Tenant detail sub-view
     tenantDetailView,
     tenantDetailSubTab,
     setTenantDetailSubTab,
@@ -1180,6 +919,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserRow,
     editUserForm,
     setEditUserForm,
+    editUserFormErrors,
+    setEditUserFormErrors,
     isSubmittingEditUser,
     handleOpenEditUser,
     handleSaveEditUser,
@@ -1191,9 +932,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleOpenDeleteUser,
     handleConfirmDeleteUser,
     closeDeleteUserDialog,
-    // Resend verification email
-    resendingVerificationTenantId,
-    handleResendVerificationEmail,
     // Fetch
     handleFetchTenants,
     handleFetchTenantUsers,

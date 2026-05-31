@@ -1,69 +1,105 @@
 // Services Management service API client
 
-import { apiClient } from './api';
+import { z } from 'zod';
+import { apiService } from './api';
+import { apiEndpoints } from './apiEndpoints';
+import { serviceRecordSchema, serviceSingleSchema, servicesListSchema } from './dto/schemas/platform';
+import type {
+  DeleteServiceResponse,
+  PaginatedServices,
+  Service,
+  ServiceCreateRequest,
+  ServiceListParams,
+  ServiceUpdateRequest,
+} from '../types/platform';
 
-export interface Service {
-  uuid?: string;
-  serviceId?: string;
-  service_id?: string; // For backward compatibility
-  name?: string;
-  serviceDescription?: string;
-  description?: string; // For backward compatibility
-  hardwareDescription?: string;
-  publishedOn?: number;
-  modelId?: string;
-  model_id?: string; // For backward compatibility
-  modelVersion?: string;
-  model_version?: string; // For backward compatibility
-  modelSubmissionDate?: string;
-  endpoint?: string;
-  endpoint_url?: string; // For backward compatibility
-  api_key?: string;
-  apiKey?: string; // For backward compatibility
-  task_type?: string; // For backward compatibility
-  task?: {
-    type: string;
-  };
-  model?: {
-    task?: {
-      type: string;
-    };
-    [key: string]: any;
-  };
-  status?: string;
-  healthStatus?: {
-    status: string;
-    lastUpdated: string;
-  };
-  isPublished?: boolean;
-  /** ISO timestamp when service was published; used for list ordering */
-  publishedAt?: string | null;
-  /** ISO timestamp when service was unpublished; used for list ordering */
-  unpublishedAt?: string | null;
-  created_at?: string;
-  updated_at?: string;
-  /** ISO timestamp when status was last updated; used for list ordering */
-  versionStatusUpdatedAt?: string;
-  [key: string]: any;
-}
+export type {
+  DeleteServiceResponse,
+  PaginatedServices,
+  Service,
+  ServiceCreateRequest,
+  ServiceDetailResponse,
+  ServiceListItem,
+  ServiceListParams,
+  ServiceResponse,
+  ServiceUpdateRequest,
+} from '../types/platform';
 
 /**
- * List all services
+ * List all services (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of services
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
-    // The apiClient interceptor will automatically add:
-    // - Content-Type: application/json
-    // - Accept: application/json
-    // - Authorization: Bearer <token>
-    // - X-API-Key: <api_key> (if available)
-    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiClient.get<Service[]>('/api/v1/model-management/services');
-    return response.data;
+    const response = await apiService.get(apiEndpoints.platform.services.base, {
+      responseSchema: servicesListSchema,
+    });
+    return response.data || [];
   } catch (error: any) {
     console.error('List services error:', error);
-    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
+  }
+};
+
+/**
+ * List services with server-side pagination, filtering, and search.
+ * Reads the X-Total-Count response header for the accurate total count.
+ */
+const REGISTRY_FETCH_PAGE_SIZE = 100;
+const MAX_REGISTRY_FETCH_PAGES = 500;
+
+/**
+ * Fetches every service matching list filters by walking paginated API pages.
+ * Used by the registry UI so name search and table pagination stay consistent (frontend-only).
+ */
+export const fetchAllServicesMatchingFilters = async (
+  params: Pick<ServiceListParams, 'taskType' | 'isPublished' | 'createdBy'> = {}
+): Promise<PaginatedServices> => {
+  const items: Service[] = [];
+  let total = 0;
+  let offset = 0;
+
+  for (let page = 0; page < MAX_REGISTRY_FETCH_PAGES; page++) {
+    const result = await listServicesPaginated({
+      ...params,
+      offset,
+      limit: REGISTRY_FETCH_PAGE_SIZE,
+    });
+    total = result.total;
+    items.push(...result.items);
+    if (items.length >= total || result.items.length === 0) break;
+    offset += REGISTRY_FETCH_PAGE_SIZE;
+  }
+
+  return { items, total, offset: 0, limit: null };
+};
+
+export const listServicesPaginated = async (params: ServiceListParams = {}): Promise<PaginatedServices> => {
+  try {
+    const queryParams: Record<string, any> = {};
+    if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
+    if (params.limit !== undefined) queryParams.limit = params.limit;
+    if (params.taskType) queryParams.task_type = params.taskType;
+    if (params.isPublished !== undefined) queryParams.is_published = params.isPublished;
+    if (params.createdBy) queryParams.created_by = params.createdBy;
+
+    const response = await apiService.get(apiEndpoints.platform.services.base, {
+      params: queryParams,
+      responseSchema: servicesListSchema,
+    });
+
+    const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const payload = response.data;
+    const items = Array.isArray(payload) ? payload : [];
+
+    return {
+      items,
+      total: Number.isNaN(total) ? items.length : total,
+      offset: params.offset ?? 0,
+      limit: params.limit ?? null,
+    };
+  } catch (error: any) {
+    console.error('List services (paginated) error:', error);
     throw error;
   }
 };
@@ -76,10 +112,9 @@ export const listServices = async (): Promise<Service[]> => {
 export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
-    const response = await apiClient.post<Service>(
-      `/api/v1/model-management/services/${serviceId}`,
-      { service_id: serviceId }
-    );
+    const response = await apiService.get(apiEndpoints.platform.services.byId(serviceId), {
+      responseSchema: serviceSingleSchema,
+    });
     return response.data;
   } catch (error: any) {
     console.error('Get service error:', error);
@@ -97,7 +132,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
   try {
     // Transform snake_case to camelCase for API
     // The API expects camelCase format
-    const apiPayload: any = {
+    const apiPayload: Record<string, unknown> = {
       serviceId: serviceData.serviceId || serviceData.service_id,
       name: serviceData.name,
       serviceDescription: serviceData.serviceDescription || serviceData.description,
@@ -108,7 +143,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
       api_key: serviceData.api_key || serviceData.apiKey || '',
     };
-    
+
     // Add optional healthStatus if provided
     if (serviceData.healthStatus || serviceData.status) {
       apiPayload.healthStatus = serviceData.healthStatus || {
@@ -116,16 +151,17 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
         lastUpdated: new Date().toISOString(),
       };
     }
-    
+
     // The apiClient interceptor will automatically add:
     // - Content-Type: application/json
     // - Accept: application/json
     // - Authorization: Bearer <token>
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiClient.post<Service>(
-      '/api/v1/model-management/services',
-      apiPayload
+    const response = await apiService.post(
+      apiEndpoints.platform.services.base,
+      apiPayload,
+      { responseSchema: serviceSingleSchema }
     );
     return response.data;
   } catch (error: any) {
@@ -137,7 +173,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
 
 /**
  * Update a service
- * @param serviceData - The service data to update (must include uuid)
+ * @param serviceData - The service data to update (must include serviceId)
  * @returns Promise with updated service
  */
 export const updateService = async (serviceData: Partial<Service>): Promise<Service> => {
@@ -145,9 +181,9 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     // For publish/unpublish, only send serviceId and isPublished
     // For other updates, send all fields
     const isPublishUpdate = serviceData.serviceId && serviceData.hasOwnProperty('isPublished') && Object.keys(serviceData).length <= 2;
-    
-    let apiPayload: any;
-    
+
+    let apiPayload: Record<string, unknown>;
+
     if (isPublishUpdate) {
       // Publish/unpublish: only send serviceId and isPublished
       apiPayload = {
@@ -157,7 +193,6 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     } else {
       // Full update: send all fields
       apiPayload = {
-        uuid: serviceData.uuid,
         serviceId: serviceData.serviceId || serviceData.service_id,
         name: serviceData.name,
         serviceDescription: serviceData.serviceDescription || serviceData.description,
@@ -168,7 +203,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
         endpoint: serviceData.endpoint || serviceData.endpoint_url,
         api_key: serviceData.api_key || serviceData.apiKey,
       };
-      
+
       // Add optional healthStatus if provided
       if (serviceData.healthStatus || serviceData.status) {
         apiPayload.healthStatus = serviceData.healthStatus || {
@@ -176,16 +211,17 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
           lastUpdated: new Date().toISOString(),
         };
       }
-      
+
       // Add isPublished if provided
       if (serviceData.hasOwnProperty('isPublished')) {
         apiPayload.isPublished = serviceData.isPublished;
       }
     }
-    
-    const response = await apiClient.patch<Service>(
-      '/api/v1/model-management/services',
-      apiPayload
+
+    const response = await apiService.patch(
+      apiEndpoints.platform.services.base,
+      apiPayload,
+      { responseSchema: serviceSingleSchema }
     );
     return response.data;
   } catch (error: any) {
@@ -197,15 +233,15 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
 
 /**
  * Delete a service
- * @param uuid - The UUID of the service to delete
+ * @param serviceId - The service_id of the service to delete
  * @returns Promise with deletion response
  */
-export const deleteService = async (uuid: string): Promise<any> => {
+export const deleteService = async (serviceId: string): Promise<DeleteServiceResponse> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
-    const response = await apiClient.delete<any>(
-      `/api/v1/model-management/services/${uuid}`
-    );
+    const response = await apiService.delete(apiEndpoints.platform.services.byId(serviceId), {
+      responseSchema: z.unknown(),
+    });
     return response.data;
   } catch (error: any) {
     console.error('Delete service error:', error);
@@ -213,5 +249,3 @@ export const deleteService = async (uuid: string): Promise<any> => {
     throw error;
   }
 };
-
-

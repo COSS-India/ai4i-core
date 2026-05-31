@@ -16,7 +16,6 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
     full_name: "",
     phone_number: "",
     timezone: "UTC",
-    language: "en",
     preferences: {},
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -27,7 +26,6 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
         full_name: user.full_name || "",
         phone_number: user.phone_number || "",
         timezone: user.timezone || "UTC",
-        language: user.language || "en",
         preferences: user.preferences || {},
       });
     }
@@ -98,7 +96,6 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
         full_name: user.full_name || "",
         phone_number: user.phone_number || "",
         timezone: user.timezone || "UTC",
-        language: user.language || "en",
         preferences: user.preferences || {},
       });
     }
@@ -113,7 +110,6 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
         full_name: userFormData.full_name?.trim() || "",
         phone_number: userFormData.phone_number?.trim() || "",
         timezone: userFormData.timezone || "UTC",
-        language: userFormData.language || "en",
         preferences: userFormData.preferences || {},
       };
       await updateUser(updateData as Partial<User>);
