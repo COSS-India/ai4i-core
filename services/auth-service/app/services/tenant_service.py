@@ -432,6 +432,11 @@ class TenantService:
     async def update_tenant(
         self, current_user: User, tenant_id: int, body: TenantUpdate
     ) -> Tenant:
+        # TENANT ADMIN now holds tenant.update (perm 42), which the gateway
+        # shares between this profile endpoint and the status endpoint. Without
+        # a scope check a Tenant Admin could PATCH any tenant by id; restrict
+        # non-admins to their own tenant (system admins pass through).
+        await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         data = body.model_dump(exclude_unset=True)
         # Status changes go through PATCH /status to keep authorization split clean.
