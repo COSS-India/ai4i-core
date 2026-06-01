@@ -13,7 +13,7 @@ Related: AI4IDS-1750
 Idempotent: INSERT ... WHERE NOT EXISTS is a no-op if the row already exists.
 
 Revision ID: c3d4e5f6a7b8
-Revises: b2c3d4e5f6a7
+Revises: f5a8c2d6e9b1
 Create Date: 2026-06-01 00:00:00.000000
 
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'c3d4e5f6a7b8'
-down_revision: Union[str, None] = 'e3f4a5b6c7d8'
+down_revision: Union[str, None] = 'f5a8c2d6e9b1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
