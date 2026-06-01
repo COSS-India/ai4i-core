@@ -127,7 +127,8 @@ below show the domain-level paths. Source: `services/auth-service/app/routes/`.
 | PATCH | `/tenants/{tenant_id}/status` | Lifecycle transition |
 | GET | `/tenants/{tenant_id}/plan` | Tenant plan |
 | GET / POST | `/tenants/{tenant_id}/users` | List / invite tenant users |
-| PATCH | `/tenants/{tenant_id}/users/{user_id}` · `/users/{user_id}/status` | Update tenant user / change status |
+| PATCH | `/tenants/{tenant_id}/users/{user_id}` | Update tenant user |
+| PATCH | `/tenants/{tenant_id}/users/{user_id}/status` | Change tenant-user status |
 | DELETE | `/tenants/{tenant_id}/users/{user_id}` | Remove tenant user |
 
 ### OAuth2, validation, internal, health
@@ -162,8 +163,8 @@ Source: `services/auth-service/app/models/`.
 
 - **APISIX gateway** (production) calls `/auth/validate` (forward-auth, `GET`) on every
   request (see [overview sequence](./00-overview.md#request-path-sequence)).
-- **platform-core-service** is called over **synchronous HTTP** for tenant-plan
-  assignment (`PLATFORM_CORE_URL`); the tenant service drives this.
+- **platform-core-service** is called over **direct request/response HTTP** (httpx async
+  client) for tenant-plan assignment (`PLATFORM_CORE_URL`); the tenant service drives this.
 - **Email** is sent via Starlette `BackgroundTasks` + `ai4icore_core.email` (SMTP / SES /
   SendGrid; console fallback in dev). **No Kafka.**
 

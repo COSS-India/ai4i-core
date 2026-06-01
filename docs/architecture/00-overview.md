@@ -120,8 +120,8 @@ Defined in [`docker-compose-local.yml`](../../docker-compose-local.yml). Network
 |-----------|-----------|-----------|------|
 | PostgreSQL 15 | `ai4v-postgres` | 5432 | Primary relational store (SCRAM-SHA-256) |
 | Redis 7 | `ai4v-redis` | 6379 | Cache, rate-limit state, OAuth state, resolution cache |
-| Zookeeper | `ai4v-zookeeper` | 2181 | Kafka coordination |
-| Kafka | `ai4v-kafka` | 9093 (`9093:9092`) | OTEL span transport (telemetry lane). Apps connect via `KAFKA_SERVER` — `localhost:9094` in the local env |
+| Zookeeper | `ai4v-zookeeper` | — (internal 2181) | Kafka coordination |
+| Kafka | `ai4v-kafka` | 9093 (`9093:9092`) | OTEL span transport (telemetry lane); services connect via the broker host listener configured in `KAFKA_SERVER` |
 | Prometheus | `ai4v-prometheus` | 9090 | Metrics scrape + time-series store |
 | Grafana | `ai4v-grafana` | 3001 | Dashboards |
 | Alertmanager | `ai4v-alertmanager` | 9095 | Alert routing / notifications |

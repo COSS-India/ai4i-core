@@ -70,8 +70,7 @@ The `/api/v1` prefix is applied centrally. Domain prefixes below are from
 | GET | `/models` | List (filter: task_type, status, name, created_by) |
 | GET | `/models/{model_id}` | Details (optionally by version) |
 | POST | `/models` | Create model |
-| PUT | `/models/{model_id}` | Update metadata |
-| PATCH | `/models/{model_id}/version-status` | Set ACTIVE / DEPRECATED |
+| PATCH | `/models` | Update metadata / set version status — `model_id` + fields (e.g. `versionStatus` ACTIVE/DEPRECATED) in the body |
 | DELETE | `/models/{model_id}` | Delete version |
 
 ### Services — `/services`
@@ -80,8 +79,8 @@ The `/api/v1` prefix is applied centrally. Domain prefixes below are from
 | GET | `/services` | List (filter: task_type, published) |
 | GET | `/services/try-it-service-list` | Public trial list |
 | GET | `/services/{service_id}` | Details |
-| POST / PUT | `/services` · `/services/{service_id}` | Create / update |
-| PATCH | `/services/{service_id}/publish` | Publish (immutable) |
+| POST | `/services` | Create service |
+| PATCH | `/services` | Update / publish — `service_id` + fields (e.g. `isPublished`) in the body; published services are immutable |
 | DELETE | `/services/{service_id}` | Delete (unpublished) |
 
 ### Alerts — `/alerts/*`
@@ -127,7 +126,7 @@ Source: `services/platform-core-service/app/models/`.
 | Redis | `REDIS_HOST/PORT/PASSWORD/DB`, `REDIS_TIMEOUT`, `MODEL_CACHE_TTL_SECONDS`, `SERVICE_CACHE_TTL_SECONDS` |
 | Model rules | `MAX_ACTIVE_VERSIONS_PER_MODEL`, `RUN_INFERENCE_TEST`, `ENDPOINT_VALIDATION_TIMEOUT_SECONDS`, `ENDPOINT_VALIDATION_MODE`, `ENDPOINT_VALIDATION_SKIP_TLS_VERIFY` |
 | External services | `AUTH_SERVICE_URL` |
-| Alert sync | `ALERT_SYNC_ENABLED`, `SYNC_INTERVAL`, `PROMETHEUS_URL`, `ALERTMANAGER_URL`, `*_ALERTS_PATH`, `ALERTMANAGER_CONFIG_PATH`, `ALERT_HISTORY_WEBHOOK_URL`, `SMTP_*` |
+| Alert sync | `ALERT_SYNC_ENABLED`, `SYNC_INTERVAL`, `PROMETHEUS_URL`, `ALERTMANAGER_URL`, `PROMETHEUS_APPLICATION_ALERTS_PATH`, `PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH`, `ALERTMANAGER_CONFIG_PATH`, `ALERT_HISTORY_WEBHOOK_URL`, `SMTP_*` |
 | OpenSearch | `OPENSEARCH_URL`, `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `OPENSEARCH_INDEX` (`traces-*`) |
 
 > Config source of truth: `services/platform-core-service/app/core/config.py`.

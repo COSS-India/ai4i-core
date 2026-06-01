@@ -12,9 +12,11 @@ exporter (`services/inference-service/app_factory.py`, `trace/setup.py`).
 
 ## Capabilities
 
-- **Unified polymorphic inference** — a single `GenericInferenceRequest` envelope with
-  `task_type` and one of `input` / `audio` / `image` arrays
-  (`services/inference-service/models/common.py`).
+- **Unified polymorphic inference** — a single JSON envelope (`task_type` + one of
+  `input` / `audio` / `image` arrays + `config`). The `/inference` handler accepts a raw
+  dict (`payload: Dict[str, Any]`), with an optional top-level `serviceId` used for model
+  selection. `GenericInferenceRequest` / `GenericInferenceResponse`
+  (`services/inference-service/models/common.py`) describe the envelope and response shape.
 - **Task coverage** — NMT, NER, transliteration, language detection, ASR, TTS,
   audio-language detection, speaker diarization, language diarization, OCR, and LLM chat.
 - **Orchestration** — `orchestrator/orchestrator.py` + `task_service_registry.py` route a
@@ -105,13 +107,17 @@ All under the `/api/v1` prefix (`API_PREFIX`). Source:
 | POST | `/language-diarization/inference` | Multilingual segmentation |
 | POST | `/ocr/inference` | Optical character recognition |
 | POST | `/chat`, `/chat/completions` | OpenAI-compatible LLM proxy |
-| GET | `/tasks` | List available inference tasks |
-| GET | `/health` | Health check |
+| GET | `/inference/tasks` | List available inference tasks |
+| GET | `/inference/health` | Health check |
 
 ## Request / response shape
 
-`GenericInferenceRequest` (`models/common.py`) — exactly one of `input` / `audio` /
-`image` is populated based on `task_type`:
+The `/inference` endpoint accepts a raw JSON object (the handler signature is
+`payload: Dict[str, Any]`). `GenericInferenceRequest` (`models/common.py`) documents the
+envelope shape — exactly one of `input` / `audio` / `image` is populated based on
+`task_type`. `serviceId` is an optional **top-level** key read from the payload by the
+orchestrator (`orchestrator/orchestrator.py`) for model resolution — it is **not** a typed
+field on `GenericInferenceRequest`. `GenericInferenceResponse` is the response model:
 
 ```jsonc
 {
@@ -154,8 +160,10 @@ All under the `/api/v1` prefix (`API_PREFIX`). Source:
 | platform-core | `MODEL_MANAGEMENT_SERVICE_URL`, `MODEL_MANAGEMENT_SERVICE_TIMEOUT` |
 | SmartModelRouter | `SMR_SERVICE_URL`, `SMR_SERVICE_TIMEOUT` |
 | LLM proxy | `LLM_DEFAULT_ENDPOINT`, `LLM_MODEL_ENDPOINTS` (JSON map), `LLM_INFERENCE_TIMEOUT` |
-| Backend / validation | `DEFAULT_TRITON_TIMEOUT`, `ENDPOINT_VALIDATION_*` |
+| Backend | `DEFAULT_TRITON_TIMEOUT` |
 | Cache / DB | `REDIS_URL`, `REDIS_PASSWORD`, `CACHE_TTL_SECONDS`; `DATABASE_URL`, `POSTGRES_*` (optional) |
-| Telemetry / Kafka | `ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `KAFKA_TOPIC_OTEL_TRACE`, `KAFKA_SERVER` |
+| Telemetry | `ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Kafka (trace export) | `KAFKA_TOPIC_OTEL_TRACE`, `KAFKA_SERVER` — read directly in `trace/setup.py`, not in `config.py` |
 
-> Config source of truth: `services/inference-service/config.py`.
+> Config source of truth: `services/inference-service/config.py` (except the Kafka trace
+> vars, which `trace/setup.py` reads via `os.getenv`).
