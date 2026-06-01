@@ -1,8 +1,11 @@
 import { TENANT_USER_ROLE_OPTIONS } from "../components/profile/types";
+import { DEFAULT_TENANT_ROLE_FILTER_LIST } from "./defaultTenant";
 import type { TenantAssignableRole, TenantUserView } from "../types/tenant";
 
 /** Static RBAC role values for tenant user list filters. */
 export const TENANT_USER_ROLE_FILTER_LIST = TENANT_USER_ROLE_OPTIONS;
+
+export { DEFAULT_TENANT_ROLE_FILTER_LIST };
 
 /** List-users API shape: upcoming `role` string and/or legacy `roles` array. */
 export type TenantUserRoleSource = Pick<TenantUserView, "role" | "roles">;
@@ -13,7 +16,8 @@ export function normalizeTenantUserRole(role: string): string {
 
 export function formatTenantUserRoleLabel(role: string): string {
   const normalized = normalizeTenantUserRole(role);
-  const match = TENANT_USER_ROLE_OPTIONS.find(
+  const allRoleOptions = [...TENANT_USER_ROLE_OPTIONS, ...DEFAULT_TENANT_ROLE_FILTER_LIST];
+  const match = allRoleOptions.find(
     (o) => normalizeTenantUserRole(o.value) === normalized,
   );
   return match?.label ?? role;

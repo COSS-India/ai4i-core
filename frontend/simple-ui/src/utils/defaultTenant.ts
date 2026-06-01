@@ -11,6 +11,15 @@ export const DEFAULT_TENANT_ORGANISATION =
  */
 export const DEFAULT_TENANT_ASSIGNABLE_ROLES = ["ADMIN", "MODERATOR", "USER"] as const;
 
+/** All platform roles shown in the Default Tenant's Users → Role filter dropdown. */
+export const DEFAULT_TENANT_ROLE_FILTER_LIST = [
+  { value: "ADMIN", label: "Admin" },
+  { value: "MODERATOR", label: "Moderator" },
+  { value: "USER", label: "User" },
+  { value: "GUEST", label: "Guest" },
+  { value: "TENANT ADMIN", label: "Tenant Admin" },
+] as const;
+
 export type DefaultTenantAssignableRole = (typeof DEFAULT_TENANT_ASSIGNABLE_ROLES)[number];
 
 const ASSIGNABLE_ROLE_LABELS: Record<DefaultTenantAssignableRole, string> = {

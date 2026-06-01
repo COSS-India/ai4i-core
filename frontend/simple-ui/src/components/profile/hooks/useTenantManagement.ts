@@ -32,7 +32,11 @@ import {
   normalizeTenantUserRoles,
   tenantUserHasRole,
   TENANT_USER_ROLE_FILTER_LIST,
+  DEFAULT_TENANT_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
+import {
+  DEFAULT_TENANT_ORGANISATION,
+} from "../../../utils/defaultTenant";
 
 const USER_EMAIL_PAGE_SIZE = 100;
 const DEFAULT_TENANT_USER_ROLE = "USER" as const;
@@ -184,6 +188,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         return true;
       }),
     [tenantUsers, userFilterStatus, userFilterRole, userSearch]
+  );
+
+  const isViewingDefaultTenant = useMemo(() => {
+    if (!tenantDetailView) return false;
+    return (
+      (tenantDetailView.organisation || "").trim().toLowerCase() ===
+      DEFAULT_TENANT_ORGANISATION.toLowerCase()
+    );
+  }, [tenantDetailView]);
+
+  const tenantUserRoleFilterOptions = useMemo(
+    () => (isViewingDefaultTenant ? DEFAULT_TENANT_ROLE_FILTER_LIST : TENANT_USER_ROLE_FILTER_LIST),
+    [isViewingDefaultTenant]
   );
 
   // ----- Fetchers -----
@@ -853,7 +870,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserSearch,
     handleResetTenantFilters,
     handleResetUserFilters,
-    tenantUserRoleFilterOptions: TENANT_USER_ROLE_FILTER_LIST,
+    tenantUserRoleFilterOptions,
     TENANT_ADMIN_UPDATABLE_STATUSES,
     // Create tenant
     isTenantModalOpen,
