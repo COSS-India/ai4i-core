@@ -25,10 +25,15 @@ def enqueue_email(
     whose DB commit already succeeded — orphan-row prevention. Render
     failures are logged at ERROR for ops to catch via metrics.
 
-    Silent no-op when no BackgroundTasks available (e.g. tests calling the
-    service directly without a request).
+    No-op when no BackgroundTasks available (e.g. tests calling the
+    service directly without a request) — logged at WARN so production
+    misuse is visible instead of silently dropping the email.
     """
     if background_tasks is None:
+        logger.warning(
+            "enqueue_email skipped: background_tasks is None; "
+            "email would not be delivered"
+        )
         return
     try:
         message = factory()

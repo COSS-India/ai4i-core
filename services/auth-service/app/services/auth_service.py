@@ -583,14 +583,41 @@ class AuthService:
         Anti-enumeration: always returns successfully. Only sends email to users
         who have NOT yet set a password (no credentials). Works for tenant contact
         admins while the tenant is still PENDING.
+
+        Each silent no-op is logged at INFO so ops can diagnose "200 OK but no
+        email" reports — the route can't surface these reasons in the response
+        (would defeat anti-enumeration) but the log line is enough to tell
+        whether it was an unknown email, an already-onboarded user, or a real
+        delivery failure (see ``EmailClient.send_safe`` for SMTP errors).
         """
+        if background_tasks is None:
+            # Programmer error — every caller in routes passes the FastAPI
+            # request-scoped BackgroundTasks. Without it we'd silently drop
+            # the email even on the happy path; fail loud instead of silent.
+            logger.warning(
+                "resend_setup_link called without background_tasks; email "
+                "would be dropped — refusing to issue a token. email=%s",
+                email,
+            )
+            return
+
         user = await self._users.get_by_email(email)
         if not user:
-            return  # anti-enumeration: silent no-op
+            logger.info(
+                "resend_setup_link no-op: no user found for email=%s "
+                "(returning 200 for anti-enumeration)",
+                email,
+            )
+            return
 
         existing_creds = await self._credentials.get_by_user_id(user.id)
         if existing_creds:
-            return  # silent no-op — onboarding complete
+            logger.info(
+                "resend_setup_link no-op: user id=%s already has credentials "
+                "(onboarding complete; returning 200 for anti-enumeration)",
+                user.id,
+            )
+            return
 
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.SETUP)
@@ -604,5 +631,5 @@ class AuthService:
         )
         await self._users.commit()
 
-        logger.info("Setup link resent for user id=%s", user.id)
+        logger.info("Setup link resent for user id=%s email=%s", user.id, email)
         enqueue_email(background_tasks, self._email, lambda: render_setup_link(user, setup_token))
