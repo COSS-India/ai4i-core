@@ -9,14 +9,15 @@
 
 ## 1. Executive Summary
 
-This document proposes a unified, scalable architecture for handling inference requests across multiple micro-services. The design decouples service-specific logic from the orchestration layer, enabling:
+This document describes the current inference architecture for contributors. It explains how requests are routed, how shared Triton execution works, and how new task services can be added safely.
+
+Key outcomes:
 
 - **Horizontal scalability**: Add new services without modifying orchestrator
 - **Separation of concerns**: Each service handles its own preprocessing and postprocessing
-- **Shared resources**: Singleton inference client across all services
-- **Unified base execution**: `BaseTaskService` uses a common `TritonService` for `TextBase`, `AudioBase`, and `ImageBase` task types
-- **Configuration-driven execution**: Chain multiple services dynamically
-- **Testability**: Easy mocking and unit testing of individual components
+- **Shared runtime path**: `BaseTaskService` uses one common `TritonService` across `TextBase`, `AudioBase`, and `ImageBase`
+- **Registry-based routing**: `TaskServiceRegistry` maps `(task_type, model_name)` to the correct service
+- **Contributor-friendly extension model**: Add new task support by implementing a service and updating registry mappings
 
 ---
 
@@ -342,17 +343,18 @@ Endpoints
 
 ## 6. Public Integration Notes
 
-- Public contributors should focus on extending task services through base families (`TextBase`, `AudioBase`, `ImageBase`) and updating `TaskServiceRegistry` mappings.
-- Interface contracts and payload schemas are defined in repository source-of-truth modules and OpenAPI specs.
-- This document intentionally avoids embedding implementation snippets.
+- Add or update task behavior by extending one of the base families: `TextBase`, `AudioBase`, or `ImageBase`.
+- Register model routing in `TaskServiceRegistry` using `(task_type, model_name)` mappings.
+- Keep request/response contract changes aligned with OpenAPI and schema modules.
+- This guide is intentionally code-light for public sharing.
 
 ---
 
 ## 7. Testing Strategy
 
-- Unit tests should validate preprocess/postprocess behavior and service-level request handling.
-- Integration tests should validate orchestrator routing, registry lookup, and multi-service chaining behavior.
-- Regression coverage should include mixed task-type pipelines (text/audio/image).
+- Unit tests: validate preprocess/postprocess behavior and task-level request handling.
+- Integration tests: validate orchestrator routing, registry resolution, and chained execution.
+- Regression tests: include mixed text/audio/image pipelines.
 
 ---
 
@@ -440,15 +442,15 @@ Metrics to track:
 
 ---
 
-## 16. Decision Points for Architect Review
+## 16. Open Design Decisions
 
-1. **Parallel vs Sequential Execution**: Should multi-service requests execute services in parallel or sequentially?
-2. **Error Handling Strategy**: Should one service failure stop the entire request or continue with others?
-3. **Response Format**: Should each service result be isolated or merged into a single response?
-4. **Service Discovery**: Should services be registered statically or dynamically?
-5. **Triton Connection**: Should we use HTTP or gRPC client? Connection pooling strategy?
+1. **Parallel vs Sequential Execution**: Should multi-service requests run in parallel or in order?
+2. **Failure Handling**: Should one service failure stop the full pipeline or allow partial results?
+3. **Response Shape**: Should each service result remain isolated or be merged?
+4. **Registry Governance**: Should service mappings stay static or support dynamic loading?
+5. **Triton Transport**: Should HTTP remain default, or should gRPC be preferred for some workloads?
 
 ---
 
-**Document prepared for architectural review and discussion.**  
+**Document prepared for public contributors and maintainers.**  
 **Last updated**: June 1, 2026
