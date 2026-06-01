@@ -1,4 +1,4 @@
-"""Unit tests: Moderator is blocked from update_tenant_user and update_tenant_user_status."""
+"""Unit tests: Moderator is blocked from list, update, and update-status on tenant users."""
 
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -44,6 +44,33 @@ def _tenant_user() -> User:
 def _active_tenant() -> Tenant:
     return Tenant(id=1, name="Acme", organisation="Acme", email="c@acme.com",
                   status=TenantStatus.ACTIVE)
+
+
+class TestModeratorListTenantUsers:
+    @pytest.mark.asyncio
+    async def test_moderator_cannot_list_tenant_users(self) -> None:
+        svc = _make_service()
+        svc.enforce_scope = AsyncMock()
+        svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.list_tenant_users(_moderator(), 1, offset=0, limit=20)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
+        svc._users.list_by_tenant.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_can_list_tenant_users(self) -> None:
+        svc = _make_service()
+        svc.enforce_scope = AsyncMock()
+        svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+        svc._users.list_by_tenant = AsyncMock(return_value=[])
+
+        result = await svc.list_tenant_users(_admin(), 1, offset=0, limit=20)
+
+        assert result == []
+        svc._users.list_by_tenant.assert_awaited_once_with(1, offset=0, limit=20)
 
 
 class TestModeratorUpdateTenantUser:

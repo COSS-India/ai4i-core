@@ -175,6 +175,18 @@ class TenantService:
         roles = await self._roles.get_user_roles(user.id)
         return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
 
+    async def _require_admin(self, user: User) -> None:
+        """Raise 403 if the caller is a Moderator. Use after enforce_scope on tenant-user operations."""
+        roles = await self._roles.get_user_roles(user.id)
+        if RoleName.MODERATOR.value in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Moderators cannot perform this action.",
+                },
+            )
+
     @staticmethod
     def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
         if RoleName.TENANT_ADMIN.value in roles:
@@ -537,6 +549,7 @@ class TenantService:
         self, current_user: User, tenant_id: int, offset: int, limit: int
     ) -> list[User]:
         await self.enforce_scope(current_user, tenant_id)
+        await self._require_admin(current_user)
         await self._load_tenant_or_404(tenant_id)
         return await self._users.list_by_tenant(tenant_id, offset=offset, limit=limit)
 
@@ -577,15 +590,7 @@ class TenantService:
         body: TenantUserUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
-        roles = await self._roles.get_user_roles(current_user.id)
-        if RoleName.MODERATOR.value in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "INSUFFICIENT_PERMISSIONS",
-                    "message": "Moderators cannot update tenant user details.",
-                },
-            )
+        await self._require_admin(current_user)
         await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
@@ -606,15 +611,7 @@ class TenantService:
         body: TenantUserStatusUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
-        roles = await self._roles.get_user_roles(current_user.id)
-        if RoleName.MODERATOR.value in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "INSUFFICIENT_PERMISSIONS",
-                    "message": "Moderators cannot update tenant user status.",
-                },
-            )
+        await self._require_admin(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
