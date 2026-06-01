@@ -52,9 +52,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     for perm_name in _REVOKED_PERMISSIONS:
-        conn.execute(sa.text(f"""
+        conn.execute(sa.text("""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.id, p.id, '{SEEDER_ID}'
+            SELECT r.id, p.id, :seeder_id
             FROM roles r
             JOIN permissions p ON p.name = :perm
             WHERE r.name = 'MODERATOR'
@@ -62,4 +62,4 @@ def downgrade() -> None:
                   SELECT 1 FROM role_permission rp
                   WHERE rp.role_id = r.id AND rp.permission_id = p.id
               )
-        """), {"perm": perm_name})
+        """), {"perm": perm_name, "seeder_id": SEEDER_ID})
