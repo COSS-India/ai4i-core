@@ -21,7 +21,7 @@ anchored to a source path so you can jump straight to the code.
 
 | Service | Port | Stack | Primary database | Purpose |
 |---------|------|-------|------------------|---------|
-| **auth-service** | `8081` | FastAPI / Python 3.12 | PostgreSQL `ai4iplatform_auth` | AuthN/AuthZ, users, tenants, RBAC, API keys, OAuth2; issues & validates JWTs |
+| **auth-service** | `8081` | FastAPI / Python 3.11 | PostgreSQL `ai4iplatform_auth` | AuthN/AuthZ, users, tenants, RBAC, API keys, OAuth2; issues & validates JWTs |
 | **platform-core-service** | `8095` (host `8102`) | FastAPI / Python 3.11 | PostgreSQL `ai4iplatform_core` | Model & service registry, alerts, telemetry query |
 | **inference-service** | `8090` (runs natively on host) | FastAPI / Python 3.11 | stateless | Unified inference orchestration over Triton / OpenAI-compatible LLM backends |
 

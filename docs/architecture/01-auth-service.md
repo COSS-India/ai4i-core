@@ -1,6 +1,6 @@
 # auth-service
 
-**Port:** `8081` · **Stack:** FastAPI / Python 3.12 / SQLAlchemy (async) · **DB:** PostgreSQL
+**Port:** `8081` · **Stack:** FastAPI / Python 3.11 / SQLAlchemy (async) · **DB:** PostgreSQL
 `ai4iplatform_auth` · **Cache:** Redis
 
 The auth-service is the platform's identity authority. It is the **only** service that
