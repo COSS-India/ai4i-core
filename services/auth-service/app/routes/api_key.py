@@ -63,6 +63,7 @@ async def create_api_key(
 @router.get("/api-keys")
 async def list_api_keys(
     user_id: UUID = Depends(get_current_user_id),
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     keys = await svc.list_by_user(user_id)
