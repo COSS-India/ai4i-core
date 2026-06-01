@@ -23,7 +23,7 @@ router = APIRouter(prefix="/auth/roles", tags=["Roles"])
 
 @router.get("/list")
 async def list_roles(
-    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: RoleService = Depends(get_role_service),
 ):
     roles = await svc.list_roles()
