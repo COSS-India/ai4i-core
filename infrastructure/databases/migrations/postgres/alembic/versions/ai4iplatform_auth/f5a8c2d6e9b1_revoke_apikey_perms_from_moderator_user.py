@@ -8,15 +8,10 @@ This migration removes those four permissions from MODERATOR and USER on
 already-seeded DBs. The seed migration (2362774ac241) is updated in parallel
 so fresh installs no longer grant them.
 
-This also functions as a **merge migration**: the auth-schema graph had two
-heads (e1f8a2c4b903, e3f4a5b6c7d8) both branched off d7a1c3f9e2b4. Closing
-the branch here means ``alembic upgrade head`` no longer fails with
-"multiple heads".
-
 Idempotent: ``DELETE … WHERE`` is a no-op when the rows are already absent.
 
 Revision ID: f5a8c2d6e9b1
-Revises: e1f8a2c4b903, e3f4a5b6c7d8
+Revises: b2c3d4e5f6a7
 Create Date: 2026-06-01 12:00:00.000000
 
 """
@@ -27,8 +22,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'f5a8c2d6e9b1'
-# Tuple == merge migration; closes both heads created on 2026-06-01.
-down_revision: Union[str, Sequence[str], None] = ('e1f8a2c4b903', 'e3f4a5b6c7d8')
+down_revision: Union[str, Sequence[str], None] = 'b2c3d4e5f6a7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
