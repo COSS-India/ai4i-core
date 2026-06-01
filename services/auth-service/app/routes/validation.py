@@ -162,7 +162,7 @@ async def _validate_jwt(
         response.headers["X-User-ID"] = str(claims.user_id)
     response.headers["X-User-Plan"] = USER_PLAN_JWT
     response.headers["X-Auth-Type"] = claims.token_type
-    response.headers["X-Permission-IDS"] = json.dumps(claims.permission_ids)
+    response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in claims.permission_ids) + "]"
     if claims.tenant_id:
         response.headers["X-Tenant-ID"] = str(claims.tenant_id)
     # Permission id 1 is the "admin" sentinel (only the ADMIN role holds it).
