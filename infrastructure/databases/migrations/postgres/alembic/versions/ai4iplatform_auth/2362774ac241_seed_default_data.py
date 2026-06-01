@@ -238,7 +238,7 @@ def upgrade() -> None:
         JOIN permissions p ON p.name IN (
           'users.create', 'users.read', 'users.update',
           'users.profile.read', 'users.profile.update', 'users.password.change',
-          'roles.read', 'roles.assign', 'permissions.read',
+          'roles.read', 'roles.assign', 'roles.remove', 'permissions.read',
           'apiKey.create', 'apiKey.read', 'apiKey.update', 'apiKey.delete',
           'service.read', 'model.read', 'pii_guard.admin',
           'asr.inference', 'audio-lang-detection.inference', 'language-detection.inference',
