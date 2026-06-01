@@ -62,10 +62,11 @@ async def get_tenant(
 async def update_tenant(
     tenant_id: int,
     body: TenantUpdate,
+    background: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    tenant = await svc.update_tenant(current_user, tenant_id, body)
+    tenant = await svc.update_tenant(current_user, tenant_id, body, background)
     return success_response(data=to_response(tenant, TenantResponse))
 
 

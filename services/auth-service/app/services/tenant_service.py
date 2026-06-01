@@ -424,7 +424,11 @@ class TenantService:
         return await self._load_tenant_or_404(tenant_id)
 
     async def update_tenant(
-        self, current_user: User, tenant_id: int, body: TenantUpdate
+        self,
+        current_user: User,
+        tenant_id: int,
+        body: TenantUpdate,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
         tenant = await self._load_tenant_or_404(tenant_id)
         data = body.model_dump(exclude_unset=True)
@@ -433,10 +437,95 @@ class TenantService:
         # Schema uses `contact_name` (frontend-aligned); model column is `name`.
         if "contact_name" in data:
             data["name"] = data.pop("contact_name")
+
+        # Capture the pre-update email so we can decide whether to re-issue the
+        # activation link. Normalise both sides for the comparison.
+        old_email = (tenant.email or "").lower().strip()
+        new_email_raw = data.get("email")
+        new_email = (new_email_raw or "").lower().strip() if new_email_raw else ""
+        email_changed = bool(new_email) and new_email != old_email
+
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
         await self._tenants.save_and_refresh(tenant)
+
+        # PENDING tenants haven't been activated yet — the original activation
+        # link points at the old email and is still valid. Updating the email
+        # without invalidating + re-issuing leaves the tenant in an inconsistent
+        # state (old address can still activate; new owner gets nothing). For
+        # ACTIVE / SUSPENDED / DEACTIVATED tenants the activation flow has
+        # already finished or is intentionally blocked, so we skip.
+        if email_changed and tenant.status == TenantStatus.PENDING:
+            await self._reissue_pending_activation(
+                tenant=tenant,
+                old_email=old_email,
+                new_email=new_email,
+                background_tasks=background_tasks,
+            )
         return tenant
+
+    async def _reissue_pending_activation(
+        self,
+        tenant: Tenant,
+        old_email: str,
+        new_email: str,
+        background_tasks: Optional[BackgroundTasks],
+    ) -> None:
+        """Invalidate the old activation link and send a fresh one to ``new_email``.
+
+        Finds the tenant's auto-provisioned admin user by old email + tenant_id
+        (the one created in ``create_tenant`` with ``email_kind="setup"``),
+        deactivates its outstanding setup tokens, updates the user's email to
+        match the tenant's new email, mints a new setup token, persists it,
+        and enqueues the activation email.
+        """
+        admin = await self._users.get_by_email(old_email)
+        if admin is None or admin.tenant_id != tenant.id:
+            logger.warning(
+                "No tenant-admin user found for tenant %s with email %s; "
+                "skipping activation re-issue.",
+                tenant.id, old_email,
+            )
+            return
+
+        # Refuse if another user already owns the new email — otherwise we'd
+        # silently violate the users.email uniqueness constraint at flush.
+        clash = await self._users.get_by_email(new_email)
+        if clash is not None and clash.id != admin.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_USER_EMAIL",
+                    "message": "Another user already has this email address.",
+                },
+            )
+
+        # Invalidate every existing token for this user — covers the original
+        # setup link plus any subsequent re-sends, so only the new token works.
+        await self._verifications.deactivate_all_for_user(str(admin.id))
+
+        # Email reassignment is a plain attribute write on the mapped object;
+        # the subsequent commit() flushes the UPDATE alongside the new token.
+        admin.email = new_email
+
+        expires_at = setup_token_expires_at()
+        token = self._tokens.create_setup_token(
+            user_id=str(admin.id), email=new_email
+        )
+        await persist_token_verification(
+            self._verifications, token, admin.id, expires_at
+        )
+        await self._users.commit()
+
+        logger.info(
+            "Re-issued tenant activation link for tenant %s: %s → %s",
+            tenant.id, old_email, new_email,
+        )
+        enqueue_email(
+            background_tasks,
+            self._email,
+            lambda: render_setup_link(admin, token),
+        )
 
     async def update_tenant_status(
         self,
