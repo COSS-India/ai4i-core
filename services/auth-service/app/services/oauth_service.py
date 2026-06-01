@@ -27,7 +27,7 @@ from ai4icore_core.email import EmailClient
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
-from app.services.email_helpers import enqueue_email, issue_session
+from app.services.email_helpers import enqueue_email, issue_session, resolve_tenant_id
 from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
 from app.core.messages import (
     OAUTH_PROVIDER_UNKNOWN,
@@ -45,6 +45,7 @@ from app.core.messages import (
 from app.models.role_name import RoleName
 from app.models.user import CreationType, User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
+from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth_email_templates import render_welcome
 from app.services.role_service import RoleService
@@ -70,12 +71,14 @@ class OAuthService:
         self,
         user_repo: UserRepository,
         refresh_token_repo: RefreshTokenRepository,
+        tenant_repo: TenantRepository,
         role_service: RoleService,
         token_service: TokenService,
         email_client: EmailClient,
     ) -> None:
         self._users = user_repo
         self._refresh_tokens = refresh_token_repo
+        self._tenants = tenant_repo
         self._roles = role_service
         self._tokens = token_service
         self._email = email_client
@@ -201,6 +204,8 @@ class OAuthService:
         except ValueError:
             creation_type = CreationType.DEFAULT
 
+        tenant_id = await resolve_tenant_id(None, self._tenants)
+
         user = User(
             email=email,
             username=username,
@@ -208,6 +213,7 @@ class OAuthService:
             avatar_url=avatar_url,
             is_active=True,  # OAuth identity = email already verified by provider
             creation_type=creation_type,
+            tenant_id=tenant_id,
         )
         await self._users.create(user)
 
