@@ -122,3 +122,65 @@ class TestRouteRegistration:
         # The guard is registered as a router-level dependency
         # We can verify by checking the router structure exists
         assert api_router is not None
+
+
+class TestTenantAdminRoleRemoval:
+    """Tenant Admin role-removal: same-tenant allowed, cross-tenant blocked."""
+
+    def _make_user(self, tenant_id: int):
+        from uuid import uuid4
+        from app.models.user import User
+        return User(id=uuid4(), email="u@example.com", username="u", tenant_id=tenant_id)
+
+    def _mock_request(self):
+        from unittest.mock import MagicMock
+        req = MagicMock()
+        req.state.tenant_id = None  # fall back to current_user.tenant_id
+        return req
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role_name", ["USER", "GUEST", "MODERATOR", "TENANT ADMIN"])
+    async def test_tenant_admin_remove_role_within_tenant(self, role_name):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.dependencies.tenant_scope import enforce_target_user_same_tenant
+        from app.models.role_name import RoleName
+
+        caller = self._make_user(tenant_id=1)
+        target = self._make_user(tenant_id=1)
+        mock_db = MagicMock()
+
+        with patch("app.dependencies.tenant_scope.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.tenant_scope.UserRepository") as MockUserRepo:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=target)
+
+            # Must not raise — TENANT ADMIN acting on a user in their own tenant
+            await enforce_target_user_same_tenant(
+                self._mock_request(), caller, target.id, mock_db,
+                bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR),
+            )
+
+    @pytest.mark.asyncio
+    async def test_tenant_admin_remove_role_cross_tenant_forbidden(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from fastapi import HTTPException
+        from app.dependencies.tenant_scope import enforce_target_user_same_tenant
+        from app.models.role_name import RoleName
+
+        caller = self._make_user(tenant_id=1)
+        target = self._make_user(tenant_id=2)  # different tenant
+        mock_db = MagicMock()
+
+        with patch("app.dependencies.tenant_scope.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.tenant_scope.UserRepository") as MockUserRepo:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=target)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await enforce_target_user_same_tenant(
+                    self._mock_request(), caller, target.id, mock_db,
+                    bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR),
+                )
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "TENANT_FORBIDDEN"
