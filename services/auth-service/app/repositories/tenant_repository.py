@@ -32,7 +32,7 @@ class TenantRepository(BaseRepository):
 
     async def get_by_organisation(self, organisation: str) -> Optional[Tenant]:
         result = await self._db.execute(
-            select(Tenant).where(Tenant.organisation == organisation).limit(1)
+            select(Tenant).where(func.lower(Tenant.organisation) == organisation.lower()).limit(1)
         )
         return result.scalar_one_or_none()
 
