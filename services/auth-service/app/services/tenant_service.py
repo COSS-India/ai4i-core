@@ -577,6 +577,15 @@ class TenantService:
         body: TenantUserUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.MODERATOR.value in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Moderators cannot update tenant user details.",
+                },
+            )
         await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
@@ -597,6 +606,15 @@ class TenantService:
         body: TenantUserStatusUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.MODERATOR.value in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Moderators cannot update tenant user status.",
+                },
+            )
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
