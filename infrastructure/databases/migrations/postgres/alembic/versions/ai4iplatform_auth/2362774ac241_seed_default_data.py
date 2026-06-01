@@ -212,7 +212,7 @@ def upgrade() -> None:
         JOIN permissions p ON p.name IN (
           'users.create', 'users.read', 'users.update', 'users.delete',
           'users.profile.read', 'users.profile.update', 'users.password.change',
-          'roles.read', 'permissions.read',
+          'permissions.read',
           'apiKey.create', 'apiKey.read', 'apiKey.update', 'apiKey.delete',
           'service.create', 'service.read', 'service.update', 'service.delete',
           'model.create', 'model.read', 'model.update', 'model.delete',
@@ -224,8 +224,7 @@ def upgrade() -> None:
           'configs.read', 'configs.create', 'configs.update', 'configs.delete',
           'metrics.read', 'metrics.export',
           'alerts.read', 'alerts.create', 'alerts.update', 'alerts.delete',
-          'dashboards.read', 'dashboards.create', 'dashboards.update', 'dashboards.delete',
-          'tenant.read', 'tenant.users.read', 'tenant.users.update'
+          'dashboards.read', 'dashboards.create', 'dashboards.update', 'dashboards.delete'
         )
         WHERE r.name = 'MODERATOR'
     """))
