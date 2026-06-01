@@ -103,7 +103,7 @@ async def get_model_by_id(
     return success_response(data=data)
 
 
-@router.post("")
+@router.post("", status_code=201)
 async def create_model(
     request: Request,
     payload: ModelCreateRequest,
