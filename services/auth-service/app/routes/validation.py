@@ -162,12 +162,12 @@ async def _validate_jwt(
         response.headers["X-User-ID"] = str(claims.user_id)
     response.headers["X-User-Plan"] = USER_PLAN_JWT
     response.headers["X-Auth-Type"] = claims.token_type
+    response.headers["X-Permission-IDS"] = json.dumps(claims.permission_ids)
     if claims.tenant_id:
         response.headers["X-Tenant-ID"] = str(claims.tenant_id)
     # Permission id 1 is the "admin" sentinel (only the ADMIN role holds it).
     # Forward a trusted flag so upstream services can widen scope (e.g. cross-tenant
     # trace access) without re-resolving roles or hitting the DB.
-    response.headers["X-Is-Admin"] = "true" if 1 in claims.permission_ids else "false"
     return TokenValidationResponse(
         valid=True,
         user_id=claims.user_id,
