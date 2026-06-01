@@ -14,8 +14,13 @@ correct. This migration fixes already-seeded databases.
 
 Idempotent: DELETE WHERE is a no-op if the rows are absent.
 
+Re-parented from d7a1c3f9e2b4 onto e1f8a2c4b903 to linearize the two
+ai4iplatform_auth heads that both branched off d7a1c3f9e2b4 (this revoke +
+e1f8a2c4b903 grant). Both are independent role_permission data changes, so
+order is immaterial; linearizing makes `alembic upgrade head` unambiguous.
+
 Revision ID: e3f4a5b6c7d8
-Revises: d7a1c3f9e2b4
+Revises: e1f8a2c4b903
 Create Date: 2026-06-01 00:00:00.000000
 
 """
@@ -26,7 +31,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'e3f4a5b6c7d8'
-down_revision: Union[str, None] = 'd7a1c3f9e2b4'
+down_revision: Union[str, None] = 'e1f8a2c4b903'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
