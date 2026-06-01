@@ -506,6 +506,7 @@ class TenantService:
         self, current_user: User, tenant_id: int, offset: int, limit: int
     ) -> list[User]:
         await self.enforce_scope(current_user, tenant_id)
+        await self._load_tenant_or_404(tenant_id)
         return await self._users.list_by_tenant(tenant_id, offset=offset, limit=limit)
 
     async def create_tenant_user(
