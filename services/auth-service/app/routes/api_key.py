@@ -7,7 +7,7 @@ All operations are delegated to APIKeyService.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_user, get_current_user_id, get_user_context
@@ -39,7 +39,7 @@ def _key_dict(k) -> dict:
     }
 
 
-@router.post("/api-keys")
+@router.post("/api-keys", status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     body: CreateAPIKeyRequest,
     ctx = Depends(get_user_context),
