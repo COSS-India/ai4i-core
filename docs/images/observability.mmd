@@ -1,0 +1,30 @@
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'Inter, Segoe UI, Helvetica, Arial, sans-serif','fontSize':'15px','lineColor':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#ffffff'}}}%%
+flowchart LR
+    subgraph Apps["Services"]
+        direction TB
+        AUTH("🔐 auth-service"):::svc
+        CORE("🧩 platform-core-service"):::svc
+        INF("⚙️ inference-service"):::svc
+    end
+
+    K("📨 Kafka<br/>kafka-topic-otel-trace"):::obs
+    FB("🔀 Fluent Bit"):::obs
+
+    AUTH -- "logs (stdout)" --> FB
+    CORE -- "logs (stdout)" --> FB
+    INF  -- "logs (stdout)" --> FB
+
+    INF == "OTel spans" ==> K
+    K == "in_kafka" ==> FB
+
+    FB -- "logs-*" --> OSL[("🔎 OpenSearch<br/>logs-*")]:::store
+    FB == "traces-*" ==> OST[("🔎 OpenSearch<br/>traces-*")]:::store
+
+    OSL --> DASH("📊 OpenSearch Dashboards · :5602"):::ui
+    OST --> DASH
+    CORE -- "GET /telemetry/traces/search" --> OST
+
+    classDef svc   fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#075985;
+    classDef store fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef obs   fill:#ffedd5,stroke:#ea580c,stroke-width:1.5px,color:#7c2d12;
+    classDef ui    fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95;
