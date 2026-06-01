@@ -1,7 +1,7 @@
 # AI4I-Core Microservices Platform
 
-> **Open-source codebase** for building enterprise-grade AI/ML microservices for Indic
-> languages. Not a hosted service — you deploy and manage it yourself.
+> **Open-source codebase** for building AI/ML microservices for Indic languages.
+> Not a hosted service — you deploy and manage it yourself.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub Issues](https://img.shields.io/github/issues/COSS-India/ai4i-core)](https://github.com/COSS-India/ai4i-core/issues)
@@ -11,15 +11,8 @@
 
 ## 🎯 What This Repository Provides
 
-An open-source platform codebase built with **FastAPI**, providing a reference
-implementation for deploying scalable language-AI services. A web **Portal** talks to a
-set of microservices through an **APISIX** gateway; services persist business data in
-**PostgreSQL** and use **Redis** for caching and session/rate-limit state. Observability
-data flows on a separate lane via **Kafka → Fluent Bit → OpenSearch** plus
-**Prometheus/Grafana**.
-
-**What you get:** complete source for the services, frontend, and shared libraries; Docker
-Compose for local infrastructure; Alembic migrations; and code-anchored architecture docs.
+An open-source, **FastAPI**-based reference implementation for deploying multi-tenant
+**language-AI services** (translation, speech, OCR, NER, LLM) in your own infrastructure.
 
 ## 🏗️ Architecture Overview
 
@@ -39,7 +32,7 @@ lane** (dotted) so they never touch the business-data path.
 > (forward-auth), which returns identity headers (`X-User-ID`, `X-Tenant-ID`) the
 > downstream service trusts.
 
-## 📦 What This Repository Provides
+## 📦 What's Included
 
 - ✅ **Source code** for all backend services and the frontend
 - ✅ **Docker Compose** (`docker-compose-local.yml`) for local infrastructure
@@ -49,8 +42,7 @@ lane** (dotted) so they never touch the business-data path.
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
-> **Note:** this is **not a hosted service**. You deploy and manage it in your own
-> infrastructure. The APISIX gateway is **external to this repo** (not in compose).
+> **Note:** the APISIX gateway is **external to this repo** (not in compose).
 
 ## 🎯 Core Services
 
@@ -60,8 +52,13 @@ The AI/ML capabilities (NMT, ASR, TTS, NER, OCR, …) are **consolidated into a 
 | Service | Port | Database | Purpose | Docs |
 |---------|------|----------|---------|------|
 | **auth-service** | `8081` | PostgreSQL `ai4iplatform_auth` | AuthN/AuthZ, users, tenants, RBAC, API keys, OAuth2; issues & validates JWTs | [README](./services/auth-service/README.md) · [Architecture](./docs/architecture/01-auth-service.md) |
-| **platform-core-service** | `8095` (host `8102`) | PostgreSQL `ai4iplatform_core` | Model & service registry, alerts, telemetry (trace) query | [README](./services/platform-core-service/README.md) · [Architecture](./docs/architecture/02-platform-core-service.md) |
-| **inference-service** | `8090` (runs natively) | stateless | Unified inference orchestration over Triton / OpenAI-compatible backends (tasks below) | [README](./services/inference-service/README.md) · [Architecture](./docs/architecture/03-inference-service.md) |
+| **platform-core-service** | `8095` | PostgreSQL `ai4iplatform_core` | Model & service registry, alerts, telemetry (trace) query | [README](./services/platform-core-service/README.md) · [Architecture](./docs/architecture/02-platform-core-service.md) |
+| **inference-service** | `8090` | stateless | Unified inference orchestration over Triton / OpenAI-compatible backends (tasks below) | [README](./services/inference-service/README.md) · [Architecture](./docs/architecture/03-inference-service.md) |
+
+> In local development all three application services run **natively** on the host (Docker
+> hosts only the infrastructure). The `docker-compose-local.yml` file also includes
+> container definitions for them, used by the alternative all-in-Docker workflow in
+> `docs/SETUP_GUIDE.md` (where platform-core is published on host `8102`).
 
 ### Inference services
 
@@ -111,14 +108,15 @@ uses an OpenAI-compatible `POST /api/v1/chat/completions`.
 - **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
 - **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting
 - **OpenSearch + Dashboards · Fluent Bit** — logs & trace (`traces-*`) storage
-- **Jaeger** — bundled in the local compose stack
 
 ## 🚀 Deploy Your Own Instance
 
 ### Prerequisites
-- Docker 20.10+ and Docker Compose 2.0+
-- ~16 GB RAM recommended to run the full stack locally
-- Linux / macOS (Windows via WSL2)
+Docker runs the **infrastructure only**; the application services run **natively** on the host.
+- **Docker 20.10+ / Docker Compose 2.0+** — for infrastructure (PostgreSQL, Redis, Kafka, OpenSearch, Prometheus, …)
+- **Python 3.11 + pip** — for the application services (auth, platform-core, inference)
+- **Node 18+** — for the Simple UI frontend
+- ~16 GB RAM recommended for the full stack; Linux / macOS (Windows via WSL2)
 
 ### Quick Start (local)
 ```bash
@@ -129,14 +127,19 @@ cd ai4i-core
 # 2. Configure environment (see docs/SETUP_GUIDE.md for the full walkthrough)
 ./env-local-setup/setup-env.sh
 
-# 3. Start infrastructure + compose-managed services
-docker compose -f docker-compose-local.yml up -d
+# 3. Start INFRASTRUCTURE in Docker (not the app services)
+#    (add opensearch fluent-bit prometheus grafana for the full observability stack)
+docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper
 
-# 4. inference-service runs natively on the host
-cd services/inference-service && pip install -r requirements.txt && python main.py
+# 4. Run database migrations — see docs/SETUP_GUIDE.md, Step 5
 
-# 5. Open the UI
-open http://localhost:3000
+# 5. Run each application service NATIVELY (separate terminals)
+cd services/auth-service          && pip install -r requirements.txt && uvicorn app.main:app --port 8081
+cd services/platform-core-service && pip install -r requirements.txt && uvicorn app.main:app --port 8095
+cd services/inference-service     && pip install -r requirements.txt && python main.py          # :8090
+
+# 6. Run the frontend natively
+cd frontend/simple-ui && npm install && npm run dev                                              # :3000
 ```
 > Full instructions: **[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)**.
 
@@ -145,7 +148,7 @@ open http://localhost:3000
 |-----|------|
 | http://localhost:3000 | Portal (Simple UI) |
 | http://localhost:8081 | auth-service |
-| http://localhost:8102 | platform-core-service (container `8095`) |
+| http://localhost:8095 | platform-core-service |
 | http://localhost:8090 | inference-service |
 | http://localhost:3001 | Grafana |
 | http://localhost:9090 | Prometheus |
@@ -180,8 +183,7 @@ open http://localhost:3000
   **OpenSearch**.
 - **Traces** — only **inference-service** emits OpenTelemetry spans; they flow
   **Kafka (`kafka-topic-otel-trace`) → Fluent Bit → OpenSearch `traces-*`**, queried via
-  platform-core's `/telemetry/traces/search`. (Jaeger is available in the local compose
-  stack.)
+  platform-core's `/telemetry/traces/search`.
 
 ![Observability pipeline — logs from all services and traces from inference flow through Fluent Bit into OpenSearch logs-* / traces-*](./docs/images/observability.png)
 
@@ -196,22 +198,14 @@ open http://localhost:3000
 
 ## 📄 License
 
-Licensed under the **MIT License**. You are free to use, modify, and distribute this code,
-including commercially, with no warranty or liability from the maintainers.
+Licensed under the **MIT License** — see [LICENSE](./LICENSE).
 
 ## 💬 Community & Support
 
 Open-source project — support is community-based:
 - **Issues:** [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
 - **Docs:** the [`docs/`](./docs/) directory
-- **Deployment debugging:** `docker compose -f docker-compose-local.yml logs <service>` and
-  per-service `/health` endpoints
+- **Debugging:** infrastructure logs via `docker compose -f docker-compose-local.yml logs <service>`;
+  app-service logs appear in the terminal running each service; check per-service `/health` endpoints
 
 > Provided as-is; no commercial SLA.
-
-## 🙏 Acknowledgments
-
-Built with open-source technologies — FastAPI, PostgreSQL, Redis, Kafka, APISIX,
-Prometheus, Grafana, OpenSearch, Fluent Bit, Next.js / React / TypeScript, and the
-NVIDIA Triton Inference Server — and the **AI4Bharat** Indic-language models served
-through it.
