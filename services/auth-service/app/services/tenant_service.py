@@ -33,6 +33,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
+from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
@@ -54,7 +55,13 @@ from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
-from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
+from app.services.email_helpers import (
+    enqueue_email,
+    persist_token_verification,
+    reissue_setup_token,
+    resolve_tenant_id,
+    setup_token_expires_at,
+)
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
@@ -130,6 +137,7 @@ class TenantService:
         user_repo: UserRepository,
         role_service: RoleService,
         verification_repo: VerificationRepository,
+        credentials_repo: CredentialsRepository,
         token_service: TokenService,
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
@@ -138,6 +146,7 @@ class TenantService:
         self._users = user_repo
         self._roles = role_service
         self._verifications = verification_repo
+        self._credentials = credentials_repo
         self._tokens = token_service
         self._email = email_client
         self._api_keys = api_key_service
@@ -430,6 +439,21 @@ class TenantService:
         body: TenantUpdate,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
+        """Patch a tenant's editable fields.
+
+        When the tenant is ``PENDING`` and the email changes, the
+        auto-provisioned admin user's email is updated to match, their
+        outstanding SETUP tokens are deactivated, and a fresh activation
+        email is enqueued to the new address.
+
+        Transactional contract: every write — tenant column update, admin's
+        ``users.email``, token deactivation, new ``token_verification`` row
+        — flushes against the SAME ``AsyncSession`` and is committed once
+        at the end. Any pre-commit failure (409 on duplicate email, admin
+        not found, helper raise) aborts the whole change. The activation
+        email is enqueued **after** commit, so a rolled-back transaction
+        can never leak a delivered email whose token no longer exists.
+        """
         tenant = await self._load_tenant_or_404(tenant_id)
         data = body.model_dump(exclude_unset=True)
         # Status changes go through PATCH /status to keep authorization split clean.
@@ -444,88 +468,81 @@ class TenantService:
         new_email_raw = data.get("email")
         new_email = (new_email_raw or "").lower().strip() if new_email_raw else ""
         email_changed = bool(new_email) and new_email != old_email
+        is_pending_email_change = (
+            email_changed and tenant.status == TenantStatus.PENDING
+        )
 
+        # ── Pre-validate everything that might fail BEFORE applying any write,
+        # so the tenant.email change is never committed without the matching
+        # admin-email update + token invalidation.
+        admin: Optional[User] = None
+        if is_pending_email_change:
+            admin = await self._users.get_by_email(old_email)
+            if admin is None or admin.tenant_id != tenant.id:
+                # No admin to re-issue against → fail loudly. Otherwise the
+                # tenant.email would change while the original activation link
+                # (bound to whichever user actually exists) stays live, which
+                # is the inconsistency this flow exists to prevent.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "TENANT_ADMIN_NOT_FOUND",
+                        "message": (
+                            "Cannot update tenant email: the tenant's admin "
+                            "user could not be located, so the existing "
+                            "activation link cannot be invalidated."
+                        ),
+                    },
+                )
+            # Refuse if another user already owns the new email — otherwise
+            # we'd silently violate the users.email uniqueness constraint at
+            # flush time, after the tenant change has been written.
+            clash = await self._users.get_by_email(new_email)
+            if clash is not None and clash.id != admin.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "DUPLICATE_USER_EMAIL",
+                        "message": "Another user already has this email address.",
+                    },
+                )
+
+        # ── Stage writes against the open session (flush only, no commit).
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
-        await self._tenants.save_and_refresh(tenant)
 
-        # PENDING tenants haven't been activated yet — the original activation
-        # link points at the old email and is still valid. Updating the email
-        # without invalidating + re-issuing leaves the tenant in an inconsistent
-        # state (old address can still activate; new owner gets nothing). For
-        # ACTIVE / SUSPENDED / DEACTIVATED tenants the activation flow has
-        # already finished or is intentionally blocked, so we skip.
-        if email_changed and tenant.status == TenantStatus.PENDING:
-            await self._reissue_pending_activation(
-                tenant=tenant,
-                old_email=old_email,
-                new_email=new_email,
+        new_setup_token: Optional[str] = None
+        if admin is not None:
+            # Aligns admin's email with the tenant's, then delegates the
+            # SETUP-token deactivation + new token mint to the shared helper
+            # (same path used by AuthService.resend_setup_link, so the
+            # token-type scoping and credentials guard stay in lockstep).
+            admin.email = new_email
+            new_setup_token = await reissue_setup_token(
+                admin,
+                credentials_repo=self._credentials,
+                verifications_repo=self._verifications,
+                token_service=self._tokens,
                 background_tasks=background_tasks,
             )
+
+        # ── Single atomic commit + refresh.
+        await self._tenants.commit()
+        await self._tenants.refresh(tenant)
+
+        # ── Email enqueue happens AFTER the commit so a rolled-back tx can't
+        # leak a delivered email whose token row was never persisted.
+        if admin is not None and new_setup_token is not None:
+            logger.info(
+                "Re-issued tenant activation link for tenant %s: %s → %s",
+                tenant.id, old_email, new_email,
+            )
+            enqueue_email(
+                background_tasks,
+                self._email,
+                lambda: render_setup_link(admin, new_setup_token),
+            )
         return tenant
-
-    async def _reissue_pending_activation(
-        self,
-        tenant: Tenant,
-        old_email: str,
-        new_email: str,
-        background_tasks: Optional[BackgroundTasks],
-    ) -> None:
-        """Invalidate the old activation link and send a fresh one to ``new_email``.
-
-        Finds the tenant's auto-provisioned admin user by old email + tenant_id
-        (the one created in ``create_tenant`` with ``email_kind="setup"``),
-        deactivates its outstanding setup tokens, updates the user's email to
-        match the tenant's new email, mints a new setup token, persists it,
-        and enqueues the activation email.
-        """
-        admin = await self._users.get_by_email(old_email)
-        if admin is None or admin.tenant_id != tenant.id:
-            logger.warning(
-                "No tenant-admin user found for tenant %s with email %s; "
-                "skipping activation re-issue.",
-                tenant.id, old_email,
-            )
-            return
-
-        # Refuse if another user already owns the new email — otherwise we'd
-        # silently violate the users.email uniqueness constraint at flush.
-        clash = await self._users.get_by_email(new_email)
-        if clash is not None and clash.id != admin.id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "DUPLICATE_USER_EMAIL",
-                    "message": "Another user already has this email address.",
-                },
-            )
-
-        # Invalidate every existing token for this user — covers the original
-        # setup link plus any subsequent re-sends, so only the new token works.
-        await self._verifications.deactivate_all_for_user(str(admin.id))
-
-        # Email reassignment is a plain attribute write on the mapped object;
-        # the subsequent commit() flushes the UPDATE alongside the new token.
-        admin.email = new_email
-
-        expires_at = setup_token_expires_at()
-        token = self._tokens.create_setup_token(
-            user_id=str(admin.id), email=new_email
-        )
-        await persist_token_verification(
-            self._verifications, token, admin.id, expires_at
-        )
-        await self._users.commit()
-
-        logger.info(
-            "Re-issued tenant activation link for tenant %s: %s → %s",
-            tenant.id, old_email, new_email,
-        )
-        enqueue_email(
-            background_tasks,
-            self._email,
-            lambda: render_setup_link(admin, token),
-        )
 
     async def update_tenant_status(
         self,

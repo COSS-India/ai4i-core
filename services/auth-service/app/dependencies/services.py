@@ -115,6 +115,7 @@ async def get_tenant_service(
         user_repo=UserRepository(db),
         role_service=role_service,
         verification_repo=VerificationRepository(db),
+        credentials_repo=CredentialsRepository(db),
         token_service=token_service,
         email_client=email_client,
         api_key_service=api_key_service,

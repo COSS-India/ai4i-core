@@ -17,7 +17,6 @@ from jose import jwt
 from app.models.verification import TokenVerification
 from app.repositories.base import BaseRepository
 from app.core.constants import TokenType
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +51,18 @@ class VerificationRepository(BaseRepository):
             if token_type is None:
                 token_obj.is_active = False
             else:
+                # We only need to read the ``token_type`` claim — not verify
+                # the signature — so use get_unverified_claims, which is
+                # algorithm-agnostic. (``jwt.decode`` with algorithms=["HS256"]
+                # rejected RS256-signed tokens here even with
+                # verify_signature=False, so token-type-scoped deactivation
+                # silently failed for every real token.)
                 try:
-                    payload = jwt.decode(
-                        token_obj.token,
-                        key=settings.secret_key,
-                        algorithms=["HS256"],
-                        options={"verify_signature": False}
-                    )
-                    if payload.get("token_type") == token_type:
+                    payload = jwt.get_unverified_claims(token_obj.token)
+                    # JWT claim name is ``type`` (see TokenService._create_token);
+                    # the older `payload.get("token_type")` here always returned
+                    # None, so token-type-scoped deactivation was a silent no-op.
+                    if payload.get("type") == token_type:
                         token_obj.is_active = False
                 except Exception as e:
                     logger.warning("Failed to decode token for user %s: %s", user_uuid, e)

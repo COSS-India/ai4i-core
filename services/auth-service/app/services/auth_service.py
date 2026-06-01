@@ -46,7 +46,14 @@ from app.services.auth_email_templates import (
     render_welcome,
 )
 from app.core.security import password_manager
-from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
+from app.services.email_helpers import (
+    enqueue_email,
+    issue_session,
+    persist_token_verification,
+    reissue_setup_token,
+    resolve_tenant_id,
+    setup_token_expires_at,
+)
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -583,26 +590,30 @@ class AuthService:
         Anti-enumeration: always returns successfully. Only sends email to users
         who have NOT yet set a password (no credentials). Works for tenant contact
         admins while the tenant is still PENDING.
+
+        Token issuance is delegated to ``reissue_setup_token`` so the SETUP
+        token-type scoping and credentials-already-set guard stay in lockstep
+        with the tenant email-update flow (see ``TenantService.update_tenant``).
         """
         user = await self._users.get_by_email(email)
         if not user:
             return  # anti-enumeration: silent no-op
 
-        existing_creds = await self._credentials.get_by_user_id(user.id)
-        if existing_creds:
-            return  # silent no-op — onboarding complete
-
-        user_id_str = str(user.id)
-        await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.SETUP)
-
-        setup_token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
-        await persist_token_verification(
-            self._verifications,
-            setup_token,
-            user.id,
-            setup_token_expires_at(),
+        setup_token = await reissue_setup_token(
+            user,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
+            background_tasks=background_tasks,
         )
-        await self._users.commit()
+        if setup_token is None:
+            return  # helper guarded — credentials set or no bg tasks
 
+        await self._users.commit()
         logger.info("Setup link resent for user id=%s", user.id)
-        enqueue_email(background_tasks, self._email, lambda: render_setup_link(user, setup_token))
+        # Enqueue AFTER commit so a commit failure can't leak an email whose
+        # token has been rolled back.
+        enqueue_email(
+            background_tasks, self._email,
+            lambda: render_setup_link(user, setup_token),
+        )
