@@ -244,7 +244,7 @@ def upgrade() -> None:
           'language-diarization.inference', 'llm.inference', 'ner.inference',
           'nmt.inference', 'ocr.inference', 'pipeline.inference',
           'speaker-diarization.inference', 'transliteration.inference', 'tts.inference',
-          'tenant.read', 'tenant.users.read', 'tenant.users.create',
+          'tenant.read', 'tenant.update', 'tenant.users.read', 'tenant.users.create',
           'tenant.users.update', 'tenant.users.delete'
         )
         WHERE r.name = 'TENANT ADMIN'

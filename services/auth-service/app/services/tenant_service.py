@@ -451,18 +451,13 @@ class TenantService:
         body: TenantStatusUpdate,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
-        await self.enforce_scope(current_user, tenant_id)
-        if body.status in (
-            TenantStatus.SUSPENDED,
-            TenantStatus.DEACTIVATED,
-        ) and not await self.is_system_admin(current_user):
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
-                    "code": "TENANT_STATUS_FORBIDDEN",
-                    "message": (
-                        "Only system administrators can suspend or deactivate a tenant."
-                    ),
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can change tenant status.",
                 },
             )
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
