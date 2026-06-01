@@ -107,7 +107,11 @@ class CoreSettings(BaseSettings):
     # ── Endpoint validation ──
     run_inference_test: bool = True
     endpoint_validation_timeout_seconds: float = 15.0
-    # "lenient" = accept <500, "strict" = accept <400
+    # Both "lenient" and "strict" accept any non-5xx response (threshold < 500).
+    # "strict" (originally < 400) was too aggressive — inference servers
+    # legitimately return 400/422 for probe payloads even when healthy.
+    # The setting is retained for backwards compatibility; both values behave
+    # identically. See endpoint_validator._VALIDATION_MODE_THRESHOLDS.
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
 
