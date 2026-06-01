@@ -19,61 +19,28 @@ data (trace spans, logs, metrics) flows out on a separate lane through **Kafka**
 
 ```mermaid
 flowchart TB
-    Portal["Portal — simple-ui<br/>Next.js · :3000"]
+    Portal["Portal (Next.js)"] --> GW["APISIX Gateway"]
 
-    subgraph Edge["Edge"]
-        GW["APISIX Gateway<br/>(JWT / API-key check via auth /auth/validate)"]
-    end
+    GW --> AUTH["auth-service"]
+    GW --> CORE["platform-core-service"]
+    GW --> INF["inference-service"]
 
-    subgraph Services["Application services (FastAPI)"]
-        AUTH["auth-service<br/>:8081"]
-        CORE["platform-core-service<br/>:8095"]
-        INF["inference-service<br/>:8090"]
-    end
-
-    subgraph Backends["Inference backends"]
-        TRITON["Triton Inference Server"]
-        LLM["OpenAI-compatible LLM<br/>(vLLM / llama.cpp / …)"]
-    end
-
-    subgraph Data["Business data / state"]
-        PG[("PostgreSQL 15<br/>ai4iplatform_auth · ai4iplatform_core")]
-        REDIS[("Redis 7<br/>token cache, rate limits, OAuth state, resolution cache")]
-    end
-
-    subgraph Telemetry["Observability lane"]
-        KAFKA["Kafka<br/>topic: kafka-topic-otel-trace"]
-        FB["Fluent Bit"]
-        OS[("OpenSearch<br/>traces-* · logs")]
-        PROM["Prometheus"]
-        GRAF["Grafana"]
-        AM["Alertmanager"]
-    end
-
-    Portal --> GW
-    GW --> AUTH
-    GW --> CORE
-    GW --> INF
-
-    AUTH --> PG
-    AUTH --> REDIS
+    AUTH --> PG[("PostgreSQL")]
     CORE --> PG
-    CORE --> REDIS
+    AUTH -.-> REDIS[("Redis")]
+    CORE -.-> REDIS
+    INF -.-> REDIS
 
-    INF -- "resolve serviceId → model + endpoint" --> CORE
-    INF --> TRITON
-    INF --> LLM
+    INF -- "resolve serviceId" --> CORE
+    INF --> BK["Triton / LLM backends"]
 
-    INF -. "OTEL spans" .-> KAFKA
-    KAFKA -.-> FB
-    FB -.-> OS
-    Services -. "container logs" .-> FB
-    Services -. "/metrics scrape" .-> PROM
-    PROM --> GRAF
-    PROM --> AM
-    CORE -- "trace search" --> OS
-    AM -- "alert webhook" --> CORE
+    INF -. "trace spans" .-> OBS["Kafka → Fluent Bit → OpenSearch"]
 ```
+
+> Request path: **Portal → APISIX → service → PostgreSQL** (Redis for cache/state). The
+> telemetry lane (dotted) is separate: inference-service spans flow **Kafka → Fluent Bit →
+> OpenSearch**. Metrics (Prometheus/Grafana) and alerts (Alertmanager) are listed in the
+> [infrastructure inventory](#infrastructure-inventory) rather than drawn here.
 
 ## Request path (sequence)
 
