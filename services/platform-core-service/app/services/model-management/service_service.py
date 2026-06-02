@@ -10,7 +10,7 @@ Owns the rules:
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
-- Policy combinations are validated (e.g., low-cost + sensitive accuracy).
+- Policy fields (latency/cost/accuracy) are stored as-is; no tier combinations are blocked.
 """
 
 import logging
@@ -84,34 +84,16 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
 
 
 def _validate_policy(policy: ServicePolicy) -> None:
-    """Cross-field policy constraints.
+    """Cross-field policy validation hook — reserved for future constraints.
 
-    These mirror the gateway's request-time validation so invalid combinations
-    cannot be persisted in the platform.
+    AI4IDS-1766: The original constraints (accuracy='sensitive' + cost='tier_1'
+    and latency='low' + cost='tier_1') were removed because they blocked valid
+    service configurations. All tier/accuracy/latency combinations are
+    legitimate; routing decisions are left to the gateway at request time.
+
+    Add new constraints here if business rules change, keeping this function
+    as the single enforcement point for update-time policy checks.
     """
-    latency = policy.latency.value if policy.latency else None
-    cost = policy.cost.value if policy.cost else None
-    accuracy = policy.accuracy.value if policy.accuracy else None
-
-    if cost == "tier_1":
-        if accuracy == "sensitive":
-            raise ValidationError(
-                message=(
-                    "Requested combination accuracy='sensitive' with "
-                    "cost='tier_1' is against policy. Choose a higher cost "
-                    "tier or lower accuracy profile."
-                ),
-                code="POLICY_CONSTRAINT_VIOLATION",
-            )
-        if latency == "low":
-            raise ValidationError(
-                message=(
-                    "Requested combination latency='low' with cost='tier_1' "
-                    "is against policy. Choose a higher cost tier or higher "
-                    "latency profile."
-                ),
-                code="POLICY_CONSTRAINT_VIOLATION",
-            )
 
 
 class ServiceService:
