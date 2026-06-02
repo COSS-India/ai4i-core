@@ -1,7 +1,7 @@
 """seed_role_identity_permissions
 
 Revision ID: a1b2c3d4e5f6
-Revises: 9fc0a999caa1
+Revises: e5f6a7b8c9d0
 Create Date: 2026-06-01 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a1b2c3d4e5f6'
-down_revision: Union[str, None] = 'd4e5f6a7b8c9'
+down_revision: Union[str, None] = 'e5f6a7b8c9d0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
