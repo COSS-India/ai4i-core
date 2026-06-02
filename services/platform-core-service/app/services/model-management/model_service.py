@@ -226,20 +226,19 @@ class ModelService:
                 code="VERSION_REQUIRED",
             )
 
-        # model_id uniquely encodes (name, version), so look up by model_id alone.
-        # Using get_by_id_version would 404 when the caller passes a new version
-        # string that differs from what is currently stored.
-        instance = await self._models.get_by_model_id(payload.modelId)
+        instance = await self._models.get_by_id_version(payload.modelId, payload.version)
         if instance is None:
-            raise EntityNotFoundError(f"Model '{payload.modelId}'")
+            raise EntityNotFoundError(
+                f"Model '{payload.modelId}' v{payload.version}"
+            )
 
         # Immutability: published services lock down their model version
         published_service_ids = await self._services.list_published_for_model_version(
-            instance.model_id, instance.version
+            payload.modelId, payload.version
         )
         if published_service_ids:
             raise ImmutableModelVersionError(
-                f"Model version '{instance.model_id}' v{instance.version} cannot "
+                f"Model version '{payload.modelId}' v{payload.version} cannot "
                 f"be modified because it is associated with "
                 f"{len(published_service_ids)} published service(s): "
                 f"{', '.join(published_service_ids)}. Unpublish the service(s) "
@@ -252,7 +251,7 @@ class ModelService:
             and not settings.allow_deprecated_model_changes
         ):
             raise ValidationError(
-                f"Model version '{instance.model_id}' v{instance.version} cannot "
+                f"Model version '{payload.modelId}' v{payload.version} cannot "
                 "be modified because it is deprecated.",
                 code="DEPRECATED_MODEL_UPDATE_NOT_ALLOWED",
             )
@@ -260,19 +259,6 @@ class ModelService:
         # PATCH semantics
         request_dict = payload.model_dump(exclude_unset=True)
         update_data: Dict[str, Any] = {}
-
-        # Version change: conflict-check first, then cascade to associated services
-        if payload.version != instance.version:
-            conflict = await self._models.get_by_name_version(instance.name, payload.version)
-            if conflict is not None:
-                raise DuplicateModelVersionError(
-                    f"Model with name '{instance.name}' and version "
-                    f"'{payload.version}' already exists.",
-                )
-            update_data["version"] = payload.version
-            await self._services.update_model_version_reference(
-                instance.model_id, payload.version
-            )
 
         if payload.versionStatus is not None:
             new_status = VersionStatus(payload.versionStatus.value)

@@ -5,7 +5,7 @@ Async repository for the Service entity.
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, delete, desc, func, select, update
+from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -151,17 +151,6 @@ class ServiceRepository:
             )
         )
         return int(result.rowcount or 0)
-
-    async def update_model_version_reference(
-        self, model_id: str, new_version: str
-    ) -> None:
-        """Cascade a model version rename to all services referencing model_id."""
-        await self._db.execute(
-            update(Service)
-            .where(Service.model_id == model_id)
-            .values(model_version=new_version)
-        )
-        await self._db.flush()
 
     async def commit(self) -> None:
         await self._db.commit()
