@@ -130,6 +130,7 @@ async def get_oauth_service(
     return OAuthService(
         user_repo=UserRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
+        tenant_repo=TenantRepository(db),
         role_service=role_service,
         token_service=token_service,
         email_client=email_client,

@@ -168,12 +168,18 @@ def create_app() -> FastAPI:
             "name": "X-User-ID",
             "description": "User UUID injected by the gateway. Required for protected endpoints when calling the service directly (bypassing the gateway).",
         }
+        security_schemes["XPermissionIDs"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Permission-IDs",
+            "description": "Comma-separated list of permission IDs injected by the gateway after token validation.",
+        }
         for path, methods in (schema.get("paths") or {}).items():
             if path in _PUBLIC_PATHS:
                 continue
             for _method, op in (methods or {}).items():
                 if isinstance(op, dict) and _PUBLIC_TAG not in (op.get("tags") or []):
-                    op.setdefault("security", [{"bearerAuth": []}, {"XUserID": []}])
+                    op.setdefault("security", [{"bearerAuth": []}, {"XUserID": []}, {"XPermissionIDs": []}])
         app.openapi_schema = schema
         return app.openapi_schema
 

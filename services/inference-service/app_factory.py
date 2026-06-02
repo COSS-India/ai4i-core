@@ -191,17 +191,30 @@ async def create_inference_app() -> FastAPI:
             routes=app.routes,
         )
         components = schema.setdefault("components", {})
-        components.setdefault("securitySchemes", {})["bearerAuth"] = {
+        security_schemes = components.setdefault("securitySchemes", {})
+        security_schemes["bearerAuth"] = {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
+        }
+        security_schemes["XUserID"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-User-ID",
+            "description": "User UUID injected by the gateway. Required for protected endpoints when calling the service directly (bypassing the gateway).",
+        }
+        security_schemes["XPermissionIDs"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Permission-IDs",
+            "description": "Comma-separated list of permission IDs injected by the gateway after token validation.",
         }
         for path, methods in (schema.get("paths") or {}).items():
             if path in _PUBLIC_PATHS:
                 continue
             for _method, op in (methods or {}).items():
                 if isinstance(op, dict):
-                    op.setdefault("security", [{"bearerAuth": []}])
+                    op.setdefault("security", [{"bearerAuth": []}, {"XUserID": []}, {"XPermissionIDs": []}])
         app.openapi_schema = schema
         return app.openapi_schema
 
