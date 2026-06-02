@@ -10,7 +10,7 @@ Owns the rules:
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
-- Policy fields (latency/cost/accuracy) are stored as-is; no tier combinations are blocked.
+- Policy fields (latency/cost/accuracy) are stored as-is; combination enforcement is the gateway's responsibility.
 """
 
 import logging
@@ -31,7 +31,6 @@ from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.model_management.service import (
     ServiceCreateRequest,
-    ServicePolicy,
     ServiceUpdateRequest,
 )
 from app.services.cache_service import CacheService
@@ -81,19 +80,6 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
         "request_schema": schema.get("request"),
         "triton_schema": (schema.get("response") or {}).get("triton"),
     }
-
-
-def _validate_policy(policy: ServicePolicy) -> None:
-    """Cross-field policy validation hook — reserved for future constraints.
-
-    AI4IDS-1766: The original constraints (accuracy='sensitive' + cost='tier_1'
-    and latency='low' + cost='tier_1') were removed because they blocked valid
-    service configurations. All tier/accuracy/latency combinations are
-    legitimate; routing decisions are left to the gateway at request time.
-
-    Add new constraints here if business rules change, keeping this function
-    as the single enforcement point for update-time policy checks.
-    """
 
 
 class ServiceService:
@@ -290,7 +276,6 @@ class ServiceService:
         if "policy" in request_dict:
             policy_obj = payload.policy
             if policy_obj is not None:
-                _validate_policy(policy_obj)
                 policy_dict: Optional[Dict[str, Any]] = {
                     k: (v.value if hasattr(v, "value") else v)
                     for k, v in policy_obj.model_dump(exclude_none=True).items()

@@ -1,8 +1,10 @@
 """
 Shared pytest configuration for platform-core-service unit tests.
 
-Sets the minimum environment variables required for CoreSettings to initialise
-at import time so tests can import from app.* without a real .env file.
+CoreSettings is instantiated at module import time (config.py:173), so env vars
+must be set here at module level — before pytest imports any test module. An
+autouse fixture would run too late (after imports) and cause a ValidationError
+during collection.
 """
 
 import os
