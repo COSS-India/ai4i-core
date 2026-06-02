@@ -451,6 +451,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   // ── Row actions (inline icons, same pattern as service/model management) ─
   function renderTenantRowActions(t: TenantView) {
+    const statusActionTargets = isTenantStatus(t.status, TENANT.STATUS.PENDING)
+      ? [TENANT.STATUS.ACTIVE]
+      : getTenantStatusActionTargets(t.status);
+
     return (
       <HStack spacing={1}>
         <Tooltip label="View" placement="top" hasArrow>
@@ -489,7 +493,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             />
           </Tooltip>
         )}
-        {getTenantStatusActionTargets(t.status).map((s) => (
+        {statusActionTargets.map((s) => (
           <Tooltip
             key={s}
             label={getTenantStatusActionLabel(s, t.status)}
