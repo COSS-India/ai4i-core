@@ -231,7 +231,6 @@ def upgrade() -> None:
           'dashboards.read', 'dashboards.create', 'dashboards.update', 'dashboards.delete'
         )
         WHERE r.name = 'MODERATOR'
-        ON CONFLICT (role_id, permission_id) DO NOTHING
     """))
 
     # TENANT ADMIN
@@ -267,7 +266,6 @@ def upgrade() -> None:
             (r.name = 'USER'         AND p.id = 4) OR
             (r.name = 'TENANT ADMIN' AND p.id = 5)
         )
-        ON CONFLICT (role_id, permission_id) DO NOTHING
     """))
 
     # Default tenant
