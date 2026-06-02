@@ -11,7 +11,7 @@ NOTE: This migration will fail if duplicate (case-insensitive) organisation
 names already exist in the tenants table. Deduplicate before applying.
 
 Revision ID: d4e5f6a7b8c9
-Revises: e3f4a5b6c7d8
+Revises: c3d4e5f6a7b8
 Create Date: 2026-06-01 00:00:00.000000
 
 """
@@ -21,7 +21,7 @@ from alembic import op
 
 
 revision: str = 'd4e5f6a7b8c9'
-down_revision: Union[str, None] = 'e3f4a5b6c7d8'
+down_revision: Union[str, None] = 'c3d4e5f6a7b8'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 

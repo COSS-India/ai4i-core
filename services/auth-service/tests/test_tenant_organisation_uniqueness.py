@@ -20,10 +20,15 @@ def _make_service() -> TenantService:
     tenant_repo.update = AsyncMock()
     tenant_repo.save_and_refresh = AsyncMock()
     tenant_repo.refresh = AsyncMock()
+    # update_tenant calls enforce_scope first; act as a system admin so these
+    # tests isolate the organisation-uniqueness logic (scope is covered in
+    # test_tenant_update_scope.py).
+    role_service = MagicMock()
+    role_service.get_user_roles = AsyncMock(return_value=["ADMIN"])
     return TenantService(
         tenant_repo=tenant_repo,
         user_repo=MagicMock(),
-        role_service=MagicMock(),
+        role_service=role_service,
         verification_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
