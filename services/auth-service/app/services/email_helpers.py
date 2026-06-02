@@ -67,6 +67,69 @@ async def persist_token_verification(
     return obj
 
 
+async def reissue_setup_token(
+    user,
+    *,
+    credentials_repo,
+    verifications_repo,
+    token_service,
+    background_tasks: Optional[BackgroundTasks],
+) -> Optional[str]:
+    """Invalidate ``user``'s outstanding SETUP tokens and mint a new one.
+
+    Returns the new setup-token string on success, ``None`` when skipped —
+    either because no ``BackgroundTasks`` was supplied (no way to deliver the
+    email) or because the user already has credentials (onboarding complete).
+
+    The helper deliberately does NOT commit and does NOT enqueue the email.
+    Two reasons:
+
+      1. Atomicity. Callers (``AuthService.resend_setup_link`` and the tenant
+         email-update flow) often batch the new token row with related writes
+         in the same transaction (e.g. updating ``users.email``). Committing
+         here would split that transaction in two.
+      2. Email-after-commit ordering. The activation email contains the token
+         string. If the helper enqueued the email and the caller's later
+         commit failed, the recipient would receive a link pointing at a
+         token that doesn't exist in the DB. Returning the token lets the
+         caller commit first and only then call ``enqueue_email`` with a
+         ``lambda: render_setup_link(user, token)``.
+
+    Token deactivation is scoped to ``TokenType.SETUP`` so unrelated VERIFY
+    and RESET tokens for the same user are left alone.
+    """
+    # Local imports to avoid a circular dep (auth_email_templates imports
+    # app.core.config which transitively imports this module on some setups).
+    from app.core.constants import TokenType
+
+    if background_tasks is None:
+        logger.warning(
+            "reissue_setup_token skipped: background_tasks is None; "
+            "no way to deliver the email (user id=%s)", user.id,
+        )
+        return None
+
+    existing_creds = await credentials_repo.get_by_user_id(user.id)
+    if existing_creds:
+        logger.info(
+            "reissue_setup_token skipped: user id=%s already has credentials",
+            user.id,
+        )
+        return None
+
+    await verifications_repo.deactivate_all_for_user(
+        str(user.id), token_type=TokenType.SETUP
+    )
+
+    setup_token = token_service.create_setup_token(
+        user_id=str(user.id), email=user.email
+    )
+    await persist_token_verification(
+        verifications_repo, setup_token, user.id, setup_token_expires_at()
+    )
+    return setup_token
+
+
 async def issue_session(
     user,
     roles_svc,

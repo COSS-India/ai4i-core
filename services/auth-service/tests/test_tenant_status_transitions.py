@@ -133,6 +133,7 @@ def _tenant_service_with_mocks() -> TenantService:
         user_repo=user_repo,
         role_service=MagicMock(),
         verification_repo=MagicMock(),
+        credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
     )

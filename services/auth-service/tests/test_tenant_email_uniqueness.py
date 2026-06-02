@@ -18,6 +18,8 @@ def _make_service() -> TenantService:
     tenant_repo.get_by_organisation = AsyncMock(return_value=None)
     tenant_repo.update = AsyncMock()
     tenant_repo.save_and_refresh = AsyncMock()
+    tenant_repo.commit = AsyncMock()
+    tenant_repo.refresh = AsyncMock()
     user_repo = MagicMock()
     user_repo.get_by_email = AsyncMock(return_value=None)
     # update_tenant calls enforce_scope first; act as a system admin so these
@@ -30,6 +32,7 @@ def _make_service() -> TenantService:
         user_repo=user_repo,
         role_service=role_service,
         verification_repo=MagicMock(),
+        credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
     )
