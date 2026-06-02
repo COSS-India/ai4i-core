@@ -196,6 +196,20 @@ class TenantService:
                 },
             )
 
+    async def _deny_tenant_admin_tenant_flag(self, user: User, body: TenantUserStatusUpdate) -> None:
+        """Raise 403 if a Tenant Admin tries to set is_tenant_active. Only Admin may suspend tenant access."""
+        if "is_tenant_active" not in body.model_fields_set:
+            return
+        roles = await self._roles.get_user_roles(user.id)
+        if RoleName.TENANT_ADMIN.value in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Tenant Admins cannot modify the is_tenant_active flag.",
+                },
+            )
+
     @staticmethod
     def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
         if RoleName.TENANT_ADMIN.value in roles:
@@ -738,6 +752,7 @@ class TenantService:
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
+        await self._deny_tenant_admin_tenant_flag(current_user, body)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
