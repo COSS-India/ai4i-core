@@ -232,12 +232,81 @@ def check_stale_pycache():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CHECK 4: ON CONFLICT targets must be backed by a unique constraint
+#   Catches the #837 class: `ON CONFLICT (role_id, permission_id)` on a table
+#   with no matching unique constraint -> Postgres InvalidColumnReference at
+#   runtime -> `upgrade head` rolls back. The revision graph looks fine, so the
+#   other checks miss it; this scans the SQL statically.
+#   Scoped to multi-column targets (the risky, rarely-backed case); single-column
+#   conflicts are almost always backed by a column unique and would be noisy.
+# ─────────────────────────────────────────────────────────────────────────────
+def _trailing_idents(group: str) -> frozenset:
+    # "'role_id', 'permission_id'" -> {role_id, permission_id}
+    # "lower(organisation), id" -> {organisation, id}  (last identifier per item)
+    # Skip keyword args like name='uq_...' so they don't pollute the column set.
+    cols = set()
+    for part in group.split(","):
+        if "=" in part:  # kwarg (e.g. name='uq_pattern_entity_lang'), not a column
+            continue
+        idents = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", part)
+        if idents:
+            cols.add(idents[-1].lower())
+    return frozenset(cols)
+
+
+def check_on_conflict_targets():
+    print("\n=== Check 4: ON CONFLICT targets backed by a unique constraint ===")
+
+    if not VERSIONS_DIR.is_dir():
+        return
+
+    UNIQUE_PATTERNS = (
+        r"UniqueConstraint\(([^)]+)\)",
+        r"PrimaryKeyConstraint\(([^)]+)\)",
+        r"create_index\([^\[]*\[([^\]]+)\][^)]*unique\s*=\s*True",
+        r"CREATE UNIQUE INDEX[^(]*\(([^)]+)\)",
+        r"ADD CONSTRAINT[^(]*UNIQUE\s*\(([^)]+)\)",
+    )
+
+    found_issue = False
+    for db_dir in sorted(VERSIONS_DIR.iterdir()):
+        if not db_dir.is_dir() or db_dir.name == "__pycache__":
+            continue
+        files = [f for f in db_dir.glob("*.py") if f.name != "__init__.py"]
+        texts = {f: f.read_text(encoding="utf-8", errors="ignore") for f in files}
+
+        # All multi-column unique column-sets declared anywhere in this db's chain.
+        unique_sets = set()
+        for text in texts.values():
+            for pat in UNIQUE_PATTERNS:
+                for m in re.finditer(pat, text, re.IGNORECASE):
+                    cols = _trailing_idents(m.group(1))
+                    if len(cols) >= 2:
+                        unique_sets.add(cols)
+
+        for f, text in texts.items():
+            for m in re.finditer(r"ON CONFLICT\s*\(([^)]+)\)", text, re.IGNORECASE):
+                target = _trailing_idents(m.group(1))
+                if len(target) >= 2 and target not in unique_sets:
+                    fail(
+                        f"{db_dir.name}/{f.name}: ON CONFLICT ({', '.join(sorted(target))}) "
+                        f"has no matching multi-column unique constraint — will raise "
+                        f"InvalidColumnReference at runtime. Use INSERT ... WHERE NOT EXISTS."
+                    )
+                    found_issue = True
+
+    if not found_issue:
+        ok("No unbacked multi-column ON CONFLICT targets")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     check_model_files()
     check_revision_chains()
     check_stale_pycache()
+    check_on_conflict_targets()
 
     print()
     print("-" * 40)
@@ -249,6 +318,7 @@ def main():
         print("  - Broken down_revision  -> Never delete applied migration files")
         print("  - Multiple heads        -> alembic -x db=<name> merge heads -m 'merge'")
         print("  - Stale __pycache__     -> Delete the __pycache__ directory")
+        print("  - Unbacked ON CONFLICT  -> Use INSERT ... WHERE NOT EXISTS (no unique constraint needed)")
         return 1
     else:
         print(f"{_c('0;32', 'ALL CHECKS PASSED')} ({warnings} warning(s))")
