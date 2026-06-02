@@ -456,6 +456,19 @@ class TenantService:
                     status_code=status.HTTP_409_CONFLICT,
                     detail={"code": "DUPLICATE_TENANT_ORGANISATION", "message": "A tenant with this organisation name already exists."},
                 )
+        if "email" in data:
+            existing_tenant = await self._tenants.get_by_email(data["email"])
+            if existing_tenant and existing_tenant.id != tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "DUPLICATE_TENANT_EMAIL", "message": "A tenant with this email already exists."},
+                )
+            existing_user = await self._users.get_by_email(data["email"])
+            if existing_user and existing_user.tenant_id != tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "DUPLICATE_EMAIL", "message": "This email is already in use."},
+                )
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
         await self._tenants.save_and_refresh(tenant)
