@@ -2,16 +2,24 @@
 Tenant request/response schemas.
 """
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Union
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field, field_serializer, model_validator
+from pydantic import AliasChoices, EmailStr, Field, field_serializer, field_validator, model_validator
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.models.tenant import TenantStatus
+
+# Invisible Unicode characters that str.strip() does not remove:
+# soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
+# line/paragraph separators, zero-width no-break space (BOM).
+_INVISIBLE_CHARS = re.compile(
+    "[\u00ad\u200b\u200c\u200d\u200e\u200f\u2028\u2029\ufeff]+"
+)
 
 
 class TenantUserRole(str, Enum):
@@ -63,9 +71,16 @@ class TenantResponse(BaseSchema):
 
 class TenantUserCreate(BaseSchema):
     email: EmailStr
-    full_name: Optional[str] = Field(None, max_length=255)
+    full_name: str = Field(..., min_length=1, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     role: TenantUserRole = TenantUserRole.USER
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def strip_full_name(cls, v: str) -> str:
+        if isinstance(v, str):
+            return _INVISIBLE_CHARS.sub("", v).strip()
+        return v
 
 
 class TenantUserCreateResponse(BaseSchema):
