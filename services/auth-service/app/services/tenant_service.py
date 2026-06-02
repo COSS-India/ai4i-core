@@ -366,7 +366,6 @@ class TenantService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "DUPLICATE_TENANT_EMAIL", "message": "A tenant with this email already exists."},
             )
-
         if await self._tenants.get_by_organisation(body.organisation):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -444,6 +443,13 @@ class TenantService:
         # Schema uses `contact_name` (frontend-aligned); model column is `name`.
         if "contact_name" in data:
             data["name"] = data.pop("contact_name")
+        if "organisation" in data:
+            existing = await self._tenants.get_by_organisation(data["organisation"])
+            if existing and existing.id != tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "DUPLICATE_TENANT_ORGANISATION", "message": "A tenant with this organisation name already exists."},
+                )
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
         await self._tenants.save_and_refresh(tenant)
