@@ -248,11 +248,20 @@ export const useAuth = () => {
     } catch (error) {
       console.error('useAuth: Login failed:', error);
       let errorMessage = error instanceof Error ? error.message : 'Login failed';
-      
-      // Provide more user-friendly error messages
+      const lower = errorMessage.toLowerCase();
+      const hasAccountLifecycleMessage =
+        lower.includes('inactive') ||
+        lower.includes('suspended') ||
+        lower.includes('deactivated') ||
+        lower.includes('authorization error');
+
+      // Provide more user-friendly error messages (keep server lifecycle messages as-is)
       if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
         errorMessage = 'Invalid email or password. Please check your credentials and try again.';
-      } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+      } else if (
+        (errorMessage.includes('403') || errorMessage.includes('Forbidden')) &&
+        !hasAccountLifecycleMessage
+      ) {
         errorMessage = 'Access denied. Your account may be inactive. Please contact support.';
       } else if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
         errorMessage = 'Login endpoint not found. Please check your connection and try again.';
@@ -261,7 +270,7 @@ export const useAuth = () => {
       } else if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
         errorMessage = 'Network error. Please check your internet connection and try again.';
       }
-      
+
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
@@ -298,7 +307,7 @@ export const useAuth = () => {
 
     try {
       const user = await authService.register(userData);
-      
+
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
@@ -322,7 +331,7 @@ export const useAuth = () => {
 
     try {
       await authService.logout();
-      
+
       setAuthState({
         user: null,
         accessToken: null,
@@ -371,7 +380,7 @@ export const useAuth = () => {
   const refreshToken = useCallback(async () => {
     try {
       const response = await authService.refreshToken();
-      
+
       setAuthState(prev => ({
         ...prev,
         accessToken: response.access_token,
@@ -392,7 +401,7 @@ export const useAuth = () => {
 
     try {
       const updatedUser = await authService.updateCurrentUser(userData);
-      
+
       setAuthState(prev => ({
         ...prev,
         user: updatedUser,
@@ -424,7 +433,7 @@ export const useAuth = () => {
 
     try {
       const response = await authService.changePassword(passwordData);
-      
+
       setAuthState(prev => ({
         ...prev,
         isLoading: false,

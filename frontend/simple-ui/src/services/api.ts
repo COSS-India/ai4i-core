@@ -128,6 +128,17 @@ const clearSessionAndRedirect = async (href: '/auth' | '/') => {
   }
 };
 
+/** Login/register/guest sign-in: inactive responses must stay on the form, not reload /auth. */
+const isUnauthenticatedAuthSubmissionUrl = (rawUrl: string): boolean => {
+  const pathNoQuery = (rawUrl.split('?')[0] || '').toLowerCase();
+  const suffixes = [
+    apiEndpoints.auth.paths.login,
+    apiEndpoints.auth.paths.guestLogin,
+    apiEndpoints.auth.paths.register,
+  ].map((s) => s.toLowerCase());
+  return suffixes.some((suffix) => pathNoQuery.endsWith(suffix));
+};
+
 const getEndpointContext = (rawUrl: string): EndpointContext => {
   const url = (rawUrl || '').toLowerCase();
   const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
@@ -233,16 +244,21 @@ apiClient.interceptors.response.use(
       const status = error?.response?.status;
       const data = error?.response?.data;
 
-      if (
-        typeof window !== 'undefined' &&
-        responseIndicatesTenantSuspendedOrInactive(status, data)
-      ) {
-        console.warn('API: tenant suspended/deactivated or user inactive — ending session');
-        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-        forceFrontendSessionEnd();
-        return Promise.reject(
-          new Error('Your organization account is no longer active. Please sign in again.')
-        );
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        const requestUrl = error?.config?.url || '';
+        // Failed sign-in (no session yet): surface the server message on the login form.
+        if (isUnauthenticatedAuthSubmissionUrl(requestUrl)) {
+          return Promise.reject(error);
+        }
+        if (typeof window !== 'undefined' && getJwtToken()) {
+          console.warn('API: tenant suspended/deactivated or user inactive — ending session');
+          const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+          forceFrontendSessionEnd();
+          return Promise.reject(
+            new Error('Your organization account is no longer active. Please sign in again.')
+          );
+        }
+        return Promise.reject(error);
       }
 
       switch (status) {
