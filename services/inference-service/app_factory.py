@@ -63,15 +63,6 @@ class InferenceServiceFactory:
         """
         logger.info("Setting up middleware...")
 
-        # CORS middleware
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-
         # Observability — Prometheus /metrics + per-request middleware.
         # Reads OBSERVE_UTIL_* env vars (enabled, debug, metrics_path).
         # Returns a MetricsCollector if you ever want to emit custom
@@ -82,8 +73,17 @@ class InferenceServiceFactory:
         # Request context middleware — seeds trace_id and tenant_id (from the
         # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so
         # inference spans carry attributes.tenantId (read via get_context_attributes).
-        # Added last → outermost → runs first, seeding the context for everything below.
         app.add_middleware(RequestMiddleware)
+
+        # CORS middleware — added last so it is outermost and applies headers
+        # even when inner middleware short-circuits the request.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
         logger.info("✓ Middleware setup complete")
 

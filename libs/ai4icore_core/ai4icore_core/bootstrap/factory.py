@@ -3,12 +3,13 @@ Service app factory — the single way to create a FastAPI app in AI4I-Core.
 
 Middleware execution order (LIFO — last added runs first on request):
 
-  RequestMiddleware            ← outermost: seeds trace_id, logs the request
+  CORSMiddleware               ← outermost: applies CORS headers before anything else
+  RequestMiddleware            ← seeds trace_id, logs the request
   OTel / FastAPIInstrumentor   ← CorrelationPropagator reads trace_id here
-  CORSMiddleware               ← innermost
 
-RequestMiddleware MUST be added last so it executes first and the trace ID
-is in context before OTel's propagator runs.
+CORSMiddleware MUST be added last so it is outermost and CORS headers are
+applied even when inner middleware short-circuits the request.
+RequestMiddleware is added before CORSMiddleware so it still runs before OTel.
 """
 
 import logging
@@ -68,18 +69,7 @@ def create_service_app(config: Optional[ServiceConfig] = None, **kwargs) -> Fast
     from ai4icore_core.logging import configure_logging
     configure_logging(service_name=config.service_name, log_level=config.log_level)
 
-    # ── 3. CORS (innermost — added first) ──
-    allow_all = config.cors_origins == ["*"]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=config.cors_origins,
-        allow_credentials=not allow_all,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # ── 4. OTel instrumentation (added before RequestMiddleware so it runs
-    #       after RequestMiddleware in the request chain) ──
+    # ── 3. OTel instrumentation ──
     if config.telemetry_enabled:
         try:
             from ai4icore_core.telemetry import setup_tracing
@@ -96,9 +86,19 @@ def create_service_app(config: Optional[ServiceConfig] = None, **kwargs) -> Fast
         except ImportError:
             pass
 
-    # ── 5. Request middleware (outermost — added last, runs first) ──
+    # ── 4. Request middleware (seeds trace_id before OTel propagator runs) ──
     from ai4icore_core.logging import RequestMiddleware
     app.add_middleware(RequestMiddleware)
+
+    # ── 5. CORS (outermost — added last, runs first) ──
+    allow_all = config.cors_origins == ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=not allow_all,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # ── 6. Health endpoints ──
     @app.get("/")
