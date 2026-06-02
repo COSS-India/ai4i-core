@@ -254,19 +254,11 @@ def upgrade() -> None:
         WHERE r.name = 'TENANT ADMIN'
     """))
 
-    # Role identity permission mappings: ADMIN=1, MODERATOR=2, GUEST=3, USER=4, TENANT_ADMIN=5
-    conn.execute(sa.text(f"""
-        INSERT INTO role_permission (role_id, permission_id, created_by)
-        SELECT r.id, p.id, '{SEEDER_ID}'
-        FROM roles r
-        JOIN permissions p ON (
-            (r.name = 'ADMIN'        AND p.id = 1) OR
-            (r.name = 'MODERATOR'    AND p.id = 2) OR
-            (r.name = 'GUEST'        AND p.id = 3) OR
-            (r.name = 'USER'         AND p.id = 4) OR
-            (r.name = 'TENANT ADMIN' AND p.id = 5)
-        )
-    """))
+    # Role identity-permission mappings (role ↔ permission id 1-5) are seeded by
+    # the later migration a1b2c3d4e5f6 (idempotent, WHERE NOT EXISTS). They were
+    # duplicated here, which produced a duplicate (role_id, permission_id) row
+    # (e.g. ADMIN already gets permission 1 via its grant above), so this block
+    # is intentionally omitted — a1b2c3d4e5f6 is the single source of truth.
 
     # Default tenant
     org     = (os.getenv("DEFAULT_TENANT_ORG") or "default organisation").strip()
