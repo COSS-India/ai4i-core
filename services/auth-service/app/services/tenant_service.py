@@ -393,12 +393,6 @@ class TenantService:
                 detail={"code": "DUPLICATE_TENANT_ORGANISATION", "message": "A tenant with this organisation name already exists."},
             )
 
-        if await self._tenants.get_by_organisation(body.organisation):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "DUPLICATE_ORGANISATION_NAME", "message": "An organisation with this name already exists."},
-            )
-
         tenant = Tenant(
             name=body.contact_name,
             organisation=body.organisation,
