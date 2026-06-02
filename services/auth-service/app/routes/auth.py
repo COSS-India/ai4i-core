@@ -176,6 +176,7 @@ async def change_password(
         current_password=body.current_password,
         new_password=body.new_password,
         confirm_password=body.confirm_password,
+        current_refresh_token=body.current_refresh_token,
         background_tasks=background_tasks,
     )
     return success_response(data={"message": "Password changed successfully."})
