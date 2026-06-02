@@ -182,3 +182,12 @@ class AuthSettings(BaseSettings):
 
 
 settings = AuthSettings()
+
+
+# ── Role IDs (must match the seeded values in roles table) ───────────
+class RoleId:
+    ADMIN = 1
+    MODERATOR = 2
+    GUEST = 3
+    USER = 4
+    TENANT_ADMIN = 5
