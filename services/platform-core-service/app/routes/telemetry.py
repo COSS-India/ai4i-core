@@ -143,6 +143,9 @@ async def search_traces_opensearch(
                 if not trace_id:
                     continue
 
+                span_name = source.get("name")
+                attrs = source.get("attributes", {})
+
                 if trace_id not in traces_map:
                     traces_map[trace_id] = {
                         "trace_id": trace_id,
@@ -154,9 +157,6 @@ async def search_traces_opensearch(
                         "timestamp": source.get("@timestamp") or source.get("timestamp"),
                     }
 
-                span_name = source.get("name")
-                attrs = source.get("attributes", {})
-
                 # Extract task_type from model span
                 if span_name == "model" and not traces_map[trace_id]["task_type"]:
                     traces_map[trace_id]["task_type"] = attrs.get("task_type")
@@ -164,6 +164,12 @@ async def search_traces_opensearch(
                 # Extract url from request span
                 if span_name == "request" and not traces_map[trace_id]["url"]:
                     traces_map[trace_id]["url"] = attrs.get("url")
+
+                # Extract tenant_id from any span (prefer actual tenantId over filter/fallback)
+                if not traces_map[trace_id]["tenant_id"] or traces_map[trace_id]["tenant_id"] == "system":
+                    tenant_id_from_span = attrs.get("tenantId")
+                    if tenant_id_from_span:
+                        traces_map[trace_id]["tenant_id"] = str(tenant_id_from_span)
 
                 # Extract status from any span
                 if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
