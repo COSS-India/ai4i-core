@@ -769,6 +769,7 @@ class TenantService:
         self, current_user: User, tenant_id: int, user_id: UUID
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         await self._users.update(

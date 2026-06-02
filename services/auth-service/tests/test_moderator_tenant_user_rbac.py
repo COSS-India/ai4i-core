@@ -181,3 +181,34 @@ class TestModeratorUpdateTenantUser:
         await svc.update_tenant_user_status(_admin(), 1, target.id, body)
 
         svc._users.update.assert_awaited_once()
+
+
+class TestModeratorDeleteTenantUser:
+    @pytest.mark.asyncio
+    async def test_moderator_cannot_delete_tenant_user(self) -> None:
+        svc = _make_service()
+        svc.enforce_scope = AsyncMock()
+        svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.delete_tenant_user(_moderator(), 1, uuid4())
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
+        svc._tenants.get_by_id.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_can_delete_tenant_user(self) -> None:
+        svc = _make_service()
+        svc.enforce_scope = AsyncMock()
+        svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+        svc._tenants.get_by_id = AsyncMock(return_value=_active_tenant())
+        target = _tenant_user()
+        svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
+        svc._users.update = AsyncMock()
+        svc._users.commit = AsyncMock()
+
+        await svc.delete_tenant_user(_admin(), 1, target.id)
+
+        svc._users.update.assert_awaited_once()
+        svc._users.commit.assert_awaited_once()
