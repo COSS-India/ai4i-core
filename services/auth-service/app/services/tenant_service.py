@@ -26,6 +26,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role_name import RoleName, role_name_to_str
@@ -275,7 +276,7 @@ class TenantService:
         - ``verify``: verify-email link (/auth/register self-signup only)
         - ``none``: no email
         """
-        if await self._users.get_by_email(email):
+        if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
@@ -759,8 +760,14 @@ class TenantService:
         payload["updated_by"] = current_user.id
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
-        await self._users.update(target, payload)
-        await self._users.save_and_refresh(target)
+        try:
+            await self._users.update(target, payload)
+            await self._users.save_and_refresh(target)
+        except IntegrityError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status value: boolean fields cannot be null.",
+            ) from exc
         if self._api_keys is not None and _payload_touches_user_access(payload):
             await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target

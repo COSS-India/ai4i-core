@@ -75,13 +75,13 @@ async def get_user(
     svc: UserService = Depends(get_user_service),
     db: AsyncSession = Depends(get_db),
 ):
-    check_permission_ids(request, RoleId.ADMIN, RoleId.MODERATOR, RoleId.TENANT_ADMIN)
+    check_permission_ids(request, RoleId.ADMIN, RoleId.TENANT_ADMIN)
     await enforce_target_user_same_tenant(
         request,
         caller,
         user_id,
         db,
-        bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR),
+        bypass_roles=(RoleName.ADMIN,),
     )
     user_roles = await RoleRepository(db).get_user_roles(caller.id)
     user = await svc.get_user_by_id_for_caller(caller, user_id, role_set=set(user_roles))

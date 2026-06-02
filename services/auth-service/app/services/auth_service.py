@@ -192,7 +192,7 @@ class AuthService:
         # Normalize email to lowercase for consistent storage and lookup
         email = email.lower().strip()
 
-        if await self._users.get_by_email(email):
+        if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
 
         username = await allocate_unique_username(

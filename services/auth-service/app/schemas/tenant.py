@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Optional, Union
 from uuid import UUID
 
-from pydantic import AliasChoices, EmailStr, Field, field_serializer, field_validator, model_validator
+from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer, field_validator, model_validator
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
@@ -90,8 +90,18 @@ class TenantUserCreateResponse(BaseSchema):
 
 
 class TenantUserStatusUpdate(BaseSchema):
-    is_active: Optional[bool] = None
-    is_tenant_active: Optional[bool] = None
+    is_active: Optional[StrictBool] = None
+    is_tenant_active: Optional[StrictBool] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def reject_explicit_null(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            if 'is_active' in data and data['is_active'] is None:
+                raise ValueError("is_active cannot be null; provide true or false.")
+            if 'is_tenant_active' in data and data['is_tenant_active'] is None:
+                raise ValueError("is_tenant_active cannot be null; provide true or false.")
+        return data
 
     @model_validator(mode='after')
     def at_least_one_field(self) -> 'TenantUserStatusUpdate':

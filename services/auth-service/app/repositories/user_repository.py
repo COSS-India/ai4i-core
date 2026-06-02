@@ -42,6 +42,15 @@ class UserRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def email_exists(self, email: str) -> bool:
+        """Return True if any user (including soft-deleted) has this email."""
+        result = await self._db.execute(
+            select(User.id).where(
+                func.lower(User.email) == email.lower().strip()
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
     async def get_by_username(self, username: str) -> Optional[User]:
         result = await self._db.execute(
             select(User).where(User.username == username, User.is_delete.isnot(True))
