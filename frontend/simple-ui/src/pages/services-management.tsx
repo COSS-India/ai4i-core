@@ -515,6 +515,8 @@ const ServicesManagementPage: React.FC = () => {
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim();
 
+  const isCreateFormModelSelected = !!formData.modelId?.trim();
+
   const handleViewService = async (serviceId: string) => {
     // Check session expiry before viewing service
     if (!checkSessionExpiry()) return;
@@ -1260,16 +1262,21 @@ const ServicesManagementPage: React.FC = () => {
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <FormControl isRequired>
                                 <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                                <Input value={formData.modelId || ""} bg="gray.50" isReadOnly />
+                                <Input
+                                  value={formData.modelId || ""}
+                                  bg={isCreateFormModelSelected ? "gray.50" : "white"}
+                                  isReadOnly
+                                  placeholder="Select a model above"
+                                />
                               </FormControl>
 
                               <FormControl isRequired>
                                 <FormLabel fontWeight="semibold">Model Task Type</FormLabel>
                                 <Input
                                   value={formData.task_type || ""}
-                                  onChange={(e) => handleInputChange("task_type", e.target.value)}
-                                  placeholder="Enter model task type"
-                                  bg="white"
+                                  placeholder="Select a model above"
+                                  bg={isCreateFormModelSelected ? "gray.50" : "white"}
+                                  isReadOnly
                                 />
                               </FormControl>
                             </SimpleGrid>
@@ -1281,8 +1288,9 @@ const ServicesManagementPage: React.FC = () => {
                               <Input
                                 type="date"
                                 value={(formData.modelSubmissionDate as string) || ""}
-                                onChange={(e) => handleInputChange("modelSubmissionDate", e.target.value)}
-                                bg="white"
+                                placeholder="Select a model above"
+                                bg={isCreateFormModelSelected ? "gray.50" : "white"}
+                                isReadOnly
                               />
                             </FormControl>
 
