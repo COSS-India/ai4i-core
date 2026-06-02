@@ -1,6 +1,6 @@
-"""Unit tests: Moderator is blocked from list, update, and update-status on tenant users."""
+"""Unit tests: Moderator is blocked from list, create, update, and update-status on tenant users."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -71,6 +71,45 @@ class TestModeratorListTenantUsers:
 
         assert result == []
         svc._users.list_by_tenant.assert_awaited_once_with(1, offset=0, limit=20)
+
+
+class TestModeratorCreateTenantUser:
+    @pytest.mark.asyncio
+    async def test_moderator_cannot_create_tenant_user(self) -> None:
+        svc = _make_service()
+        svc.enforce_scope = AsyncMock()
+        svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.create_tenant_user(_moderator(), 1, MagicMock(), MagicMock())
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
+        svc._tenants.get_by_id_for_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_can_create_tenant_user(self) -> None:
+        svc = _make_service()
+        svc.enforce_scope = AsyncMock()
+        svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_active_tenant())
+        svc.provision_user = AsyncMock(return_value=("user-id-123", "setup-token-abc"))
+
+        body = MagicMock()
+        body.email = "newuser@tenant.com"
+        body.full_name = "New User"
+        body.phone_number = None
+        body.role.value = "TENANT USER"
+
+        with patch(
+            "app.services.tenant_service.allocate_unique_username",
+            new_callable=AsyncMock,
+            return_value="newuser",
+        ):
+            result = await svc.create_tenant_user(_admin(), 1, body, MagicMock())
+
+        assert result == ("user-id-123", "setup-token-abc")
+        svc.provision_user.assert_awaited_once()
 
 
 class TestModeratorUpdateTenantUser:
