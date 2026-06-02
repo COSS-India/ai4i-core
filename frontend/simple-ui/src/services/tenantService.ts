@@ -82,6 +82,26 @@ export async function updateTenantStatus(
   return response.data.data;
 }
 
+/**
+ * Re-send verification email to the tenant contact (PENDING tenants).
+ * Wire up in useTenantManagement once auth-service exposes this route.
+ */
+export async function resendTenantVerificationEmail(
+  tenant_id: string
+): Promise<{ message: string }> {
+  const response = await apiService.post(
+    apiEndpoints.tenants.resendVerification(tenant_id),
+    {},
+    {
+      responseSchema: tenantSuccessEnvelopeSchema(
+        z.object({ message: z.string() }).passthrough()
+      ),
+    }
+  );
+  const data = response.data.data as { message?: string };
+  return { message: data?.message ?? "Verification email sent." };
+}
+
 export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
   const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),

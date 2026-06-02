@@ -31,7 +31,8 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
 import type { AdminAPIKeyWithUserResponse } from "../../types/auth";
-import { ViewIcon, EditIcon, DeleteIcon } from "@chakra-ui/icons";
+import { FiSlash } from "react-icons/fi";
+import { ViewIcon, EditIcon } from "@chakra-ui/icons";
 import { useAdminTableSurface } from "../common/TableControls";
 import AdminDataTable, {
   TableSearchField,
@@ -189,11 +190,11 @@ export default function ApiKeyManagementTab({
             <Tooltip hasArrow label={key.is_active ? "Revoke key" : "Already revoked"}>
               <IconButton
                 aria-label="Revoke API key"
-                icon={<DeleteIcon />}
+                icon={<FiSlash />}
                 size="sm"
                 variant="ghost"
-                colorScheme="red"
-                _hover={{ bg: "red.50" }}
+                colorScheme="orange"
+                _hover={{ bg: "orange.50" }}
                 onClick={(e) => {
                   e.stopPropagation();
                   mgmt.handleOpenRevokeModal(key);

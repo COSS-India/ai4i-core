@@ -515,8 +515,9 @@ class AuthService:
 
         hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
+        await self._refresh_tokens.delete_by_user_id(user.id)
         await self._credentials.commit()
-        logger.info("Password changed for user id=%s", user.id)
+        logger.info("Password changed for user id=%s; refresh tokens revoked", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
     # ── Email Activation: Set Password ──

@@ -1276,11 +1276,52 @@ export const TENANT_ADMIN_UPDATABLE_STATUSES: readonly TenantStatusValue[] = [
   TENANT.STATUS.DEACTIVATED,
 ];
 
-/** Static tenant user statuses for filters and display (Active, Suspended). */
+/** Allowed PATCH transitions — keep in sync with auth-service tenant_lifecycle.py. */
+export const ALLOWED_TENANT_STATUS_TRANSITIONS: Readonly<
+  Record<TenantStatusValue, readonly TenantStatusValue[]>
+> = {
+  [TENANT.STATUS.PENDING]: [TENANT.STATUS.ACTIVE],
+  [TENANT.STATUS.ACTIVE]: [TENANT.STATUS.SUSPENDED, TENANT.STATUS.DEACTIVATED],
+  [TENANT.STATUS.SUSPENDED]: [TENANT.STATUS.ACTIVE, TENANT.STATUS.DEACTIVATED],
+  [TENANT.STATUS.DEACTIVATED]: [TENANT.STATUS.ACTIVE],
+};
+
+/** Tenant-user lifecycle statuses for filters and badges (not tenant PENDING/DEACTIVATED). */
 export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
   TENANT.USER_STATUS.ACTIVE,
   TENANT.USER_STATUS.SUSPENDED,
 ];
+
+/** Minimal fields needed to derive tenant-user display status. */
+export type TenantUserStatusSource = {
+  is_active: boolean;
+  is_tenant_active?: boolean | null;
+};
+
+/** Active when both user and tenant access flags are true. */
+export function resolveTenantUserDisplayStatus(
+  user: TenantUserStatusSource
+): TenantUserStatusValue {
+  return user.is_active && (user.is_tenant_active ?? true)
+    ? TENANT.USER_STATUS.ACTIVE
+    : TENANT.USER_STATUS.SUSPENDED;
+}
+
+/** Status to apply when toggling Suspend/Activate on a tenant user. */
+export function getTenantUserStatusToggleTarget(
+  user: TenantUserStatusSource
+): TenantUserStatusValue {
+  return resolveTenantUserDisplayStatus(user) === TENANT.USER_STATUS.ACTIVE
+    ? TENANT.USER_STATUS.SUSPENDED
+    : TENANT.USER_STATUS.ACTIVE;
+}
+
+/** Suspend/Activate action label for tenant users (Delete is a separate action). */
+export function getTenantUserStatusActionLabel(user: TenantUserStatusSource): string {
+  return resolveTenantUserDisplayStatus(user) === TENANT.USER_STATUS.ACTIVE
+    ? "Suspend"
+    : "Activate";
+}
 
 const TENANT_STATUS_LABELS: Record<TenantStatusValue, string> = {
   [TENANT.STATUS.PENDING]: "Pending",
@@ -1339,9 +1380,27 @@ export function getTenantStatusColorScheme(status?: string | null): string {
   return "gray";
 }
 
+/** Target statuses offered as row actions for the given tenant status. */
+export function getTenantStatusActionTargets(
+  currentStatus: string | null | undefined
+): TenantStatusValue[] {
+  const current = normalizeTenantStatus(currentStatus ?? "");
+  return [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+}
+
 /** Action button label when changing tenant status. */
-export function getTenantStatusActionLabel(status: TenantStatusValue): string {
-  switch (status) {
+export function getTenantStatusActionLabel(
+  targetStatus: TenantStatusValue,
+  currentStatus?: string | null
+): string {
+  const current = currentStatus ? normalizeTenantStatus(currentStatus) : null;
+  if (
+    targetStatus === TENANT.STATUS.ACTIVE &&
+    current === TENANT.STATUS.DEACTIVATED
+  ) {
+    return "Reactivate";
+  }
+  switch (targetStatus) {
     case TENANT.STATUS.ACTIVE:
       return "Activate";
     case TENANT.STATUS.SUSPENDED:
@@ -1349,7 +1408,7 @@ export function getTenantStatusActionLabel(status: TenantStatusValue): string {
     case TENANT.STATUS.DEACTIVATED:
       return "Deactivate";
     default:
-      return formatTenantStatusLabel(status);
+      return formatTenantStatusLabel(targetStatus);
   }
 }
 
