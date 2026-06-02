@@ -275,7 +275,7 @@ class TenantService:
         - ``verify``: verify-email link (/auth/register self-signup only)
         - ``none``: no email
         """
-        if await self._users.get_by_email(email):
+        if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
