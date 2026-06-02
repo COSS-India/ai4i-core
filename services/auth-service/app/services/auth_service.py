@@ -502,6 +502,7 @@ class AuthService:
         current_password: str,
         new_password: str,
         confirm_password: str,
+        current_refresh_token: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
         password_manager.validate_and_confirm(new_password, confirm_password)
@@ -519,11 +520,20 @@ class AuthService:
                 code="SAME_PASSWORD",
             )
 
+        # Preserve current session's refresh token (client-provided or fetch from DB)
+        token_to_preserve = current_refresh_token
+        if not token_to_preserve:
+            existing = await self._refresh_tokens.get_by_user_id(user.id)
+            token_to_preserve = existing.refresh_token if existing else None
+
         hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._refresh_tokens.delete_by_user_id(user.id)
+        if token_to_preserve:
+            await self._refresh_tokens.upsert(user.id, token_to_preserve)
         await self._credentials.commit()
-        logger.info("Password changed for user id=%s; refresh tokens revoked", user.id)
+        await self._refresh_tokens.commit()
+        logger.info("Password changed for user id=%s; refresh tokens revoked except current session", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
     # ── Email Activation: Set Password ──
