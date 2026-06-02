@@ -38,6 +38,10 @@ def upgrade() -> None:
 
     permissions = [
         (1,   "admin",                          "admin",              "admin"),
+        (2,   "moderator",                      "moderator",          "moderator"),
+        (3,   "guest",                          "guest",              "guest"),
+        (4,   "user",                           "user",               "user"),
+        (5,   "tenant_admin",                   "tenant_admin",       "tenant_admin"),
         (11,  "users.create",                   "users",              "create"),
         (12,  "users.read",                     "users",              "read"),
         (13,  "users.update",                   "users",              "update"),
@@ -210,7 +214,7 @@ def upgrade() -> None:
         SELECT r.id, p.id, '{SEEDER_ID}'
         FROM roles r
         JOIN permissions p ON p.name IN (
-          'users.create', 'users.read', 'users.update', 'users.delete',
+          'users.create', 'users.update', 'users.delete',
           'users.profile.read', 'users.profile.update', 'users.password.change',
           'permissions.read',
           'apiKey.create', 'apiKey.read', 'apiKey.update', 'apiKey.delete',
@@ -227,6 +231,7 @@ def upgrade() -> None:
           'dashboards.read', 'dashboards.create', 'dashboards.update', 'dashboards.delete'
         )
         WHERE r.name = 'MODERATOR'
+        ON CONFLICT (role_id, permission_id) DO NOTHING
     """))
 
     # TENANT ADMIN
@@ -248,6 +253,21 @@ def upgrade() -> None:
           'tenant.users.update', 'tenant.users.delete'
         )
         WHERE r.name = 'TENANT ADMIN'
+    """))
+
+    # Role identity permission mappings: ADMIN=1, MODERATOR=2, GUEST=3, USER=4, TENANT_ADMIN=5
+    conn.execute(sa.text(f"""
+        INSERT INTO role_permission (role_id, permission_id, created_by)
+        SELECT r.id, p.id, '{SEEDER_ID}'
+        FROM roles r
+        JOIN permissions p ON (
+            (r.name = 'ADMIN'        AND p.id = 1) OR
+            (r.name = 'MODERATOR'    AND p.id = 2) OR
+            (r.name = 'GUEST'        AND p.id = 3) OR
+            (r.name = 'USER'         AND p.id = 4) OR
+            (r.name = 'TENANT ADMIN' AND p.id = 5)
+        )
+        ON CONFLICT (role_id, permission_id) DO NOTHING
     """))
 
     # Default tenant

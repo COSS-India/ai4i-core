@@ -23,6 +23,7 @@ from app.core.exceptions import (
     TokenInvalidError,
     TokenRevokedError,
     UserInactiveError,
+    ValidationError,
 )
 from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
@@ -406,7 +407,6 @@ class AuthService:
         tenant = await self._tenants.get_by_id(user.tenant_id)
         if tenant is None:
             raise EntityNotFoundError(f"Tenant {user.tenant_id}")
-        assert_valid_tenant_status_transition(tenant.status, TenantStatus.ACTIVE)
         await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
         await sync_tenant_users_for_status(
             self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
@@ -512,6 +512,12 @@ class AuthService:
 
         if not await password_manager.verify_password_async(current_password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError("Current password is incorrect.")
+
+        if await password_manager.verify_password_async(new_password, creds.password_hash, creds.password_salt):
+            raise ValidationError(
+                message="New password cannot be the same as the current password.",
+                code="SAME_PASSWORD",
+            )
 
         hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
