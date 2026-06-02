@@ -10,7 +10,7 @@ Owns the rules:
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
-- Policy combinations are validated (e.g., low-cost + sensitive accuracy).
+- Policy fields (latency/cost/accuracy) are stored as-is; combination enforcement is the gateway's responsibility.
 """
 
 import logging
@@ -31,7 +31,6 @@ from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.model_management.service import (
     ServiceCreateRequest,
-    ServicePolicy,
     ServiceUpdateRequest,
 )
 from app.services.cache_service import CacheService
@@ -81,37 +80,6 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
         "request_schema": schema.get("request"),
         "triton_schema": (schema.get("response") or {}).get("triton"),
     }
-
-
-def _validate_policy(policy: ServicePolicy) -> None:
-    """Cross-field policy constraints.
-
-    These mirror the gateway's request-time validation so invalid combinations
-    cannot be persisted in the platform.
-    """
-    latency = policy.latency.value if policy.latency else None
-    cost = policy.cost.value if policy.cost else None
-    accuracy = policy.accuracy.value if policy.accuracy else None
-
-    if cost == "tier_1":
-        if accuracy == "sensitive":
-            raise ValidationError(
-                message=(
-                    "Requested combination accuracy='sensitive' with "
-                    "cost='tier_1' is against policy. Choose a higher cost "
-                    "tier or lower accuracy profile."
-                ),
-                code="POLICY_CONSTRAINT_VIOLATION",
-            )
-        if latency == "low":
-            raise ValidationError(
-                message=(
-                    "Requested combination latency='low' with cost='tier_1' "
-                    "is against policy. Choose a higher cost tier or higher "
-                    "latency profile."
-                ),
-                code="POLICY_CONSTRAINT_VIOLATION",
-            )
 
 
 class ServiceService:
@@ -308,7 +276,6 @@ class ServiceService:
         if "policy" in request_dict:
             policy_obj = payload.policy
             if policy_obj is not None:
-                _validate_policy(policy_obj)
                 policy_dict: Optional[Dict[str, Any]] = {
                     k: (v.value if hasattr(v, "value") else v)
                     for k, v in policy_obj.model_dump(exclude_none=True).items()
