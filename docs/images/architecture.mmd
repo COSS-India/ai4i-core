@@ -1,0 +1,50 @@
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'Inter, Segoe UI, Helvetica, Arial, sans-serif','fontSize':'15px','lineColor':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#ffffff'}}}%%
+flowchart TB
+    Portal(["🖥️ Portal — Next.js · :3000"]):::client
+    GW{{"🚪 APISIX Gateway<br/><i>forward-auth → /auth/validate</i>"}}:::gw
+
+    Portal -- "Bearer JWT / API key" --> GW
+
+    subgraph Services["Application Services · FastAPI"]
+        direction LR
+        AUTH("🔐 auth-service<br/>:8081"):::svc
+        CORE("🧩 platform-core-service<br/>:8095"):::svc
+        INF("⚙️ inference-service<br/>:8090 · native"):::svc
+    end
+
+    GW --> AUTH
+    GW --> CORE
+    GW --> INF
+
+    INF -- "resolve serviceId" --> CORE
+    INF -- "run model" --> BK(["🤖 Triton / LLM backends"]):::backend
+
+    subgraph Data["Data Plane"]
+        direction LR
+        PG[("🗄️ PostgreSQL")]:::store
+        RD[("⚡ Redis")]:::store
+    end
+
+    AUTH --> PG
+    CORE --> PG
+    AUTH -. cache .-> RD
+    CORE -. cache .-> RD
+    INF  -. cache .-> RD
+
+    subgraph Telemetry["Telemetry Lane"]
+        direction LR
+        KAFKA("📨 Kafka<br/>kafka-topic-otel-trace"):::obs
+        FB("🔀 Fluent Bit"):::obs
+        OS[("🔎 OpenSearch<br/>traces-*")]:::store
+    end
+
+    INF -. "trace spans" .-> KAFKA
+    KAFKA -.-> FB
+    FB -.-> OS
+
+    classDef client  fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95;
+    classDef gw      fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81;
+    classDef svc     fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#075985;
+    classDef store   fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef backend fill:#f1f5f9,stroke:#475569,stroke-width:1.5px,color:#1e293b;
+    classDef obs     fill:#ffedd5,stroke:#ea580c,stroke-width:1.5px,color:#7c2d12;

@@ -103,7 +103,17 @@ def validate_url_format(url: str) -> ValidationDetail:
 # ── Level 2 — Live inference probe ──
 
 
-_VALIDATION_MODE_THRESHOLDS: Dict[str, int] = {"lenient": 500, "strict": 400}
+# Both modes accept any response with status < 500 (i.e. any non-5xx).
+#
+# "strict" (< 400) was originally intended to require a successful 2xx/3xx
+# response from the inference endpoint. In practice this is unworkable:
+# inference servers routinely return 400/422 for probe payloads that don't
+# match the exact model schema (wrong language pair, missing fields, etc.),
+# even when the server is fully healthy. A 4xx response proves the server is
+# alive and processing requests — only 5xx or a connection failure indicates
+# a real problem. Keeping both thresholds at 500 preserves the config knob
+# for backwards compatibility without silently accepting broken endpoints.
+_VALIDATION_MODE_THRESHOLDS: Dict[str, int] = {"lenient": 500, "strict": 500}
 
 
 async def test_inference(

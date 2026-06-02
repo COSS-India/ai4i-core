@@ -1,6 +1,7 @@
 # AI4I-Core Microservices Platform
 
-> **Open-source codebase** for building enterprise-grade AI/ML microservices platforms for Indic languages. Not a hosted service - you deploy and manage it yourself.
+> **Open-source codebase** for building AI/ML microservices for Indic languages.
+> Not a hosted service — you deploy and manage it yourself.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub Issues](https://img.shields.io/github/issues/COSS-India/ai4i-core)](https://github.com/COSS-India/ai4i-core/issues)
@@ -10,395 +11,201 @@
 
 ## 🎯 What This Repository Provides
 
-An open-source microservices platform codebase built with FastAPI, providing a complete reference implementation for deploying scalable language AI services. This repository contains production-ready code following best practices for microservices architecture, observability, and progressive delivery.
-
-**What You Get**: Complete source code, Docker configurations, deployment manifests, and documentation to build and deploy your own AI/ML platform for Indic languages in your own infrastructure.
+An open-source, **FastAPI**-based reference implementation for deploying multi-tenant
+**language-AI services** (translation, speech, OCR, NER, LLM) in your own infrastructure.
 
 ## 🏗️ Architecture Overview
 
-<img width="413" height="392" alt="image" src="https://github.com/user-attachments/assets/78400e0a-d180-4c74-9e75-1c15b4b4c8bb" />
+The platform is **three application microservices** behind an APISIX gateway, sharing a
+PostgreSQL/Redis data plane. Inference trace spans flow out on a **separate observability
+lane** (dotted) so they never touch the business-data path.
 
-This open-source codebase includes **22 microservices**, **1 frontend application**, **15+ infrastructure components**, and **4 shared libraries** that you can deploy in your own environment:
+![Architecture overview — Portal → APISIX → auth / platform-core / inference, with the telemetry lane to OpenSearch](./docs/images/architecture.png)
 
-## 📦 What This Repository Provides
+<!-- Source: docs/images/architecture.mmd — regenerate with:
+     npx @mermaid-js/mermaid-cli -i docs/images/architecture.mmd -o docs/images/architecture.png -b white -s 2 -->
 
-This repository contains:
-- ✅ **Complete source code** for all microservices and frontend
-- ✅ **Docker and Docker Compose** configurations for easy deployment
-- ✅ **Infrastructure as Code** - Pre-configured Postgres, Redis, Kafka, Kong, Prometheus, Grafana, etc.
-- ✅ **Production-ready examples** - Authentication, rate limiting, observability, feature flags
-- ✅ **Comprehensive documentation** - Setup guides, API docs, architecture diagrams
-- ✅ **Reusable libraries** - Shared Python modules for logging, observability, model management
-- ✅ **Reference implementations** - Best practices for microservices, AI/ML serving, and scalability
+> **Solid** arrows = request / business-data path; **dotted** = cache and the telemetry
+> lane. Full diagrams (system, request sequence, telemetry lane) and code references:
+> **[docs/architecture/00-overview.md](./docs/architecture/00-overview.md)** — start here.
+> Every external request is authorized at the gateway via auth-service `/auth/validate`
+> (forward-auth), which returns identity headers (`X-User-ID`, `X-Tenant-ID`) the
+> downstream service trusts.
 
-**Note**: This is **not a hosted service**. You deploy and manage the platform in your own infrastructure (on-premises, cloud, or hybrid).
+## 📦 What's Included
+
+- ✅ **Source code** for all backend services and the frontend
+- ✅ **Docker Compose** (`docker-compose-local.yml`) for local infrastructure
+- ✅ **Alembic migrations** for the PostgreSQL schemas
+- ✅ **Shared Python library** (`libs/ai4icore_core`): logging + request middleware,
+  observability (OpenTelemetry + Prometheus ASGI), bootstrap (API versioning, async DB),
+  email, exceptions, request-scoped context
+- ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
+
+> **Note:** the APISIX gateway is **external to this repo** (not in compose).
 
 ## 🎯 Core Services
 
-### Platform Services
+The AI/ML capabilities (NMT, ASR, TTS, NER, OCR, …) are **consolidated into a single
+`inference-service`**, not separate per-modality services.
 
-- **API Gateway Service** (Port 8080) - Central entry point with routing, rate limiting, and authentication
-- **Authentication & Authorization Service** (Port 8081) - Identity management with JWT, OAuth2, and Casbin RBAC | [Documentation](services/auth-service/docs/SERVICE_DOCUMENTATION.md)
-- **Configuration Management Service** (Port 8082) - Centralized configuration, feature flags with Unleash, and service registry | [Documentation](services/config-service/docs/SERVICE_DOCUMENTATION.md)
-- **Model Management Service** (Port 8094) - Model versioning, lifecycle management, and Triton endpoint registry
-- **Multi-Tenant Service** (Port 8100) - Multi-tenancy support with tenant isolation and quota management
-- **Metrics Service** (Port 8083) - Metrics collection and aggregation
-- **Telemetry Service** (Port 8084) - Distributed tracing and logging aggregation
-- **Alerting Service** (Port 8085) - Real-time alerting and notification system
-- **Alert Config Sync Service** - Alert configuration synchronization service
-- **Dashboard Service** (Port 8090/8501) - Streamlit-based analytics dashboard
+| Service | Port | Database | Purpose | Docs |
+|---------|------|----------|---------|------|
+| **auth-service** | `8081` | PostgreSQL `ai4iplatform_auth` | AuthN/AuthZ, users, tenants, RBAC, API keys, OAuth2; issues & validates JWTs | [README](./services/auth-service/README.md) · [Architecture](./docs/architecture/01-auth-service.md) |
+| **platform-core-service** | `8095` | PostgreSQL `ai4iplatform_core` | Model & service registry, alerts, telemetry (trace) query | [README](./services/platform-core-service/README.md) · [Architecture](./docs/architecture/02-platform-core-service.md) |
+| **inference-service** | `8090` | stateless | Unified inference orchestration over Triton / OpenAI-compatible backends (tasks below) | [README](./services/inference-service/README.md) · [Architecture](./docs/architecture/03-inference-service.md) |
 
-### AI/ML Services
+> In local development all three application services run **natively** on the host (Docker
+> hosts only the infrastructure). The `docker-compose-local.yml` file also includes
+> container definitions for them, used by the alternative all-in-Docker workflow in
+> `docs/SETUP_GUIDE.md` (where platform-core is published on host `8102`).
 
-- **ASR Service** (Port 8087) - Speech-to-Text with 22+ Indic languages, WebSocket streaming | [Documentation](services/asr-service/docs/SERVICE_DOCUMENTATION.md)
-- **TTS Service** (Port 8088) - Text-to-Speech with multiple voice options, WebSocket streaming | [Documentation](services/tts-service/docs/SERVICE_DOCUMENTATION.md)
-- **NMT Service** (Port 8091) - Neural Machine Translation for Indic languages | [Documentation](services/nmt-service/docs/SERVICE_DOCUMENTATION.md)
-- **LLM Service** (Port 8093) - Large Language Model service for text generation with streaming | [Documentation](services/llm-service/docs/SERVICE_DOCUMENTATION.md)
-- **Pipeline Service** (Port 8092) - Orchestrates multiple AI services in workflows | [Documentation](services/pipeline-service/docs/SERVICE_DOCUMENTATION.md)
-- **OCR Service** (Port 8099) - Optical Character Recognition for Indic scripts
-- **NER Service** (Port 9001) - Named Entity Recognition for Indic languages
-- **Transliteration Service** (Port 8097) - Script transliteration between Indic languages
-- **Language Detection Service** (Port 8098) - Text-based language identification
-- **Audio Language Detection Service** (Port 8096) - Audio-based language identification
-- **Speaker Diarization Service** (Port 8095) - Speaker identification and segmentation
-- **Language Diarization Service** (Port 9002) - Multi-lingual audio segmentation
+### Inference services
+
+All inference services share one unified endpoint `POST /api/v1/inference` (routed by
+`task_type`), each also exposed as a per-service alias `POST /api/v1/{task}/inference`. LLM
+uses an OpenAI-compatible `POST /api/v1/chat/completions`.
+
+| Service | `task_type` | Endpoint | Description |
+|---------|-------------|----------|-------------|
+| Machine Translation | `NMT` | `/api/v1/nmt/inference` | Neural machine translation |
+| Speech Recognition | `ASR` | `/api/v1/asr/inference` | Speech → text |
+| Text-to-Speech | `TTS` | `/api/v1/tts/inference` | Text → audio |
+| Named Entity Recognition | `NER` | `/api/v1/ner/inference` | Entity extraction |
+| OCR | `OCR` | `/api/v1/ocr/inference` | Image → text |
+| Transliteration | `TRANSLITERATION` | `/api/v1/transliteration/inference` | Script transliteration |
+| Language Detection | `LANGUAGE_DETECTION` | `/api/v1/language-detection/inference` | Text language identification |
+| Audio Language Detection | `AUDIO_LANGUAGE_DETECTION` | `/api/v1/audio-lang-detection/inference` | Spoken-language identification |
+| Speaker Diarization | `SPEAKER_DIARIZATION` | `/api/v1/speaker-diarization/inference` | Who-spoke-when segmentation |
+| Language Diarization | `LANGUAGE_DIARIZATION` | `/api/v1/language-diarization/inference` | Multilingual audio segmentation |
+| PII | `PII` | `/api/v1/inference` (`task_type=PII`) | PII detection / redaction |
+| LLM Chat | — | `/api/v1/chat/completions` | OpenAI-compatible chat completions |
+
+> Source of truth: `services/inference-service/orchestrator/task_service_registry.py`
+> (`GET /api/v1/inference/tasks` lists what the running service has registered).
 
 ## 🎨 Frontend
 
-- **Simple UI Frontend** (Port 3000) - Modern web interface built with Next.js 13, Chakra UI, and TypeScript for testing all AI services
-
-## 🔧 Infrastructure Components
-
-### Data Storage
-
-- **PostgreSQL** (Port 5434) - Primary relational database with separate schemas for each service
-- **PostgreSQL-Konga** (Port 5435) - Dedicated PostgreSQL instance for Konga (Kong admin UI)
-- **Redis** (Port 6381) - In-memory data store for caching, session management, and rate limiting
-- **InfluxDB** (Port 8089) - Time-series database for metrics storage
-
-### API Management
-
-- **Kong Gateway** (Port 8000/8443) - Enterprise API Gateway with custom plugins for token validation
-- **Konga** (Port 8002) - Web-based Kong administration UI
-- **Swagger UI** (Port 8086) - Interactive API documentation viewer for Kong-facing APIs
-
-### Observability & Monitoring
-
-- **Prometheus** (Port 9090) - Metrics collection and time-series database
-- **Grafana** (Port 3001) - Metrics visualization and dashboards with pre-configured DevOps operational dashboard
-- **Node Exporter** (Port 9100) - System-level metrics exporter for Prometheus
-- **OpenSearch** (Port 9204) - Distributed search and analytics engine for logs
-- **OpenSearch Dashboards** (Port 5602) - Log visualization and analysis interface
-- **Jaeger** (Port 16686) - Distributed tracing with OpenTelemetry support
-- **Fluent Bit** - Log collection and forwarding agent
-
-### Event Streaming
-
-- **Kafka** (Port 9093) - Event streaming platform for real-time data pipelines
-- **Zookeeper** (Port 2181) - Distributed coordination service for Kafka
-
-### Feature Management
-
-- **Unleash** (Port 4242) - Feature flag management and progressive delivery with OpenFeature SDK integration
-
-## 📚 Shared Libraries
-
-The platform includes reusable Python libraries for common functionality:
-
-- **ai4icore_logging** - Structured logging with context propagation
-- **ai4icore_observability** - OpenTelemetry instrumentation and metrics
-- **ai4icore_telemetry** - Distributed tracing utilities
-- **ai4icore_model_management** - Model Management Service client, Triton client wrapper, and caching
-
-## ✨ Features Included in This Codebase
-
-### AI/ML Service Code
-- **22+ Indic Languages Support** - Complete implementation for Indian languages in ASR, TTS, and NMT
-- **Real-time Streaming** - WebSocket-based streaming implementation for ASR and TTS with low latency
-- **Multi-Service Pipelines** - Code to chain multiple AI services (ASR → NMT → TTS) for complex workflows
-- **Model Versioning** - Complete model lifecycle management system with versioning and registry
-- **Triton Integration** - Production-ready integration with NVIDIA Triton Inference Server
-
-### Platform Code & Infrastructure
-- **Feature Flags** - Integrated Unleash + OpenFeature implementation for progressive delivery
-- **Multi-Tenancy** - Complete multi-tenant architecture with tenant isolation and quota management
-- **API Gateway** - Kong-based API management with custom plugins for token validation
-- **Authentication & Authorization** - Full JWT, OAuth2, and Casbin RBAC implementation
-- **Distributed Tracing** - OpenTelemetry instrumentation with Jaeger integration
-- **Centralized Logging** - Fluent Bit, OpenSearch, and OpenSearch Dashboards setup
-- **Metrics & Monitoring** - Prometheus, Grafana dashboards, and InfluxDB configuration
-- **Horizontal Scaling** - Stateless service design ready for Docker Swarm or Kubernetes
-- **Service Registry** - Dynamic service discovery and health monitoring implementation
-
-### Developer Tools & Experience
-- **Modern Web UI Code** - Complete Next.js 13 frontend with TypeScript, Chakra UI, and TanStack React Query
-- **Interactive Testing Interface** - UI for testing all AI services with microphone recording, file upload, and visualization
-- **API Documentation** - Auto-generated Swagger/OpenAPI documentation for all service endpoints
-- **Docker Compose** - Production-ready Docker Compose files for single-command deployment
-- **Kubernetes Manifests** - K8s migration guides and deployment configurations
-- **Shared Libraries** - Reusable Python modules for logging, observability, and model management
+- **Simple UI** (`frontend/simple-ui`, port `3000`) — web interface built with **Next.js 14**,
+  **React 18**, and **TypeScript** for exercising the platform's APIs.
 
 ## 🛠️ Technology Stack
 
 ### Backend
-- **FastAPI** - High-performance async Python web framework
-- **PostgreSQL 15** - ACID-compliant relational database
-- **Redis 7** - In-memory data store for caching and rate limiting
-- **SQLAlchemy** - Async ORM with connection pooling
-- **Pydantic** - Data validation and serialization
-- **NVIDIA Triton** - ML model serving infrastructure
+- **FastAPI** · **Python 3.11** — async microservices
+- **PostgreSQL 15** — primary relational store (per-service databases)
+- **Redis 7** — cache, rate-limit/session state, resolution cache
+- **SQLAlchemy (async)** + **Alembic** — ORM & migrations
+- **Pydantic** — validation/serialization
+- **NVIDIA Triton** / OpenAI-compatible **LLM** backends — model serving
 
 ### Frontend
-- **Next.js 13.1.1** - React framework with App Router
-- **TypeScript** - Type-safe JavaScript
-- **Chakra UI** - Component library for accessible UI
-- **TanStack React Query** - Server state management
-- **Socket.IO Client** - WebSocket communication
+- **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
-### Infrastructure
-- **Docker & Docker Compose** - Containerization and orchestration
-- **Kong 3.4** - API Gateway with Lua plugins
-- **Prometheus & Grafana** - Monitoring and visualization
-- **OpenSearch & Jaeger** - Logging and tracing
-- **Kafka & Zookeeper** - Event streaming
-- **Unleash** - Feature flag management
+### Gateway & Infrastructure
+- **APISIX** — API gateway (forward-auth via `/auth/validate`; external to this repo)
+- **Docker Compose** — local infrastructure (`docker-compose-local.yml`)
+- **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
+- **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting
+- **OpenSearch + Dashboards · Fluent Bit** — logs & trace (`traces-*`) storage
 
 ## 🚀 Deploy Your Own Instance
 
-- **PostgreSQL** (Port 5434) - Primary database with separate schemas for each service
-- **Redis** (Port 6381) - Caching, session management, and rate limiting
-- **InfluxDB** (Port 8089) - Time-series database for metrics storage
-- **Elasticsearch** (Port 9203) - Log storage and search engine
-- **Kafka** (Port 9093) - Event streaming and message queuing
-- **Zookeeper** (Port 2181) - Kafka coordination service
-
 ### Prerequisites
+Docker runs the **infrastructure only**; the application services run **natively** on the host.
+- **Docker 20.10+ / Docker Compose 2.0+** — for infrastructure (PostgreSQL, Redis, Kafka, OpenSearch, Prometheus, …)
+- **Python 3.11 + pip** — for the application services (auth, platform-core, inference)
+- **Node 18+** — for the Simple UI frontend
+- ~16 GB RAM recommended for the full stack; Linux / macOS (Windows via WSL2)
 
-- Docker 20.10+ and Docker Compose 2.0+
-- 16GB+ RAM recommended (for running all services locally)
-- 50GB+ disk space for all services and databases
-- Linux/macOS (Windows with WSL2)
-
-### Quick Start (Local Deployment)
-
+### Quick Start (local)
 ```bash
-# 1. Clone this repository
+# 1. Clone
 git clone https://github.com/COSS-India/ai4i-core.git
 cd ai4i-core
 
-# 2. Copy environment template
-cp env.template .env
+# 2. Configure environment (see docs/SETUP_GUIDE.md for the full walkthrough)
+./env-local-setup/setup-env.sh
 
-# 3. Configure your environment variables
-nano .env
-# Update database credentials, API keys, Triton endpoints, etc.
+# 3. Start INFRASTRUCTURE in Docker (not the app services)
+#    (add opensearch fluent-bit prometheus grafana for the full observability stack)
+docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper
 
-# 4. Start all services using Docker Compose
-docker-compose up -d
+# 4. Run database migrations — see docs/SETUP_GUIDE.md, Step 5
 
-# 5. Check service health
-docker-compose ps
+# 5. Run each application service NATIVELY (separate terminals)
+cd services/auth-service          && pip install -r requirements.txt && uvicorn app.main:app --port 8081
+cd services/platform-core-service && pip install -r requirements.txt && uvicorn app.main:app --port 8095
+cd services/inference-service     && pip install -r requirements.txt && python main.py          # :8090
 
-# 6. Access your deployed instance
-open http://localhost:3000
+# 6. Run the frontend natively
+cd frontend/simple-ui && npm install && npm run dev                                              # :3000
 ```
+> Full instructions: **[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)**.
 
-### Service URLs (After Deployment)
-
-Once deployed locally, access your services at:
-
-- **Frontend UI**: http://localhost:3000
-- **API Gateway**: http://localhost:8080
-- **Kong Admin**: http://localhost:8001
-- **Konga UI**: http://localhost:8002
-- **Grafana**: http://localhost:3001
-- **Prometheus**: http://localhost:9090
-- **OpenSearch Dashboards**: http://localhost:5602
-- **Jaeger UI**: http://localhost:16686
-- **Unleash**: http://localhost:4242
-
-> **Note**: These URLs are for local deployment. For production deployments on your infrastructure, configure domain names and SSL certificates as per [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+### Service URLs (local)
+| URL | What |
+|-----|------|
+| http://localhost:3000 | Portal (Simple UI) |
+| http://localhost:8081 | auth-service |
+| http://localhost:8095 | platform-core-service |
+| http://localhost:8090 | inference-service |
+| http://localhost:3001 | Grafana |
+| http://localhost:9090 | Prometheus |
+| http://localhost:5602 | OpenSearch Dashboards |
 
 ## 📖 Documentation
 
-### Setup & Deployment
-- [Setup Guide](docs/SETUP_GUIDE.md) - Comprehensive setup instructions
-- [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment guide
-- [Architecture](docs/ARCHITECTURE.md) - Detailed architecture documentation
+### Architecture (code-anchored)
+- [docs/architecture/00-overview.md](./docs/architecture/00-overview.md) — system overview (**start here**)
+- [docs/architecture/01-auth-service.md](./docs/architecture/01-auth-service.md) — auth/RBAC, tenants, API keys, OAuth2, JWT
+- [docs/architecture/02-platform-core-service.md](./docs/architecture/02-platform-core-service.md) — model/service registry, alerts, telemetry query
+- [docs/architecture/03-inference-service.md](./docs/architecture/03-inference-service.md) — inference orchestration over Triton/LLM
 
-### Migration Guides
-- [Kubernetes Migration](K8s-MIGRATION-GUIDE.md) - Migrate from Docker Compose to Kubernetes
-- [Docker Swarm Migration](SWARM-MIGRATION-GUIDE.md) - Migrate to Docker Swarm
-- [Container Platform Comparison](CONTAINER-PLATFORM-COMPARISON.md) - Compare deployment options
+### Setup
+- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) — comprehensive local setup
 
-### Service Documentation
-- [Auth Service](services/auth-service/docs/SERVICE_DOCUMENTATION.md)
-- [Config Service](services/config-service/docs/SERVICE_DOCUMENTATION.md)
-- [ASR Service](services/asr-service/docs/SERVICE_DOCUMENTATION.md)
-- [TTS Service](services/tts-service/docs/SERVICE_DOCUMENTATION.md)
-- [NMT Service](services/nmt-service/docs/SERVICE_DOCUMENTATION.md)
-- [LLM Service](services/llm-service/docs/SERVICE_DOCUMENTATION.md)
-- [Pipeline Service](services/pipeline-service/docs/SERVICE_DOCUMENTATION.md)
-
-### Additional Resources
-- [API Documentation](docs/API_DOCUMENTATION.md)
-- [Model Management Integration Guide](docs/MODEL_MANAGEMENT_INTEGRATION_GUIDE.md)
-- [Microservice Implementation Prompt](MICROSERVICE_IMPLEMENTATION_PROMPT.md)
+### Service READMEs
+- [auth-service](./services/auth-service/README.md) · [platform-core-service](./services/platform-core-service/README.md) · [inference-service](./services/inference-service/README.md)
 
 ## 🤝 Contributing
 
-We welcome contributions! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes following our coding standards
-4. Add tests for new functionality
-5. Update documentation as needed
-6. Commit your changes (`git commit -m 'Add amazing feature'`)
-7. Push to the branch (`git push origin feature/amazing-feature`)
-8. Open a Pull Request
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-## 🔌 Port Reference
-
-### Platform Services
-| Service | Port | Description |
-|---------|------|-------------|
-| API Gateway | 8080 | Main API entry point |
-| Auth Service | 8081 | Authentication & Authorization |
-| Config Service | 8082 | Configuration Management |
-| Metrics Service | 8083 | Metrics Collection |
-| Telemetry Service | 8084 | Distributed Tracing |
-| Alerting Service | 8085 | Alerting & Notifications |
-| Dashboard Service | 8090, 8501 | Analytics Dashboard |
-
-### AI/ML Services
-| Service | Port | Description |
-|---------|------|-------------|
-| ASR Service | 8087 | Speech-to-Text |
-| TTS Service | 8088 | Text-to-Speech |
-| NMT Service | 8091 | Neural Machine Translation |
-| Pipeline Service | 8092 | Service Orchestration |
-| LLM Service | 8093 | Large Language Models |
-| Model Management | 8094 | Model Lifecycle Management |
-| Speaker Diarization | 8095 | Speaker Identification |
-| Audio Language Detection | 8096 | Audio Language ID |
-| Transliteration | 8097 | Script Transliteration |
-| Language Detection | 8098 | Text Language ID |
-| OCR Service | 8099 | Optical Character Recognition |
-| Multi-Tenant Service | 8100 | Multi-tenancy Management |
-| NER Service | 9001 | Named Entity Recognition |
-| Language Diarization | 9002 | Multi-lingual Segmentation |
-
-### Frontend & API Management
-| Service | Port | Description |
-|---------|------|-------------|
-| Simple UI | 3000 | Web Interface |
-| Kong Gateway | 8000, 8443 | API Gateway (HTTP/HTTPS) |
-| Kong Admin | 8001 | Kong Admin API |
-| Konga UI | 8002 | Kong Management UI |
-| Swagger UI | 8086 | API Documentation |
-
-### Infrastructure
-| Service | Port | Description |
-|---------|------|-------------|
-| PostgreSQL | 5434 | Primary Database |
-| PostgreSQL-Konga | 5435 | Konga Database |
-| Redis | 6381 | Cache & Session Store |
-| InfluxDB | 8089 | Time-series Metrics |
-| Kafka | 9093 | Event Streaming |
-| Zookeeper | 2181 | Kafka Coordination |
-| Unleash | 4242 | Feature Flags |
-
-### Observability
-| Service | Port | Description |
-|---------|------|-------------|
-| Grafana | 3001 | Metrics Visualization |
-| Prometheus | 9090 | Metrics Collection |
-| Node Exporter | 9100 | System Metrics |
-| Elasticsearch | 9203 | Log Storage (Legacy) |
-| OpenSearch | 9204, 9600 | Log Storage & Search |
-| OpenSearch Dashboards | 5602 | Log Visualization |
-| Jaeger UI | 16686 | Distributed Tracing |
-| Jaeger Collector | 14268 | Trace Collection (HTTP) |
-| Jaeger Agent | 6831 | Trace Collection (UDP) |
-| OTLP gRPC | 4317 | OpenTelemetry Protocol |
-| OTLP HTTP | 4318 | OpenTelemetry Protocol |
+1. Branch off `dev` (`git checkout -b feat/your-change origin/dev`)
+2. Make changes following the existing patterns; keep migrations single-headed
+   (validated by `scripts/validate-migrations.py`, run as a pre-commit hook)
+3. Open a Pull Request against `dev`
 
 ## 📊 Monitoring & Observability
 
-The platform includes comprehensive monitoring with pre-configured dashboards:
+- **Metrics** — services expose Prometheus metrics (scraped by **Prometheus**,
+  visualized in **Grafana**, alerted via **Alertmanager**).
+- **Logs** — structured JSON logs (`ai4icore_core.logging`) shipped by **Fluent Bit** to
+  **OpenSearch**.
+- **Traces** — only **inference-service** emits OpenTelemetry spans; they flow
+  **Kafka (`kafka-topic-otel-trace`) → Fluent Bit → OpenSearch `traces-*`**, queried via
+  platform-core's `/telemetry/traces/search`.
 
-- **Grafana Dashboard**: DevOps Operational Dashboard with service health, resource utilization, and performance metrics
-- **Prometheus Metrics**: Service-level metrics, request rates, error rates, and latency
-- **OpenSearch Logs**: Centralized logging with structured logs and context propagation
-- **Jaeger Tracing**: Distributed tracing with service dependency mapping
+![Observability pipeline — logs from all services and traces from inference flow through Fluent Bit into OpenSearch logs-* / traces-*](./docs/images/observability.png)
 
-## 🏗️ Architecture Highlights
+<!-- Source: docs/images/observability.mmd — regenerate with:
+     npx @mermaid-js/mermaid-cli -i docs/images/observability.mmd -o docs/images/observability.png -b white -s 2 -->
 
-- **Microservices Architecture**: 22 independent, scalable services
-- **API-First Design**: OpenAPI/Swagger documentation for all endpoints
-- **Event-Driven**: Kafka-based event streaming for decoupled services
-- **Multi-Layer Caching**: In-memory + Redis for optimal performance
-- **Repository Pattern**: Clean separation of data access layer
-- **Dependency Injection**: FastAPI Depends() for loose coupling
-- **Middleware Pipeline**: Reusable cross-cutting concerns (auth, logging, rate limiting)
-- **Feature Flags**: Progressive delivery with targeting and gradual rollouts
-- **Health Checks**: Comprehensive health monitoring with dependency tracking
-
-## ⚠️ Important Disclaimers
-
-### What This Repository Is
-- ✅ **Open-source codebase** - Complete source code for building your own AI/ML platform
-- ✅ **Reference architecture** - Production-ready implementation you can learn from and customize
-- ✅ **Self-hosted solution** - Deploy and manage in your own infrastructure
-- ✅ **Community-supported** - Open-source project with community contributions
-
-### What This Repository Is NOT
-- ❌ **Not a hosted/managed service** - You must deploy and maintain it yourself
-- ❌ **Not a SaaS platform** - No cloud service or API endpoints provided by us
-- ❌ **Not commercially supported** - No SLA, guaranteed uptime, or paid support plans
-- ❌ **Not plug-and-play** - Requires infrastructure, DevOps knowledge, and ML model access
-
-### Your Responsibilities When Using This Code
-- Deploying and maintaining the infrastructure (servers, databases, networking)
-- Securing your deployment (SSL, firewalls, secrets management)
-- Providing your own ML models or Triton Inference Server endpoints
-- Monitoring, logging, and incident response for your deployment
-- Compliance with data privacy and security regulations in your jurisdiction
-- Managing costs for your cloud/on-premises infrastructure
+> **Logs** (thin arrows): every service writes structured JSON to stdout → **Fluent Bit**
+> tails it → OpenSearch **`logs-*`**. **Traces** (thick arrows): inference-service spans →
+> **Kafka** → Fluent Bit (`in_kafka`, lifts the span payload) → OpenSearch **`traces-*`**.
+> Both are viewable in **OpenSearch Dashboards**; platform-core reads `traces-*` for the
+> trace API. Metrics go the separate Prometheus → Grafana/Alertmanager route.
 
 ## 📄 License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) file for details.
-
-**MIT License means**: You are free to use, modify, and distribute this code, including for commercial purposes, but with no warranty or liability from the maintainers.
+Licensed under the **MIT License** — see [LICENSE](./LICENSE).
 
 ## 💬 Community & Support
 
-This is an **open-source project**. Community support is available through:
+Open-source project — support is community-based:
+- **Issues:** [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
+- **Docs:** the [`docs/`](./docs/) directory
+- **Debugging:** infrastructure logs via `docker compose -f docker-compose-local.yml logs <service>`;
+  app-service logs appear in the terminal running each service; check per-service `/health` endpoints
 
-- **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
-- **Documentation**: Check the [docs](docs/) directory for setup guides, API documentation, and architecture details
-- **Discussions**: Join discussions for questions and community help
-- **Pull Requests**: Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
-
-For deployment issues:
-- **Logs**: Use `docker-compose logs <service-name>` to review service logs in your deployment
-- **Health Checks**: Visit `http://localhost:<port>/health` for any service in your environment
-
-> **Note**: This is open-source code provided as-is. There is no commercial support or SLA. For enterprise support options, you may need to engage third-party service providers or build your own support team.
-
-## 🙏 Acknowledgments
-
-Built with cutting-edge open-source technologies:
-- FastAPI, PostgreSQL, Redis, Kafka
-- Kong Gateway, Unleash, OpenFeature
-- Prometheus, Grafana, Jaeger, OpenSearch
-- Next.js, React, TypeScript, Chakra UI
-- NVIDIA Triton Inference Server
-
----
-
-**Note**: For production deployments, refer to [DEPLOYMENT.md](docs/DEPLOYMENT.md) for security hardening, scaling strategies, and best practices.
+> Provided as-is; no commercial SLA.
