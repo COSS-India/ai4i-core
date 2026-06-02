@@ -22,6 +22,7 @@ def _make_service() -> TenantService:
         user_repo=user_repo,
         role_service=MagicMock(),
         verification_repo=MagicMock(),
+        credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
     )
