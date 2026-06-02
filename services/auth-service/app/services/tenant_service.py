@@ -491,32 +491,9 @@ class TenantService:
                         "message": "A tenant with this organisation name already exists.",
                     },
                 )
-        if "email" in data:
-            existing_tenant = await self._tenants.get_by_email(data["email"])
-            if existing_tenant and existing_tenant.id != tenant_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "DUPLICATE_TENANT_EMAIL",
-                        "message": "A tenant with this email already exists.",
-                    },
-                )
-            existing_user = await self._users.get_by_email(data["email"])
-            if existing_user and existing_user.tenant_id != tenant_id:
-                # Cross-tenant collision. A same-tenant collision against the
-                # admin user themselves is fine (admin's email is about to be
-                # re-aligned below); a same-tenant collision against any OTHER
-                # user is caught by the DUPLICATE_USER_EMAIL check below.
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "DUPLICATE_EMAIL",
-                        "message": "This email is already in use.",
-                    },
-                )
 
-        # Capture the pre-update email so we can decide whether to re-issue the
-        # activation link. Normalise both sides for the comparison.
+        # Normalise old/new email and decide whether this is a PENDING-tenant
+        # email change (the only case that triggers admin re-alignment).
         old_email = (tenant.email or "").lower().strip()
         new_email_raw = data.get("email")
         new_email = (new_email_raw or "").lower().strip() if new_email_raw else ""
@@ -525,6 +502,9 @@ class TenantService:
             email_changed and tenant.status == TenantStatus.PENDING
         )
 
+        # Look up the admin user BEFORE the email-uniqueness check below, so
+        # that check can be admin-aware (a user row whose id matches the
+        # admin we're about to re-align is not a real collision).
         admin: Optional[User] = None
         if is_pending_email_change:
             admin = await self._users.get_by_email(old_email)
@@ -544,19 +524,43 @@ class TenantService:
                         ),
                     },
                 )
-            # Refuse if a DIFFERENT same-tenant user already owns the new email
-            # — otherwise we'd silently violate the users.email uniqueness
-            # constraint at flush time, after the tenant change has been written.
-            # (Cross-tenant collisions were already caught by DUPLICATE_EMAIL above.)
-            clash = await self._users.get_by_email(new_email)
-            if clash is not None and clash.id != admin.id:
+
+        # ── Single, admin-aware email-uniqueness check. Consolidates what
+        # PR #828 added (cross-tenant tenant+user collision) with the
+        # reissue-time check this PR needed (any non-admin user collision),
+        # so there is exactly one query per table and one place that owns
+        # email uniqueness for this endpoint.
+        if "email" in data:
+            existing_tenant = await self._tenants.get_by_email(data["email"])
+            if existing_tenant and existing_tenant.id != tenant_id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
-                        "code": "DUPLICATE_USER_EMAIL",
-                        "message": "Another user already has this email address.",
+                        "code": "DUPLICATE_TENANT_EMAIL",
+                        "message": "A tenant with this email already exists.",
                     },
                 )
+            existing_user = await self._users.get_by_email(data["email"])
+            if existing_user is not None:
+                if admin is not None:
+                    # Reissue flow will assign ``admin.email = new_email``.
+                    # Any other holder — same-tenant or cross-tenant — breaks
+                    # the users.email UNIQUE constraint at flush time, so
+                    # only the admin themselves is an allowed match.
+                    collides = existing_user.id != admin.id
+                else:
+                    # No reissue planned: tenant.email is independent of
+                    # users.email, so a same-tenant user happening to share
+                    # the address is harmless. Only reject cross-tenant.
+                    collides = existing_user.tenant_id != tenant_id
+                if collides:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "DUPLICATE_EMAIL",
+                            "message": "This email is already in use.",
+                        },
+                    )
 
         # ── Stage writes against the open session (flush only, no commit).
         data["updated_by"] = current_user.id
