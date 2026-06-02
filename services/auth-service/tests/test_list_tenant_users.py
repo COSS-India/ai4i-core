@@ -17,10 +17,12 @@ def _make_service() -> TenantService:
     tenant_repo.get_by_id = AsyncMock()
     user_repo = MagicMock()
     user_repo.list_by_tenant = AsyncMock(return_value=[])
+    role_service = MagicMock()
+    role_service.get_user_roles = AsyncMock(return_value=[])
     return TenantService(
         tenant_repo=tenant_repo,
         user_repo=user_repo,
-        role_service=MagicMock(),
+        role_service=role_service,
         verification_repo=MagicMock(),
         credentials_repo=MagicMock(),
         token_service=MagicMock(),
