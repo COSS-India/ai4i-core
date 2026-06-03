@@ -228,6 +228,16 @@ class ModelService:
 
         instance = await self._models.get_by_id_version(payload.modelId, payload.version)
         if instance is None:
+            existing_model = await self._models.get_by_model_id(payload.modelId)
+            if existing_model is not None:
+                conflict = await self._models.get_by_name_version(
+                    existing_model.name, payload.version
+                )
+                if conflict is not None:
+                    raise DuplicateModelVersionError(
+                        f"Model with name '{existing_model.name}' and version "
+                        f"'{payload.version}' already exists.",
+                    )
             raise EntityNotFoundError(
                 f"Model '{payload.modelId}' v{payload.version}"
             )

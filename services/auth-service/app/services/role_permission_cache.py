@@ -71,10 +71,7 @@ class RolePermissionCache:
     async def stop(self) -> None:
         if self._task is not None and not self._task.done():
             self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.gather(self._task, return_exceptions=True)
         self._task = None
 
     async def _refresh_loop(self) -> None:
