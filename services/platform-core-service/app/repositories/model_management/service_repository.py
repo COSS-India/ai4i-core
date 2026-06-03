@@ -26,7 +26,12 @@ class ServiceRepository:
     # ── Reads ──
 
     async def get_by_uuid(self, uuid: UUID) -> Optional[Service]:
-        result = await self._db.execute(select(Service).where(Service.id == uuid))
+        result = await self._db.execute(
+            select(Service).where(
+                Service.id == uuid,
+                Service.deleted_at.is_(None),
+            )
+        )
         return result.scalar_one_or_none()
 
     async def get_by_service_id(self, service_id: str) -> Optional[Service]:
@@ -140,7 +145,10 @@ class ServiceRepository:
         now = datetime.now(timezone.utc)
         result = await self._db.execute(
             update(Service)
-            .where(Service.id == uuid)
+            .where(
+                Service.id == uuid,
+                Service.deleted_at.is_(None),
+            )
             .values(deleted_at=now)
         )
         await self._db.flush()
@@ -150,7 +158,10 @@ class ServiceRepository:
         now = datetime.now(timezone.utc)
         result = await self._db.execute(
             update(Service)
-            .where(Service.service_id == service_id)
+            .where(
+                Service.service_id == service_id,
+                Service.deleted_at.is_(None),
+            )
             .values(deleted_at=now)
         )
         await self._db.flush()
