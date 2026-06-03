@@ -100,10 +100,7 @@ class PolicySyncService:
     async def stop_listener(self) -> None:
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
-            try:
-                await self._listener_task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.gather(self._listener_task, return_exceptions=True)
         self._listener_task = None
 
     async def _listen(self, redis_client, db_factory) -> None:
@@ -118,7 +115,7 @@ class PolicySyncService:
                         async with db_factory() as db:
                             await self.refresh(db)
             except asyncio.CancelledError:
-                return
+                raise
             except Exception as exc:
                 logger.warning("PolicySync listener error (reconnecting in 5 s): %s", exc)
                 await asyncio.sleep(5)
