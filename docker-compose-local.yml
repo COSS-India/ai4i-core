@@ -1,7 +1,9 @@
 version: '3.8'
 
 services:
-  # Infrastructure Services
+
+  # ── Database ──────────────────────────────────────────────────────────────────
+
   postgres:
     image: postgres:15-alpine
     container_name: ai4v-postgres
@@ -28,34 +30,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Run the database CLI (Alembic wrapper) inside the Docker network so that
-  # POSTGRES_HOST=postgres resolves. Uses project root .env so credentials match
-  # the postgres container (compose substitutes ${POSTGRES_*} from root .env).
-  # Commands: migrate, migrate:all, rollback, migrate:status, migrate:fresh, make:migration
-  # Usage:
-  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py migrate:status
-  #   ./scripts/run-migration-cli.sh migrate:all
-  migration-runner:
-    image: python:3.11-slim
-    container_name: ai4v-migration-runner
-    working_dir: /app
-    volumes:
-      - .:/app
-    env_file:
-      - ./.env
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      AUTH_DB_HOST: postgres
-      APP_DB_HOST: postgres
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$$@\"", "sh"]
-    command: ["python", "infrastructure/databases/cli.py"]
-
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
@@ -79,6 +53,7 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # ── Messaging ─────────────────────────────────────────────────────────────────
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -109,8 +84,6 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
-      # Default map if KAFKA_LISTENER_SECURITY_PROTOCOL_MAP is not set:
-      # map both PLAINTEXT and PLAINTEXT_INTERNAL to PLAINTEXT.
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT}"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -131,167 +104,14 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  auth-service:
-    build:
-      context: .
-      dockerfile: ./services/auth-service/Dockerfile
-    container_name: ai4v-auth-service
-    ports:
-      - "8081:8081"
-    environment:
-      - ENV_FILE=.env
-    env_file:
-      - ./services/auth-service/.env
-    volumes:
-      - ./services/auth-service:/app
-      - ./libs/ai4icore_core:/libs/ai4icore_core
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - auth-service
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
+  # ── Metrics ───────────────────────────────────────────────────────────────────
 
-
-
-  platform-core-service:
-    build:
-      context: .
-      dockerfile: ./services/platform-core-service/Dockerfile
-    container_name: ai4v-platform-core-service
-    ports:
-      - "8102:8095"
-    env_file:
-      - ./services/platform-core-service/.env
-    environment:
-      # ── Override localhost hostnames from .env with Docker service names ──
-      - DATABASE_URL=postgresql+asyncpg://ai4iuser:ai4ipassword@postgres:5432/ai4iplatform_core
-      - POSTGRES_HOST=postgres
-      - APP_DB_HOST=postgres
-      - REDIS_HOST=redis
-      - AUTH_SERVICE_URL=http://auth-service:8081
-      # ── External GPU service endpoints ──
-      - NER_SERVICE_URL=${NER_SERVICE_URL:-http://inference-service:8090/api/v1/ner/inference}
-      - PII_LLM_URL=${PII_LLM_URL:-http://inference-service:8090/api/query}
-    volumes:
-      # Bind-mount app code for hot-reload without image rebuilds
-      - ./services/platform-core-service:/app
-      - ./libs/ai4icore_core:/libs/ai4icore_core
-    command:
-      - "uvicorn"
-      - "app.main:app"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8095"
-      - "--reload"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - platform-core-service
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8095/health', timeout=3)",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
-
-
-  simple-ui-frontend:
-    build:
-      context: ./frontend/simple-ui
-      dockerfile: Dockerfile.dev
-      args:
-        # Browser talks directly to the API Gateway on host port 8080
-        # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
-
-        NEXT_PUBLIC_API_URL: http://localhost:8080
-        # Service-specific API keys from .env file (no hardcoding)
-        NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
-        NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
-        NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
-        NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
-        NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
-        NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
-        # Telemetry/Observability service URL (logs and traces) - same as API Gateway
-        # NEXT_PUBLIC_TELEMETRY_SERVICE_URL: https://core-v1.ai4inclusion.org
-        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: http://localhost:8084
-
-    container_name: ai4v-simple-ui
-    ports:
-      - "3000:3000"
-    environment:
-      # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
-      - HOSTNAME=0.0.0.0
-      # Route all frontend API calls through the API Gateway on host
-      # - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
-
-      - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
-      # Service-specific API keys for API Gateway authentication / RBAC
-      - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
-      - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
-      - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
-      - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
-      - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
-      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
-      # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
-    env_file:
-      - ./.env
-    volumes:
-      - ./frontend/simple-ui:/app
-      - /app/node_modules
-      - /app/.next
-    networks:
-      microservices-network:
-        aliases:
-          - simple-ui
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: unless-stopped
-
-  # Observability: Prometheus
   prometheus:
     image: prom/prometheus:latest
     container_name: ai4v-prometheus
     ports:
       - "9090:9090"
-    # Make `host.docker.internal` resolve to the host gateway so Prometheus
-    # can scrape services running natively on the host (e.g. inference-service
-    # during local development). Works on Docker Engine 20.10+ and Docker Desktop.
+    # Allows Prometheus to scrape services running natively on the host
     extra_hosts:
       - "inference-service:host-gateway"
     volumes:
@@ -305,20 +125,17 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
-      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
       - '--web.external-url=http://localhost:9090'
       - '--web.route-prefix=/'
     networks:
       - microservices-network
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
       interval: 10s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
 
-  # Observability: Alertmanager (POC)
-  # Mount directory; bootstrap copies alertmanager.default.yml to alertmanager.yml if missing
   alertmanager:
     image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
@@ -333,19 +150,17 @@ services:
           cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml;
         fi;
         exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml
-    # Resolve `inference-service` to the host gateway so Alertmanager can POST the
-    # alert-history webhook back to platform-core when it runs natively on the host
-    # (mirrors the prometheus block's alias used for scraping host services).
+    # Allows Alertmanager to POST alert-history webhooks to platform-core running on the host
     extra_hosts:
       - "inference-service:host-gateway"
     networks:
       - microservices-network
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
       interval: 10s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:latest
@@ -355,15 +170,6 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-
-      # Combined from both HEAD and remote commits
-      - GF_INSTALL_PLUGINS=
-      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
-
-    env_file:
-      - ./.env
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
@@ -371,17 +177,16 @@ services:
       - microservices-network
     depends_on:
       - prometheus
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
 
   node-exporter:
     image: prom/node-exporter:v1.7.0
     container_name: ai4v-node-exporter
-    restart: unless-stopped
     ports:
       - "9100:9100"
     volumes:
@@ -400,9 +205,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
 
+  # ── Logging ───────────────────────────────────────────────────────────────────
 
-  # Telemetry: OpenSearch (for logs)
   opensearch:
     image: opensearchproject/opensearch:2.11.0
     container_name: ai4v-opensearch
@@ -431,7 +237,6 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # OpenSearch initialization - ensures index template is created on startup
   opensearch-init:
     image: curlimages/curl:latest
     container_name: ai4v-opensearch-init
@@ -449,7 +254,6 @@ services:
     command: ["sh", "/init-opensearch.sh"]
     restart: "no"
 
-  # Telemetry: OpenSearch Dashboards (for log visualization)
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:2.11.0
     container_name: ai4v-opensearch-dashboards
@@ -458,8 +262,6 @@ services:
     environment:
       - OPENSEARCH_HOSTS=http://opensearch:9200
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
-      # - SERVER_BASEPATH=/opensearch
-      # - SERVER_REWRITEBASEPATH=true
     networks:
       - microservices-network
     depends_on:
@@ -473,50 +275,16 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # Telemetry: Jaeger (for distributed tracing)
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    container_name: ai4v-jaeger
-    ports:
-      - "16686:16686"  # UI
-      - "14268:14268"  # HTTP collector
-      - "6831:6831/udp"  # UDP agent
-      - "4317:4317"  # OTLP gRPC
-      - "4318:4318"  # OTLP HTTP
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-      - QUERY_BASE_PATH=/jaeger
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:14269/"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    restart: unless-stopped
-
-  # Telemetry: Fluent Bit (for log collection)
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
     env_file:
       - ./.env
-    # Log filtering configuration is read from .env file (no hardcoding)
-    # - EXCLUDE_INIT_LOGS: Filter initialization/noise logs (startup messages)
-    #   Set to "true" to exclude service initialization logs (e.g., "Service started successfully",
-    #   "Registered service with service registry", "Plugin initialized", etc.)
-    #   This prevents logs with trace_ids that don't exist in Jaeger from appearing in OpenSearch Dashboards
-    #   Example: EXCLUDE_INIT_LOGS=true
-    # - INCLUDE_SERVICE_LOGS: Service allowlist (comma-separated list of services to keep)
-    #   Example: INCLUDE_SERVICE_LOGS=asr,tts,ocr,ner,nmt,llm,pipeline,transliteration,language-detection,language-diarization,audio-lang-detection,speaker-diarization,auth
-    #   If not set, all logs are kept (no filtering)
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
       - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
-      # - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network
@@ -531,19 +299,96 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # ── Application Services (reference — run natively on the host in development) ─
+  # Uncomment to run services in Docker instead of natively.
+  # Ensure services/*/. env files exist before starting.
+
+  # auth-service:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/auth-service/Dockerfile
+  #   container_name: ai4v-auth-service
+  #   ports:
+  #     - "8081:8081"
+  #   env_file:
+  #     - ./services/auth-service/.env
+  #   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - auth-service
+  #   restart: unless-stopped
+
+  # platform-core-service:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/platform-core-service/Dockerfile
+  #   container_name: ai4v-platform-core-service
+  #   ports:
+  #     - "8102:8095"
+  #   env_file:
+  #     - ./services/platform-core-service/.env
+  #   environment:
+  #     - POSTGRES_HOST=postgres
+  #     - REDIS_HOST=redis
+  #     - AUTH_SERVICE_URL=http://auth-service:8081
+  #     - NER_SERVICE_URL=${NER_SERVICE_URL:-http://inference-service:8090/api/v1/ner/inference}
+  #     - PII_LLM_URL=${PII_LLM_URL:-http://inference-service:8090/api/query}
+  #   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8095", "--reload"]
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - platform-core-service
+  #   restart: unless-stopped
+
+  # simple-ui-frontend:
+  #   build:
+  #     context: ./frontend/simple-ui
+  #     dockerfile: Dockerfile.dev
+  #     args:
+  #       NEXT_PUBLIC_API_URL: http://localhost:8080
+  #       NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
+  #       NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
+  #       NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
+  #       NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
+  #       NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+  #       NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+  #   container_name: ai4v-simple-ui
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - HOSTNAME=0.0.0.0
+  #     - NEXT_PUBLIC_API_URL=http://localhost:8080
+  #     - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
+  #     - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
+  #     - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
+  #     - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
+  #     - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
+  #     - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
+  #   volumes:
+  #     - ./frontend/simple-ui:/app
+  #     - /app/node_modules
+  #     - /app/.next
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - simple-ui
+  #   restart: unless-stopped
 
 
 volumes:
   postgres-data:
     driver: local
-    # Note: Removed bind mount to Linux-specific path for Windows compatibility
-    # Data will persist in Docker's managed volume location
-    # To use a custom path on Linux, uncomment and adjust the driver_opts below:
-    #driver_opts:
-      #type: "none"
-     # o: "bind"
-     # device: "/home/ubuntu/ai4i-v/volumes/pg_data"
-
   redis-data:
     driver: local
   kafka-data:
