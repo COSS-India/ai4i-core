@@ -38,6 +38,9 @@ def downgrade() -> None:
             SELECT r.id, 55, '{SEEDER_ID}'
             FROM roles r
             WHERE r.name = 'USER'
-            ON CONFLICT DO NOTHING
+              AND NOT EXISTS (
+                SELECT 1 FROM role_permission rp
+                WHERE rp.role_id = r.id AND rp.permission_id = 55
+              )
         """)
     )
