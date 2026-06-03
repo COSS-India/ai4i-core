@@ -13,6 +13,9 @@ export { default as ImageInput } from "./inputs/ImageInput";
 export { default as ResultDisplay } from "./response/ResultDisplay";
 export { default as ResponseMetadata } from "./response/ResponseMetadata";
 export { default as ResponseActions } from "./response/ResponseActions";
+export { default as AudioInputSection } from "./AudioInputSection";
+export { mapToServiceOptions, INDIC_LANGUAGE_OPTIONS } from "./utils";
+export type { ServiceListItem } from "./utils";
 
 export type {
   ServiceInputType,
