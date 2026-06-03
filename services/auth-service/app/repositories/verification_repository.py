@@ -67,9 +67,16 @@ class VerificationRepository(BaseRepository):
                     header = jwt.get_unverified_header(token_obj.token)  # NOSONAR(python:S5659)
                     kid = header.get("kid")
                     if not kid:
+                        # No kid → cannot verify, but also no way to scope
+                        # by token type. Preserve the pre-S5659 deactivation
+                        # coverage and fail closed: invalidate a token we
+                        # cannot trust rather than leave it live.
                         logger.warning(
-                            "Skipping token with no kid for user %s", user_uuid
+                            "Deactivating kid-less token for user %s — "
+                            "cannot verify, safer to invalidate",
+                            user_uuid,
                         )
+                        token_obj.is_active = False
                         continue
                     public_key = key_manager.get_public_key(kid)
                     public_pem = public_key.public_bytes(
