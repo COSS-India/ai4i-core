@@ -21,7 +21,6 @@ This project uses **Alembic** for database migrations with a thin CLI wrapper fo
 infrastructure/databases/migrations/postgres/alembic/versions/
 ├── ai4iplatform_auth/          ← Auth-service database
 ├── ai4iplatform_core/
-├── config_db/
 ├── alerting_db/
 ├── policy_db/
 └── ai4i_platform/
@@ -49,7 +48,7 @@ python infrastructure/databases/cli.py make:migration add_email_verified_column 
 
 For **other databases**:
 ```bash
-python infrastructure/databases/cli.py make:migration create_audit_table --postgres-db config_db
+python infrastructure/databases/cli.py make:migration create_audit_table --postgres-db alerting_db
 ```
 
 ### 2. Edit the Generated File
@@ -192,7 +191,7 @@ python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
 
 For specific database:
 ```bash
-python infrastructure/databases/cli.py migrate --postgres-db config_db
+python infrastructure/databases/cli.py migrate --postgres-db alerting_db
 ```
 
 ### Run Specific Number of Migrations

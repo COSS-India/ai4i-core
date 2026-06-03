@@ -33,7 +33,6 @@ class MigrationCLI:
     POSTGRES_DBS = [
         'ai4iplatform_auth',
         'ai4iplatform_core',
-        'config_db',
         'alerting_db',
         'policy_db',
         'ai4i_platform'

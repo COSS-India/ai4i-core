@@ -39,7 +39,6 @@ EXTRA_ARGS=("${@:3}")
 
 DATABASES=(
   "ai4iplatform_auth"
-  "config_db"
   "ai4i_platform_db"
   "ai4iplatform_core"
 )
@@ -78,7 +77,7 @@ Prerequisite:
 Examples:
   ./scripts/migrate.sh all upgrade
   ./scripts/migrate.sh ai4iplatform_auth upgrade head
-  ./scripts/migrate.sh config_db current
+  ./scripts/migrate.sh policy_db current
   ./scripts/migrate.sh ai4iplatform_core upgrade head
   ./scripts/migrate.sh alerting_db revision -m "manual migration"
 
