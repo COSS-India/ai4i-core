@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from orchestrator import Orchestrator, OrchestratorError
+from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
 from services.llm_service import OpenAIProxyService
@@ -632,7 +633,7 @@ async def list_available_tasks(
     Returns:
         Dict with list of available task types
     """
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": list(TASK_SERVICE_REGISTRY)}
 
 async def get_task_info(
     task_type: str,

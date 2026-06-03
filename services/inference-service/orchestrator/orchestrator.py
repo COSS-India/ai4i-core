@@ -58,7 +58,7 @@ class Orchestrator:
         self.task_registry = task_registry
         self.logger = logger
         self.inference_server_resolver = InferenceServerResolver()
-        self.task_service_registry: list = TASK_SERVICE_REGISTRY
+        self.task_service_registry: dict = TASK_SERVICE_REGISTRY
 
     async def route_inference(
         self,
@@ -155,10 +155,10 @@ class Orchestrator:
         Raises:
             UnknownTaskTypeError: If task_type not registered
         """
-        # For now, allow all known task types
-        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
-        if task_type not in allowed_tasks:
-            raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {', '.join(allowed_tasks)}")
+        # Allowed tasks are exactly the ones with a registered TaskService class.
+        if task_type not in self.task_service_registry:
+            allowed = ", ".join(self.task_service_registry)
+            raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {allowed}")
 
 
 
@@ -184,26 +184,17 @@ class Orchestrator:
             # serviceId (model name) comes from the resolved service_info
             serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
 
-            # Search flat list: find entry where task_type matches
-            # AND serviceId is listed in the model_name array
-            registry_entry = next(
-                (
-                    entry for entry in self.task_service_registry
-                    if entry.get("task_type") == task_type
-                    and serviceId in entry.get("model_name", [])
-                ),
-                None,
-            )
+            # Which model serves the request was already resolved against MMS;
+            # the registry only maps task_type to the TaskService class.
+            service_class = self.task_service_registry.get(task_type)
 
-            if not registry_entry:
+            if not service_class:
                 raise TaskServiceExecutionError(
-                    f"No registry entry found for task_type='{task_type}', "
-                    f"serviceId='{serviceId}'. "
-                    f"Add it to task_service_registry.json under the matching "
-                    f"task_type entry's model_name list."
+                    f"No registry entry found for task_type='{task_type}'. "
+                    f"Add it to TASK_SERVICE_REGISTRY in "
+                    f"orchestrator/task_service_registry.py."
                 )
 
-            service_class = registry_entry.get("service_class")
             self.logger.debug(
                 f"Instantiating {service_class.__name__} "
                 f"for task_type='{task_type}', serviceId='{serviceId}'"

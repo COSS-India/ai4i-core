@@ -64,7 +64,7 @@ def _make_mock_inference_model(translated: str = "नमस्ते, आप क
 
 
 async def test_validate_request_valid():
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
     payload = {
@@ -79,7 +79,7 @@ async def test_validate_request_valid():
 
 
 async def test_validate_request_errors():
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
@@ -120,7 +120,7 @@ async def test_validate_request_errors():
 
 
 async def test_preprocess_input():
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
@@ -143,7 +143,7 @@ async def test_preprocess_input():
 
 
 async def test_get_inference_model_class():
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
     from services.base.config_mapper import GenericTritonMapper
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
@@ -153,7 +153,7 @@ async def test_get_inference_model_class():
 
 
 async def test_postprocess_output():
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
@@ -172,7 +172,7 @@ async def test_postprocess_output():
 
 
 async def test_build_response():
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
     payload = {
@@ -190,7 +190,7 @@ async def test_build_response():
 
 async def test_run_inference_full():
     """Full run_inference with mocked InferenceModel and mocked _call_triton_inference."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
@@ -229,7 +229,7 @@ async def test_run_inference_full():
 
 async def test_run_inference_missing_endpoint():
     """run_inference raises RuntimeError when service_info lacks endpoint."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.base.text_base import TextDefaultModel
 
     bad_service_info = {"service_id": "x", "name": "model", "endpoint": "", "api_key": None}
     service = TextDefaultModel(service_info=bad_service_info)

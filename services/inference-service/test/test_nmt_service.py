@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, '.')
 
-from services.models.text_default_model import TextDefaultModel
+from services.base.text_base import TextDefaultModel
 
 
 async def test_nmt_validation():

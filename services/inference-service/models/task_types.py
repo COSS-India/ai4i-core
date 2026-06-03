@@ -19,7 +19,6 @@ class TaskType(str, Enum):
     LANGUAGE_DIARIZATION = "LANGUAGE_DIARIZATION"  # Language Diarization
     SPEAKER_DIARIZATION = "SPEAKER_DIARIZATION"  # Speaker Diarization
     AUDIO_LANGUAGE_DETECTION = "AUDIO_LANGUAGE_DETECTION"  # Audio Language Detection
-    PII = "PII"  # PII Detection and Redaction
 
 
 class TaskRegistry:

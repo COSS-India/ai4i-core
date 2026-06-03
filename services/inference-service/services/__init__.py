@@ -13,15 +13,18 @@ if "inference_models" not in sys.modules:
     _pkg.__package__ = "inference_models"
     sys.modules["inference_models"] = _pkg
 
-from services.asr_service import ASRTaskService
-from services.ner_service import NERTaskService
-from services.language_detection_service import LanguageDetectionTaskService
+from services.base.audio_tasks import (
+    ASRTaskService,
+    LanguageDiarizationTaskService,
+    SpeakerDiarizationTaskService,
+)
+from services.base.text_base import (
+    LanguageDetectionTaskService,
+    NERTaskService,
+    TextDefaultModel,
+    TransliterationTaskService,
+)
 from services.tts_service import TTSTaskService
-from services.transliteration_service import TransliterationTaskService
-from services.language_diarization_service import LanguageDiarizationTaskService
-from services.speaker_diarization_service import SpeakerDiarizationTaskService
-from services.pii_service import PIITaskService
-from services.models.text_default_model import TextDefaultModel
 
 __all__ = [
     "TextDefaultModel",
@@ -32,5 +35,4 @@ __all__ = [
     "TransliterationTaskService",
     "LanguageDiarizationTaskService",
     "SpeakerDiarizationTaskService",
-    "PIITaskService",
 ]
