@@ -40,10 +40,8 @@ POSTGRES_DB=ai4i_platform
 # Databases the migration framework actually creates (one per Alembic
 # versions/<dir>, see infrastructure/databases/migrations/postgres/alembic/versions/):
 AUTH_DB_NAME=ai4iplatform_auth
-CONFIG_DB_NAME=config_db
 MODEL_MANAGEMENT_DB_NAME=ai4iplatform_core
 POLICY_DB_NAME=policy_db
-TELEMETRY_DB_NAME=telemetry_db
 ALERTING_DB_NAME=alerting_db
 ```
 
@@ -119,7 +117,7 @@ Run migrations for all databases at once.
 ```
 
 This command will:
-- Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `config_db`, `alerting_db`, `telemetry_db`, `policy_db`, `ai4i_platform_db`)
+- Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `alerting_db`, `policy_db`, `ai4i_platform_db`)
 - Create all tables, indexes, constraints, and triggers
 - Seed the default data — the seed steps are themselves Alembic migrations (`*_seed_*.py` under `infrastructure/databases/migrations/postgres/alembic/versions/`), so they run as part of the same `upgrade`. This includes:
   - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (the password is the literal string `ADMIN_PASSWORD` unless you override it by setting `ADMIN_DEFAULT_PASSWORD` in the environment before running the migration)
