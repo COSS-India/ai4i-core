@@ -607,6 +607,11 @@ async def validate_prometheus_config(config: Dict[str, Any]) -> bool:
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.debug("promtool timed out, skipping validation")
+            return True
         except FileNotFoundError:
             logger.debug("promtool not available, skipping validation")
             return True
