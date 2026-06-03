@@ -2,12 +2,12 @@
 
 This guide provides step-by-step instructions for setting up and running the AI4I Core platform locally.
 
-**Run model**: infrastructure (PostgreSQL, Redis, Kafka, observability stack) runs in Docker; the three application services (`auth-service`, `platform-core-service`, `inference-service`) run natively on the host via `uvicorn` / `python main.py` so you can iterate quickly and attach a debugger.
+**Run model**: infrastructure (PostgreSQL, Redis, Kafka, observability stack) runs in Docker; the three application services (`auth-service`, `platform-core-service`, `inference-service`) run natively on the host via `python3 -m uvicorn` so you can iterate quickly and attach a debugger.
 
 ## Prerequisites
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
-- **[Python 3.11](https://www.python.org/downloads/)** and **[pip](https://pip.pypa.io/en/stable/installation/)** installed
+- **[Python 3.11](https://www.python.org/downloads/)** installed (`python3 --version` should show `3.11.x`)
 - **[Git](https://git-scm.com/install/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
@@ -181,17 +181,11 @@ REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
 
 ```bash
 cd services/auth-service
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
-**Using uvicorn directly:**
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
-```
-
-**Using the module entrypoint:**
-```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
 ```
 
 The service is ready when you see `Application startup complete` in the logs. Verify at **http://localhost:8081/docs**.
@@ -246,17 +240,11 @@ ALERTMANAGER_CONFIG_PATH=infrastructure/alertmanager/alertmanager.yml
 
 ```bash
 cd services/platform-core-service
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
-**Using uvicorn directly:**
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
-```
-
-**Using the module entrypoint:**
-```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
 ```
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8095/docs**.
@@ -300,17 +288,11 @@ LLM_DEFAULT_ENDPOINT=<YOUR_LLM_UPSTREAM_BASE_URL>
 
 ```bash
 cd services/inference-service
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
-**Using the built-in entrypoint (reads HOST/PORT from `.env`):**
 ```bash
-python main.py
-```
-
-**Using uvicorn directly:**
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8090 --reload
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 ```
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8090/docs**.
@@ -423,7 +405,7 @@ netstat -ano | findstr <port>
 | Prometheus, Alertmanager, Grafana, OpenSearch, Fluent Bit | Docker Compose | same |
 | `auth-service` | Native — uvicorn | restart the terminal process |
 | `platform-core-service` | Native — uvicorn | restart the terminal process |
-| `inference-service` | Native — python main.py / uvicorn | restart the terminal process |
+| `inference-service` | Native — python3 main.py / uvicorn | restart the terminal process |
 
 ### Why Services Run Natively
 
