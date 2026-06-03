@@ -7,19 +7,38 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.schemas.telemetry import SearchTracesResponse, TraceResponse
 from app.utils.opensearch_client import OpenSearchTraceClient
+from app.core.exceptions import InsufficientPermissionsError
+from app.core.role_id import RoleId
+from app.utils.auth_helper import check_permission_ids
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
+# All allowed roles for telemetry access (roles that can access telemetry endpoints)
+ALLOWED_ROLES = {RoleId.ADMIN, RoleId.MODERATOR, RoleId.TENANT_ADMIN}
+
+
+def _validate_telemetry_access(request: Request) -> None:
+    """Validate that user has one of the allowed roles for telemetry access.
+
+    Only roles 1 (admin), 2 (moderator), or 5 (tenant admin) are allowed.
+    Raises InsufficientPermissionsError if user has role 3 (guest), 4 (user), or no role.
+    """
+    check_permission_ids(request, *ALLOWED_ROLES)
+
 
 def _is_admin(request: Request) -> bool:
-    """Admin flag injected by the gateway (auth-service /validate) from the validated token.
+    """Check if the user has admin/moderator role for trace access.
 
-    Trusted because the gateway strips any client-supplied X-Is-Admin and sets it
-    itself. Drives breadth only — access is already gated by traces.read at the gateway.
+    Admin and Moderator can see all traces across all tenants.
+    Returns True if user is admin or moderator, False otherwise.
     """
-    return request.headers.get("X-Is-Admin", "").strip().lower() == "true"
+    try:
+        check_permission_ids(request, RoleId.ADMIN, RoleId.MODERATOR)
+        return True
+    except InsufficientPermissionsError:
+        return False
 
 
 def _get_tenant_id(request: Request) -> Optional[str]:
@@ -54,6 +73,9 @@ async def search_traces_opensearch(
     Search traces from OpenSearch using direct queries on nested fields.
     """
     try:
+        # Validate user has one of the allowed roles (1, 2, or 5)
+        _validate_telemetry_access(request)
+
         is_admin = _is_admin(request)
 
         # Access is already gated at the gateway (traces.read). Here we only decide
@@ -182,10 +204,10 @@ async def search_traces_opensearch(
         by_level = {}
         by_task = {}
         for trace in data:
-            status = trace.get("status", "unknown")
+            trace_status = trace.get("status", "unknown")
             task_type = trace.get("task_type", "unknown")
 
-            by_level[status] = by_level.get(status, 0) + 1
+            by_level[trace_status] = by_level.get(trace_status, 0) + 1
             by_task[task_type] = by_task.get(task_type, 0) + 1
 
         return SearchTracesResponse(
@@ -227,6 +249,9 @@ async def get_trace_by_id(
         Complete trace with all spans
     """
     try:
+        # Validate user has one of the allowed roles (1, 2, or 5)
+        _validate_telemetry_access(request)
+
         is_admin = _is_admin(request)
         tenant_scope = None if is_admin else _get_tenant_id(request)
         if not is_admin and not tenant_scope:
