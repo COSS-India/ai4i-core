@@ -301,7 +301,11 @@ services:
 
   # ── Application Services (reference — run natively on the host in development) ─
   # Uncomment to run services in Docker instead of natively.
-  # Ensure services/*/. env files exist before starting.
+  # Ensure services/*/.env files exist before starting.
+  # simple-ui-frontend also requires the AI4Voice API keys to be set in the root .env
+  # (ASR_API_KEY, AI4VOICE_API_KEY, TTS_API_KEY, NMT_API_KEY, PIPELINE_API_KEY,
+  #  MODEL_MANAGEMENT_API_KEY) — they were removed from env.template since they are
+  # only needed when running that container.
 
   # auth-service:
   #   build:
