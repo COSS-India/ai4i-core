@@ -25,10 +25,10 @@ import asyncio
 import logging
 import os
 import re
-import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
+import aiofiles
 import httpx
 import yaml
 
@@ -596,23 +596,29 @@ async def validate_prometheus_config(config: Dict[str, Any]) -> bool:
     """
     tmp_path: Optional[str] = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as tmp:
-            yaml.dump(config, tmp, default_flow_style=False, sort_keys=False, allow_unicode=True)
-            tmp_path = tmp.name
+        fd, tmp_path = tempfile.mkstemp(suffix=".yml")
+        os.close(fd)
+        async with aiofiles.open(tmp_path, mode="w") as tmp:
+            await tmp.write(yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True))
         try:
-            result = subprocess.run(
-                ["promtool", "check", "rules", tmp_path],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                "promtool", "check", "rules", tmp_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.debug("promtool timed out, skipping validation")
+            return True
         except FileNotFoundError:
             logger.debug("promtool not available, skipping validation")
             return True
-        if result.returncode == 0:
+        if proc.returncode == 0:
             logger.info("Prometheus configuration validated successfully")
             return True
-        logger.error("Prometheus configuration validation failed: %s", result.stderr)
+        logger.error("Prometheus configuration validation failed: %s", stderr_bytes.decode())
         return False
     except Exception as exc:
         logger.warning("Validation check failed: %s, proceeding anyway", exc)
@@ -644,16 +650,15 @@ async def write_yaml_file(
         for attempt in range(3):
             try:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                with open(file_path, "w", encoding="utf-8") as f:
-                    yaml.dump(
+                async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                    await f.write(yaml.dump(
                         data_to_dump,
-                        f,
                         default_flow_style=False,
                         sort_keys=False,
                         allow_unicode=True,
                         width=1000,
                         indent=2,
-                    )
+                    ))
                 logger.info(
                     "Wrote %s (%d bytes)", file_path, os.path.getsize(file_path)
                 )
@@ -676,16 +681,15 @@ async def write_yaml_file(
     temp_path = f"{file_path}.tmp"
     try:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(temp_path, "w", encoding="utf-8") as f:
-            yaml.dump(
+        async with aiofiles.open(temp_path, "w", encoding="utf-8") as f:
+            await f.write(yaml.dump(
                 data,
-                f,
                 default_flow_style=False,
                 sort_keys=False,
                 allow_unicode=True,
                 width=1000,
                 indent=2,
-            )
+            ))
         if validate and not await validate_prometheus_config(data):
             raise ValueError("Prometheus configuration validation failed")
         os.replace(temp_path, file_path)
