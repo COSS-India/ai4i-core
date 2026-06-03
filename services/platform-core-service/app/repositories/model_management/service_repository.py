@@ -2,10 +2,11 @@
 Async repository for the Service entity.
 """
 
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, delete, desc, func, select
+from sqlalchemy import and_, delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -30,7 +31,10 @@ class ServiceRepository:
 
     async def get_by_service_id(self, service_id: str) -> Optional[Service]:
         result = await self._db.execute(
-            select(Service).where(Service.service_id == service_id)
+            select(Service).where(
+                Service.service_id == service_id,
+                Service.deleted_at.is_(None),
+            )
         )
         return result.scalar_one_or_none()
 
@@ -52,7 +56,7 @@ class ServiceRepository:
                 Model.model_id == Service.model_id,
                 Model.version == Service.model_version,
             ),
-        )
+        ).where(Service.deleted_at.is_(None))
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
         if is_published is not None:
@@ -78,7 +82,7 @@ class ServiceRepository:
                 Model.model_id == Service.model_id,
                 Model.version == Service.model_version,
             ),
-        )
+        ).where(Service.deleted_at.is_(None))
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
         if is_published is not None:
@@ -100,6 +104,7 @@ class ServiceRepository:
             Service.model_id == model_id,
             Service.model_version == model_version,
             Service.is_published.is_(True),
+            Service.deleted_at.is_(None),
         )
         result = await self._db.execute(stmt)
         return [row[0] for row in result.fetchall()]
@@ -111,6 +116,7 @@ class ServiceRepository:
             Service.model_id == model_id,
             Service.model_version == model_version,
             Service.is_published.is_(False),
+            Service.deleted_at.is_(None),
         )
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
@@ -131,25 +137,40 @@ class ServiceRepository:
         return instance
 
     async def delete_by_uuid(self, uuid: UUID) -> int:
-        result = await self._db.execute(delete(Service).where(Service.id == uuid))
+        now = datetime.now(timezone.utc)
+        result = await self._db.execute(
+            update(Service)
+            .where(Service.id == uuid)
+            .values(deleted_at=now)
+        )
+        await self._db.flush()
         return int(result.rowcount or 0)
 
     async def delete_by_service_id(self, service_id: str) -> int:
+        now = datetime.now(timezone.utc)
         result = await self._db.execute(
-            delete(Service).where(Service.service_id == service_id)
+            update(Service)
+            .where(Service.service_id == service_id)
+            .values(deleted_at=now)
         )
+        await self._db.flush()
         return int(result.rowcount or 0)
 
     async def delete_unpublished_for_model_version(
         self, model_id: str, model_version: str
     ) -> int:
+        now = datetime.now(timezone.utc)
         result = await self._db.execute(
-            delete(Service).where(
+            update(Service)
+            .where(
                 Service.model_id == model_id,
                 Service.model_version == model_version,
                 Service.is_published.is_(False),
+                Service.deleted_at.is_(None),
             )
+            .values(deleted_at=now)
         )
+        await self._db.flush()
         return int(result.rowcount or 0)
 
     async def commit(self) -> None:

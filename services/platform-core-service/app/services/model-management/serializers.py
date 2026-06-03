@@ -73,6 +73,7 @@ def service_to_dict(
         "isPublished": bool(service.is_published),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
+        "deletedAt": _iso(service.deleted_at),
         "createdAt": _iso(service.created_at),
         "createdBy": service.created_by,
         "updatedBy": service.updated_by,
