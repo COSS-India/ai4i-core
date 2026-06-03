@@ -117,8 +117,6 @@ POSTGRES_PASSWORD=postgres
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 
-CONFIG_DB_NAME=config_db
-TELEMETRY_DB_NAME=telemetry_db
 AI4I_PLATFORM_DB_NAME=ai4i_platform_db
 ```
 
@@ -145,7 +143,7 @@ cd ..\..
 ```
 
 This command will:
-- Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `config_db`, `telemetry_db`, `ai4i_platform_db`)
+- Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `ai4i_platform_db`)
 - Apply all table, index, constraint, and trigger migrations
 - Seed default data (admin user, roles, permissions, alert rules) — seed steps are Alembic migrations so they run automatically. This includes:
   - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (override by setting `ADMIN_DEFAULT_PASSWORD` in the environment before running the migration)
