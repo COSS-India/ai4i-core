@@ -173,8 +173,12 @@ class JWTVerifier:
         if not self._public_keys:
             raise JWTVerificationError(TOKEN_NO_KEYS)
 
+        # Header-only read to pick the right public key by ``kid`` before
+        # signature verification. The signature is verified below by
+        # ``jwt.decode(token, pem, algorithms=["RS256"], ...)``. This is the
+        # JWKS kid-selection pattern that python:S5659 itself recommends.
         try:
-            header = jwt.get_unverified_header(token)
+            header = jwt.get_unverified_header(token)  # NOSONAR(python:S5659)
         except JWTError as exc:
             raise JWTVerificationError(TOKEN_HEADER_INVALID) from exc
 

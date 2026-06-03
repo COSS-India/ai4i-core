@@ -12,11 +12,13 @@ from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from jose import jwt
+from jose import jwt, JWTError
+from cryptography.hazmat.primitives import serialization
 
 from app.models.verification import TokenVerification
 from app.repositories.base import BaseRepository
 from app.core.constants import TokenType
+from app.core.security import key_manager
 
 logger = logging.getLogger(__name__)
 
@@ -51,19 +53,44 @@ class VerificationRepository(BaseRepository):
             if token_type is None:
                 token_obj.is_active = False
             else:
-                # We only need to read the ``token_type`` claim — not verify
-                # the signature — so use get_unverified_claims, which is
-                # algorithm-agnostic. (``jwt.decode`` with algorithms=["HS256"]
-                # rejected RS256-signed tokens here even with
-                # verify_signature=False, so token-type-scoped deactivation
-                # silently failed for every real token.)
+                # RS256 signature-verified read of the ``type`` claim. Why
+                # full verification matters even though these rows come from
+                # our own DB: it makes signature tampering on stored tokens
+                # detectable here too, and silences python:S5659 which (
+                # correctly) flags any payload read that skips verification.
+                #
+                # ``verify_exp=False`` is deliberate: this method is called
+                # specifically to deactivate stale tokens, many of which have
+                # already expired. Refusing expired tokens here would leave
+                # them flagged as ``is_active=true`` forever.
                 try:
-                    payload = jwt.get_unverified_claims(token_obj.token)
+                    header = jwt.get_unverified_header(token_obj.token)  # NOSONAR(python:S5659)
+                    kid = header.get("kid")
+                    if not kid:
+                        logger.warning(
+                            "Skipping token with no kid for user %s", user_uuid
+                        )
+                        continue
+                    public_key = key_manager.get_public_key(kid)
+                    public_pem = public_key.public_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                    )
+                    payload = jwt.decode(
+                        token_obj.token,
+                        public_pem,
+                        algorithms=["RS256"],
+                        options={"verify_exp": False},
+                    )
                     # JWT claim name is ``type`` (see TokenService._create_token);
                     # the older `payload.get("token_type")` here always returned
                     # None, so token-type-scoped deactivation was a silent no-op.
                     if payload.get("type") == token_type:
                         token_obj.is_active = False
-                except Exception as e:
-                    logger.warning("Failed to decode token for user %s: %s", user_uuid, e)
+                except (JWTError, ValueError) as e:
+                    # Unknown kid → ValueError from key_manager; bad signature
+                    # → JWTError. Either way, leave the row alone (safest).
+                    logger.warning(
+                        "Failed to verify token for user %s: %s", user_uuid, e
+                    )
         await self._db.flush()
