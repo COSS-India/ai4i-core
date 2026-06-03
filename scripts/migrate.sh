@@ -42,7 +42,6 @@ DATABASES=(
   "config_db"
   "ai4i_platform_db"
   "ai4iplatform_core"
-  "telemetry_db"
 )
 
 print_db_header() {
