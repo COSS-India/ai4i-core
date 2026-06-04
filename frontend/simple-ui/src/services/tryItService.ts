@@ -105,7 +105,7 @@ export const performTryItNMTInference = async (
         rawMessage.toLowerCase().includes('rate') ||
         error?.response?.status === 429
       ) {
-        throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.');
+        throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.');
       }
 
       throw new Error('Access denied. Please login to access this service.');
