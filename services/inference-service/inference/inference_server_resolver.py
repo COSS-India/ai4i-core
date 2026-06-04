@@ -3,10 +3,11 @@ InferenceServerResolver for looking up Triton endpoints and model information.
 Provides caching with Redis and in-memory cache for efficient server resolution.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 import logging
 import time
-import os
+
+from config import settings
 
 from utils import HTTPServiceClient, ServiceNotFoundError as HTTPServiceNotFoundError
 
@@ -155,7 +156,7 @@ class InferenceServerResolver:
         Raises:
             ServiceNotFoundError: If the service is not found or the call fails.
         """
-        model_management_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL")
+        model_management_url = settings.MODEL_MANAGEMENT_SERVICE_URL
         if not model_management_url:
             logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
             raise ServiceNotFoundError(f"Service {service_id} not found: Model management service not configured")

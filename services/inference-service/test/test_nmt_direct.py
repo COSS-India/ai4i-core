@@ -262,10 +262,14 @@ async def test_resolver_url_construction():
         ("https://mms.internal/",   "https://mms.internal/api/v1/services/indictrans-v2-all"),
     ]
 
+    # The resolver reads settings (single config source), not raw env vars —
+    # patch the Settings attribute instead of os.environ.
+    from config import settings as _settings
+
     for base_url, expected in cases:
         captured.clear()
         resolver._memory_cache.clear()
-        with _patch.dict(os.environ, {"MODEL_MANAGEMENT_SERVICE_URL": base_url}):
+        with _patch.object(_settings, "MODEL_MANAGEMENT_SERVICE_URL", base_url):
             with _patch("utils.http_client.HTTPServiceClient.get_json", new=_mock_get_json):
                 await resolver.resolve_service("indictrans-v2-all")
         assert captured[0] == expected, f"base={base_url!r}: got {captured[0]!r}, want {expected!r}"

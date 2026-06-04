@@ -17,6 +17,12 @@ from pydub import AudioSegment
 _TRITON_SAMPLE_RATE = 22050
 # Maximum characters per Triton call
 _MAX_CHUNK_LENGTH = 400
+# Bounds for user-controlled numerics (OWASP API4 — resource consumption):
+# samplingRate outside telephony..studio range is rejected; audioDuration
+# drives silence padding, so an unbounded value would allocate GBs.
+_MIN_SAMPLE_RATE = 8000
+_MAX_SAMPLE_RATE = 48000
+_MAX_AUDIO_DURATION_S = 300.0
 
 
 class TTSTaskService(TextBase):
@@ -130,7 +136,7 @@ class TTSTaskService(TextBase):
     ) -> Dict[str, Any]:
         config: Dict[str, Any] = payload.get("config") or {}
         source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
-        target_rate  = int(config.get("samplingRate") or config.get("sampling_rate") or _TRITON_SAMPLE_RATE)
+        target_rate  = self._validated_sample_rate(config)
         audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
 
         audio_outputs: List[Dict[str, Any]] = []
@@ -138,7 +144,7 @@ class TTSTaskService(TextBase):
 
         for item in response_items:
             combined = item["samples"]
-            audio_duration = item.get("audioDuration")
+            audio_duration = self._validated_duration(item.get("audioDuration"))
 
             # Resample to requested rate
             if target_rate != _TRITON_SAMPLE_RATE:
@@ -200,6 +206,40 @@ class TTSTaskService(TextBase):
         # FP32 range assumed [-1, 1] from Triton TTS model
         audio_int16 = np.clip(audio_fp32 * 32767, -32768, 32767).astype(np.int16)
         return audio_int16
+
+    # ------------------------------------------------------------------
+    # Input bounds (user-controlled numerics)
+    # ------------------------------------------------------------------
+
+    def _validated_sample_rate(self, config: Dict[str, Any]) -> int:
+        """Parse samplingRate, rejecting junk and out-of-range values with a 400."""
+        raw = config.get("samplingRate") or config.get("sampling_rate") or _TRITON_SAMPLE_RATE
+        try:
+            rate = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{self.task_name}: samplingRate must be an integer, got {raw!r}") from exc
+        if not _MIN_SAMPLE_RATE <= rate <= _MAX_SAMPLE_RATE:
+            raise ValueError(
+                f"{self.task_name}: samplingRate must be between "
+                f"{_MIN_SAMPLE_RATE} and {_MAX_SAMPLE_RATE}, got {rate}"
+            )
+        return rate
+
+    def _validated_duration(self, raw: Any) -> Any:
+        """Parse audioDuration (None = keep natural length), bounded to prevent
+        unbounded silence-padding allocations."""
+        if raw is None:
+            return None
+        try:
+            duration = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{self.task_name}: audioDuration must be a number, got {raw!r}") from exc
+        if not 0 < duration <= _MAX_AUDIO_DURATION_S:
+            raise ValueError(
+                f"{self.task_name}: audioDuration must be between 0 and "
+                f"{_MAX_AUDIO_DURATION_S} seconds, got {duration}"
+            )
+        return duration
 
     # ------------------------------------------------------------------
     # Text chunking

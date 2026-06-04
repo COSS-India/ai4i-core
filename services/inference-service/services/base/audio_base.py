@@ -256,8 +256,11 @@ class AudioBase(BaseTaskService):
     async def _download_audio(self, uri: str) -> bytes:
         """
         Download raw audio bytes from an HTTP/HTTPS URI.
+        The URI is user-supplied — validated against the SSRF guard first.
         Raises on non-2xx responses.
         """
+        from utils.url_guard import validate_external_url
+        validate_external_url(uri)
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(uri)
