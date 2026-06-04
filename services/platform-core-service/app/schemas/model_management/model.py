@@ -58,6 +58,17 @@ class ModelCreateRequest(BaseSchema):
     def _validate_name(cls, v: str) -> str:
         return validate_entity_name(v, field="Model name")
 
+    @field_validator("versionStatus", mode="before")
+    @classmethod
+    def _validate_version_status(cls, v: Any) -> Any:
+        if v is not None and str(v).upper() == VersionStatusEnum.DEPRECATED.value:
+            raise ValueError(
+                "Models cannot be created with 'DEPRECATED' status. "
+                "Newly created models must start in 'ACTIVE' status. "
+                "Deprecation is only allowed as a lifecycle transition after creation."
+            )
+        return v
+
     @field_validator("license", mode="before")
     @classmethod
     def _validate_license(cls, v: Any) -> Any:

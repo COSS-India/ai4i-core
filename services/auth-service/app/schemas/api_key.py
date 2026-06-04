@@ -5,7 +5,7 @@ API key request/response schemas.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.schemas.base import BaseSchema
 
@@ -19,10 +19,16 @@ class CreateAPIKeyRequest(BaseSchema):
 
 
 class UpdateAPIKeyRequest(BaseSchema):
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+        str_strip_whitespace=True,
+        extra="forbid",
+    )
+
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)
     permissions: Optional[list[int]] = None
     expires_days: Optional[int] = Field(None, ge=1)
-    # api_key is now provided as a path parameter
 
 
 # ── Responses ──
