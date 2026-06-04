@@ -18,7 +18,6 @@ Exit codes:
 Compatible with: macOS, Ubuntu, Windows
 """
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -83,10 +82,13 @@ def warn(msg):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHECK 1: All model files referenced in migration_registry.py exist
+# CHECK 1: All model sources referenced in migration_registry.py exist
+#   The registry loads service ORM metadata by importing `app.models` from a
+#   service root (PROJECT_ROOT / "services" / "<svc>"), and may also reference
+#   individual .py model files directly. Validate both styles.
 # ─────────────────────────────────────────────────────────────────────────────
 def check_model_files():
-    print("\n=== Check 1: Model file references ===")
+    print("\n=== Check 1: Service metadata references ===")
 
     if not REGISTRY.exists():
         fail(f"migration_registry.py not found at {REGISTRY}")
@@ -94,26 +96,38 @@ def check_model_files():
 
     text = REGISTRY.read_text(encoding="utf-8")
 
-    # Match  PROJECT_ROOT / "segment" / "segment" / ... patterns
-    pattern = r'PROJECT_ROOT\s*/\s*((?:"[^"]+"\s*/?\s*)+)'
-    paths = set()
-    for m in re.finditer(pattern, text):
-        parts = re.findall(r'"([^"]+)"', m.group(1))
-        joined = "/".join(parts)
-        # Only check actual .py files, skip placeholders like <service-name>
-        if joined.endswith(".py") and "<" not in joined:
-            paths.add(joined)
+    checked = 0
+    seen = set()
+    for m in re.finditer(r'PROJECT_ROOT((?:\s*/\s*"[^"]+")+)', text):
+        parts = tuple(re.findall(r'"([^"]+)"', m.group(1)))
+        rel = "/".join(parts)
+        # Skip placeholders in comments like <service-name>
+        if "<" in rel or rel in seen:
+            continue
+        seen.add(rel)
+        full = PROJECT_ROOT.joinpath(*parts)
 
-    if not paths:
-        warn("Could not extract model paths from registry")
-        return
+        if rel.endswith(".py"):
+            checked += 1
+            if full.is_file():
+                ok(rel)
+            else:
+                fail(f"{rel} does not exist")
+        elif len(parts) >= 2 and parts[0] == "services":
+            # Service root: the registry imports `app.models` from here.
+            checked += 1
+            if not full.is_dir():
+                fail(f"{rel} (service root) does not exist")
+            elif not (full / "app" / "models" / "__init__.py").is_file():
+                fail(
+                    f"{rel}/app/models/__init__.py missing — the registry "
+                    f"imports app.models from this service root"
+                )
+            else:
+                ok(f"{rel} -> app.models")
 
-    for rel_path in sorted(paths):
-        full_path = PROJECT_ROOT / rel_path.replace("/", os.sep)
-        if full_path.is_file():
-            ok(rel_path)
-        else:
-            fail(f"{rel_path} does not exist")
+    if checked == 0:
+        warn("No registry path references found to validate")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -150,23 +164,27 @@ def check_revision_chains():
                 continue
 
             rev_match = re.search(
-                r"^revision\b.*?['\"]([a-f0-9A-Z_]+)['\"]", text, re.MULTILINE
+                r"^revision\b.*?['\"](\w+)['\"]", text, re.MULTILINE
             )
             # down_revision may be a single id or a list (merge revisions:
-            # down_revision = ['abc', 'def']) — capture ALL quoted ids on the line.
-            down_match = re.search(
-                r"^down_revision\b[^=]*=\s*(.+)$", text, re.MULTILINE
-            )
+            # down_revision = ['abc', 'def']), possibly wrapped across lines —
+            # capture ALL quoted ids in the assignment's right-hand side.
+            down_match = re.search(r"^down_revision\b[^=]*=\s*", text, re.MULTILINE)
 
             if not rev_match:
                 continue
 
             rev = rev_match.group(1)
-            downs = (
-                re.findall(r"['\"]([a-f0-9A-Z_]+)['\"]", down_match.group(1))
-                if down_match
-                else []
-            )
+            downs = []
+            if down_match:
+                rest = text[down_match.end():]
+                newline = rest.find("\n")
+                rhs = rest if newline == -1 else rest[:newline]
+                if "[" in rhs and "]" not in rhs:
+                    close = rest.find("]")
+                    if close != -1:
+                        rhs = rest[: close + 1]
+                downs = re.findall(r"['\"](\w+)['\"]", rhs)
 
             if rev in revisions:
                 fail(
