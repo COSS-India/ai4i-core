@@ -50,8 +50,30 @@ class TestTenantUserCreateFullName:
         assert obj.full_name == "José García"
 
     def test_max_length_accepted(self) -> None:
-        TenantUserCreate(email="user@tenant.com", full_name="A" * 255, role="USER")
+        TenantUserCreate(email="user@tenant.com", full_name="A" * 80, role="USER")
 
     def test_over_max_length_raises_422(self) -> None:
         with pytest.raises(ValidationError):
-            TenantUserCreate(email="user@tenant.com", full_name="A" * 256, role="USER")
+            TenantUserCreate(email="user@tenant.com", full_name="A" * 81, role="USER")
+
+    def test_single_character_raises_422(self) -> None:
+        with pytest.raises(ValidationError):
+            TenantUserCreate(email="user@tenant.com", full_name="A", role="USER")
+
+    def test_digits_in_full_name_raise_422(self) -> None:
+        with pytest.raises(ValidationError):
+            TenantUserCreate(email="user@tenant.com", full_name="Jane2", role="USER")
+
+
+class TestTenantUserCreatePhone:
+    def test_valid_e164_phone_accepted(self) -> None:
+        obj = TenantUserCreate(email="user@tenant.com", full_name="Jane Doe", phone_number="+14155552671", role="USER")
+        assert obj.phone_number == "+14155552671"
+
+    def test_empty_phone_becomes_none(self) -> None:
+        obj = TenantUserCreate(email="user@tenant.com", full_name="Jane Doe", phone_number="  ", role="USER")
+        assert obj.phone_number is None
+
+    def test_invalid_phone_raises_422(self) -> None:
+        with pytest.raises(ValidationError):
+            TenantUserCreate(email="user@tenant.com", full_name="Jane Doe", phone_number="919876543210", role="USER")

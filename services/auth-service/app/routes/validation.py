@@ -133,7 +133,14 @@ async def _validate_api_key(
     # Forward a trusted flag so upstream services can widen scope (e.g. cross-tenant
     # trace access) without re-resolving roles or hitting the DB.
     response.headers["X-Is-Admin"] = "true" if 1 in permission_ids else "false"
-    return ValidateAPIKeyResponse(valid=True, user_id=user_id, permission_ids=permission_ids)
+    response.headers["X-Permission-Ids"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
+    return JSONResponse(
+        status_code=200,
+        content=ValidateAPIKeyResponse(
+            valid=True, user_id=user_id, permission_ids=permission_ids
+        ).model_dump(),
+        headers=dict(response.headers),
+    )
 
 
 async def _validate_jwt(

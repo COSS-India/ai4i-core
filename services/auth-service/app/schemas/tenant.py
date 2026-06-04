@@ -2,7 +2,6 @@
 Tenant request/response schemas.
 """
 
-import re
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Union
@@ -10,15 +9,19 @@ from uuid import UUID
 
 from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer, field_validator, model_validator
 
+from app.core.constants import (
+    TENANT_CONTACT_NAME_MAX_LENGTH,
+    TENANT_ORGANISATION_MAX_LENGTH,
+    TENANT_USER_FULL_NAME_MAX_LENGTH,
+)
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.models.tenant import TenantStatus
-
-# Invisible Unicode characters that str.strip() does not remove:
-# soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
-# line/paragraph separators, zero-width no-break space (BOM).
-_INVISIBLE_CHARS = re.compile(
-    "[\u00ad\u200b\u200c\u200d\u200e\u200f\u2028\u2029\ufeff]+"
+from app.schemas.tenant_field_validators import (
+    strip_invisible_chars,
+    validate_optional_e164_phone,
+    validate_organisation,
+    validate_person_name,
 )
 
 
@@ -30,11 +33,47 @@ class TenantUserRole(str, Enum):
 
 
 class TenantCreate(BaseSchema):
-    contact_name: str = Field(..., min_length=1, max_length=255)
-    organisation: str = Field(..., min_length=1, max_length=255)
+    contact_name: str = Field(..., max_length=TENANT_CONTACT_NAME_MAX_LENGTH)
+    organisation: str = Field(..., max_length=TENANT_ORGANISATION_MAX_LENGTH)
     email: EmailStr
-    phone_number: Optional[str] = Field(None, max_length=20)
+    phone_number: Optional[str] = None
     plan_id: Optional[UUID] = None
+
+    @field_validator("organisation", mode="before")
+    @classmethod
+    def _organisation_before(cls, v: object) -> object:
+        if isinstance(v, str):
+            return strip_invisible_chars(v)
+        return v
+
+    @field_validator("organisation", mode="after")
+    @classmethod
+    def _organisation_after(cls, v: str) -> str:
+        return validate_organisation(v)
+
+    @field_validator("contact_name", mode="before")
+    @classmethod
+    def _contact_name_before(cls, v: object) -> object:
+        if isinstance(v, str):
+            return strip_invisible_chars(v)
+        return v
+
+    @field_validator("contact_name", mode="after")
+    @classmethod
+    def _contact_name_after(cls, v: str) -> str:
+        return validate_person_name(v, field_label="Contact name")
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def _phone_before(cls, v: object) -> object:
+        if isinstance(v, str):
+            return strip_invisible_chars(v)
+        return v
+
+    @field_validator("phone_number", mode="after")
+    @classmethod
+    def _phone_after(cls, v: Optional[str]) -> Optional[str]:
+        return validate_optional_e164_phone(v)
 
 
 class TenantUpdate(BaseSchema):
@@ -71,16 +110,33 @@ class TenantResponse(BaseSchema):
 
 class TenantUserCreate(BaseSchema):
     email: EmailStr
-    full_name: str = Field(..., min_length=1, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
+    full_name: str = Field(..., max_length=TENANT_USER_FULL_NAME_MAX_LENGTH)
+    phone_number: Optional[str] = None
     role: TenantUserRole = TenantUserRole.USER
 
     @field_validator("full_name", mode="before")
     @classmethod
-    def strip_full_name(cls, v: str) -> str:
+    def _full_name_before(cls, v: object) -> object:
         if isinstance(v, str):
-            return _INVISIBLE_CHARS.sub("", v).strip()
+            return strip_invisible_chars(v)
         return v
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _full_name_after(cls, v: str) -> str:
+        return validate_person_name(v, field_label="Full name")
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def _phone_before(cls, v: object) -> object:
+        if isinstance(v, str):
+            return strip_invisible_chars(v)
+        return v
+
+    @field_validator("phone_number", mode="after")
+    @classmethod
+    def _phone_after(cls, v: Optional[str]) -> Optional[str]:
+        return validate_optional_e164_phone(v)
 
 
 class TenantUserCreateResponse(BaseSchema):
