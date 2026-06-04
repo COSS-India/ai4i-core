@@ -75,7 +75,7 @@ class AudioBase(BaseTaskService):
 
         items = []
         for item in input_data:
-            d = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            d = item
             has_content = d.get("audio_content") or d.get("audioContent")
             if not has_content:
                 has_uri = d.get("audio_uri") or d.get("audioUri")
@@ -121,12 +121,8 @@ class AudioBase(BaseTaskService):
         Returns audioContent directly, or downloads from audioUri and base64-encodes.
         Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
-        if isinstance(audio_input, dict):
-            audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
-            audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
-        else:
-            audio_content = getattr(audio_input, "audio_content", None)
-            audio_uri     = getattr(audio_input, "audio_uri", None)
+        audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
+        audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
 
         if audio_content:
             return audio_content
@@ -177,12 +173,8 @@ class AudioBase(BaseTaskService):
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
 
         for idx, item in enumerate(audio_items):
-            if isinstance(item, dict):
-                has_content = bool(item.get("audio_content") or item.get("audioContent"))
-                has_uri     = bool(item.get("audio_uri") or item.get("audioUri"))
-            else:
-                has_content = bool(getattr(item, "audio_content", None))
-                has_uri     = bool(getattr(item, "audio_uri", None))
+            has_content = bool(item.get("audio_content") or item.get("audioContent"))
+            has_uri     = bool(item.get("audio_uri") or item.get("audioUri"))
 
             if not has_content and not has_uri:
                 raise ValueError(

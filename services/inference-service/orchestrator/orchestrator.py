@@ -143,11 +143,10 @@ class Orchestrator:
             attrs.update(get_context_attributes())
 
             # Extract serviceId: check config block first, then top-level
-            config_block = payload.get("config", {})
-            if isinstance(config_block, dict):
-                serviceId = config_block.get("serviceId") or payload.get("serviceId")
-            else:
-                serviceId = getattr(config_block, "serviceId", None) or payload.get("serviceId")
+            config_block = payload.get("config") or {}
+            serviceId = (
+                config_block.get("serviceId") if isinstance(config_block, dict) else None
+            ) or payload.get("serviceId")
 
             if not serviceId:
                 # Fall back to SMR or a safe default

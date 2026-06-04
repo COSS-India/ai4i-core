@@ -79,7 +79,7 @@ class ASRTaskService(AudioBase):
         items = []
 
         for item in input_data:
-            d = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            d = item
 
             audio_bytes             = await self._get_audio_bytes(item)
             audio_data, sample_rate = await self._decode_audio_bytes(audio_bytes)
@@ -152,12 +152,8 @@ class ASRTaskService(AudioBase):
         Returns raw bytes before any format decoding.
         Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
-        if isinstance(audio_input, dict):
-            audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
-            audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
-        else:
-            audio_content = getattr(audio_input, "audio_content", None)
-            audio_uri     = getattr(audio_input, "audio_uri", None)
+        audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
+        audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
 
         if audio_content:
             return base64.b64decode(audio_content)

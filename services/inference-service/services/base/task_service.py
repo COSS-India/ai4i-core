@@ -170,22 +170,13 @@ class BaseTaskService:
         Generic helper for extracting source texts or other fields from request items.
 
         Args:
-            items: List of input items (dicts or objects with attributes)
-            field_name: Name of the field to extract (e.g., 'source', 'audio', 'image')
+            items: List of input item dicts
+            field_name: Name of the field to extract (e.g. 'source')
 
         Returns:
             List of extracted field values as strings
         """
-        extracted = []
-        for item in items:
-            if isinstance(item, dict):
-                extracted.append(item.get(field_name, ''))
-            elif hasattr(item, field_name):
-                value = getattr(item, field_name)
-                extracted.append(value if isinstance(value, str) else '')
-            else:
-                extracted.append('')
-        return extracted
+        return [item.get(field_name, '') for item in items]
 
     def _triton_context_builder(self):
         """

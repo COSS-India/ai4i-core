@@ -45,7 +45,7 @@ class TextBase(BaseTaskService):
             raise ValueError(f"{self.task_name}: payload must contain a 'config' field")
 
         for idx, item in enumerate(payload.get("input", [])):
-            source = item.get("source") if isinstance(item, dict) else getattr(item, "source", None)
+            source = item.get("source")
             if not source or not isinstance(source, str):
                 raise ValueError(f"{self.task_name}: input[{idx}]['source'] must be a non-empty string")
 
@@ -71,16 +71,10 @@ class TextBase(BaseTaskService):
         source_texts = self.extract_field_from_items(input_data, "source")
         sanitized = [self._sanitize_source(t) for t in source_texts]
 
-        items = []
-        for idx, item in enumerate(input_data):
-            item_dict = (
-                item if isinstance(item, dict)
-                else (item.model_dump(by_alias=False) if hasattr(item, "model_dump") else item.dict())
-            )
-            items.append({
-                **item_dict,
-                "source": sanitized[idx] if idx < len(sanitized) else "",
-            })
+        items = [
+            {**item, "source": sanitized[idx] if idx < len(sanitized) else ""}
+            for idx, item in enumerate(input_data)
+        ]
 
         payload[self.payload_key] = items
         return payload

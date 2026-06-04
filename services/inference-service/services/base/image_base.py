@@ -47,7 +47,7 @@ class ImageBase(BaseTaskService):
         """Normalize each image to base64 under 'image_content' (downloads URI if needed)."""
         items: List[Dict[str, Any]] = []
         for item in payload.get(self.payload_key) or []:
-            d = dict(item) if isinstance(item, dict) else item
+            d = dict(item)
             d["image_content"] = await self._resolve_image_base64(d)
             items.append(d)
         payload[self.payload_key] = items
@@ -57,15 +57,11 @@ class ImageBase(BaseTaskService):
     # Image input helpers
     # ------------------------------------------------------------------
 
-    def _item_content(self, item: Any) -> Optional[str]:
-        if isinstance(item, dict):
-            return item.get("imageContent") or item.get("image_content")
-        return getattr(item, "image_content", None)
+    def _item_content(self, item: Dict[str, Any]) -> Optional[str]:
+        return item.get("imageContent") or item.get("image_content")
 
-    def _item_uri(self, item: Any) -> Optional[str]:
-        if isinstance(item, dict):
-            return item.get("imageUri") or item.get("image_uri")
-        return getattr(item, "image_uri", None)
+    def _item_uri(self, item: Dict[str, Any]) -> Optional[str]:
+        return item.get("imageUri") or item.get("image_uri")
 
     async def _resolve_image_base64(self, image_input: Any) -> str:
         """Return image as a base64 string from inline content or downloaded from a URI."""

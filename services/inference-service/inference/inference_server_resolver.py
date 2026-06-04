@@ -3,7 +3,7 @@ InferenceServerResolver — looks up Triton endpoints and adapter config from th
 model management service, with a TTL'd in-memory cache.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 import logging
 import time
 
@@ -15,11 +15,7 @@ from utils import HTTPServiceClient, ServiceCallError, ServiceNotFoundError as H
 logger = logging.getLogger(__name__)
 
 
-class InferenceServerResolverError(Exception):
-    """Base exception for resolver errors."""
-
-
-class ServiceNotFoundError(InferenceServerResolverError):
+class ServiceNotFoundError(Exception):
     """Raised when service cannot be resolved."""
 
 
@@ -146,10 +142,3 @@ class InferenceServerResolver:
 
         # Flat shape (legacy/fallback): pass through as-is
         return raw
-
-    def clear_cache(self, service_id: Optional[str] = None) -> None:
-        """Clear one cached service, or all when service_id is None."""
-        if service_id:
-            self._memory_cache.pop(service_id, None)
-        else:
-            self._memory_cache.clear()
