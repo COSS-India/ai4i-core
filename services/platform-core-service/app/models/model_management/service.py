@@ -5,6 +5,10 @@ A Service is a deployed instance of a Model — identified by a deterministic
 `service_id` hash derived from the service name. Service names are globally
 unique. A service can be in published or unpublished state; once published,
 its model version becomes immutable until unpublished.
+
+Services follow a soft-delete pattern: deletion sets `deleted_at` timestamp
+but retains the record for audit and telemetry traceability. Soft-deleted
+services are excluded from active queries and do not permit state transitions.
 """
 
 import uuid
@@ -38,6 +42,7 @@ class Service(Base):
         ),
         Index("ix_mm_services_is_published", "is_published"),
         Index("ix_mm_services_created_by", "created_by"),
+        Index("ix_mm_services_deleted_at", "deleted_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -57,6 +62,7 @@ class Service(Base):
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
     published_at = Column(DateTime(timezone=True), nullable=True)
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     cost_per_unit = Column(Numeric(10, 4), nullable=True)
     billing_unit_type = Column(String(32), nullable=True)
     tier = Column(String(20), nullable=True)
