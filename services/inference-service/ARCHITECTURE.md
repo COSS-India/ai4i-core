@@ -30,7 +30,7 @@ All 7 steps have been completed. The monolith inference service now provides a u
 │
 ├── interfaces/                          # Service interfaces & base classes
 │   ├── __init__.py
-│   └── task_service.py                  # ITaskService interface, BaseTaskService ABC
+│   └── task_service.py                  # BaseTaskService — pipeline template base class
 │
 ├── orchestrator/                        # Orchestration layer
 │   ├── __init__.py
@@ -98,7 +98,7 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - `GenericInferenceRequest` with `input`, `audio`, or `image` fields
   - `GenericInferenceResponse` with task-specific output
   - `ControlConfig` for optional control parameters
-  
+
 - **`task_types.py`** — Task registry mapping types to implementations:
   - `TaskType` enum (12 services)
   - `TaskRegistry` for registration & lookup
@@ -109,15 +109,15 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - Response models (e.g., `NMTInferenceResponse`)
 
 ### 2. **Interfaces Layer** (`interfaces/`)
-- **`ITaskService`** — Abstract interface all services implement:
-  - `validate_request()` — Input validation
-  - `preprocess_input()` — Data preprocessing
-  - `run_inference()` — Main pipeline
-  - `postprocess_output()` — Output formatting
-
-- **`BaseTaskService`** — Abstract base class with common logic:
-  - Default implementations for base operations
-  - Subclasses override for task-specific behavior
+- **`BaseTaskService`** — pipeline template all services inherit (Template Method):
+  - `process()` / `run_inference()` — the template; never overridden
+  - `validate_request()` — input validation (modality bases + task overrides)
+  - `preprocess_input()` — data preprocessing (modality bases + ASR)
+  - `execute_triton_inference()` — Triton call topology
+    (base = one batch call; AudioBase = per-item; TTS = per-chunk)
+  - `build_response()` — output shaping + response envelope (one per task)
+  - `_traced_inference()` — owns the `ai-inference` span (single definition)
+  - `payload_key` — modality input key (`input` / `audio` / `image`)
 
 ### 3. **Orchestration Layer** (`orchestrator/`)
 - **`Orchestrator`** — Polymorphic request router:
@@ -215,14 +215,15 @@ Orchestrator.route_inference(payload)
                 ↓
         TaskFactory.create_service(task_type, dependencies)
                 ↓
-        TaskService.run_inference(request)
+        TaskService.process(payload, serviceInfo)
                 ├─ Validate request
-                ├─ Preprocess input
-                ├─ Resolve service via InferenceServerResolver
-                ├─ Create InferenceModel converter
-                ├─ Convert payload to Triton format
-                ├─ Call Triton inference server
-                ├─ Convert Triton output to task format
+                ├─ Preprocess input (payload[payload_key])
+                └─ run_inference
+                    ├─ execute_triton_inference (inside ai-inference span)
+                    │   ├─ Convert payload to Triton format (GenericTritonMapper)
+                    │   ├─ Call Triton inference server
+                    │   └─ Convert Triton output to task format
+                    └─ build_response (output shaping + envelope)
                 └─ Postprocess output
                         ↓
         Response (JSON)

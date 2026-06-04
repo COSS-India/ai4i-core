@@ -15,12 +15,12 @@ Lookup at runtime:
 """
 
 from services.asr_service import ASRTaskService
-from services.models.audio_default_model import AudioDefaultModel
+from services.audio_lang_detection_service import AudioLanguageDetectionTaskService
 from services.language_detection_service import LanguageDetectionTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
-from services.models.text_default_model import TextDefaultModel
+from services.nmt_service import NMTTaskService
 from services.ner_service import NERTaskService
-from services.models.image_default_model import ImageDefaultModel
+from services.ocr_service import OCRTaskService
 from services.pii_service import PIITaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
 from services.transliteration_service import TransliterationTaskService
@@ -31,7 +31,7 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "NMT",
         "model_name":    ["indictrans-gpu-t4", "indictrans-nmt-service-2", "indictrans-nmt-service-3", "NMT-Service-05"],
-        "service_class": TextDefaultModel,
+        "service_class": NMTTaskService,
     },
     {
         "task_type":     "ASR",
@@ -51,7 +51,7 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "OCR",
         "model_name":    ["surya-ocr-gpu", "ai4bharat/triton-ocr"],
-        "service_class": ImageDefaultModel,
+        "service_class": OCRTaskService,
     },
     {
         "task_type":     "PII",
@@ -81,6 +81,6 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "AUDIO_LANGUAGE_DETECTION",
         "model_name":    ["ai4bharat/triton-audio-language-detection", "ald-gpu", "sd-gpu"],
-        "service_class": AudioDefaultModel,
+        "service_class": AudioLanguageDetectionTaskService,
     },
 ]

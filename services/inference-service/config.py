@@ -7,7 +7,6 @@ from typing import Dict, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
-import os
 
 
 # Load .env file
@@ -19,11 +18,20 @@ class Settings(BaseSettings):
 
     # Service configuration
     SERVICE_NAME: str = Field("inference-service", description="Service name")
+    SERVICE_VERSION: str = Field("1.0.1", description="Service version reported in traces")
     HOST: str = Field("0.0.0.0", description="Host to bind to")
-    PORT: int = Field(8080, description="Port to bind to")
+    # Default matches the Dockerfile EXPOSE/HEALTHCHECK port — a container
+    # started without PORT set must still pass its health check.
+    PORT: int = Field(8090, description="Port to bind to")
     WORKERS: int = Field(4, description="Number of worker processes")
     LOG_LEVEL: str = Field("INFO", description="Logging level")
     DEBUG: bool = Field(False, description="Debug mode")
+    ENABLE_DOCS: bool = Field(
+        True, description="Expose /docs and /openapi.json (disable in production)"
+    )
+    CORS_ALLOW_ORIGINS: str = Field(
+        "*", description="Comma-separated list of allowed CORS origins"
+    )
 
     # API configuration
     API_PREFIX: str = Field("/api/v1", description="API prefix for routes")
@@ -77,6 +85,19 @@ class Settings(BaseSettings):
     ENABLE_TELEMETRY: bool = Field(True, description="Enable telemetry")
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
         None, description="OpenTelemetry OTLP exporter endpoint"
+    )
+    KAFKA_SERVER: str = Field(
+        "localhost:9092", description="Kafka bootstrap servers for trace export"
+    )
+    KAFKA_TOPIC_OTEL_TRACE: str = Field(
+        "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"
+    )
+
+    # Security — user-supplied audio/image URI downloads (SSRF guard)
+    ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
+        False,
+        description="Allow audio/image URI downloads from private/loopback addresses "
+        "(enable only for local development)",
     )
 
     class Config:
