@@ -3,18 +3,14 @@ Orchestrator for routing inference requests to appropriate TaskServices.
 Handles task routing, service resolution, and request/model span tracing.
 """
 
-import time
 from typing import Any, Dict, Optional
 from fastapi import Request
 import logging
 
-from opentelemetry import context as otel_context
 from trace.request_span import (
-    tracer,
     get_context_attributes,
     get_endpoint_path,
-    compute_total_time_ms,
-    finalize_span,
+    traced_span,
 )
 
 from services.base.task_service import BaseTaskService
@@ -69,50 +65,23 @@ class Orchestrator:
             ValueError: If task_type is not registered
             RuntimeError: If service resolution or inference fails
         """
-        # Start root span with parentID=null (empty context)
-        start_time = time.time()
-        ctx_attrs = get_context_attributes()
-        end_point = str(request.url.path) if request else get_endpoint_path()
-        request_method = request.method if request else ""
+        # Root span (parentID=null); traced_span owns timing + status.
+        with traced_span("request", root=True, classify_status=True) as attrs:
+            attrs["url"] = str(request.url.path) if request else get_endpoint_path()
+            attrs["method"] = request.method if request else ""
+            attrs.update(get_context_attributes())
 
-        with tracer.start_as_current_span(
-            "request",
-            context=otel_context.Context(),  # ensures parentID=null
-        ) as request_span:
-            try:
-                task_type = payload.get("task_type", "").upper()
-                self._validate_task_type(task_type)
+            task_type = payload.get("task_type", "").upper()
+            self._validate_task_type(task_type)
 
-                # Resolve service and model BEFORE creating task service
-                service_info = await self._resolve_service_and_model(payload)
+            # Resolve service and model BEFORE creating task service
+            service_info = await self._resolve_service_and_model(payload)
 
-                # Instantiate and run the task service with the raw payload
-                task_service = self._get_task_service(service_info)
-                task_response = await task_service.process(payload, service_info)
+            # Instantiate and run the task service with the raw payload
+            task_service = self._get_task_service(service_info)
+            task_response = await task_service.process(payload, service_info)
 
-                result = task_response.dict() if hasattr(task_response, 'dict') else task_response
-
-                finalize_span(request_span, "request", {
-                    "total_time_ms": compute_total_time_ms(start_time),
-                    "url": end_point,
-                    "method": request_method,
-                    "status": "success",
-                    "status_code": 200,
-                    **ctx_attrs,
-                }, ok=True)
-                return result  # type: ignore
-
-            except Exception as e:
-                finalize_span(request_span, "request", {
-                    "total_time_ms": compute_total_time_ms(start_time),
-                    "url": end_point,
-                    "method": request_method,
-                    "status": "failure",
-                    # ValueError = bad request input, not a server-side failure
-                    "status_code": 400 if isinstance(e, ValueError) else 500,
-                    **ctx_attrs,
-                }, error=e)
-                raise
+            return task_response.dict() if hasattr(task_response, 'dict') else task_response
 
     def _validate_task_type(self, task_type: str) -> None:
         """Raise ValueError if task_type is not a known task."""
@@ -169,11 +138,10 @@ class Orchestrator:
         Raises:
             RuntimeError: If the service cannot be resolved
         """
-        start_time = time.time()
-        ctx_attrs = get_context_attributes()
-        task_type = payload.get("task_type", "").upper()
+        with traced_span("model") as attrs:
+            attrs["task_type"] = payload.get("task_type", "").upper()
+            attrs.update(get_context_attributes())
 
-        with tracer.start_as_current_span("model") as model_span:
             # Extract serviceId: check config block first, then top-level
             config_block = payload.get("config", {})
             if isinstance(config_block, dict):
@@ -191,22 +159,7 @@ class Orchestrator:
             self.logger.debug(f"Resolving service: {serviceId}")
             try:
                 service_info = await self.inference_server_resolver.resolve_service(serviceId)
-
-                adapter_cfg = service_info.get("adapter_config") or {}
-                finalize_span(model_span, "model", {
-                    "total_time_ms": compute_total_time_ms(start_time),
-                    "model_name": service_info.get("name", ""),
-                    "model_version": service_info.get("model_version") or adapter_cfg.get("model_version", "unknown"),
-                    "task_type": task_type,
-                    **ctx_attrs,
-                }, ok=True)
-                return service_info
             except Exception as e:
-                finalize_span(model_span, "model", {
-                    "total_time_ms": compute_total_time_ms(start_time),
-                    "task_type": task_type,
-                    **ctx_attrs,
-                }, error=e)
                 self.logger.error(
                     f"Failed to resolve service '{serviceId}': {type(e).__name__}: {e}",
                     exc_info=True,
@@ -214,3 +167,10 @@ class Orchestrator:
                 raise RuntimeError(
                     f"Orchestrator: Failed to resolve service '{serviceId}': {e}"
                 ) from e
+
+            adapter_cfg = service_info.get("adapter_config") or {}
+            attrs["model_name"] = service_info.get("name", "")
+            attrs["model_version"] = (
+                service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
+            )
+            return service_info

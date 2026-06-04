@@ -7,9 +7,9 @@ with context attributes (userId, tenantId) from ai4icore_core.context.
 
 import time
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 
-from opentelemetry import trace
+from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import StatusCode
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,51 @@ def log_span_attributes(span_name: str, span, attributes: dict) -> None:
         logger.debug(f"Error logging span in OTel format: {e}")
 
 
+@contextmanager
+def traced_span(
+    span_name: str,
+    *,
+    root: bool = False,
+    classify_status: bool = False,
+    error_attrs=None,
+):
+    """
+    THE span-lifecycle primitive: opens a span, captures start_time, yields a
+    mutable attrs dict for the caller to enrich, and finalizes with
+    total_time_ms plus success/error status. Every traced section (request,
+    model, ai-inference) goes through here — never hand-roll
+    `start_time = time.time()` + finalize again.
+
+    Args:
+        root: start with an empty otel context (parentID=null root span)
+        classify_status: add status/status_code attrs (200 ok; 400 for
+            ValueError, else 500 on failure)
+        error_attrs: optional fn(attrs, exc) -> attrs to reshape the
+            collected attrs on failure (e.g. zero token counts)
+    """
+    start_time = time.time()
+    context = otel_context.Context() if root else None
+    with tracer.start_as_current_span(span_name, context=context) as span:
+        attrs: dict = {}
+        try:
+            yield attrs
+        except Exception as e:
+            if error_attrs is not None:
+                attrs = error_attrs(attrs, e)
+            attrs["total_time_ms"] = compute_total_time_ms(start_time)
+            if classify_status:
+                attrs["status"] = "failure"
+                attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
+            finalize_span(span, span_name, attrs, error=e)
+            raise
+        else:
+            attrs["total_time_ms"] = compute_total_time_ms(start_time)
+            if classify_status:
+                attrs.setdefault("status", "success")
+                attrs.setdefault("status_code", 200)
+            finalize_span(span, span_name, attrs, ok=True)
+
+
 def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: bool = False) -> None:
     """
     Set attributes on a span, record its status, and emit the OTel-format log line.
@@ -98,48 +143,30 @@ def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: boo
 @asynccontextmanager
 async def traced_inference(payload: dict, task_name: str, logger_: logging.Logger):
     """
-    Own the 'ai-inference' span lifecycle around an inference call.
+    The 'ai-inference' span around an inference call, built on traced_span.
 
     Yields a mutable attrs dict pre-seeded with input_type; the wrapped code
     fills in input_tokens / output_tokens / output_type as they become known.
-    On success the collected attrs are recorded with status 200; on failure
-    token counts are zeroed and status_code is 400 for ValueError (bad request
-    input) or 500 otherwise.
+    On failure token counts are zeroed and the error is logged with traceback.
 
-    Single definition shared by the text/image base, the audio base, and TTS —
+    Single definition shared by the base run_inference and TTS's override —
     keep span attribute changes here only.
     """
     from trace.span_attributes import get_input_type
 
-    start_time = time.time()
-    with tracer.start_as_current_span("ai-inference") as span:
-        ctx = {
+    def _zero_tokens(attrs, exc):
+        logger_.error(f"{task_name}: inference failed: {exc}", exc_info=True)
+        attrs["input_tokens"] = 0
+        attrs["output_tokens"] = 0
+        return attrs
+
+    with traced_span(
+        "ai-inference", classify_status=True, error_attrs=_zero_tokens
+    ) as attrs:
+        attrs.update({
             "input_type": get_input_type(payload),
             "output_type": "unknown",
             "input_tokens": 0,
             "output_tokens": 0,
-        }
-        try:
-            yield ctx
-        except Exception as e:
-            logger_.error(f"{task_name}: inference failed: {e}", exc_info=True)
-            finalize_span(span, "ai-inference", {
-                "total_time_ms": compute_total_time_ms(start_time),
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "input_type": ctx["input_type"],
-                "output_type": ctx["output_type"],
-                "status": "failure",
-                "status_code": 400 if isinstance(e, ValueError) else 500,
-            }, error=e)
-            raise
-        else:
-            finalize_span(span, "ai-inference", {
-                "total_time_ms": compute_total_time_ms(start_time),
-                "input_tokens": ctx["input_tokens"],
-                "output_tokens": ctx["output_tokens"],
-                "input_type": ctx["input_type"],
-                "output_type": ctx["output_type"],
-                "status": "success",
-                "status_code": 200,
-            })
+        })
+        yield attrs
