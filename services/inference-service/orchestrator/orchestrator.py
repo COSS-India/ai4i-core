@@ -47,7 +47,7 @@ class Orchestrator:
         """Initialize orchestrator."""
         self.logger = logger
         self.inference_server_resolver = InferenceServerResolver()
-        self.task_service_registry: list = TASK_SERVICE_REGISTRY
+        self.task_service_registry: dict = TASK_SERVICE_REGISTRY
 
     async def route_inference(
         self,
@@ -87,7 +87,7 @@ class Orchestrator:
                 service_info = await self._resolve_service_and_model(payload)
 
                 # Instantiate and run the task service with the raw payload
-                task_service = self._get_task_service(task_type, service_info)
+                task_service = self._get_task_service(service_info)
                 task_response = await task_service.process(payload, service_info)
 
                 result = task_response.dict() if hasattr(task_response, 'dict') else task_response
@@ -121,41 +121,34 @@ class Orchestrator:
                 f"Unknown task_type: {task_type}. Allowed: {', '.join(ALLOWED_TASK_TYPES)}"
             )
 
-    def _get_task_service(
-        self, task_type: str, service_info: Dict[str, Any]
-    ) -> BaseTaskService:
+    def _get_task_service(self, service_info: Dict[str, Any]) -> BaseTaskService:
         """
-        Instantiate the task service for given task_type and resolved service_info.
-        Looks up TASK_SERVICE_REGISTRY by task_type + serviceId (model name).
+        Instantiate the task service for the resolved service_info.
+        Looks up TASK_SERVICE_REGISTRY by mm_models.class_instance.
 
         Raises:
-            RuntimeError: If no registry entry matches (deployment/config gap,
-                          not a client error)
+            RuntimeError: If class_instance is unset or unknown (platform/config
+                          gap, not a client error)
         """
-        # serviceId (model name) comes from the resolved service_info
-        serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
-
-        registry_entry = next(
-            (
-                entry for entry in self.task_service_registry
-                if entry.get("task_type") == task_type
-                and serviceId in entry.get("model_name", [])
-            ),
-            None,
-        )
-
-        if not registry_entry:
+        # class_instance comes from mm_models.class_instance via the resolver —
+        # adding a model in the platform needs no code change here.
+        class_instance = service_info.get("class_instance")
+        if not class_instance:
             raise RuntimeError(
-                f"No registry entry found for task_type='{task_type}', "
-                f"serviceId='{serviceId}'. "
-                f"Add it to task_service_registry.py under the matching "
-                f"task_type entry's model_name list."
+                f"No class_instance set on model for serviceId='"
+                f"{service_info.get('name', '')}'. "
+                f"Set the classInstance field on the model in the platform."
             )
 
-        service_class = registry_entry.get("service_class")
+        service_class = self.task_service_registry.get(class_instance)
+        if not service_class:
+            raise RuntimeError(
+                f"Unknown class_instance '{class_instance}'. "
+                f"Register it in task_service_registry.py."
+            )
+
         self.logger.debug(
-            f"Instantiating {service_class.__name__} "
-            f"for task_type='{task_type}', serviceId='{serviceId}'"
+            f"Instantiating {class_instance} for serviceId='{service_info.get('name', '')}'"
         )
         return service_class(service_info=service_info)  # type: ignore
 
