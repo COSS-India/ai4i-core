@@ -131,6 +131,22 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  nginx-gateway:
+    image: nginx:alpine
+    container_name: ai4v-nginx-gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      platform-core-service:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
   auth-service:
     build:
       context: .
@@ -161,7 +177,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8081/api/v1/auth/health', timeout=3)",
         ]
       interval: 10s
       timeout: 10s
@@ -182,7 +198,7 @@ services:
       - ./services/platform-core-service/.env
     environment:
       # ── Override localhost hostnames from .env with Docker service names ──
-      - DATABASE_URL=postgresql+asyncpg://ai4iuser:ai4ipassword@postgres:5432/ai4iplatform_core
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/ai4iplatform_core
       - POSTGRES_HOST=postgres
       - APP_DB_HOST=postgres
       - REDIS_HOST=redis
@@ -217,7 +233,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8095/health', timeout=3)",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8095/api/v1/platform-core/health', timeout=3)",
         ]
       interval: 10s
       timeout: 10s
