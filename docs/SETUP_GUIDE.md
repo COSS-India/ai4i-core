@@ -36,9 +36,6 @@ POSTGRES_DB=ai4i_platform_db
 
 # Redis
 REDIS_PASSWORD=changeme
-
-# Kafka — host-accessible address (9093 is the host-mapped port for 9092 inside Docker)
-KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9093,PLAINTEXT_INTERNAL://kafka:29092
 ```
 
 > **Migration variables are separate.** The root `.env` is only for Docker Compose infrastructure. Database names, Alembic host/port, and per-DB credentials go in `infrastructure/databases/migrations/postgres/alembic/.env` — configured in Step 4 below.
