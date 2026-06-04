@@ -175,10 +175,19 @@ REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
 
 ### Step 5.2: Install Dependencies and Run
 
+**Linux/macOS:**
 ```bash
 cd services/auth-service
 python3.11 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Windows:**
+```bash
+cd services\auth-service
+python3.11 -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -228,10 +237,19 @@ AUTH_DB_PORT=5432
 
 ### Step 6.2: Install Dependencies and Run
 
+**Linux/macOS:**
 ```bash
 cd services/platform-core-service
 python3.11 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Windows:**
+```bash
+cd services\platform-core-service
+python3.11 -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -260,10 +278,19 @@ cp services/inference-service/env.template services/inference-service/.env
 
 ### Step 7.2: Install Dependencies and Run
 
+**Linux/macOS:**
 ```bash
 cd services/inference-service
 python3.11 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Windows:**
+```bash
+cd services\inference-service
+python3.11 -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
