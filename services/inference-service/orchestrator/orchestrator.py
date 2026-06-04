@@ -1,55 +1,47 @@
 """
 Orchestrator for routing inference requests to appropriate TaskServices.
-Handles polymorphic payload deserialization, validation, and response serialization.
+Handles task routing, service resolution, and request/model span tracing.
 """
 
 import time
 from typing import Any, Dict, Optional
 from fastapi import Request
-from pydantic import BaseModel
 import logging
 
 from opentelemetry import context as otel_context
-from opentelemetry.trace import StatusCode
-from trace.request_span import tracer, get_context_attributes, get_endpoint_path, compute_total_time_ms, log_span_attributes
+from trace.request_span import (
+    tracer,
+    get_context_attributes,
+    get_endpoint_path,
+    compute_total_time_ms,
+    finalize_span,
+)
 
 from models.task_types import task_registry
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 
 
 logger = logging.getLogger(__name__)
 
-
-class OrchestratorError(Exception):
-    """Base exception for orchestrator errors."""
-
-    pass
-
-
-class UnknownTaskTypeError(OrchestratorError):
-    """Raised when task_type is not registered."""
-
-    pass
-
-
-class PayloadValidationError(OrchestratorError):
-    """Raised when payload validation fails."""
-
-    pass
-
-
-class TaskServiceExecutionError(OrchestratorError):
-    """Raised when task service execution fails."""
-
-    pass
+# Allowed task types — kept here (not derived from the registry) because SMR
+# routes without a registry entry of its own.
+ALLOWED_TASK_TYPES = [
+    "NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION",
+    "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION",
+    "AUDIO_LANGUAGE_DETECTION", "SMR",
+]
 
 
 class Orchestrator:
     """
     Orchestrator manages the routing and execution of inference requests.
     Coordinates between generic request envelopes and task-specific services.
+
+    Errors propagate with their original types (`raise ... from`) — the route
+    layer maps the exception cause chain to client-safe HTTP statuses, so no
+    orchestrator-specific exception wrappers are needed.
     """
 
     def __init__(self):
@@ -76,12 +68,12 @@ class Orchestrator:
             Serialized response dictionary
 
         Raises:
-            UnknownTaskTypeError: If task_type not registered
-            TaskServiceExecutionError: If task service execution fails
+            ValueError: If task_type is not registered
+            RuntimeError: If service resolution or inference fails
         """
         # Start root span with parentID=null (empty context)
         start_time = time.time()
-        ctx_attrs = get_context_attributes(request)
+        ctx_attrs = get_context_attributes()
         end_point = str(request.url.path) if request else get_endpoint_path()
         request_method = request.method if request else ""
 
@@ -90,132 +82,86 @@ class Orchestrator:
             context=otel_context.Context(),  # ensures parentID=null
         ) as request_span:
             try:
-                # Extract task type from payload
                 task_type = payload.get("task_type", "").upper()
-
-                # Validate task type
-                await self._validate_task_type(task_type)
+                self._validate_task_type(task_type)
 
                 # Resolve service and model BEFORE creating task service
-                service_info = await self._resolve_service_and_model(payload, request=request)
+                service_info = await self._resolve_service_and_model(payload)
 
-                # Get task service for this task type, injecting resolved service info
-                task_service = await self._get_task_service(task_type, service_info)
+                # Instantiate and run the task service with the raw payload
+                task_service = self._get_task_service(task_type, service_info)
+                task_response = await task_service.process(payload, service_info)
 
-                # Execute task service with raw payload
-                task_response = await self._execute_task_service(
-                    task_service=task_service,
-                    payload=payload,
-                    serviceInfo=service_info,
-                )
-
-                # Serialize response
                 result = task_response.dict() if hasattr(task_response, 'dict') else task_response
 
-                # Set root span attributes on success
-                span_attrs = {
+                finalize_span(request_span, "request", {
                     "total_time_ms": compute_total_time_ms(start_time),
                     "url": end_point,
                     "method": request_method,
                     "status": "success",
                     "status_code": 200,
                     **ctx_attrs,
-                }
-                for k, v in span_attrs.items():
-                    request_span.set_attribute(k, v)
-                request_span.set_status(StatusCode.OK)
-                log_span_attributes("request", request_span, span_attrs)
+                }, ok=True)
+                return result  # type: ignore
 
-                return result # type: ignore
-
-            except OrchestratorError as e:
-                span_attrs = {
+            except Exception as e:
+                finalize_span(request_span, "request", {
                     "total_time_ms": compute_total_time_ms(start_time),
-                    "end_point": end_point,
-                    "request_method": request_method,
+                    "url": end_point,
+                    "method": request_method,
                     "status": "failure",
-                    "status_code": 500,
+                    # ValueError = bad request input, not a server-side failure
+                    "status_code": 400 if isinstance(e, ValueError) else 500,
                     **ctx_attrs,
-                }
-                for k, v in span_attrs.items():
-                    request_span.set_attribute(k, v)
-                request_span.set_status(StatusCode.ERROR, str(e))
-                log_span_attributes("request", request_span, span_attrs)
+                }, error=e)
+                raise
 
-                raise TaskServiceExecutionError(f"Orchestration failed: {str(e)}") from e
+    def _validate_task_type(self, task_type: str) -> None:
+        """Raise ValueError if task_type is not a known task."""
+        if task_type not in ALLOWED_TASK_TYPES:
+            raise ValueError(
+                f"Unknown task_type: {task_type}. Allowed: {', '.join(ALLOWED_TASK_TYPES)}"
+            )
 
-    async def _validate_task_type(self, task_type: str) -> None:
-        """
-        Validate that task_type is registered.
-
-        Args:
-            task_type: Task type to validate
-
-        Raises:
-            UnknownTaskTypeError: If task_type not registered
-        """
-        # For now, allow all known task types
-        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
-        if task_type not in allowed_tasks:
-            raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {', '.join(allowed_tasks)}")
-
-
-
-    async def _get_task_service(
+    def _get_task_service(
         self, task_type: str, service_info: Dict[str, Any]
     ) -> BaseTaskService:
         """
-        Get or instantiate task service for given task_type and resolved service_info.
-        Looks up TASK_SERVICE_REGISTRY and instantiates the matching service class.
-
-        Args:
-            task_type: Task type to get service for
-            service_info: Resolved service information from _resolve_service_and_model
-                          (includes endpoint, model name, adapter_config, etc.)
-
-        Returns:
-            TaskService instance ready for execution, initialized with service_info
+        Instantiate the task service for given task_type and resolved service_info.
+        Looks up TASK_SERVICE_REGISTRY by task_type + serviceId (model name).
 
         Raises:
-            TaskServiceExecutionError: If service instantiation fails
+            RuntimeError: If no registry entry matches (deployment/config gap,
+                          not a client error)
         """
-        try:
-            # serviceId (model name) comes from the resolved service_info
-            serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
+        # serviceId (model name) comes from the resolved service_info
+        serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
 
-            # Search flat list: find entry where task_type matches
-            # AND serviceId is listed in the model_name array
-            registry_entry = next(
-                (
-                    entry for entry in self.task_service_registry
-                    if entry.get("task_type") == task_type
-                    and serviceId in entry.get("model_name", [])
-                ),
-                None,
+        registry_entry = next(
+            (
+                entry for entry in self.task_service_registry
+                if entry.get("task_type") == task_type
+                and serviceId in entry.get("model_name", [])
+            ),
+            None,
+        )
+
+        if not registry_entry:
+            raise RuntimeError(
+                f"No registry entry found for task_type='{task_type}', "
+                f"serviceId='{serviceId}'. "
+                f"Add it to task_service_registry.py under the matching "
+                f"task_type entry's model_name list."
             )
 
-            if not registry_entry:
-                raise TaskServiceExecutionError(
-                    f"No registry entry found for task_type='{task_type}', "
-                    f"serviceId='{serviceId}'. "
-                    f"Add it to task_service_registry.json under the matching "
-                    f"task_type entry's model_name list."
-                )
+        service_class = registry_entry.get("service_class")
+        self.logger.debug(
+            f"Instantiating {service_class.__name__} "
+            f"for task_type='{task_type}', serviceId='{serviceId}'"
+        )
+        return service_class(service_info=service_info)  # type: ignore
 
-            service_class = registry_entry.get("service_class")
-            self.logger.debug(
-                f"Instantiating {service_class.__name__} "
-                f"for task_type='{task_type}', serviceId='{serviceId}'"
-            )
-            return service_class(service_info=service_info)  # type: ignore
-        except TaskServiceExecutionError:
-            raise
-        except Exception as e:
-            raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}") from e
-
-    async def _resolve_service_and_model(
-        self, payload: Dict[str, Any], request: Optional[Request] = None
-    ) -> Dict[str, Any]:
+    async def _resolve_service_and_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Resolve the model service details from the raw request payload.
         Extracted here so the Orchestrator can route to the correct model-specific
@@ -233,7 +179,7 @@ class Orchestrator:
             RuntimeError: If the service cannot be resolved
         """
         start_time = time.time()
-        ctx_attrs = get_context_attributes(request)
+        ctx_attrs = get_context_attributes()
         task_type = payload.get("task_type", "").upper()
 
         with tracer.start_as_current_span("model") as model_span:
@@ -255,31 +201,21 @@ class Orchestrator:
             try:
                 service_info = await self.inference_server_resolver.resolve_service(serviceId)
 
-                # Set model span attributes
                 adapter_cfg = service_info.get("adapter_config") or {}
-                span_attrs = {
+                finalize_span(model_span, "model", {
                     "total_time_ms": compute_total_time_ms(start_time),
                     "model_name": service_info.get("name", ""),
                     "model_version": service_info.get("model_version") or adapter_cfg.get("model_version", "unknown"),
                     "task_type": task_type,
                     **ctx_attrs,
-                }
-                for k, v in span_attrs.items():
-                    model_span.set_attribute(k, v)
-                model_span.set_status(StatusCode.OK)
-                log_span_attributes("model", model_span, span_attrs)
-
+                }, ok=True)
                 return service_info
             except Exception as e:
-                span_attrs = {
+                finalize_span(model_span, "model", {
                     "total_time_ms": compute_total_time_ms(start_time),
                     "task_type": task_type,
                     **ctx_attrs,
-                }
-                for k, v in span_attrs.items():
-                    model_span.set_attribute(k, v)
-                model_span.set_status(StatusCode.ERROR, str(e))
-                log_span_attributes("model", model_span, span_attrs)
+                }, error=e)
                 self.logger.error(
                     f"Failed to resolve service '{serviceId}': {type(e).__name__}: {e}",
                     exc_info=True,
@@ -287,53 +223,3 @@ class Orchestrator:
                 raise RuntimeError(
                     f"Orchestrator: Failed to resolve service '{serviceId}': {e}"
                 ) from e
-
-    async def _execute_task_service(
-        self,
-        task_service: BaseTaskService,
-        payload: Dict[str, Any],
-        serviceInfo: Optional[Dict[str, Any]] = None,
-    ) -> BaseModel:
-        """
-        Execute task service with raw payload.
-        Task service is responsible for deserializing the payload.
-
-        Args:
-            task_service: TaskService instance to execute
-            payload: Raw request payload dictionary
-
-        Returns:
-            Task-specific response model
-
-        Raises:
-            TaskServiceExecutionError: If service execution fails
-        """
-        try:
-            result = await task_service.process(payload, serviceInfo)  # type: ignore
-            return result  # type: ignore
-        except Exception as e:
-            raise TaskServiceExecutionError(f"Task service execution failed: {str(e)}") from e
-
-    async def _serialize_response(
-        self, task_type: str, response: BaseModel
-    ) -> Dict[str, Any]:
-        """
-        Serialize task-specific response to dictionary.
-        Uses correct response model for task type.
-
-        Args:
-            task_type: Task type to use for serialization
-            response: Task-specific response model instance
-
-        Returns:
-            Serialized response dictionary
-
-        Raises:
-            PayloadValidationError: If serialization fails
-        """
-        try:
-            if isinstance(response, dict):
-                return response
-            return response.dict()  # type: ignore
-        except Exception as e:
-            raise PayloadValidationError(f"Response serialization failed: {str(e)}") from e

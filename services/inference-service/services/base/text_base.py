@@ -10,7 +10,7 @@ Child classes only add service-specific logic on top of super().validate_request
 """
 
 from typing import Any, Dict, List, Optional
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 
 
 class TextBase(BaseTaskService):

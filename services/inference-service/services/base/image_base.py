@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 
 
 class ImageBase(BaseTaskService):

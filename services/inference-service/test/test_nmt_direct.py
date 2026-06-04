@@ -5,9 +5,9 @@ Unit tests for NMTTaskService — no live Triton required.
 Tests each pipeline stage in isolation:
   1. validate_request      — valid + four error paths
   2. preprocess_input      — sanitisation
-  3. get_payload_object    — reads payload[payload_key]
+  3. payload_key           — modality input key
   4. build_response        — pairing + unwrap, returns plain dict with output list
-  5. run_inference          — full loop with mocked GenericTritonMapper + Triton
+  5. process               — full pipeline with mocked GenericTritonMapper + Triton
 
 Triton HTTP is mocked via unittest.mock so no running server is needed.
 """
@@ -139,15 +139,12 @@ async def test_preprocess_input():
     logger.info("   [PASS] preprocess_input sanitised correctly")
 
 
-async def test_get_payload_object():
+async def test_payload_key():
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
     assert service.payload_key == "input"
-    items = [{"source": "Hello"}]
-    assert service.get_payload_object({"input": items}) == items
-    assert service.get_payload_object({}) == []
-    logger.info("   [PASS] get_payload_object reads payload['input']")
+    logger.info("   [PASS] payload_key is 'input'")
 
 
 async def test_build_response():
@@ -173,8 +170,8 @@ async def test_build_response():
     logger.info("   [PASS] build_response paired sources, unwrapped values, returned plain dicts")
 
 
-async def test_run_inference_full():
-    """Full run_inference with mocked InferenceModel and mocked _call_triton_inference."""
+async def test_process_full():
+    """Full process() pipeline with mocked InferenceModel and mocked Triton."""
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -190,10 +187,6 @@ async def test_run_inference_full():
         },
     }
 
-    # Preprocess mutates payload['input'] (as process() would do)
-    preprocessed = await service.preprocess_input(payload["input"])
-    payload["input"] = preprocessed
-
     mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
 
     # execute_triton_inference instantiates GenericTritonMapper from its module —
@@ -207,17 +200,17 @@ async def test_run_inference_full():
             "_call_triton_inference",
             new=AsyncMock(return_value=MOCK_TRITON_OUTPUT),
         ):
-            response = await service.run_inference(payload)
+            response = await service.process(payload, MOCK_SERVICE_INFO)
 
     assert isinstance(response, dict)
     assert len(response["output"]) == 2  # one per input item
     assert response["output"][0]["source"] == "Hello, how are you?"
     assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
-    logger.info("   [PASS] run_inference returned dict with correct sources")
+    logger.info("   [PASS] process returned dict with correct sources")
 
 
-async def test_run_inference_missing_endpoint():
-    """run_inference raises RuntimeError when service_info lacks endpoint."""
+async def test_process_missing_endpoint():
+    """process raises RuntimeError when service_info lacks endpoint."""
     from services.nmt_service import NMTTaskService
 
     bad_service_info = {"service_id": "x", "name": "model", "endpoint": "", "api_key": None}
@@ -228,7 +221,7 @@ async def test_run_inference_missing_endpoint():
         "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
     }
     try:
-        await service.run_inference(payload)
+        await service.process(payload)
         raise AssertionError("Should have raised RuntimeError")
     except RuntimeError as e:
         assert "endpoint" in str(e)
@@ -286,10 +279,10 @@ async def run_all():
         ("validate_request — valid", test_validate_request_valid),
         ("validate_request — error paths", test_validate_request_errors),
         ("preprocess_input — sanitise", test_preprocess_input),
-        ("get_payload_object — payload_key", test_get_payload_object),
+        ("payload_key", test_payload_key),
         ("build_response — pairing + unwrap", test_build_response),
-        ("run_inference — full pipeline (mocked)", test_run_inference_full),
-        ("run_inference — missing endpoint", test_run_inference_missing_endpoint),
+        ("process — full pipeline (mocked)", test_process_full),
+        ("process — missing endpoint", test_process_missing_endpoint),
         ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),
     ]
 

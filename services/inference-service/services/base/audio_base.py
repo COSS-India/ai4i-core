@@ -4,7 +4,7 @@ AudioBase — base class for all audio-backed inference services.
 Covers: ASR, Audio Language Detection, Language Diarization, Speaker Diarization.
 
 Inherits the BaseTaskService pipeline (process → validate → preprocess →
-run_inference) and overrides:
+execute → build_response) and overrides:
   validate_request          → common audio validation (audio items only)
   preprocess_input          → base64 passthrough (downloads audio_uri if needed)
   execute_triton_inference  → one Triton call per audio item (vs. one batch call)
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 from services.base.config_mapper import GenericTritonMapper
 
 logger = logging.getLogger(__name__)
@@ -100,9 +100,10 @@ class AudioBase(BaseTaskService):
 
         VAD / chunk-batching is a future enhancement; add it here when ready.
         """
+        from trace.request_span import traced_inference
         from trace.span_attributes import get_output_type, count_input_tokens, count_output_tokens
 
-        async with self._traced_inference(payload) as span_ctx:
+        async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
             service_id      = self.service_info.get("service_id", "")
             model_name      = self.service_info.get("name", "")
             triton_endpoint = self.service_info.get("endpoint", "")
@@ -126,7 +127,7 @@ class AudioBase(BaseTaskService):
 
             # Audio items are already preprocessed by process() via preprocess_input.
             # Config is the raw payload dict — field names match the schema (snake_case for ASR).
-            audio_items: List[Any] = self.get_payload_object(payload)
+            audio_items: List[Any] = payload.get(self.payload_key) or []
             config_dict: Dict[str, Any] = payload.get("config") or {}
             all_response_data: List[Dict[str, Any]] = []
 

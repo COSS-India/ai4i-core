@@ -1,6 +1,6 @@
 """PII (Personally Identifiable Information) Detection and Redaction TaskService."""
 
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 
 
 class PIITaskService(BaseTaskService):

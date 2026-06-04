@@ -28,10 +28,6 @@ All 7 steps have been completed. The monolith inference service now provides a u
 │       ├── audio_language_detection.py
 │       └── pii.py
 │
-├── interfaces/                          # Service interfaces & base classes
-│   ├── __init__.py
-│   └── task_service.py                  # BaseTaskService — pipeline template base class
-│
 ├── orchestrator/                        # Orchestration layer
 │   ├── __init__.py
 │   └── orchestrator.py                  # Orchestrator with polymorphic routing
@@ -108,16 +104,17 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - Config models with discriminated unions (e.g., `NMTConfig`)
   - Response models (e.g., `NMTInferenceResponse`)
 
-### 2. **Interfaces Layer** (`interfaces/`)
+### 2. **Pipeline Base** (`services/base/task_service.py`)
 - **`BaseTaskService`** — pipeline template all services inherit (Template Method):
-  - `process()` / `run_inference()` — the template; never overridden
+  - `process()` — the template; never overridden
   - `validate_request()` — input validation (modality bases + task overrides)
   - `preprocess_input()` — data preprocessing (modality bases + ASR)
   - `execute_triton_inference()` — Triton call topology
     (base = one batch call; AudioBase = per-item; TTS = per-chunk)
   - `build_response()` — output shaping + response envelope (one per task)
-  - `_traced_inference()` — owns the `ai-inference` span (single definition)
   - `payload_key` — modality input key (`input` / `audio` / `image`)
+- Span handling lives in `trace/request_span.py` (`traced_inference`,
+  `finalize_span`) — no tracing code in the service classes.
 
 ### 3. **Orchestration Layer** (`orchestrator/`)
 - **`Orchestrator`** — Polymorphic request router:
@@ -218,12 +215,11 @@ Orchestrator.route_inference(payload)
         TaskService.process(payload, serviceInfo)
                 ├─ Validate request
                 ├─ Preprocess input (payload[payload_key])
-                └─ run_inference
-                    ├─ execute_triton_inference (inside ai-inference span)
-                    │   ├─ Convert payload to Triton format (GenericTritonMapper)
-                    │   ├─ Call Triton inference server
-                    │   └─ Convert Triton output to task format
-                    └─ build_response (output shaping + envelope)
+                ├─ execute_triton_inference (inside ai-inference span)
+                │   ├─ Convert payload to Triton format (GenericTritonMapper)
+                │   ├─ Call Triton inference server
+                │   └─ Convert Triton output to task format
+                └─ build_response (output shaping + envelope)
                 └─ Postprocess output
                         ↓
         Response (JSON)

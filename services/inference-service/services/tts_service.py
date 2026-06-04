@@ -48,9 +48,10 @@ class TTSTaskService(TextBase):
         Returns one response item per input with the raw synthesized audio
         at _TRITON_SAMPLE_RATE; build_response does the shaping.
         """
+        from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens
 
-        async with self._traced_inference(payload) as span_ctx:
+        async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
             span_ctx["output_type"] = "audio"  # TTS output is audio, success or failure
 
             triton_endpoint = self.service_info.get("endpoint", "")
@@ -68,7 +69,7 @@ class TTSTaskService(TextBase):
                     "Every TTS service must have an adapter_config seeded in mm_services."
                 )
 
-            input_items: List[Dict[str, Any]] = self.get_payload_object(payload)
+            input_items: List[Dict[str, Any]] = payload.get(self.payload_key) or []
             config: Dict[str, Any] = payload.get("config") or {}
 
             span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
