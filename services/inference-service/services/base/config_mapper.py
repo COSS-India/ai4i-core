@@ -24,10 +24,6 @@ SUPPORTED_TRITON_DTYPES = {
 }
 
 
-class GenericMapperError(Exception):
-    """Base exception for generic mapper failures."""
-
-
 class InputTensorDeclaration(BaseModel):
     """Input tensor declaration for adapter config."""
 
@@ -104,7 +100,7 @@ class GenericTritonMapper:
         - only declared paths/static values are used
         """
         if not input_data:
-            raise GenericMapperError("input_data cannot be empty")
+            raise RuntimeError("input_data cannot be empty")
 
         triton_inputs: Dict[str, Any] = {}
         for tensor_cfg in self.adapter_config.inputs:
@@ -165,7 +161,7 @@ class GenericTritonMapper:
         for output_cfg in self.adapter_config.outputs:
             value = self._extract_output_tensor(triton_output, output_cfg.tensor)
             if value is None:
-                raise GenericMapperError(f"Missing output tensor '{output_cfg.tensor}'")
+                raise RuntimeError(f"Missing output tensor '{output_cfg.tensor}'")
             decoded = self._decode_output_value(value)
             if output_cfg.json_field:
                 decoded = self._extract_json_field(decoded, output_cfg.json_field)
@@ -211,23 +207,23 @@ class GenericTritonMapper:
 
     def _validate_config(self, config: AdapterMappingConfig) -> None:
         if not config.version.strip():
-            raise GenericMapperError("adapter config version cannot be empty")
+            raise RuntimeError("adapter config version cannot be empty")
 
         for tensor in config.inputs:
             if tensor.dtype not in SUPPORTED_TRITON_DTYPES:
-                raise GenericMapperError(f"Unsupported input dtype '{tensor.dtype}'")
+                raise RuntimeError(f"Unsupported input dtype '{tensor.dtype}'")
             if not tensor.shape:
-                raise GenericMapperError(f"Input tensor '{tensor.tensor}' shape cannot be empty")
+                raise RuntimeError(f"Input tensor '{tensor.tensor}' shape cannot be empty")
             if tensor.value_path is None and tensor.value is None:
-                raise GenericMapperError(
+                raise RuntimeError(
                     f"Input tensor '{tensor.tensor}' requires value_path or value"
                 )
 
         for tensor in config.outputs:
             if tensor.dtype not in SUPPORTED_TRITON_DTYPES:
-                raise GenericMapperError(f"Unsupported output dtype '{tensor.dtype}'")
+                raise RuntimeError(f"Unsupported output dtype '{tensor.dtype}'")
             if not tensor.maps_to.strip():
-                raise GenericMapperError(f"Output tensor '{tensor.tensor}' maps_to cannot be empty")
+                raise RuntimeError(f"Output tensor '{tensor.tensor}' maps_to cannot be empty")
 
     def _resolve_value(
         self,
@@ -254,11 +250,11 @@ class GenericTritonMapper:
                     if camel in current:
                         current = current[camel]
                     else:
-                        raise GenericMapperError(f"Path '{path}' not found (missing key '{part}')")
+                        raise RuntimeError(f"Path '{path}' not found (missing key '{part}')")
             elif hasattr(current, part):
                 current = getattr(current, part)
             else:
-                raise GenericMapperError(f"Path '{path}' not found at '{part}'")
+                raise RuntimeError(f"Path '{path}' not found at '{part}'")
         return current
 
     def _cast_dtype(self, value: Any, dtype: str) -> Any:
@@ -303,7 +299,7 @@ class GenericTritonMapper:
         if len(inferred) < len(declared):
             inferred = inferred + [1] * (len(declared) - len(inferred))
         elif len(inferred) > len(declared):
-            raise GenericMapperError(
+            raise RuntimeError(
                 f"Declared shape {declared} has fewer dims than inferred shape {inferred}"
             )
 
@@ -314,7 +310,7 @@ class GenericTritonMapper:
             elif expected == actual:
                 resolved.append(actual)
             else:
-                raise GenericMapperError(
+                raise RuntimeError(
                     f"Declared shape {declared} does not match inferred shape {inferred}"
                 )
         return resolved

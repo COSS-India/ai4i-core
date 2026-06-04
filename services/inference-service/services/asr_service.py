@@ -166,8 +166,10 @@ class ASRTaskService(AudioBase):
     async def _decode_audio_bytes(self, audio_bytes: bytes) -> Tuple[Any, int]:
         """
         Decode raw audio bytes → (float32 numpy array, sample_rate).
-        Uses soundfile as primary decoder; falls back to raw PCM for unsupported formats.
         """
+        # No fallback on decode failure: silently reinterpreting undecodable
+        # bytes as raw PCM produced "valid" noise that transcribed to garbage.
+        # Undecodable audio is a client error -> ValueError -> 400.
         try:
             import soundfile as sf
             audio_data, sample_rate = sf.read(
@@ -175,18 +177,10 @@ class ASRTaskService(AudioBase):
             )
             return audio_data, sample_rate
         except Exception as sf_err:
-            self.logger.warning(
-                "soundfile failed to decode audio (%s), falling back to raw PCM", sf_err
-            )
-            # Fallback: treat raw bytes as little-endian int16 PCM at 16kHz
-            try:
-                audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-                return audio_data, 16000
-            except Exception as pcm_err:
-                self.logger.error("Failed to decode audio: %s", pcm_err)
-                raise RuntimeError(
-                    f"{self.task_name}: unable to decode audio bytes"
-                ) from pcm_err
+            raise ValueError(
+                f"{self.task_name}: unable to decode audio "
+                f"(expected a valid wav/flac/ogg stream): {sf_err}"
+            ) from sf_err
 
     def _stereo_to_mono(self, audio: Any) -> Any:
         """

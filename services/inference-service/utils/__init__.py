@@ -1,9 +1,5 @@
 """Utils package initialization."""
 
-from utils.http_client import HTTPServiceClient, ServiceCallError, ServiceNotFoundError
+from utils.http_client import HTTPServiceClient
 
-__all__ = [
-    "HTTPServiceClient",
-    "ServiceCallError",
-    "ServiceNotFoundError",
-]
+__all__ = ["HTTPServiceClient"]

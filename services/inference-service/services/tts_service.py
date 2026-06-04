@@ -90,7 +90,7 @@ class TTSTaskService(TextBase):
                 audio_data = output.get("data")
                 break
         if audio_data is None:
-            raise ValueError(
+            raise RuntimeError(
                 f"{self.task_name}: OUTPUT_GENERATED_AUDIO not found in Triton response"
             )
 

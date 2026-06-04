@@ -9,14 +9,10 @@ import time
 
 from config import settings
 
-from utils import HTTPServiceClient, ServiceCallError, ServiceNotFoundError as HTTPServiceNotFoundError
+from utils import HTTPServiceClient
 
 
 logger = logging.getLogger(__name__)
-
-
-class ServiceNotFoundError(Exception):
-    """Raised when service cannot be resolved."""
 
 
 class InferenceServerResolver:
@@ -38,8 +34,8 @@ class InferenceServerResolver:
         adapter_config) for the given service_id, via cache or MMS.
 
         Raises:
-            ServiceNotFoundError: If the service does not exist in MMS
-            ServiceCallError: If MMS is unreachable/unhealthy
+            LookupError: If the service does not exist in MMS
+            ConnectionError: If MMS is unreachable/unhealthy
         """
         cached = self._memory_cache.get(service_id)
         if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
@@ -68,13 +64,13 @@ class InferenceServerResolver:
         Fetch service details from the model management service.
 
         Raises:
-            ServiceNotFoundError: If the service is not found (404)
-            ServiceCallError: On transport/availability failures
+            LookupError: If the service is not found (404)
+            ConnectionError: On transport/availability failures
         """
         model_management_url = settings.MODEL_MANAGEMENT_SERVICE_URL
         if not model_management_url:
             logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
-            raise ServiceCallError("Model management service not configured")
+            raise RuntimeError("Model management service not configured")
 
         try:
             http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
@@ -84,17 +80,17 @@ class InferenceServerResolver:
             logger.debug(f"Resolved service {service_id}: {service_info}")
             return service_info
 
-        except HTTPServiceNotFoundError as e:
+        except LookupError as e:
             logger.error(f"Service {service_id} not found: {str(e)}")
-            raise ServiceNotFoundError(f"Service {service_id} not found") from e
-        except ServiceCallError:
+            raise LookupError(f"Service {service_id} not found") from e
+        except ConnectionError:
             raise
         except Exception as e:
             # Transport/availability failure is NOT "service not found" — a
             # hung or unreachable MMS must surface as a 502-class dependency
             # error, not a 404 (and not pollute logs with "not found").
             logger.error(f"Model management service query failed for {service_id}: {str(e)}")
-            raise ServiceCallError(
+            raise ConnectionError(
                 f"Model management service unavailable while resolving '{service_id}'"
             ) from e
 

@@ -13,10 +13,6 @@ from fastapi.responses import JSONResponse
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-from utils.http_client import ServiceCallError, ServiceNotFoundError
-from inference.inference_server_resolver import (
-    ServiceNotFoundError as ResolverServiceNotFoundError,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -48,13 +44,14 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
     """
     Map an orchestration failure to a client-safe HTTPException.
 
-    Walks the exception __cause__ chain (orchestrator wraps with `from exc`)
-    so the original error classifies the response:
+    Walks the exception __cause__ chain (raised with `from exc` throughout)
+    so the original error classifies the response. Builtin exceptions only:
       ValueError          → 400 (validation messages are user-facing by design)
-      NotImplementedError               → 501 (unimplemented task, e.g. PII)
-      ServiceNotFoundError              → 404 (unknown serviceId)
-      RuntimeError                      → 502 (Triton / MMS dependency failed)
-      anything else                     → 500
+      NotImplementedError → 501 (unimplemented task, e.g. PII)
+      LookupError         → 404 (unknown serviceId)
+      ConnectionError     → 502 (MMS / Triton unreachable)
+      RuntimeError        → 502 (server-side config / backend mismatch)
+      anything else       → 500
 
     Only validation messages are echoed to the client. Resolver and backend
     errors previously leaked internal endpoints via str(exc) — those now get
@@ -71,12 +68,14 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
             return HTTPException(status_code=400, detail=str(e))
         if isinstance(e, NotImplementedError):
             return HTTPException(status_code=501, detail=str(e))
-        if isinstance(e, (ServiceNotFoundError, ResolverServiceNotFoundError)):
+        # exact type: KeyError/IndexError are LookupError subclasses but are
+        # programming errors, not not-found semantics — they must stay 500
+        if type(e) is LookupError:
             return HTTPException(
                 status_code=404, detail=f"{task_type}: requested service not found"
             )
     for e in chain:
-        if isinstance(e, (RuntimeError, ServiceCallError)):
+        if isinstance(e, (RuntimeError, ConnectionError)):
             return HTTPException(
                 status_code=502, detail=f"{task_type}: upstream inference dependency failed"
             )
