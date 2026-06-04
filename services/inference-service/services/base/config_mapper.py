@@ -1,5 +1,6 @@
 """Generic adapter config declarations and path-based mapper utilities."""
 
+import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -58,6 +59,12 @@ class OutputTensorDeclaration(BaseModel):
     tensor: str = Field(..., description="Tensor name returned by Triton")
     dtype: str = Field(..., description="Expected Triton dtype")
     maps_to: str = Field(..., description="Platform semantic output key")
+    json_field: Optional[str] = Field(
+        default=None,
+        description="If set, each output value is parsed as a JSON object and "
+        "this field is extracted (e.g. Surya's envelope -> 'full_text'). "
+        "Values that fail to parse pass through unchanged.",
+    )
 
 
 class AdapterMappingConfig(BaseModel):
@@ -159,7 +166,10 @@ class GenericTritonMapper:
             value = self._extract_output_tensor(triton_output, output_cfg.tensor)
             if value is None:
                 raise GenericMapperError(f"Missing output tensor '{output_cfg.tensor}'")
-            mapped[output_cfg.maps_to] = self._decode_output_value(value)
+            decoded = self._decode_output_value(value)
+            if output_cfg.json_field:
+                decoded = self._extract_json_field(decoded, output_cfg.json_field)
+            mapped[output_cfg.maps_to] = decoded
         return mapped
 
     def to_output_items(self, mapped_outputs: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -324,6 +334,24 @@ class GenericTritonMapper:
                 if output.get("name") == tensor_name:
                     return output.get("data")
         return triton_output.get(tensor_name)
+
+    def _extract_json_field(self, value: Any, field: str) -> Any:
+        """
+        Config-driven envelope unwrapping: parse JSON string values and pull
+        out one field (declared via the output's json_field). Lists are
+        processed element-wise; non-JSON values pass through unchanged so a
+        model that sometimes returns plain text keeps working.
+        """
+        if isinstance(value, list):
+            return [self._extract_json_field(item, field) for item in value]
+        if isinstance(value, str) and value.lstrip().startswith("{"):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+            if isinstance(parsed, dict) and field in parsed:
+                return parsed[field]
+        return value
 
     def _decode_output_value(self, value: Any) -> Any:
         if isinstance(value, bytes):

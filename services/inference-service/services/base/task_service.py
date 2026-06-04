@@ -47,6 +47,11 @@ class BaseTaskService:
     # Set by the modality base classes (TextBase / AudioBase / ImageBase).
     payload_key: Optional[str] = None
 
+    # Triton call topology: "batch" = one call for the whole input list;
+    # "per_item" = one call per input item (audio models accept one file per
+    # request). adapter_config may override with a "call_mode" key.
+    TRITON_CALL_MODE: str = "batch"
+
     def __init__(self, service_info: Optional[Dict[str, Any]] = None):
         """
         Initialize base task service.
@@ -121,20 +126,24 @@ class BaseTaskService:
 
     async def postprocess_output(self, result: PostProcessFormat) -> Any:
         """
-        Build the task response from the inference result:
-        shape the output items AND assemble the response envelope
-        (taskType, config echo) in one place.
+        Final step after inference. Scope: audit logging, observability, and
+        truly model-specific final shaping — NOT Triton output conversion,
+        which happens inside run_inference via the mapper.
 
-        Args:
-            result: PostProcessFormat with the (preprocessed) payload,
-                    mapped Triton output items, and parallel source texts
-
-        Returns:
-            Task-specific response (dict or typed model)
+        Default: unwrap scalar nesting, pair each output item with its input
+        source, and echo the request config. Sufficient for services whose
+        adapter_config already maps tensors to the response field names
+        (e.g. NMT); override only when the task contract needs more.
         """
-        raise NotImplementedError(
-            f"{self.task_name} must implement postprocess_output"
-        )
+        output = []
+        for idx, item in enumerate(result.response_data):
+            clean = {k: self.unwrap_output_value(v) for k, v in item.items()}
+            if "source" not in clean:
+                clean["source"] = (
+                    result.source_texts[idx] if idx < len(result.source_texts) else ""
+                )
+            output.append(clean)
+        return {"output": output, "config": result.payload.get("config")}
 
     @staticmethod
     def unwrap_output_value(value: Any) -> Any:
@@ -178,15 +187,46 @@ class BaseTaskService:
                 extracted.append('')
         return extracted
 
+    def _triton_context_builder(self):
+        """
+        Optional context builder fed to the mapper's value_path resolution
+        (e.g. AudioBase exposes audio.audio_content, ASR exposes audio.samples).
+        None = the mapper's canonical request/input/index context only.
+        """
+        return None
+
+    async def convert_payload_to_triton_format(self, input_data, config):
+        """Convert input items + config into KServe v2 Triton inputs.
+        Default: adapter_config-driven via GenericTritonMapper. Override to
+        normalise config first (call super) — see ASR / diarization."""
+        from services.base.config_mapper import GenericTritonMapper
+        mapper = GenericTritonMapper(self._adapter_config)
+        return mapper.compose_triton_kserve_v2_payload(
+            input_data=input_data,
+            config=config,
+            context_builder=self._triton_context_builder(),
+        )
+
+    async def convert_triton_output_to_task_format(self, triton_output):
+        """Map raw Triton output to task result dicts via adapter_config
+        (including config-driven transforms like json_field)."""
+        from services.base.config_mapper import GenericTritonMapper
+        mapper = GenericTritonMapper(self._adapter_config)
+        return mapper.to_output_items(mapper.map_outputs(triton_output))
+
     async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
         """
-        Generic adapter_config-driven Triton inference: one Triton call for the
-        whole input batch, mapped via GenericTritonMapper.
+        Generic Triton inference — single implementation for every modality.
 
-        Reads the resolved service from self.service_info.
-        Override for modality-specific loops (see AudioBase / TTS).
+        Call topology is data/class-driven, not override-driven:
+        adapter_config["call_mode"] or TRITON_CALL_MODE selects one batch
+        call vs one call per item. Payload/tensor mapping goes through the
+        convert_* hooks (mapper-backed by default).
+
+        TTS overrides this method: its per-chunk loop must MERGE N outputs
+        back into one item (concatenating audio arrays), which no call-mode
+        flag can express.
         """
-        from services.base.config_mapper import GenericTritonMapper
         # Lazy import — trace setup happens at app init, after this module loads.
         from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
@@ -195,16 +235,13 @@ class BaseTaskService:
             model_name = self.service_info.get('name', '')
             triton_endpoint = self.service_info.get('endpoint', '')
             api_key = self.service_info.get('api_key')
-            adapter_config = self.service_info.get('adapter_config')
+            self._adapter_config = self.service_info.get('adapter_config')
 
             if not model_name or not triton_endpoint:
                 raise RuntimeError(
                     f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
                     "Ensure the Orchestrator resolved the service before creating this task service."
                 )
-
-            self.logger.debug(f"Converting payload to Triton format for model {model_name}")
-            inference_model = GenericTritonMapper(adapter_config=adapter_config)
 
             input_items = payload.get(self.payload_key) or []
             config_data = payload.get('config', {})
@@ -214,21 +251,26 @@ class BaseTaskService:
             source_texts = self.extract_field_from_items(input_items, 'source')
             span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
 
-            triton_inputs, triton_outputs = await inference_model.convert_payload_to_triton_format(
-                input_items, config_data
-            )
+            call_mode = (
+                (self._adapter_config or {}).get("call_mode")
+                if isinstance(self._adapter_config, dict) else None
+            ) or self.TRITON_CALL_MODE
+            groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
-            raw_triton_output = await self._call_triton_inference(
-                triton_endpoint=triton_endpoint,
-                triton_inputs=triton_inputs,
-                triton_outputs=triton_outputs,
-                api_key=api_key,
-            )
-
-            self.logger.debug("Converting Triton output to task response format")
-            response_data = await inference_model.convert_triton_output_to_task_format(
-                raw_triton_output
-            )
+            response_data = []
+            for group in groups:
+                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                    group, config_data
+                )
+                raw_triton_output = await self._call_triton_inference(
+                    triton_endpoint=triton_endpoint,
+                    triton_inputs=triton_inputs,
+                    triton_outputs=triton_outputs,
+                    api_key=api_key,
+                )
+                response_data.extend(
+                    await self.convert_triton_output_to_task_format(raw_triton_output)
+                )
 
             span_ctx["output_type"] = get_output_type(response_data)
             span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])

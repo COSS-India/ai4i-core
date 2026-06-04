@@ -48,15 +48,16 @@ MOCK_TRITON_OUTPUT = {
 
 
 def _make_mock_inference_model(translated: str = "नमस्ते, आप कैसे हैं?", num_outputs: int = 1) -> MagicMock:
-    """Return a mock InferenceModel that produces `num_outputs` translated items."""
+    """Return a mock GenericTritonMapper that produces `num_outputs` translated items."""
     model = MagicMock()
-    model.convert_payload_to_triton_format = AsyncMock(
+    model.compose_triton_kserve_v2_payload = MagicMock(
         return_value=(
             [{"name": "INPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["hello"]}],
             ["OUTPUT_TEXT"],
         )
     )
-    model.convert_triton_output_to_task_format = AsyncMock(
+    model.map_outputs = MagicMock(return_value={"target": [translated] * num_outputs})
+    model.to_output_items = MagicMock(
         return_value=[{"target": translated}] * num_outputs
     )
     return model

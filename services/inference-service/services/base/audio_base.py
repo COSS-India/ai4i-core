@@ -7,7 +7,7 @@ Inherits the BaseTaskService pipeline (process → validate → preprocess →
 execute → postprocess) and overrides:
   validate_request          → common audio validation (audio items only)
   preprocess_input          → base64 passthrough (downloads audio_uri if needed)
-  run_inference             → one Triton call per audio item (vs. one batch call)
+  TRITON_CALL_MODE          → 'per_item': one Triton call per audio item
   convert_* hooks           → adapter_config-driven via GenericTritonMapper
 
 The passthrough default fits tasks where Triton decodes audio internally
@@ -24,12 +24,11 @@ overrides.
 import base64
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import httpx
 
-from services.base.task_service import BaseTaskService, PostProcessFormat
-from services.base.config_mapper import GenericTritonMapper
+from services.base.task_service import BaseTaskService
 
 logger = logging.getLogger(__name__)
 
@@ -88,148 +87,29 @@ class AudioBase(BaseTaskService):
         return payload
 
     # ------------------------------------------------------------------
-    # run_inference — audio-specific override
-    # ------------------------------------------------------------------
-    async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
-        """
-        Audio inference loop — overrides BaseTaskService.run_inference.
-
-        Differences from the text base:
-          - Calls Triton once per audio item (one file per call)
-          - Raises RuntimeError if adapter_config is missing from service_info
-          - convert_payload_to_triton_format / convert_triton_output_to_task_format
-            are called on self (task-service methods), not on a separate mapper instance
-
-        VAD / chunk-batching is a future enhancement; add it here when ready.
-        """
-        from trace.request_span import traced_inference
-        from trace.span_attributes import get_output_type, count_input_tokens, count_output_tokens
-
-        async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-            model_name      = self.service_info.get("name", "")
-            triton_endpoint = self.service_info.get("endpoint", "")
-            api_key         = self.service_info.get("api_key")
-            adapter_config  = self.service_info.get("adapter_config")
-
-            if not model_name or not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
-                )
-
-            if not adapter_config:
-                raise RuntimeError(
-                    f"{self.task_name}: adapter_config missing from service_info. "
-                    "Every audio service must have an adapter_config seeded in mm_services."
-                )
-
-            # Store so convert_payload_to_triton_format can access via self._adapter_config
-            self._adapter_config = adapter_config
-
-            # Audio items are already preprocessed by process() via preprocess_input.
-            # Config is the raw payload dict — field names match the schema (snake_case for ASR).
-            audio_items: List[Any] = payload.get(self.payload_key) or []
-            config_dict: Dict[str, Any] = payload.get("config") or {}
-            all_response_data: List[Dict[str, Any]] = []
-
-            span_ctx["input_tokens"] = count_input_tokens(audio_items, span_ctx["input_type"])
-
-            for idx, audio_item in enumerate(audio_items):
-                item_dict = (
-                    audio_item if isinstance(audio_item, dict)
-                    else audio_item.model_dump(by_alias=False)
-                )
-
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    [item_dict], config_dict
-                )
-
-                self.logger.debug(
-                    "%s: Triton call %d / %d  endpoint=%s",
-                    self.task_name, idx + 1, len(audio_items), triton_endpoint,
-                )
-                raw_output = await self._call_triton_inference(
-                    triton_endpoint=triton_endpoint,
-                    triton_inputs=triton_inputs,
-                    triton_outputs=triton_outputs,
-                    api_key=api_key,
-                )
-
-                response_data = await self.convert_triton_output_to_task_format(raw_output)
-                all_response_data.extend(response_data)
-
-            # Collect audio URIs to surface as 'source' in postprocess (e.g. ASR).
-            # Preprocessed items retain audio_uri / audioUri from the original request.
-            source_uris = [
-                (
-                    audio_item.get("audio_uri") or audio_item.get("audioUri") or ""
-                    if isinstance(audio_item, dict)
-                    else getattr(audio_item, "audio_uri", "") or ""
-                )
-                for audio_item in audio_items
-            ]
-
-            span_ctx["output_type"] = get_output_type(all_response_data)
-            span_ctx["output_tokens"] = count_output_tokens(all_response_data, span_ctx["output_type"])
-
-            return PostProcessFormat(
-                payload=payload,
-                response_data=all_response_data,
-                source_texts=source_uris,
-            )
-
-    # ------------------------------------------------------------------
-    # Triton format hooks — adapter_config driven (default)
+    # Triton call topology + mapper context
     # ------------------------------------------------------------------
 
-    async def convert_payload_to_triton_format(
-        self,
-        input_data: List[Dict[str, Any]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Build Triton inputs from adapter_config tensor declarations.
+    # Audio Triton models accept one file per request — the generic
+    # run_inference loops per item instead of one batch call.
+    TRITON_CALL_MODE = "per_item"
 
-        num_speakers defaults to "" so an adapter that declares a NUM_SPEAKERS
-        tensor (speaker diarization) still resolves when the task config omits
-        it — e.g. ALD can run against the sd-gpu model (registered under both
-        task types in task_service_registry).
-        """
+    async def convert_payload_to_triton_format(self, input_data, config):
+        """num_speakers defaults to "" so an adapter that declares a
+        NUM_SPEAKERS tensor (speaker diarization) still resolves when the
+        task config omits it — e.g. ALD can run against the sd-gpu model."""
         config = dict(config)
         if "num_speakers" not in config and "numSpeakers" not in config:
             config["num_speakers"] = ""
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
-    async def convert_triton_output_to_task_format(
-        self,
-        triton_output: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Map Triton output tensors to result dicts via adapter_config."""
-        mapper = GenericTritonMapper(self._adapter_config)
-        mapped = mapper.map_outputs(triton_output)
-        return mapper.to_output_items(mapped)
-
-    def _build_audio_context(
-        self,
-        item: Dict[str, Any],
-        index: int,
-        config: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Context for adapter_config value_path resolution.
-        Exposes audio.audio_content — the base64 string passed to Triton.
-        ASR overrides this to expose float samples instead.
-        """
-        audio_content = item.get("audio_content") or item.get("audioContent") or ""
-        return {
-            "audio": {
-                "audio_content": audio_content,
-            }
-        }
+    def _triton_context_builder(self):
+        """Expose audio.audio_content (the base64 string) to value_path
+        resolution. ASR overrides to expose float samples instead."""
+        def build(item, index, config):
+            audio_content = item.get("audio_content") or item.get("audioContent") or ""
+            return {"audio": {"audio_content": audio_content}}
+        return build
 
     # ------------------------------------------------------------------
     # Audio input helpers

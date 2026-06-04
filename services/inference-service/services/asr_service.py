@@ -9,7 +9,6 @@ import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
 from services.base.task_service import PostProcessFormat
-from services.base.config_mapper import GenericTritonMapper
 
 
 class ASRTaskService(AudioBase):
@@ -20,8 +19,8 @@ class ASRTaskService(AudioBase):
     AudioBase default (base64 passthrough) is overridden here:
       validate_request                  → adds sourceLanguage check
       preprocess_input                  → bytes → decode → mono → resample (16 kHz) → equalize
-      convert_payload_to_triton_format  → GenericTritonMapper + samples context
-      _build_audio_context              → exposes audio.samples (not audio_content)
+      convert_payload_to_triton_format  → normalises config.language, then super
+      _triton_context_builder           → exposes audio.samples (not audio_content)
       postprocess                    → decode bytes → TranscriptionOutput list
 
     service_info (including adapter_config) is injected by the Orchestrator.
@@ -124,32 +123,23 @@ class ASRTaskService(AudioBase):
         elif isinstance(language, str):
             config["language"] = {"source_language": language}
 
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
-    def _build_audio_context(
-        self,
-        item: Dict[str, Any],
-        index: int,
-        config: Dict[str, Any],
-    ) -> Dict[str, Any]:
+    def _triton_context_builder(self):
         """
-        Context dict fed to adapter_config value_path resolution.
-        Exposes audio.samples, audio.num_samples, audio.sample_rate —
-        populated by preprocess_input before the Triton loop.
+        Expose audio.samples / num_samples / sample_rate to value_path
+        resolution — populated by preprocess_input before the Triton loop.
         """
-        samples = item.get("samples") or []
-        return {
-            "audio": {
-                "samples":     samples,
-                "num_samples": item.get("num_samples", len(samples)),
-                "sample_rate": item.get("sample_rate"),
+        def build(item, index, config):
+            samples = item.get("samples") or []
+            return {
+                "audio": {
+                    "samples":     samples,
+                    "num_samples": item.get("num_samples", len(samples)),
+                    "sample_rate": item.get("sample_rate"),
+                }
             }
-        }
+        return build
 
     # ------------------------------------------------------------------
     # Audio decoding helpers (float-PCM path — ASR only)

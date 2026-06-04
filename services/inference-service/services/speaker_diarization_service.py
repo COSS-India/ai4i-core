@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Tuple
 
 from services.base.audio_base import AudioBase
 from services.base.task_service import PostProcessFormat
-from services.base.config_mapper import GenericTritonMapper
 
 
 class SpeakerDiarizationTaskService(AudioBase):
@@ -36,12 +35,7 @@ class SpeakerDiarizationTaskService(AudioBase):
         config = dict(config)
         raw = config.get("num_speakers") or config.get("numSpeakers")
         config["num_speakers"] = "" if not raw else str(raw)
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
     async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         output_list = []

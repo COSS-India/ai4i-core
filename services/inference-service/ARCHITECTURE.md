@@ -113,9 +113,15 @@ All 7 steps have been completed. The monolith inference service now provides a u
       result: PostProcessFormat = run_inference(preprocessed)
       return postprocess_output(result)
   ```
-  - `run_inference()` — Triton call topology, returns `PostProcessFormat`
-    (base = one batch call; AudioBase = per-item; TTS = per-chunk)
-  - `postprocess_output(result)` — output shaping + response envelope (one per task)
+  - `run_inference()` — generic, single implementation returning `PostProcessFormat`;
+    call topology is data/class-driven (`adapter_config["call_mode"]` or
+    `TRITON_CALL_MODE`: batch vs per-item). Only TTS overrides it (per-chunk
+    outputs must be merged back into one item). Output conversion is
+    adapter_config-driven via GenericTritonMapper, incl. transforms like
+    `json_field` (Surya envelope unwrap)
+  - `postprocess_output(result)` — post-inference only (audit/observability/
+    model-specific final shaping); base default pairs sources + echoes config,
+    which is the full contract for e.g. NMT
   - `payload_key` — modality input key (`input` / `audio` / `image`)
 - Span handling lives in `trace/request_span.py` (`traced_inference`,
   `finalize_span`) — no tracing code in the service classes.
