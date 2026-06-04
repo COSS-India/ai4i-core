@@ -134,7 +134,27 @@ class BaseTaskService:
         source, and echo the request config. Sufficient for services whose
         adapter_config already maps tensors to the response field names
         (e.g. NMT); override only when the task contract needs more.
+
+        When the adapter_config declares response shaping (response_key /
+        pair_with_input on any output tensor), the shaping is config-driven
+        instead — the declared renames and input pairings replace the
+        implicit "source" pairing above.
         """
+        if isinstance(self._adapter_config, dict) and any(
+            o.get("response_key") or o.get("pair_with_input")
+            for o in self._adapter_config.get("outputs", [])
+        ):
+            from services.base.config_mapper import GenericTritonMapper
+            mapper = GenericTritonMapper(self._adapter_config)
+            shaped = mapper.shape_output_items(
+                [
+                    {k: self.unwrap_output_value(v) for k, v in item.items()}
+                    for item in result.response_data
+                ],
+                result.payload.get(self.payload_key) or [],
+            )
+            return {"output": shaped, "config": result.payload.get("config")}
+
         output = []
         for idx, item in enumerate(result.response_data):
             clean = {k: self.unwrap_output_value(v) for k, v in item.items()}

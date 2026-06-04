@@ -1,11 +1,16 @@
 """Generic adapter config declarations and path-based mapper utilities."""
 
+import base64
 import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel, Field, model_validator
 
+
+SUPPORTED_OUTPUT_TRANSFORMS = {"json_parse", "base64_encode", "unwrap_scalar"}
+
+_RESPONSE_KEY_RE = re.compile(r"output\[\]\.(\w+)$")
 
 SUPPORTED_TRITON_DTYPES = {
     "BOOL",
@@ -60,6 +65,23 @@ class OutputTensorDeclaration(BaseModel):
         description="If set, each output value is parsed as a JSON object and "
         "this field is extracted (e.g. Surya's envelope -> 'full_text'). "
         "Values that fail to parse pass through unchanged.",
+    )
+    transform: Optional[str] = Field(
+        default=None,
+        description="Post-extraction transform: 'json_parse' (parse JSON -> "
+        "full dict), 'base64_encode' (value -> base64 string), "
+        "'unwrap_scalar' (peel single-element list nesting).",
+    )
+    response_key: Optional[str] = Field(
+        default=None,
+        description="Final response placement as 'output[].<key>' — renames "
+        "this output's maps_to key per item in the shaped response.",
+    )
+    pair_with_input: Optional[str] = Field(
+        default=None,
+        description="Input field dot-path (e.g. 'input.source', "
+        "'audio.audio_uri'); the field is paired into each output item at "
+        "the same index under its last path segment.",
     )
 
 
@@ -165,6 +187,8 @@ class GenericTritonMapper:
             decoded = self._decode_output_value(value)
             if output_cfg.json_field:
                 decoded = self._extract_json_field(decoded, output_cfg.json_field)
+            if output_cfg.transform:
+                decoded = self._apply_transform(decoded, output_cfg.transform)
             mapped[output_cfg.maps_to] = decoded
         return mapped
 
@@ -224,6 +248,16 @@ class GenericTritonMapper:
                 raise RuntimeError(f"Unsupported output dtype '{tensor.dtype}'")
             if not tensor.maps_to.strip():
                 raise RuntimeError(f"Output tensor '{tensor.tensor}' maps_to cannot be empty")
+            if tensor.transform and tensor.transform not in SUPPORTED_OUTPUT_TRANSFORMS:
+                raise RuntimeError(
+                    f"Output tensor '{tensor.tensor}': unsupported transform "
+                    f"'{tensor.transform}' (supported: {sorted(SUPPORTED_OUTPUT_TRANSFORMS)})"
+                )
+            if tensor.response_key and not _RESPONSE_KEY_RE.fullmatch(tensor.response_key):
+                raise RuntimeError(
+                    f"Output tensor '{tensor.tensor}': response_key must be "
+                    f"'output[].<key>', got '{tensor.response_key}'"
+                )
 
     def _resolve_value(
         self,
@@ -330,6 +364,72 @@ class GenericTritonMapper:
                 if output.get("name") == tensor_name:
                     return output.get("data")
         return triton_output.get(tensor_name)
+
+    def _apply_transform(self, value: Any, transform: str) -> Any:
+        """
+        Config-driven post-extraction transform (validated at config load):
+          json_parse    — parse JSON string values into the full object
+                          (diarization/ALD envelopes); non-JSON passes through
+          base64_encode — value -> base64 of its UTF-8/bytes form
+          unwrap_scalar — peel single-element list nesting
+        """
+        if transform == "unwrap_scalar":
+            return self.unwrap_scalar(value)
+        if isinstance(value, list):
+            return [self._apply_transform(item, transform) for item in value]
+        if transform == "json_parse":
+            if isinstance(value, str):
+                stripped = value.lstrip()
+                if stripped.startswith("{") or stripped.startswith("["):
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return value
+            return value
+        if transform == "base64_encode":
+            raw = value if isinstance(value, bytes) else str(value).encode("utf-8")
+            return base64.b64encode(raw).decode("utf-8")
+        return value
+
+    def shape_output_items(
+        self,
+        output_items: List[Dict[str, Any]],
+        input_items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Config-driven response shaping:
+          response_key 'output[].<key>'  — renames the maps_to key per item
+          pair_with_input '<scope>.<field>' — copies the input field at the
+            same index into the output item under '<field>' (camelCase
+            variants of the field resolve too)
+        """
+        renames = {
+            cfg.maps_to: _RESPONSE_KEY_RE.fullmatch(cfg.response_key).group(1)
+            for cfg in self.adapter_config.outputs
+            if cfg.response_key
+        }
+        pair_fields = [
+            cfg.pair_with_input.split(".")[-1]
+            for cfg in self.adapter_config.outputs
+            if cfg.pair_with_input
+        ]
+
+        shaped = []
+        for idx, item in enumerate(output_items):
+            new_item = {renames.get(k, k): v for k, v in item.items()}
+            src_item = input_items[idx] if idx < len(input_items) else {}
+            for field in dict.fromkeys(pair_fields):
+                camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), field)
+                new_item.setdefault(field, src_item.get(field, src_item.get(camel, "")))
+            shaped.append(new_item)
+        return shaped
+
+    def has_response_shaping(self) -> bool:
+        """True when any output declares response_key or pair_with_input."""
+        return any(
+            cfg.response_key or cfg.pair_with_input
+            for cfg in self.adapter_config.outputs
+        )
 
     def _extract_json_field(self, value: Any, field: str) -> Any:
         """
