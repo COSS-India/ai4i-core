@@ -8,15 +8,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from app.schemas.telemetry import SearchTracesResponse, TraceResponse
 from app.utils.opensearch_client import OpenSearchTraceClient
 from app.core.exceptions import InsufficientPermissionsError
-from app.core.role_id import RoleId
-from app.utils.auth_helper import check_permission_ids
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
+# Role IDs (must match the seeded values in roles table)
+_ROLE_ADMIN = 1
+_ROLE_MODERATOR = 2
+_ROLE_TENANT_ADMIN = 5
+
 # All allowed roles for telemetry access (roles that can access telemetry endpoints)
-ALLOWED_ROLES = {RoleId.ADMIN, RoleId.MODERATOR, RoleId.TENANT_ADMIN}
+ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
+
+
+def _check_permission_ids(request: Request, *allowed: int) -> None:
+    """Raise if X-Permission-Ids header does not contain any of the allowed role IDs."""
+    raw = request.headers.get("X-Permission-Ids", "")
+    ids = {int(p.strip()) for p in raw.split(",") if p.strip().isdigit()}
+    if not ids & set(allowed):
+        raise InsufficientPermissionsError()
 
 
 def _validate_telemetry_access(request: Request) -> None:
@@ -25,7 +36,7 @@ def _validate_telemetry_access(request: Request) -> None:
     Only roles 1 (admin), 2 (moderator), or 5 (tenant admin) are allowed.
     Raises InsufficientPermissionsError if user has role 3 (guest), 4 (user), or no role.
     """
-    check_permission_ids(request, *ALLOWED_ROLES)
+    _check_permission_ids(request, *ALLOWED_ROLES)
 
 
 def _is_admin(request: Request) -> bool:
@@ -35,7 +46,7 @@ def _is_admin(request: Request) -> bool:
     Returns True if user is admin or moderator, False otherwise.
     """
     try:
-        check_permission_ids(request, RoleId.ADMIN, RoleId.MODERATOR)
+        _check_permission_ids(request, _ROLE_ADMIN, _ROLE_MODERATOR)
         return True
     except InsufficientPermissionsError:
         return False
