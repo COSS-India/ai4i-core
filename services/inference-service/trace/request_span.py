@@ -86,6 +86,7 @@ def traced_span(
     *,
     root: bool = False,
     classify_status: bool = False,
+    mark_ok: bool = True,
     error_attrs=None,
 ):
     """
@@ -99,6 +100,9 @@ def traced_span(
         root: start with an empty otel context (parentID=null root span)
         classify_status: add status/status_code attrs (200 ok; 400 for
             ValueError, else 500 on failure)
+        mark_ok: set OTel StatusCode.OK on success (request/model spans do;
+            ai-inference historically leaves it UNSET — kept for exporter
+            output parity)
         error_attrs: optional fn(attrs, exc) -> attrs to reshape the
             collected attrs on failure (e.g. zero token counts)
     """
@@ -122,7 +126,7 @@ def traced_span(
             if classify_status:
                 attrs.setdefault("status", "success")
                 attrs.setdefault("status_code", 200)
-            finalize_span(span, span_name, attrs, ok=True)
+            finalize_span(span, span_name, attrs, ok=mark_ok)
 
 
 def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: bool = False) -> None:
@@ -161,7 +165,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
         return attrs
 
     with traced_span(
-        "ai-inference", classify_status=True, error_attrs=_zero_tokens
+        "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
         attrs.update({
             "input_type": get_input_type(payload),
