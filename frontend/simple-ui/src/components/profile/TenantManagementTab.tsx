@@ -2,6 +2,9 @@
 
 import React, { useEffect, useMemo } from "react";
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Badge,
   Box,
   Button,
@@ -375,9 +378,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   colorScheme="blue"
                   isLoading={tm.resendVerificationTenantId === t.tenant_id}
                   loadingText="Sending..."
-                  onClick={() => void tm.handleResendTenantSetupLink(t)}
+                  onClick={() => void tm.handleResendTenantVerificationEmail(t)}
                 >
-                  Resend Setup Link
+                  Resend Verification Email
                 </Button>
               )}
               <Button
@@ -412,6 +415,29 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             </TabList>
             <TabPanels>
               <TabPanel px={0}>
+                {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
+                  <Alert status="info" variant="left-accent" borderRadius="md" mb={4}>
+                    <AlertIcon />
+                    <Box flex="1">
+                      <AlertDescription fontSize="sm">
+                        This tenant is awaiting activation. The contact must complete the email
+                        verification link. If the link expired or was not received, resend it below.
+                      </AlertDescription>
+                      <Button
+                        mt={3}
+                        size="sm"
+                        leftIcon={<FiMail />}
+                        colorScheme="blue"
+                        variant="outline"
+                        isLoading={tm.resendVerificationTenantId === t.tenant_id}
+                        loadingText="Sending..."
+                        onClick={() => void tm.handleResendTenantVerificationEmail(t)}
+                      >
+                        Resend Verification Email
+                      </Button>
+                    </Box>
+                  </Alert>
+                )}
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
                   <Box>
                     <Text fontWeight="semibold">Tenant ID</Text>
@@ -478,16 +504,16 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           />
         </Tooltip>
         {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
-          <Tooltip label="Resend setup link" placement="top" hasArrow>
+          <Tooltip label="Resend verification email" placement="top" hasArrow>
             <IconButton
-              aria-label="Resend setup link"
+              aria-label="Resend verification email"
               icon={<FiMail />}
               size="sm"
               variant="ghost"
               colorScheme="blue"
               _hover={{ bg: "blue.50" }}
               isLoading={tm.resendVerificationTenantId === t.tenant_id}
-              onClick={() => void tm.handleResendTenantSetupLink(t)}
+              onClick={() => void tm.handleResendTenantVerificationEmail(t)}
             />
           </Tooltip>
         )}

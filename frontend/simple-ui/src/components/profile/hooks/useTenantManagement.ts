@@ -757,12 +757,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsStatusDialogOpen(true);
   };
 
-  const handleResendTenantSetupLink = async (t: TenantView) => {
+  const handleResendTenantVerificationEmail = async (t: TenantView) => {
     const email = t.email?.trim();
     if (!email) {
       toast({
         title: "Email required",
-        description: "This tenant has no contact email to send a setup link.",
+        description: "This tenant has no contact email to resend verification.",
         status: "warning",
         isClosable: true,
         duration: 5000,
@@ -771,18 +771,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     setResendVerificationTenantId(t.tenant_id);
     try {
-      const res = await authService.resendSetupLink({ email });
+      const res = await authService.resendSetupLink({ email }, { withAuth: true });
       toast({
-        title: "Setup link sent",
+        title: "Verification email sent",
         description:
           res?.message ??
-          `If the account is not yet activated, a new setup link was sent to ${email}.`,
+          `A new activation link was sent to ${email} if the account is not yet activated.`,
         status: "success",
         isClosable: true,
         duration: 8000,
       });
     } catch (err) {
-      console.error("Failed to resend tenant setup link:", err);
+      console.error("Failed to resend tenant verification email:", err);
       const { title, message } = extractErrorInfo(err);
       toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
     } finally {
@@ -1052,7 +1052,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleConfirmStatusUpdate,
     closeStatusDialog,
     resendVerificationTenantId,
-    handleResendTenantSetupLink,
+    handleResendTenantVerificationEmail,
     // Edit user
     isEditUserModalOpen,
     editUserRow,
