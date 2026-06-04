@@ -222,20 +222,12 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
 
-# Auth service — already running natively on port 8081
-AUTH_SERVICE_URL=http://localhost:8081
-
-# OpenSearch — mapped to host port 9204
-OPENSEARCH_URL=http://localhost:9204
-
-# Prometheus / Alertmanager — running in Docker, mapped to host
-PROMETHEUS_URL=http://localhost:9090
-ALERTMANAGER_URL=http://localhost:9095
-
-# Alert rule file paths — local repo paths (service is on the host, not in Docker)
-PROMETHEUS_APPLICATION_ALERTS_PATH=infrastructure/prometheus/rules/application-alerts.yml
-PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH=infrastructure/prometheus/rules/infrastructure-alerts.yml
-ALERTMANAGER_CONFIG_PATH=infrastructure/alertmanager/alertmanager.yml
+# Secondary auth DB — read-only access for RBAC/tenant lookups
+AUTH_DB_NAME=ai4iplatform_auth
+AUTH_DB_USER=postgres
+AUTH_DB_PASSWORD=postgres
+AUTH_DB_HOST=localhost
+AUTH_DB_PORT=5432
 ```
 
 ### Step 6.2: Install Dependencies and Run
@@ -268,25 +260,7 @@ The inference service is the unified multi-task inference orchestration layer. S
 cp services/inference-service/env.template services/inference-service/.env
 ```
 
-Open `services/inference-service/.env` and set:
-
-```bash
-# Service bind address
-HOST=0.0.0.0
-PORT=8090
-
-# Platform Core Service — already running natively on port 8095
-MODEL_MANAGEMENT_SERVICE_URL=http://localhost:8095
-
-# Kafka — mapped to host port 9093
-KAFKA_SERVER=localhost:9093
-
-# OpenTelemetry / Jaeger — OTLP HTTP endpoint mapped to host
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-
-# LLM upstream (optional — only needed if using LLM task type)
-LLM_DEFAULT_ENDPOINT=<YOUR_LLM_UPSTREAM_BASE_URL>
-```
+> **LLM task type only:** If you plan to use LLM inference, open `services/inference-service/.env` and set `LLM_DEFAULT_ENDPOINT=<YOUR_LLM_UPSTREAM_BASE_URL>`.
 
 ### Step 7.2: Install Dependencies and Run
 
@@ -308,7 +282,47 @@ deactivate
 cd ../..
 ```
 
-## Step 8: Access the Platform
+## Step 8: Frontend (Simple UI)
+
+The Simple UI is a Next.js interface for testing ASR, TTS, and NMT services. See [`frontend/simple-ui/README.md`](../frontend/simple-ui/README.md) for full details.
+
+### Step 8.1: Prerequisites
+
+- **Node.js 18+** — verify with `node --version`
+
+### Step 8.2: Configure
+
+```bash
+cp frontend/simple-ui/env.template frontend/simple-ui/.env
+```
+
+Open `frontend/simple-ui/.env` and set the required values:
+
+```bash
+# Point to the API gateway (or inference service if no gateway is deployed locally)
+NEXT_PUBLIC_API_URL=http://localhost:8080
+
+# API key — generate one via the auth service after it is running
+NEXT_PUBLIC_API_KEY=your_api_key_here
+```
+
+The remaining variables (WebSocket URLs, telemetry, Jaeger) can be left as defaults for a minimal local setup.
+
+### Step 8.3: Install Dependencies and Run
+
+```bash
+cd frontend/simple-ui
+npm install
+npm run dev
+```
+
+The UI is available at **http://localhost:3000**.
+
+```bash
+cd ../..
+```
+
+## Step 9: Access the Platform
 
 Once all services are running, use the table below to find URLs and ports.
 
@@ -317,6 +331,7 @@ Once all services are running, use the table below to find URLs and ports.
 | Auth Service | http://localhost:8081/docs | Runs natively |
 | Platform Core Service | http://localhost:8095/docs | Runs natively |
 | Inference Service | http://localhost:8090/docs | Runs natively |
+| Simple UI | http://localhost:3000 | Runs natively (Next.js) |
 | Prometheus | http://localhost:9090 | Docker |
 | Alertmanager | http://localhost:9095 | Docker |
 | Grafana | http://localhost:3001 | Docker |
