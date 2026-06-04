@@ -139,6 +139,7 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
+    user: root
     ports:
       - "9095:9093"
     volumes:
