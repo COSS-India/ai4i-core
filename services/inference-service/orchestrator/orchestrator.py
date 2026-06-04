@@ -15,7 +15,7 @@ from trace.request_span import tracer, get_context_attributes, get_endpoint_path
 
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
-from interfaces.task_service import ITaskService
+from interfaces.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 
@@ -164,7 +164,7 @@ class Orchestrator:
 
     async def _get_task_service(
         self, task_type: str, service_info: Dict[str, Any]
-    ) -> ITaskService:
+    ) -> BaseTaskService:
         """
         Get or instantiate task service for given task_type and resolved service_info.
         Looks up TASK_SERVICE_REGISTRY and instantiates the matching service class.
@@ -291,7 +291,7 @@ class Orchestrator:
 
     async def _execute_task_service(
         self,
-        task_service: ITaskService,
+        task_service: BaseTaskService,
         payload: Dict[str, Any],
         serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> BaseModel:
