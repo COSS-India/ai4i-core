@@ -42,10 +42,10 @@ REDIS_PASSWORD=changeme
 
 ### Option A: Minimal (required services only)
 
-Only `postgres` and `redis` are strictly required for the three application services to start:
+Only `postgres`, `redis`, and `nginx-gateway` are strictly required for the three application services and the frontend to work:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d postgres redis
+docker compose -f docker-compose-local.yml up -d postgres redis nginx-gateway
 ```
 
 ### Option B: Full observability stack (recommended)
@@ -58,7 +58,8 @@ docker compose -f docker-compose-local.yml up -d \
   zookeeper kafka \
   opensearch opensearch-init \
   prometheus alertmanager grafana node-exporter \
-  fluent-bit opensearch-dashboards
+  fluent-bit opensearch-dashboards \
+  nginx-gateway
 ```
 
 
@@ -294,7 +295,7 @@ cp frontend/simple-ui/env.template frontend/simple-ui/.env
 Open `frontend/simple-ui/.env` and set the required values:
 
 ```bash
-# Point to the API gateway (or inference service if no gateway is deployed locally)
+# Point to the nginx API gateway running in Docker
 NEXT_PUBLIC_API_URL=http://localhost:8080
 
 # API key — generate one via the auth service after it is running
@@ -302,6 +303,8 @@ NEXT_PUBLIC_API_KEY=your_api_key_here
 ```
 
 The remaining variables (WebSocket URLs, telemetry, Jaeger) can be left as defaults for a minimal local setup.
+
+> **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
 
 ### Step 8.3: Install Dependencies and Run
 
@@ -327,6 +330,7 @@ Once all services are running, use the table below to find URLs and ports.
 | Platform Core Service | http://localhost:8095/docs | Runs natively |
 | Inference Service | http://localhost:8090/docs | Runs natively |
 | Simple UI | http://localhost:3000 | Runs natively (Next.js) |
+| **Nginx Gateway** | **http://localhost:8080** | **Docker — API gateway for the frontend** |
 | Prometheus | http://localhost:9090 | Docker |
 | Alertmanager | http://localhost:9095 | Docker |
 | Grafana | http://localhost:3001 | Docker |
@@ -419,6 +423,7 @@ netstat -ano | findstr <port>
 |---|---|---|
 | PostgreSQL, Redis, Kafka, Zookeeper | Docker Compose | `docker compose -f docker-compose-local.yml restart <service>` |
 | Prometheus, Alertmanager, Grafana, OpenSearch, Fluent Bit | Docker Compose | same |
+| `nginx-gateway` | Docker Compose | `docker compose -f docker-compose-local.yml restart nginx-gateway` |
 | `auth-service` | Native — uvicorn | restart the terminal process |
 | `platform-core-service` | Native — uvicorn | restart the terminal process |
 | `inference-service` | Native — python3 main.py / uvicorn | restart the terminal process |
