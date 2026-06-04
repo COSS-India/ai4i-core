@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict, List
 
 from services.base.audio_base import AudioBase
+from services.base.task_service import PostProcessFormat
 
 
 class AudioLanguageDetectionTaskService(AudioBase):
@@ -14,11 +15,11 @@ class AudioLanguageDetectionTaskService(AudioBase):
     Triton I/O from AudioBase; only the response shape is ALD-specific.
     """
 
-    async def postprocess(self, payload, response_items, source_texts):
-        cfg = payload.get("config") or {}
+    async def postprocess_output(self, result: PostProcessFormat):
+        cfg = result.payload.get("config") or {}
         return {
             "taskType": "audio-lang-detection",
-            "output": self._unwrap_output_items(response_items),
+            "output": self._unwrap_output_items(result.response_data),
             "config": {"serviceId": cfg.get("serviceId")},
         }
 

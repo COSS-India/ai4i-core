@@ -1,20 +1,21 @@
 """Language Detection TaskService."""
 import json
 from services.base.text_base import TextBase
+from services.base.task_service import PostProcessFormat
 
 
 class LanguageDetectionTaskService(TextBase):
     # No language config required — language is DETECTED not specified
     # Base validate_request handles input existence; language block skipped.
 
-    async def postprocess(self, payload, response_items, source_texts):
+    async def postprocess_output(self, result: PostProcessFormat):
         """
         Return output items with 'source' (input text) and 'langPrediction'
         as a list of prediction objects: [{langCode, scriptCode, langScore, language}, ...]
         """
         output_list = []
-        sources = source_texts or []
-        items = response_items if isinstance(response_items, list) else [response_items]
+        sources = result.source_texts
+        items = result.response_data
         for idx, item in enumerate(items):
             raw_value = item.get("langPrediction", "") if isinstance(item, dict) else item
             # Unwrap Triton KServe v2 nesting: only peel [bytes] or [string] wrappers

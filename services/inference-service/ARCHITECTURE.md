@@ -106,12 +106,16 @@ All 7 steps have been completed. The monolith inference service now provides a u
 
 ### 2. **Pipeline Base** (`services/base/task_service.py`)
 - **`BaseTaskService`** — pipeline template all services inherit (Template Method):
-  - `process()` — the template; never overridden
-  - `validate_request()` — input validation (modality bases + task overrides)
-  - `preprocess_input()` — data preprocessing (modality bases + ASR)
-  - `execute_triton_inference()` — Triton call topology
+  ```
+  process():
+      validate_request(payload)                      # throws on bad input
+      preprocessed = preprocess_input(payload)
+      result: PostProcessFormat = run_inference(preprocessed)
+      return postprocess_output(result)
+  ```
+  - `run_inference()` — Triton call topology, returns `PostProcessFormat`
     (base = one batch call; AudioBase = per-item; TTS = per-chunk)
-  - `postprocess()` — output shaping + response envelope (one per task)
+  - `postprocess_output(result)` — output shaping + response envelope (one per task)
   - `payload_key` — modality input key (`input` / `audio` / `image`)
 - Span handling lives in `trace/request_span.py` (`traced_inference`,
   `finalize_span`) — no tracing code in the service classes.
@@ -213,13 +217,13 @@ Orchestrator.route_inference(payload)
         TaskFactory.create_service(task_type, dependencies)
                 ↓
         TaskService.process(payload, serviceInfo)
-                ├─ Validate request
-                ├─ Preprocess input (payload[payload_key])
-                ├─ execute_triton_inference (inside ai-inference span)
+                ├─ validate_request
+                ├─ preprocess_input (payload → preprocessed payload)
+                ├─ run_inference → PostProcessFormat (inside ai-inference span)
                 │   ├─ Convert payload to Triton format (GenericTritonMapper)
                 │   ├─ Call Triton inference server
                 │   └─ Convert Triton output to task format
-                └─ postprocess (output shaping + envelope)
+                └─ postprocess_output (output shaping + envelope)
                 └─ Postprocess output
                         ↓
         Response (JSON)

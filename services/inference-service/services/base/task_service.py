@@ -3,7 +3,21 @@ Base class defining the contract and shared pipeline for all inference task serv
 """
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class PostProcessFormat:
+    """
+    Result of run_inference, consumed by postprocess_output.
+
+    payload carries the (preprocessed) request so postprocess_output can echo
+    config / build the task envelope without a second parameter.
+    """
+    payload: Dict[str, Any]
+    response_data: List[Dict[str, Any]]
+    source_texts: List[str] = field(default_factory=list)
 
 
 class BaseTaskService:
@@ -11,14 +25,17 @@ class BaseTaskService:
     Base class providing the common inference pipeline for all task services
     (Template Method pattern):
 
-        process() → validate_request → preprocess_input
-                  → execute_triton_inference → postprocess
+        process():
+            validate_request(payload)                       # throws on bad input
+            preprocessed = preprocess_input(payload)
+            result: PostProcessFormat = run_inference(preprocessed)
+            return postprocess_output(result)
 
     Subclasses set `payload_key` for their modality and implement
-    postprocess(). They may override validate_request(),
-    preprocess_input(), or execute_triton_inference() (e.g. AudioBase's
-    per-item loop, TTS's per-chunk loop) as needed. process() is the
-    template — never overridden.
+    postprocess_output(). They may override validate_request(),
+    preprocess_input(), or run_inference() (e.g. AudioBase's per-item
+    loop, TTS's per-chunk loop) as needed. process() is the template —
+    never overridden.
 
     The resolved service dict (endpoint, model name, adapter_config, api_key)
     lives in self.service_info — injected via the constructor or adopted by
@@ -51,7 +68,7 @@ class BaseTaskService:
     ) -> Any:
         """
         Execute the complete inference pipeline (Template Method).
-        validate → preprocess → execute_triton_inference → postprocess.
+        validate → preprocess → run_inference → postprocess_output.
 
         This is the main entry point - Orchestrator calls this method with raw payload.
 
@@ -73,19 +90,10 @@ class BaseTaskService:
         # Shallow copy so preprocessing mutations don't affect the caller's original dict
         payload = dict(payload)
 
-        # 1. Validate request
         await self.validate_request(payload)
-
-        # 2. Preprocess the modality input list (payload[self.payload_key])
-        input_data = payload.get(self.payload_key) or []
-        if input_data:
-            payload[self.payload_key] = await self.preprocess_input(input_data)
-
-        # 3. Run inference, then shape the response
-        result = await self.execute_triton_inference(payload)
-        return await self.postprocess(
-            payload, result["response_data"], result["source_texts"]
-        )
+        preprocessed = await self.preprocess_input(payload)
+        result = await self.run_inference(preprocessed)
+        return await self.postprocess_output(result)
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
@@ -101,36 +109,31 @@ class BaseTaskService:
         if payload is None:
             raise ValueError(f"{self.task_name}: Request cannot be None")
 
-    async def preprocess_input(self, input_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
+        Return the payload with its modality input list preprocessed.
         Identity by default — modality bases override with real preprocessing
-        (text sanitization, audio/image URI resolution, ASR float decode).
-        process() only calls this with a non-empty input list; emptiness is
-        rejected earlier by validate_request.
+        (text sanitization, audio/image URI resolution, ASR float decode),
+        transforming payload[self.payload_key] in place and returning payload.
+        Emptiness is rejected earlier by validate_request.
         """
-        return input_data
+        return payload
 
-    async def postprocess(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Any:
+    async def postprocess_output(self, result: PostProcessFormat) -> Any:
         """
-        Build the task response from mapped Triton output:
+        Build the task response from the inference result:
         shape the output items AND assemble the response envelope
         (taskType, config echo) in one place.
 
         Args:
-            payload: Original request payload (for config echo)
-            response_items: Output dicts from convert_triton_output_to_task_format
-            source_texts: Parallel list of input sources (text) or audio URIs
+            result: PostProcessFormat with the (preprocessed) payload,
+                    mapped Triton output items, and parallel source texts
 
         Returns:
             Task-specific response (dict or typed model)
         """
         raise NotImplementedError(
-            f"{self.task_name} must implement postprocess"
+            f"{self.task_name} must implement postprocess_output"
         )
 
     @staticmethod
@@ -139,7 +142,7 @@ class BaseTaskService:
         Peel single-element list/tuple nesting and decode bytes to str.
 
         Triton KServe v2 returns tensors as flat lists (shape [1,1] → [["hi"]]);
-        after mapping they may still be wrapped. Shared by postprocess
+        after mapping they may still be wrapped. Shared by postprocess_output
         implementations so each service doesn't hand-roll the same loop.
         """
         while isinstance(value, (list, tuple)) and len(value) == 1:
@@ -175,16 +178,13 @@ class BaseTaskService:
                 extracted.append('')
         return extracted
 
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
         """
         Generic adapter_config-driven Triton inference: one Triton call for the
         whole input batch, mapped via GenericTritonMapper.
 
         Reads the resolved service from self.service_info.
         Override for modality-specific loops (see AudioBase / TTS).
-
-        Returns:
-            {"response_data": [...], "source_texts": [...], "service_id": str}
         """
         from services.base.config_mapper import GenericTritonMapper
         # Lazy import — trace setup happens at app init, after this module loads.
@@ -192,7 +192,6 @@ class BaseTaskService:
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
 
         async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-            service_id = self.service_info.get('service_id', '')
             model_name = self.service_info.get('name', '')
             triton_endpoint = self.service_info.get('endpoint', '')
             api_key = self.service_info.get('api_key')
@@ -234,11 +233,11 @@ class BaseTaskService:
             span_ctx["output_type"] = get_output_type(response_data)
             span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
 
-            return {
-                "response_data": response_data,
-                "source_texts": source_texts,
-                "service_id": service_id,
-            }
+            return PostProcessFormat(
+                payload=payload,
+                response_data=response_data,
+                source_texts=source_texts,
+            )
 
     async def _call_triton_inference(
         self,

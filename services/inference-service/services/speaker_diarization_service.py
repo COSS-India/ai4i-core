@@ -14,6 +14,7 @@ Triton tensor contract (adapter_config from MMS):
 from typing import Any, Dict, List, Tuple
 
 from services.base.audio_base import AudioBase
+from services.base.task_service import PostProcessFormat
 from services.base.config_mapper import GenericTritonMapper
 
 
@@ -42,15 +43,10 @@ class SpeakerDiarizationTaskService(AudioBase):
             context_builder=self._build_audio_context,
         )
 
-    async def postprocess(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         output_list = []
 
-        for item in response_items:
+        for item in result.response_data:
             # Try the well-known key first; fall back to the first value in the
             # dict so different adapter_config maps_to names still work.
             raw = item.get("diarization_json") or next(iter(item.values()), None)
@@ -82,7 +78,7 @@ class SpeakerDiarizationTaskService(AudioBase):
                 "segments": segments,
             })
 
-        cfg = payload.get("config") or {}
+        cfg = result.payload.get("config") or {}
         return {
             "taskType": "speaker-diarization",
             "output": output_list,

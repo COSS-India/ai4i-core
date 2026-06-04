@@ -1,9 +1,10 @@
 """OCR TaskService — image-to-text inference (Surya and compatible models)."""
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from services.base.image_base import ImageBase
+from services.base.task_service import PostProcessFormat
 
 
 class OCRTaskService(ImageBase):
@@ -14,12 +15,7 @@ class OCRTaskService(ImageBase):
     I/O from ImageBase; only the output shaping is OCR-specific.
     """
 
-    async def postprocess(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         """Unwrap Surya envelope → shape as {source: <extracted text>, target: ""}
         (NMT-style source/target pairing; target is empty for OCR), plus the
         request config echoed verbatim. We deliberately do NOT synthesize
@@ -29,11 +25,11 @@ class OCRTaskService(ImageBase):
         Bytes were already decoded to UTF-8 strings by GenericTritonMapper."""
         output_list = [
             {"source": self._unwrap_surya_envelope(item.get("text", "")), "target": ""}
-            for item in response_items
+            for item in result.response_data
         ]
         return {
             "output": output_list,
-            "config": payload.get("config"),
+            "config": result.payload.get("config"),
         }
 
     # ------------------------------------------------------------------

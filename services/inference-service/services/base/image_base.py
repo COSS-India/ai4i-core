@@ -4,7 +4,7 @@ ImageBase — base class for image-backed inference services.
 Works on raw payload dicts (same contract as TextBase / BaseTaskService):
   validate_request   → ensures payload['image'] is non-empty and each item carries content/uri
   preprocess_input   → normalizes each item to base64 under 'image_content'
-  payload_key        → 'image'; the base execute_triton_inference does the rest
+  payload_key        → 'image'; the base run_inference does the rest
 
 All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
 via the adapter_config sourced from MMS — concrete task services don't reimplement it.
@@ -43,14 +43,15 @@ class ImageBase(BaseTaskService):
                     f"{self.task_name}: image[{idx}] requires imageContent or imageUri"
                 )
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize each image to base64 under 'image_content' (downloads URI if needed)."""
         items: List[Dict[str, Any]] = []
-        for item in input_data:
+        for item in payload.get(self.payload_key) or []:
             d = dict(item) if isinstance(item, dict) else item
             d["image_content"] = await self._resolve_image_base64(d)
             items.append(d)
-        return items
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
     # Image input helpers

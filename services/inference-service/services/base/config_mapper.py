@@ -181,7 +181,7 @@ class GenericTritonMapper:
         return items
 
     # ------------------------------------------------------------------
-    # BaseTaskService interface — execute_triton_inference calls these
+    # BaseTaskService interface — run_inference calls these
     # ------------------------------------------------------------------
 
     async def convert_payload_to_triton_format(

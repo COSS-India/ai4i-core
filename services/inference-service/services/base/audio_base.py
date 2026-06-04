@@ -7,7 +7,7 @@ Inherits the BaseTaskService pipeline (process → validate → preprocess →
 execute → postprocess) and overrides:
   validate_request          → common audio validation (audio items only)
   preprocess_input          → base64 passthrough (downloads audio_uri if needed)
-  execute_triton_inference  → one Triton call per audio item (vs. one batch call)
+  run_inference             → one Triton call per audio item (vs. one batch call)
   convert_* hooks           → adapter_config-driven via GenericTritonMapper
 
 The passthrough default fits tasks where Triton decodes audio internally
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from services.base.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService, PostProcessFormat
 from services.base.config_mapper import GenericTritonMapper
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class AudioBase(BaseTaskService):
     # Preprocessing — base64 passthrough (default)
     # ------------------------------------------------------------------
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         No float decode. Each item is passed through as-is.
         If only audioUri is provided, downloads and base64-encodes it
@@ -70,6 +70,7 @@ class AudioBase(BaseTaskService):
 
         ASR overrides this with its float-PCM pipeline (see asr_service.py).
         """
+        input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
 
@@ -83,14 +84,15 @@ class AudioBase(BaseTaskService):
                     d = dict(d)
                     d["audio_content"] = await self._resolve_audio_base64(item)
             items.append(d)
-        return items
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
-    # execute_triton_inference — audio-specific override
+    # run_inference — audio-specific override
     # ------------------------------------------------------------------
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
         """
-        Audio inference loop — overrides BaseTaskService.execute_triton_inference.
+        Audio inference loop — overrides BaseTaskService.run_inference.
 
         Differences from the text base:
           - Calls Triton once per audio item (one file per call)
@@ -104,7 +106,6 @@ class AudioBase(BaseTaskService):
         from trace.span_attributes import get_output_type, count_input_tokens, count_output_tokens
 
         async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-            service_id      = self.service_info.get("service_id", "")
             model_name      = self.service_info.get("name", "")
             triton_endpoint = self.service_info.get("endpoint", "")
             api_key         = self.service_info.get("api_key")
@@ -171,11 +172,11 @@ class AudioBase(BaseTaskService):
             span_ctx["output_type"] = get_output_type(all_response_data)
             span_ctx["output_tokens"] = count_output_tokens(all_response_data, span_ctx["output_type"])
 
-            return {
-                "response_data": all_response_data,
-                "source_texts": source_uris,
-                "service_id": service_id,
-            }
+            return PostProcessFormat(
+                payload=payload,
+                response_data=all_response_data,
+                source_texts=source_uris,
+            )
 
     # ------------------------------------------------------------------
     # Triton format hooks — adapter_config driven (default)

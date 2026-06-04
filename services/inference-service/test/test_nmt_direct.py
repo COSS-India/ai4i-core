@@ -6,7 +6,7 @@ Tests each pipeline stage in isolation:
   1. validate_request      — valid + four error paths
   2. preprocess_input      — sanitisation
   3. payload_key           — modality input key
-  4. postprocess        — pairing + unwrap, returns plain dict with output list
+  4. postprocess_output    — pairing + unwrap, returns plain dict with output list
   5. process               — full pipeline with mocked GenericTritonMapper + Triton
 
 Triton HTTP is mocked via unittest.mock so no running server is needed.
@@ -15,7 +15,7 @@ Triton HTTP is mocked via unittest.mock so no running server is needed.
 import asyncio
 import logging
 import sys
-from typing import Any, Dict, List
+from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -123,13 +123,13 @@ async def test_preprocess_input():
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
-    raw = [
+    payload = {"input": [
         {"source": "  Hello   world  "},
         {"source": "\nWhat is the weather?\r"},
         {"source": ""},
         {"source": None},
-    ]
-    result = await service.preprocess_input(raw)
+    ], "config": {}}
+    result = (await service.preprocess_input(payload))["input"]
 
     assert len(result) == 4
     assert result[0]["source"] == "Hello world"  # internal whitespace collapsed by _normalize_text
@@ -147,7 +147,7 @@ async def test_payload_key():
     logger.info("   [PASS] payload_key is 'input'")
 
 
-async def test_postprocess():
+async def test_postprocess_output():
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -158,7 +158,10 @@ async def test_postprocess():
     response_items = [{"target": ["नमस्ते"]}, {"target": b"\xe0\xa4\x86\xe0\xa4\xaa\xe0\xa4\x95\xe0\xa4\xbe \xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\xae \xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\xaf\xe0\xa4\xbe \xe0\xa4\xb9\xe0\xa5\x88?"}]
     source_texts = ["Hello", "What is your name?"]
 
-    response = await service.postprocess(payload, response_items, source_texts)
+    from services.base.task_service import PostProcessFormat
+    response = await service.postprocess_output(
+        PostProcessFormat(payload=payload, response_data=response_items, source_texts=source_texts)
+    )
     assert "output" in response
     assert len(response["output"]) == 2
     assert isinstance(response["output"][0], dict)
@@ -189,7 +192,7 @@ async def test_process_full():
 
     mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
 
-    # execute_triton_inference instantiates GenericTritonMapper from its module —
+    # run_inference instantiates GenericTritonMapper from its module —
     # patch the class there so the mock mapper is used.
     with patch(
         "services.base.config_mapper.GenericTritonMapper",
@@ -230,7 +233,6 @@ async def test_process_missing_endpoint():
 
 async def test_resolver_url_construction():
     """InferenceServerResolver builds /api/v1/services/{id} regardless of trailing slash."""
-    import os
     from unittest.mock import patch as _patch
     from inference.inference_server_resolver import InferenceServerResolver
 
@@ -280,7 +282,7 @@ async def run_all():
         ("validate_request — error paths", test_validate_request_errors),
         ("preprocess_input — sanitise", test_preprocess_input),
         ("payload_key", test_payload_key),
-        ("postprocess — pairing + unwrap", test_postprocess),
+        ("postprocess_output — pairing + unwrap", test_postprocess_output),
         ("process — full pipeline (mocked)", test_process_full),
         ("process — missing endpoint", test_process_missing_endpoint),
         ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),

@@ -9,6 +9,7 @@ import scipy.io.wavfile as wav_io
 import scipy.signal as sps
 
 from services.base.text_base import TextBase
+from services.base.task_service import PostProcessFormat
 from services.base.config_mapper import GenericTritonMapper
 from pydub import AudioSegment
 
@@ -31,22 +32,22 @@ class TTSTaskService(TextBase):
 
     Extends TextBase for text validation and normalization. Follows the
     standard pipeline with TTS-specific hook implementations:
-      execute_triton_inference → per-item chunking (≤ 400 chars per Triton
+      run_inference → per-item chunking (≤ 400 chars per Triton
                                  call), audio concatenation across chunks
-      postprocess           → resample, duration-adjust, encode to
+      postprocess_output    → resample, duration-adjust, encode to
                                  audioFormat, base64 + response envelope
     """
 
     # ------------------------------------------------------------------
-    # execute_triton_inference — chunked Triton loop (TTS call pattern)
+    # run_inference — chunked Triton loop (TTS call pattern)
     # ------------------------------------------------------------------
 
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
         """
         For each input item: normalize text → chunk (≤ 400 chars) → Triton
         call per chunk → concatenate FP32 arrays → int16.
         Returns one response item per input with the raw synthesized audio
-        at _TRITON_SAMPLE_RATE; postprocess does the shaping.
+        at _TRITON_SAMPLE_RATE; postprocess_output does the shaping.
         """
         from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens
@@ -119,22 +120,18 @@ class TTSTaskService(TextBase):
 
             span_ctx["output_tokens"] = len(response_data)
 
-            return {
-                "response_data": response_data,
-                "source_texts": source_texts,
-                "service_id": self.service_info.get("service_id", ""),
-            }
+            return PostProcessFormat(
+                payload=payload,
+                response_data=response_data,
+                source_texts=source_texts,
+            )
 
     # ------------------------------------------------------------------
-    # postprocess — resample / duration-adjust / encode + envelope
+    # postprocess_output — resample / duration-adjust / encode + envelope
     # ------------------------------------------------------------------
 
-    async def postprocess(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
+        payload = result.payload
         config: Dict[str, Any] = payload.get("config") or {}
         source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
         target_rate  = self._validated_sample_rate(config)
@@ -143,7 +140,7 @@ class TTSTaskService(TextBase):
         audio_outputs: List[Dict[str, Any]] = []
         durations: List[float] = []
 
-        for item in response_items:
+        for item in result.response_data:
             combined = item["samples"]
             audio_duration = self._validated_duration(item.get("audioDuration"))
 

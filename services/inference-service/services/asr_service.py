@@ -8,6 +8,7 @@ import numpy as np
 import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
+from services.base.task_service import PostProcessFormat
 from services.base.config_mapper import GenericTritonMapper
 
 
@@ -63,7 +64,7 @@ class ASRTaskService(AudioBase):
     # Preprocessing — float-PCM pipeline (overrides base64 passthrough)
     # ------------------------------------------------------------------
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Float-PCM preprocessing pipeline, applied to each item in sequence:
           1. Get raw audio bytes (base64 decode or URI download)
@@ -73,6 +74,7 @@ class ASRTaskService(AudioBase):
           5. _equalize_amplitude
         Returns list of item dicts enriched with samples / num_samples / sample_rate.
         """
+        input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
         items = []
@@ -93,7 +95,8 @@ class ASRTaskService(AudioBase):
             d["sample_rate"] = self.TARGET_SAMPLE_RATE
             items.append(d)
 
-        return items
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
     # Triton format hooks
@@ -233,19 +236,14 @@ class ASRTaskService(AudioBase):
     # Output
     # ------------------------------------------------------------------
 
-    async def postprocess(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         """Decode bytes → wrap in TranscriptionOutput list.
 
-        source_texts (the audio URIs collected by AudioBase) is intentionally
-        unused: per the ULCA ASR contract, output[].source carries the
-        transcript itself. Transcripts map to audio items by index.
+        result.source_texts (the audio URIs collected by AudioBase) is
+        intentionally unused: per the ULCA ASR contract, output[].source
+        carries the transcript itself. Transcripts map to audio items by index.
         """
-        decoded = await self._decode_output_bytes(response_items)
+        decoded = await self._decode_output_bytes(result.response_data)
         return self._wrap_transcription_output(decoded)
 
     async def _decode_transcript(self, transcript: Any) -> str:
