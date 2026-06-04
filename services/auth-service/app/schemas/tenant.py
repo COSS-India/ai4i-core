@@ -21,6 +21,13 @@ _INVISIBLE_CHARS = re.compile(
     "[\u00ad\u200b\u200c\u200d\u200e\u200f\u2028\u2029\ufeff]+"
 )
 
+# Unicode letters + digits + spaces/hyphens/dots/apostrophes (organisation names)
+_ORG_RE = re.compile(r"^(?:[^\W_]|[ \-\.\'])+$", re.UNICODE)
+# Unicode letters + spaces/hyphens/apostrophes (personal names)
+_NAME_RE = re.compile(r"^(?:[^\W\d_]|[ \-\'])+$", re.UNICODE)
+# E.164 phone: + followed by 2\u201315 digits
+_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
+
 
 class TenantUserRole(str, Enum):
     """Roles assignable to users provisioned under a tenant."""
@@ -30,19 +37,75 @@ class TenantUserRole(str, Enum):
 
 
 class TenantCreate(BaseSchema):
-    contact_name: str = Field(..., min_length=1, max_length=255)
-    organisation: str = Field(..., min_length=1, max_length=255)
+    contact_name: str = Field(..., min_length=2, max_length=80)
+    organisation: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
-    phone_number: Optional[str] = Field(None, max_length=20)
+    phone_number: Optional[str] = Field(None, max_length=16)
     plan_id: Optional[UUID] = None
+
+    @field_validator("organisation", "contact_name", mode="before")
+    @classmethod
+    def _clean_text(cls, v: str) -> str:
+        if isinstance(v, str):
+            return _INVISIBLE_CHARS.sub("", v).strip()
+        return v
+
+    @field_validator("organisation", mode="after")
+    @classmethod
+    def _validate_organisation(cls, v: str) -> str:
+        if not _ORG_RE.match(v):
+            raise ValueError("may only contain letters, digits, spaces, hyphens, dots, and apostrophes")
+        return v
+
+    @field_validator("contact_name", mode="after")
+    @classmethod
+    def _validate_contact_name(cls, v: str) -> str:
+        if not _NAME_RE.match(v):
+            raise ValueError("may only contain letters, spaces, hyphens, and apostrophes")
+        return v
+
+    @field_validator("phone_number", mode="after")
+    @classmethod
+    def _validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _E164_RE.match(v):
+            raise ValueError("must be in E.164 format (e.g. +919876543210)")
+        return v
 
 
 class TenantUpdate(BaseSchema):
-    contact_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    organisation: Optional[str] = Field(None, min_length=1, max_length=255)
+    contact_name: Optional[str] = Field(None, min_length=2, max_length=80)
+    organisation: Optional[str] = Field(None, min_length=2, max_length=100)
     email: Optional[EmailStr] = None
-    phone_number: Optional[str] = Field(None, max_length=20)
+    phone_number: Optional[str] = Field(None, max_length=16)
     status: Optional[TenantStatus] = None
+
+    @field_validator("organisation", "contact_name", mode="before")
+    @classmethod
+    def _clean_text(cls, v: str) -> str:
+        if isinstance(v, str):
+            return _INVISIBLE_CHARS.sub("", v).strip()
+        return v
+
+    @field_validator("organisation", mode="after")
+    @classmethod
+    def _validate_organisation(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _ORG_RE.match(v):
+            raise ValueError("may only contain letters, digits, spaces, hyphens, dots, and apostrophes")
+        return v
+
+    @field_validator("contact_name", mode="after")
+    @classmethod
+    def _validate_contact_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _NAME_RE.match(v):
+            raise ValueError("may only contain letters, spaces, hyphens, and apostrophes")
+        return v
+
+    @field_validator("phone_number", mode="after")
+    @classmethod
+    def _validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _E164_RE.match(v):
+            raise ValueError("must be in E.164 format (e.g. +919876543210)")
+        return v
 
 
 class TenantStatusUpdate(BaseSchema):
@@ -71,8 +134,8 @@ class TenantResponse(BaseSchema):
 
 class TenantUserCreate(BaseSchema):
     email: EmailStr
-    full_name: str = Field(..., min_length=1, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
+    full_name: str = Field(..., min_length=2, max_length=80)
+    phone_number: Optional[str] = Field(None, max_length=16)
     role: TenantUserRole = TenantUserRole.USER
 
     @field_validator("full_name", mode="before")
@@ -80,6 +143,20 @@ class TenantUserCreate(BaseSchema):
     def strip_full_name(cls, v: str) -> str:
         if isinstance(v, str):
             return _INVISIBLE_CHARS.sub("", v).strip()
+        return v
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: str) -> str:
+        if not _NAME_RE.match(v):
+            raise ValueError("may only contain letters, spaces, hyphens, and apostrophes")
+        return v
+
+    @field_validator("phone_number", mode="after")
+    @classmethod
+    def _validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _E164_RE.match(v):
+            raise ValueError("must be in E.164 format (e.g. +919876543210)")
         return v
 
 
@@ -112,10 +189,31 @@ class TenantUserStatusUpdate(BaseSchema):
 
 class TenantUserUpdate(BaseSchema):
     email: Optional[EmailStr] = None
-    full_name: Optional[str] = Field(None, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
+    full_name: Optional[str] = Field(None, min_length=2, max_length=80)
+    phone_number: Optional[str] = Field(None, max_length=16)
     username: Optional[str] = Field(None, min_length=3, max_length=100)
     role: Optional[TenantUserRole] = None
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _strip_full_name(cls, v: str) -> str:
+        if isinstance(v, str):
+            return _INVISIBLE_CHARS.sub("", v).strip()
+        return v
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _NAME_RE.match(v):
+            raise ValueError("may only contain letters, spaces, hyphens, and apostrophes")
+        return v
+
+    @field_validator("phone_number", mode="after")
+    @classmethod
+    def _validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _E164_RE.match(v):
+            raise ValueError("must be in E.164 format (e.g. +919876543210)")
+        return v
 
     @model_validator(mode='after')
     def at_least_one_field(self) -> 'TenantUserUpdate':
