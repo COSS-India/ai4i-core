@@ -1,6 +1,7 @@
 """OpenSearch client for querying traces."""
 
 import logging
+import os
 from typing import Optional, Dict, Any
 from opensearchpy import OpenSearch
 
@@ -14,7 +15,7 @@ class OpenSearchTraceClient:
         self,
         url: str = "http://localhost:9203",
         username: str = "admin",
-        password: str = "admin",
+        password: str = os.environ.get("OPENSEARCH_PASSWORD", ""),
         index: str = "traces",
         verify_certs: bool = False,
     ):
