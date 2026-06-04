@@ -33,7 +33,7 @@ class TTSTaskService(TextBase):
     standard pipeline with TTS-specific hook implementations:
       execute_triton_inference → per-item chunking (≤ 400 chars per Triton
                                  call), audio concatenation across chunks
-      build_response           → resample, duration-adjust, encode to
+      postprocess           → resample, duration-adjust, encode to
                                  audioFormat, base64 + response envelope
     """
 
@@ -46,7 +46,7 @@ class TTSTaskService(TextBase):
         For each input item: normalize text → chunk (≤ 400 chars) → Triton
         call per chunk → concatenate FP32 arrays → int16.
         Returns one response item per input with the raw synthesized audio
-        at _TRITON_SAMPLE_RATE; build_response does the shaping.
+        at _TRITON_SAMPLE_RATE; postprocess does the shaping.
         """
         from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens
@@ -126,10 +126,10 @@ class TTSTaskService(TextBase):
             }
 
     # ------------------------------------------------------------------
-    # build_response — resample / duration-adjust / encode + envelope
+    # postprocess — resample / duration-adjust / encode + envelope
     # ------------------------------------------------------------------
 
-    async def build_response(
+    async def postprocess(
         self,
         payload: Dict[str, Any],
         response_items: List[Dict[str, Any]],

@@ -21,7 +21,7 @@ class ASRTaskService(AudioBase):
       preprocess_input                  → bytes → decode → mono → resample (16 kHz) → equalize
       convert_payload_to_triton_format  → GenericTritonMapper + samples context
       _build_audio_context              → exposes audio.samples (not audio_content)
-      build_response                    → decode bytes → TranscriptionOutput list
+      postprocess                    → decode bytes → TranscriptionOutput list
 
     service_info (including adapter_config) is injected by the Orchestrator.
     """
@@ -233,7 +233,7 @@ class ASRTaskService(AudioBase):
     # Output
     # ------------------------------------------------------------------
 
-    async def build_response(
+    async def postprocess(
         self,
         payload: Dict[str, Any],
         response_items: List[Dict[str, Any]],

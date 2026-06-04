@@ -24,7 +24,7 @@ class TransliterationTaskService(TextBase):
         tgt = self._extract_target_lang(self._get_language(payload))
         self.logger.info(f"Transliteration: {src} -> {tgt} (sentence={is_sentence}, top_k={num_suggestions}, {len(payload.get('input', []))} inputs)")
 
-    async def build_response(self, payload, response_items, source_texts):
+    async def postprocess(self, payload, response_items, source_texts):
         paired = self._pair_with_sources(response_items, source_texts or [])
         output_list = []
         for item in paired:

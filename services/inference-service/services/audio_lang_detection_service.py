@@ -14,7 +14,7 @@ class AudioLanguageDetectionTaskService(AudioBase):
     Triton I/O from AudioBase; only the response shape is ALD-specific.
     """
 
-    async def build_response(self, payload, response_items, source_texts):
+    async def postprocess(self, payload, response_items, source_texts):
         cfg = payload.get("config") or {}
         return {
             "taskType": "audio-lang-detection",

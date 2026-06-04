@@ -12,10 +12,10 @@ class BaseTaskService:
     (Template Method pattern):
 
         process() → validate_request → preprocess_input
-                  → execute_triton_inference → build_response
+                  → execute_triton_inference → postprocess
 
     Subclasses set `payload_key` for their modality and implement
-    build_response(). They may override validate_request(),
+    postprocess(). They may override validate_request(),
     preprocess_input(), or execute_triton_inference() (e.g. AudioBase's
     per-item loop, TTS's per-chunk loop) as needed. process() is the
     template — never overridden.
@@ -51,7 +51,7 @@ class BaseTaskService:
     ) -> Any:
         """
         Execute the complete inference pipeline (Template Method).
-        validate → preprocess → execute_triton_inference → build_response.
+        validate → preprocess → execute_triton_inference → postprocess.
 
         This is the main entry point - Orchestrator calls this method with raw payload.
 
@@ -83,7 +83,7 @@ class BaseTaskService:
 
         # 3. Run inference, then shape the response
         result = await self.execute_triton_inference(payload)
-        return await self.build_response(
+        return await self.postprocess(
             payload, result["response_data"], result["source_texts"]
         )
 
@@ -110,7 +110,7 @@ class BaseTaskService:
         """
         return input_data
 
-    async def build_response(
+    async def postprocess(
         self,
         payload: Dict[str, Any],
         response_items: List[Dict[str, Any]],
@@ -130,7 +130,7 @@ class BaseTaskService:
             Task-specific response (dict or typed model)
         """
         raise NotImplementedError(
-            f"{self.task_name} must implement build_response"
+            f"{self.task_name} must implement postprocess"
         )
 
     @staticmethod
@@ -139,7 +139,7 @@ class BaseTaskService:
         Peel single-element list/tuple nesting and decode bytes to str.
 
         Triton KServe v2 returns tensors as flat lists (shape [1,1] → [["hi"]]);
-        after mapping they may still be wrapped. Shared by build_response
+        after mapping they may still be wrapped. Shared by postprocess
         implementations so each service doesn't hand-roll the same loop.
         """
         while isinstance(value, (list, tuple)) and len(value) == 1:

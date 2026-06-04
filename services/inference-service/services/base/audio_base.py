@@ -4,7 +4,7 @@ AudioBase — base class for all audio-backed inference services.
 Covers: ASR, Audio Language Detection, Language Diarization, Speaker Diarization.
 
 Inherits the BaseTaskService pipeline (process → validate → preprocess →
-execute → build_response) and overrides:
+execute → postprocess) and overrides:
   validate_request          → common audio validation (audio items only)
   preprocess_input          → base64 passthrough (downloads audio_uri if needed)
   execute_triton_inference  → one Triton call per audio item (vs. one batch call)
@@ -12,7 +12,7 @@ execute → build_response) and overrides:
 
 The passthrough default fits tasks where Triton decodes audio internally
 (ALD, Speaker Diarization, Language Diarization) — they extend this class
-directly and implement build_response. ASR is the exception: it needs
+directly and implement postprocess. ASR is the exception: it needs
 float-PCM preprocessing and overrides preprocess_input plus the convert
 hooks in asr_service.py.
 
@@ -157,7 +157,7 @@ class AudioBase(BaseTaskService):
                 response_data = await self.convert_triton_output_to_task_format(raw_output)
                 all_response_data.extend(response_data)
 
-            # Collect audio URIs to surface as 'source' in build_response (e.g. ASR).
+            # Collect audio URIs to surface as 'source' in postprocess (e.g. ASR).
             # Preprocessed items retain audio_uri / audioUri from the original request.
             source_uris = [
                 (
@@ -309,7 +309,7 @@ class AudioBase(BaseTaskService):
                 )
 
     # ------------------------------------------------------------------
-    # Output helpers — opt-in from task service build_response
+    # Output helpers — opt-in from task service postprocess
     # ------------------------------------------------------------------
 
     def _parse_json(self, value: Any) -> Dict[str, Any]:

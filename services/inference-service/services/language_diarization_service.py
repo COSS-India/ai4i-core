@@ -2,7 +2,7 @@
 LanguageDiarizationTaskService — implements language diarization inference.
 
 Extends AudioBase (base64 passthrough, adapter_config driven).
-Overrides build_response to produce the same
+Overrides postprocess to produce the same
 output structure as the old language-diarization-service.
 
 Triton tensor contract (adapter_config from MMS):
@@ -23,7 +23,7 @@ class LanguageDiarizationTaskService(AudioBase):
 
     Inherits base64-passthrough preprocessing from AudioBase.
     Overrides convert_payload_to_triton_format (normalise target_language),
-    and build_response (parse DIARIZATION_RESULT JSON + envelope).
+    and postprocess (parse DIARIZATION_RESULT JSON + envelope).
     """
 
     async def convert_payload_to_triton_format(
@@ -43,7 +43,7 @@ class LanguageDiarizationTaskService(AudioBase):
             context_builder=self._build_audio_context,
         )
 
-    async def build_response(
+    async def postprocess(
         self,
         payload: Dict[str, Any],
         response_items: List[Dict[str, Any]],

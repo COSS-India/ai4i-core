@@ -111,7 +111,7 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - `preprocess_input()` — data preprocessing (modality bases + ASR)
   - `execute_triton_inference()` — Triton call topology
     (base = one batch call; AudioBase = per-item; TTS = per-chunk)
-  - `build_response()` — output shaping + response envelope (one per task)
+  - `postprocess()` — output shaping + response envelope (one per task)
   - `payload_key` — modality input key (`input` / `audio` / `image`)
 - Span handling lives in `trace/request_span.py` (`traced_inference`,
   `finalize_span`) — no tracing code in the service classes.
@@ -219,7 +219,7 @@ Orchestrator.route_inference(payload)
                 │   ├─ Convert payload to Triton format (GenericTritonMapper)
                 │   ├─ Call Triton inference server
                 │   └─ Convert Triton output to task format
-                └─ build_response (output shaping + envelope)
+                └─ postprocess (output shaping + envelope)
                 └─ Postprocess output
                         ↓
         Response (JSON)

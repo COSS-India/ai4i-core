@@ -6,7 +6,7 @@ Tests each pipeline stage in isolation:
   1. validate_request      — valid + four error paths
   2. preprocess_input      — sanitisation
   3. payload_key           — modality input key
-  4. build_response        — pairing + unwrap, returns plain dict with output list
+  4. postprocess        — pairing + unwrap, returns plain dict with output list
   5. process               — full pipeline with mocked GenericTritonMapper + Triton
 
 Triton HTTP is mocked via unittest.mock so no running server is needed.
@@ -147,7 +147,7 @@ async def test_payload_key():
     logger.info("   [PASS] payload_key is 'input'")
 
 
-async def test_build_response():
+async def test_postprocess():
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -158,7 +158,7 @@ async def test_build_response():
     response_items = [{"target": ["नमस्ते"]}, {"target": b"\xe0\xa4\x86\xe0\xa4\xaa\xe0\xa4\x95\xe0\xa4\xbe \xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\xae \xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\xaf\xe0\xa4\xbe \xe0\xa4\xb9\xe0\xa5\x88?"}]
     source_texts = ["Hello", "What is your name?"]
 
-    response = await service.build_response(payload, response_items, source_texts)
+    response = await service.postprocess(payload, response_items, source_texts)
     assert "output" in response
     assert len(response["output"]) == 2
     assert isinstance(response["output"][0], dict)
@@ -167,7 +167,7 @@ async def test_build_response():
     assert response["output"][0]["target"] == "नमस्ते"
     assert response["output"][1]["source"] == "What is your name?"
     assert response["output"][1]["target"] == "आपका नाम क्या है?"
-    logger.info("   [PASS] build_response paired sources, unwrapped values, returned plain dicts")
+    logger.info("   [PASS] postprocess paired sources, unwrapped values, returned plain dicts")
 
 
 async def test_process_full():
@@ -280,7 +280,7 @@ async def run_all():
         ("validate_request — error paths", test_validate_request_errors),
         ("preprocess_input — sanitise", test_preprocess_input),
         ("payload_key", test_payload_key),
-        ("build_response — pairing + unwrap", test_build_response),
+        ("postprocess — pairing + unwrap", test_postprocess),
         ("process — full pipeline (mocked)", test_process_full),
         ("process — missing endpoint", test_process_missing_endpoint),
         ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),

@@ -7,7 +7,7 @@ from services.base.config_mapper import GenericTritonMapper
 class NERTaskService(TextBase):
     # source_language check handled by base; no target language needed
 
-    async def build_response(self, payload, response_items, source_texts):
+    async def postprocess(self, payload, response_items, source_texts):
         sources = source_texts or []
         raw_items = response_items if isinstance(response_items, list) else [response_items]
         json_parts = []

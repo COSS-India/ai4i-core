@@ -14,7 +14,7 @@ class OCRTaskService(ImageBase):
     I/O from ImageBase; only the output shaping is OCR-specific.
     """
 
-    async def build_response(
+    async def postprocess(
         self,
         payload: Dict[str, Any],
         response_items: List[Dict[str, Any]],

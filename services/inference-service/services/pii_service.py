@@ -12,7 +12,7 @@ class PIITaskService(BaseTaskService):
     returning nothing.
 
     To implement: set payload_key, add validate_request (language / redaction
-    mode checks), build_response (entity formatting + redaction), and any
+    mode checks), postprocess (entity formatting + redaction), and any
     PII-specific convert hooks — see NERTaskService for the closest template.
     """
 

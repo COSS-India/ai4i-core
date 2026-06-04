@@ -7,7 +7,7 @@ class LanguageDetectionTaskService(TextBase):
     # No language config required — language is DETECTED not specified
     # Base validate_request handles input existence; language block skipped.
 
-    async def build_response(self, payload, response_items, source_texts):
+    async def postprocess(self, payload, response_items, source_texts):
         """
         Return output items with 'source' (input text) and 'langPrediction'
         as a list of prediction objects: [{langCode, scriptCode, langScore, language}, ...]
