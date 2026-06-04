@@ -221,11 +221,9 @@ class BaseTaskService:
         Call topology is data/class-driven, not override-driven:
         adapter_config["call_mode"] or TRITON_CALL_MODE selects one batch
         call vs one call per item. Payload/tensor mapping goes through the
-        convert_* hooks (mapper-backed by default).
-
-        TTS overrides this method: its per-chunk loop must MERGE N outputs
-        back into one item (concatenating audio arrays), which no call-mode
-        flag can express.
+        convert_* hooks (mapper-backed by default). Item expansion (e.g.
+        TTS chunking) happens in preprocess_input; merging expanded results
+        back happens in postprocess_output — this method stays generic.
         """
         # Lazy import — trace setup happens at app init, after this module loads.
         from trace.request_span import traced_inference
