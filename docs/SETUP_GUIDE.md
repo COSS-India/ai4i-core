@@ -38,8 +38,6 @@ POSTGRES_DB=ai4i_platform_db
 REDIS_PASSWORD=changeme
 ```
 
-> **Migration variables are separate.** The root `.env` is only for Docker Compose infrastructure. Database names, Alembic host/port, and per-DB credentials go in `infrastructure/databases/migrations/postgres/alembic/.env` — configured in Step 4 below.
-
 ## Step 3: Start Infrastructure Services
 
 ### Option A: Minimal (required services only)

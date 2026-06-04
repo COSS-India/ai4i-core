@@ -1,0 +1,70 @@
+global:
+  resolve_timeout: 5m
+route:
+  group_by:
+  - alertname
+  - category
+  - severity
+  - tenant
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: default-admin
+  routes:
+  - receiver: alert-history-webhook
+    continue: true
+receivers:
+- name: alert-history-webhook
+  webhook_configs:
+  - url: http://inference-service:8095/api/v1/alerts/history/webhook
+    send_resolved: false
+- name: default-admin
+  email_configs:
+  - to: admin@ai4inclusion.org
+    send_resolved: false
+    html: |
+      <p><strong>Alert Name</strong></p>
+      <p>{{ .GroupLabels.alertname }}</p>
+
+      <p><strong>Category</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "category_display" }}</p>
+
+      <p><strong>Signal</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
+
+      {{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+      {{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
+      <p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
+      {{ end }}
+
+      <p><strong>Tenant</strong></p>
+      <p>Global (All Tenants)</p>
+
+      <p><strong>Environment</strong></p>
+      <p>Dev</p>
+
+      <p><strong>Condition</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "condition_display" }}</p>
+
+      <p><strong>Current Value</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "current_value" }}</p>
+
+      <p><strong>Threshold</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "threshold_display" }}</p>
+
+      <p><strong>Triggered At</strong></p>
+      <p>{{ (index .Alerts 0).StartsAt }}</p>
+
+      <p><strong>Sustained For</strong></p>
+      <p>{{ index (index .Alerts 0).Annotations "sustained_for" }}</p>
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} — Dev - {{ if eq .GroupLabels.severity "critical" }}Service Impacted{{ else if eq .GroupLabels.severity "warning" }}Service Degrading{{ else }}For Your Awareness{{ end }}'
+inhibit_rules:
+- source_match:
+    severity: critical
+  target_match:
+    severity: warning
+  equal:
+  - alertname
+  - category
