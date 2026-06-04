@@ -173,7 +173,7 @@ class TokenService:
         # is the JWKS kid-selection pattern that python:S5659 itself
         # recommends — see the rule's own note about ``get_unverified_header``.
         try:
-            header = jwt.get_unverified_header(token)  # NOSONAR(python:S5659)
+            header = jwt.get_unverified_header(token)  # NOSONAR
             kid = header.get("kid")
             alg = header.get("alg")
 
