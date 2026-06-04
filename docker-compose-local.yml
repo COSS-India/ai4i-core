@@ -138,6 +138,8 @@ services:
       - "8080:8080"
     volumes:
       - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       auth-service:
         condition: service_healthy
@@ -198,7 +200,7 @@ services:
       - ./services/platform-core-service/.env
     environment:
       # ── Override localhost hostnames from .env with Docker service names ──
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/ai4iplatform_core
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ai4iplatform_core
       - POSTGRES_HOST=postgres
       - APP_DB_HOST=postgres
       - REDIS_HOST=redis
