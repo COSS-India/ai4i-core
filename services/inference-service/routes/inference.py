@@ -14,7 +14,10 @@ from fastapi.responses import JSONResponse
 from orchestrator import Orchestrator, UnknownTaskTypeError
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-from utils.http_client import ServiceNotFoundError
+from utils.http_client import ServiceCallError, ServiceNotFoundError
+from inference.inference_server_resolver import (
+    ServiceNotFoundError as ResolverServiceNotFoundError,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -28,12 +31,18 @@ _CHAT_EXAMPLE = {
 }
 
 
+# Module-level singleton: a fresh Orchestrator per request would rebuild the
+# InferenceServerResolver each time, so its in-memory service cache never got
+# a hit and every request blocked on a live MMS lookup.
+_orchestrator = Orchestrator()
+
+
 async def get_orchestrator() -> Orchestrator:
     """
     Dependency for Orchestrator instance.
     Can be overridden in tests.
     """
-    return Orchestrator()
+    return _orchestrator
 
 
 def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
@@ -64,12 +73,12 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
             return HTTPException(status_code=400, detail=str(e))
         if isinstance(e, NotImplementedError):
             return HTTPException(status_code=501, detail=str(e))
-        if isinstance(e, ServiceNotFoundError):
+        if isinstance(e, (ServiceNotFoundError, ResolverServiceNotFoundError)):
             return HTTPException(
                 status_code=404, detail=f"{task_type}: requested service not found"
             )
     for e in chain:
-        if isinstance(e, RuntimeError):
+        if isinstance(e, (RuntimeError, ServiceCallError)):
             return HTTPException(
                 status_code=502, detail=f"{task_type}: upstream inference dependency failed"
             )
