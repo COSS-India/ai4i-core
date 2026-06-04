@@ -132,8 +132,8 @@ class Orchestrator:
             except OrchestratorError as e:
                 span_attrs = {
                     "total_time_ms": compute_total_time_ms(start_time),
-                    "end_point": end_point,
-                    "request_method": request_method,
+                    "url": end_point,
+                    "method": request_method,
                     "status": "failure",
                     "status_code": 500,
                     **ctx_attrs,
