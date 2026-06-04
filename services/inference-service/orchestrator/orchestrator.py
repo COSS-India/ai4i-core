@@ -6,16 +6,15 @@ Handles polymorphic payload deserialization, validation, and response serializat
 import time
 from typing import Any, Dict, Optional
 from fastapi import Request
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 import logging
 
-from opentelemetry import trace, context as otel_context
+from opentelemetry import context as otel_context
 from opentelemetry.trace import StatusCode
 from trace.request_span import tracer, get_context_attributes, get_endpoint_path, compute_total_time_ms, log_span_attributes
 
-from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
-from interfaces.task_service import ITaskService
+from interfaces.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 
@@ -58,7 +57,7 @@ class Orchestrator:
         self.task_registry = task_registry
         self.logger = logger
         self.inference_server_resolver = InferenceServerResolver()
-        self.task_service_registry: list = TASK_SERVICE_REGISTRY
+        self.task_service_registry: dict = TASK_SERVICE_REGISTRY
 
     async def route_inference(
         self,
@@ -143,7 +142,7 @@ class Orchestrator:
                 request_span.set_status(StatusCode.ERROR, str(e))
                 log_span_attributes("request", request_span, span_attrs)
 
-                raise TaskServiceExecutionError(f"Orchestration failed: {str(e)}")
+                raise TaskServiceExecutionError(f"Orchestration failed: {str(e)}") from e
 
     async def _validate_task_type(self, task_type: str) -> None:
         """
@@ -164,7 +163,7 @@ class Orchestrator:
 
     async def _get_task_service(
         self, task_type: str, service_info: Dict[str, Any]
-    ) -> ITaskService:
+    ) -> BaseTaskService:
         """
         Get or instantiate task service for given task_type and resolved service_info.
         Looks up TASK_SERVICE_REGISTRY and instantiates the matching service class.
@@ -181,38 +180,29 @@ class Orchestrator:
             TaskServiceExecutionError: If service instantiation fails
         """
         try:
-            # serviceId (model name) comes from the resolved service_info
-            serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
-
-            # Search flat list: find entry where task_type matches
-            # AND serviceId is listed in the model_name array
-            registry_entry = next(
-                (
-                    entry for entry in self.task_service_registry
-                    if entry.get("task_type") == task_type
-                    and serviceId in entry.get("model_name", [])
-                ),
-                None,
-            )
-
-            if not registry_entry:
+            class_instance = service_info.get("class_instance")
+            if not class_instance:
                 raise TaskServiceExecutionError(
-                    f"No registry entry found for task_type='{task_type}', "
-                    f"serviceId='{serviceId}'. "
-                    f"Add it to task_service_registry.json under the matching "
-                    f"task_type entry's model_name list."
+                    f"No class_instance set on model for serviceId='"
+                    f"{service_info.get('name', '')}'. "
+                    f"Set the classInstance field on the model in the platform."
                 )
 
-            service_class = registry_entry.get("service_class")
+            service_class = self.task_service_registry.get(class_instance)
+            if not service_class:
+                raise TaskServiceExecutionError(
+                    f"Unknown class_instance '{class_instance}'. "
+                    f"Register it in task_service_registry.py."
+                )
+
             self.logger.debug(
-                f"Instantiating {service_class.__name__} "
-                f"for task_type='{task_type}', serviceId='{serviceId}'"
+                f"Instantiating {class_instance} for serviceId='{service_info.get('name', '')}'"
             )
             return service_class(service_info=service_info)  # type: ignore
         except TaskServiceExecutionError:
             raise
         except Exception as e:
-            raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}")
+            raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}") from e
 
     async def _resolve_service_and_model(
         self, payload: Dict[str, Any], request: Optional[Request] = None
@@ -291,7 +281,7 @@ class Orchestrator:
 
     async def _execute_task_service(
         self,
-        task_service: ITaskService,
+        task_service: BaseTaskService,
         payload: Dict[str, Any],
         serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> BaseModel:
@@ -313,7 +303,7 @@ class Orchestrator:
             result = await task_service.process(payload, serviceInfo)  # type: ignore
             return result  # type: ignore
         except Exception as e:
-            raise TaskServiceExecutionError(f"Task service execution failed: {str(e)}")
+            raise TaskServiceExecutionError(f"Task service execution failed: {str(e)}") from e
 
     async def _serialize_response(
         self, task_type: str, response: BaseModel
@@ -337,34 +327,4 @@ class Orchestrator:
                 return response
             return response.dict()  # type: ignore
         except Exception as e:
-            raise PayloadValidationError(f"Response serialization failed: {str(e)}")
-
-    def _log_request_start(
-        self,
-    ) -> None:
-        """
-        Log start of inference request.
-
-        Args:
-            task_type: Task type being processed
-            user_id: Optional user ID
-            session_id: Optional session ID
-        """
-        pass
-
-    def _log_request_complete(
-        self,
-        task_type: str,
-        success: bool,
-        error_msg: Optional[str] = None,
-    ) -> None:
-        """
-        Log completion of inference request.
-
-        Args:
-            task_type: Task type that was processed
-            session_id: Optional session ID
-            success: Whether request succeeded
-            error_msg: Optional error message if failed
-        """
-        pass
+            raise PayloadValidationError(f"Response serialization failed: {str(e)}") from e

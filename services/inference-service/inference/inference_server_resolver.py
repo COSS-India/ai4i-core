@@ -3,12 +3,13 @@ InferenceServerResolver for looking up Triton endpoints and model information.
 Provides caching with Redis and in-memory cache for efficient server resolution.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 import logging
 import time
-import os
 
-from utils import HTTPServiceClient, ServiceNotFoundError as HTTPServiceNotFoundError
+from config import settings
+
+from utils import HTTPServiceClient, ServiceCallError, ServiceNotFoundError as HTTPServiceNotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -155,13 +156,13 @@ class InferenceServerResolver:
         Raises:
             ServiceNotFoundError: If the service is not found or the call fails.
         """
-        model_management_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL")
+        model_management_url = settings.MODEL_MANAGEMENT_SERVICE_URL
         if not model_management_url:
             logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
             raise ServiceNotFoundError(f"Service {service_id} not found: Model management service not configured")
 
         try:
-            http_client = HTTPServiceClient(timeout=30)
+            http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
             url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
             raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
@@ -174,8 +175,13 @@ class InferenceServerResolver:
         except ServiceNotFoundError:
             raise
         except Exception as e:
-            logger.error(f"Failed to query model management service: {str(e)}")
-            raise ServiceNotFoundError(f"Service {service_id} not found: {str(e)}") from e
+            # Transport/availability failure is NOT "service not found" — a
+            # hung or unreachable MMS must surface as a 502-class dependency
+            # error, not a 404 (and not pollute logs with "not found").
+            logger.error(f"Model management service query failed for {service_id}: {str(e)}")
+            raise ServiceCallError(
+                f"Model management service unavailable while resolving '{service_id}'"
+            ) from e
 
     def _normalize_mms_response(self, raw: Dict[str, Any], service_id: str) -> Dict[str, Any]:
         """
@@ -217,11 +223,13 @@ class InferenceServerResolver:
                     "model class must supply a default or this request will fail.",
                     service_id,
                 )
+            class_instance = (data.get("model") or {}).get("classInstance")
             return {
                 "name": data.get("serviceName") or data.get("name"),
                 "endpoint": endpoint,
                 "api_key": data.get("apiKey") or data.get("api_key"),
                 "adapter_config": adapter_config,
+                "class_instance": class_instance,
             }
 
         # Flat shape (legacy/fallback): pass through as-is

@@ -1,5 +1,5 @@
 """Interfaces package initialization."""
 
-from interfaces.task_service import ITaskService, BaseTaskService
+from interfaces.task_service import BaseTaskService
 
-__all__ = ["ITaskService", "BaseTaskService"]
+__all__ = ["BaseTaskService"]

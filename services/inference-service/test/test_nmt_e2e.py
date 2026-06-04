@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end integration tests for TextDefaultModel.
+End-to-end integration tests for NMTTaskService.
 
 Uses a real GenericTritonMapper with a representative adapter_config,
 but mocks only the HTTP call to Triton.
@@ -88,9 +88,9 @@ MOCK_TRITON_RESPONSE_HINDI = {
 
 async def test_full_pipeline_camel_payload():
     """process() with a camelCase portal payload → plain dict response."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.nmt_service import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     portal_payload = {
         "input": [{"source": "Hello, how are you?"}],
@@ -115,9 +115,9 @@ async def test_full_pipeline_camel_payload():
 
 async def test_full_pipeline_snake_payload():
     """process() with snake_case payload (both naming conventions work)."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.nmt_service import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     snake_payload = {
         "input": [{"source": "What is your name?"}],
@@ -140,9 +140,9 @@ async def test_full_pipeline_snake_payload():
 
 async def test_multi_input_pipeline():
     """Two input items → two separate Triton calls → two output items."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.nmt_service import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [
@@ -181,9 +181,9 @@ async def test_multi_input_pipeline():
 
 async def test_response_serialization():
     """Response is a plain dict — output key present with correct fields."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.nmt_service import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -205,9 +205,9 @@ async def test_response_serialization():
 
 async def test_validate_same_language_rejected():
     """process() raises ValueError when source == target language."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.nmt_service import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -224,9 +224,9 @@ async def test_validate_same_language_rejected():
 
 async def test_validate_whitespace_source_accepted():
     """Whitespace-only source is sanitised to single space and accepted."""
-    from services.models.text_default_model import TextDefaultModel
+    from services.nmt_service import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "   "}],
@@ -260,7 +260,7 @@ async def run_all():
     ]
 
     logger.info("=" * 70)
-    logger.info("TextDefaultModel End-to-End Tests  (real mapper, mocked HTTP)")
+    logger.info("NMTTaskService End-to-End Tests  (real mapper, mocked HTTP)")
     logger.info("=" * 70)
 
     passed = 0

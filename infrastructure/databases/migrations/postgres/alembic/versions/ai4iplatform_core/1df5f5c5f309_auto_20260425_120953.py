@@ -36,6 +36,7 @@ def upgrade() -> None:
     sa.Column('inference_endpoint', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.Column('benchmarks', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('submitter', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('class_instance', sa.String(length=100), nullable=True),
     sa.Column('created_by', sa.String(length=255), nullable=True),
     sa.Column('updated_by', sa.String(length=255), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),

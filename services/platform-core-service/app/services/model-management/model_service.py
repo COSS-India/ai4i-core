@@ -196,6 +196,7 @@ class ModelService:
             inference_endpoint=encoded.get("inferenceEndPoint") or {},
             benchmarks=encoded.get("benchmarks") or [],
             submitter=encoded.get("submitter") or {},
+            class_instance=encoded.get("classInstance"),
             created_by=created_by,
         )
         try:
@@ -311,6 +312,8 @@ class ModelService:
                 update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(ep_dict))
             elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
                 update_data[key] = jsonable_encoder(value)
+            elif key == "classInstance":
+                update_data["class_instance"] = value
             else:
                 update_data[key] = value
 

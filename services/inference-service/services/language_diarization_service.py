@@ -1,8 +1,8 @@
 """
 LanguageDiarizationTaskService — implements language diarization inference.
 
-Extends AudioDefaultModel (base64 passthrough, adapter_config driven).
-Overrides postprocess_output and _build_response to produce the same
+Extends AudioBase (base64 passthrough, adapter_config driven).
+Overrides build_response to produce the same
 output structure as the old language-diarization-service.
 
 Triton tensor contract (adapter_config from MMS):
@@ -11,28 +11,20 @@ Triton tensor contract (adapter_config from MMS):
   Output:  DIARIZATION_RESULT (BYTES) — JSON blob
 """
 
-import json
-import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from services.models.audio_default_model import AudioDefaultModel
+from services.base.audio_base import AudioBase
 from services.base.config_mapper import GenericTritonMapper
 
-logger = logging.getLogger(__name__)
 
-
-class LanguageDiarizationTaskService(AudioDefaultModel):
+class LanguageDiarizationTaskService(AudioBase):
     """
     TaskService for Language Diarization inference.
 
-    Inherits base64-passthrough preprocessing from AudioDefaultModel.
+    Inherits base64-passthrough preprocessing from AudioBase.
     Overrides convert_payload_to_triton_format (normalise target_language),
-    postprocess_output (parse DIARIZATION_RESULT JSON), and _build_response.
+    and build_response (parse DIARIZATION_RESULT JSON + envelope).
     """
-
-    def __init__(self, service_info: Optional[Dict[str, Any]] = None, **kwargs: Any):
-        super().__init__(service_info=service_info, **kwargs)
-        self.logger = logger
 
     async def convert_payload_to_triton_format(
         self,
@@ -51,8 +43,11 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
             context_builder=self._build_audio_context,
         )
 
-    async def postprocess_output(
-        self, response_items: List[Dict[str, Any]], **kwargs: Any
+    async def build_response(
+        self,
+        payload: Dict[str, Any],
+        response_items: List[Dict[str, Any]],
+        source_texts: List[str],
     ) -> Dict[str, Any]:
         output_list = []
 
@@ -84,36 +79,12 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
                 "target_language": str(data.get("target_language", "")),
             })
 
-        return {"output": output_list}
-
-    def _build_response(
-        self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
-    ) -> Dict[str, Any]:
         cfg = payload.get("config") or {}
         return {
             "taskType": "language-diarization",
-            "output": postprocessed["output"],
+            "output": output_list,
             "config": {"serviceId": cfg.get("serviceId")},
         }
-
-    def _parse_json(self, value: Any) -> Dict[str, Any]:
-        if value is None:
-            return {}
-        if isinstance(value, dict):
-            return value
-        # Unwrap single-element list nesting from Triton KServe v2 responses
-        # e.g. to_output_items peels [["json"]] → ["json"]; we peel once more → "json"
-        while isinstance(value, (list, tuple)) and len(value) == 1:
-            value = value[0]
-        if isinstance(value, bytes):
-            value = value.decode("utf-8", errors="replace")
-        if isinstance(value, str):
-            try:
-                return json.loads(value) or {}
-            except json.JSONDecodeError:
-                logger.warning("%s: failed to parse diarization JSON: %r", self.task_name, value[:200])
-                return {}
-        return {}
 
 
 __all__ = ["LanguageDiarizationTaskService"]
