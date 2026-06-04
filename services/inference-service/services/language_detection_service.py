@@ -1,21 +1,13 @@
 """Language Detection TaskService."""
 import json
-import logging
-from typing import Any, Dict, List, Optional
 from services.base.text_base import TextBase
-
-logger = logging.getLogger(__name__)
 
 
 class LanguageDetectionTaskService(TextBase):
     # No language config required — language is DETECTED not specified
     # Base validate_request handles input existence; language block skipped.
 
-    def __init__(self, service_info=None, **deps):
-        super().__init__(service_info=service_info)
-        self.logger = logger
-
-    async def postprocess_output(self, response_items, source_texts=None):
+    async def build_response(self, payload, response_items, source_texts):
         """
         Return output items with 'source' (input text) and 'langPrediction'
         as a list of prediction objects: [{langCode, scriptCode, langScore, language}, ...]
@@ -43,9 +35,6 @@ class LanguageDetectionTaskService(TextBase):
             output_list.append({"source": source, "langPrediction": raw_value})
         self.logger.debug(f"LANGUAGE_DETECTION post-processed {len(output_list)} results")
         return {"output": output_list}
-
-    def _build_response(self, payload, postprocessed):
-        return postprocessed
 
 
 __all__ = ["LanguageDetectionTaskService"]

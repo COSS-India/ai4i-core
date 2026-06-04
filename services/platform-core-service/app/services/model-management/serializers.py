@@ -42,6 +42,7 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "inferenceEndPoint": model.inference_endpoint,
         "source": model.ref_url or "",
         "task": model.task or {},
+        "classInstance": model.class_instance,
         "createdAt": _iso(model.created_at),
         "createdBy": model.created_by,
         "updatedBy": model.updated_by,

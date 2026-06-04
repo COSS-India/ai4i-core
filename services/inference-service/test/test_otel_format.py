@@ -52,13 +52,13 @@ with tracer.start_as_current_span("ai_inference") as span:
         ],
         "config": {}
     }
-    
+
     print("\n" + "="*80)
     print("INPUT PHASE - OpenTelemetry Format")
     print("="*80)
-    
+
     set_input_span_attributes(test_payload, test_payload["input"], {})
-    
+
     # Get and display the logged output
     log_output = log_capture.getvalue()
     if log_output:
@@ -71,22 +71,22 @@ with tracer.start_as_current_span("ai_inference") as span:
                     print(json.dumps(data, indent=2))
         except json.JSONDecodeError:
             print(log_output)
-    
+
     # Clear log capture
     log_capture.truncate(0)
     log_capture.seek(0)
-    
+
     # Simulate output phase
     test_response = [
         {"target": "Hola mundo", "translation": "Spanish"}
     ]
-    
+
     print("\n" + "="*80)
     print("OUTPUT PHASE - OpenTelemetry Format")
     print("="*80)
-    
+
     set_output_span_attributes(test_response, status="success", status_code=200)
-    
+
     # Get and display the logged output
     log_output = log_capture.getvalue()
     if log_output:
