@@ -57,7 +57,7 @@ class Orchestrator:
         self.task_registry = task_registry
         self.logger = logger
         self.inference_server_resolver = InferenceServerResolver()
-        self.task_service_registry: list = TASK_SERVICE_REGISTRY
+        self.task_service_registry: dict = TASK_SERVICE_REGISTRY
 
     async def route_inference(
         self,
@@ -180,32 +180,23 @@ class Orchestrator:
             TaskServiceExecutionError: If service instantiation fails
         """
         try:
-            # serviceId (model name) comes from the resolved service_info
-            serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
-
-            # Search flat list: find entry where task_type matches
-            # AND serviceId is listed in the model_name array
-            registry_entry = next(
-                (
-                    entry for entry in self.task_service_registry
-                    if entry.get("task_type") == task_type
-                    and serviceId in entry.get("model_name", [])
-                ),
-                None,
-            )
-
-            if not registry_entry:
+            class_instance = service_info.get("class_instance")
+            if not class_instance:
                 raise TaskServiceExecutionError(
-                    f"No registry entry found for task_type='{task_type}', "
-                    f"serviceId='{serviceId}'. "
-                    f"Add it to task_service_registry.json under the matching "
-                    f"task_type entry's model_name list."
+                    f"No class_instance set on model for serviceId='"
+                    f"{service_info.get('name', '')}'. "
+                    f"Set the classInstance field on the model in the platform."
                 )
 
-            service_class = registry_entry.get("service_class")
+            service_class = self.task_service_registry.get(class_instance)
+            if not service_class:
+                raise TaskServiceExecutionError(
+                    f"Unknown class_instance '{class_instance}'. "
+                    f"Register it in task_service_registry.py."
+                )
+
             self.logger.debug(
-                f"Instantiating {service_class.__name__} "
-                f"for task_type='{task_type}', serviceId='{serviceId}'"
+                f"Instantiating {class_instance} for serviceId='{service_info.get('name', '')}'"
             )
             return service_class(service_info=service_info)  # type: ignore
         except TaskServiceExecutionError:
