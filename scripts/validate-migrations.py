@@ -152,15 +152,21 @@ def check_revision_chains():
             rev_match = re.search(
                 r"^revision\b.*?['\"]([a-f0-9A-Z_]+)['\"]", text, re.MULTILINE
             )
+            # down_revision may be a single id or a list (merge revisions:
+            # down_revision = ['abc', 'def']) — capture ALL quoted ids on the line.
             down_match = re.search(
-                r"^down_revision\b.*?['\"]([a-f0-9A-Z_]+)['\"]", text, re.MULTILINE
+                r"^down_revision\b[^=]*=\s*(.+)$", text, re.MULTILINE
             )
 
             if not rev_match:
                 continue
 
             rev = rev_match.group(1)
-            down = down_match.group(1) if down_match else None
+            downs = (
+                re.findall(r"['\"]([a-f0-9A-Z_]+)['\"]", down_match.group(1))
+                if down_match
+                else []
+            )
 
             if rev in revisions:
                 fail(
@@ -170,22 +176,21 @@ def check_revision_chains():
                 continue
 
             revisions[rev] = f.name
-            down_refs[rev] = down
+            down_refs[rev] = downs
 
         # Verify every down_revision points to an existing revision
         chain_ok = True
-        for rev, down in down_refs.items():
-            if down is None:
-                continue
-            if down not in revisions:
-                fail(
-                    f"{db_name}: revision '{rev}' ({revisions[rev]}) "
-                    f"references down_revision '{down}' which has no migration file"
-                )
-                chain_ok = False
+        for rev, downs in down_refs.items():
+            for down in downs:
+                if down not in revisions:
+                    fail(
+                        f"{db_name}: revision '{rev}' ({revisions[rev]}) "
+                        f"references down_revision '{down}' which has no migration file"
+                    )
+                    chain_ok = False
 
         # Count heads (revisions not referenced as any down_revision)
-        referenced = set(down_refs.values()) - {None}
+        referenced = {down for downs in down_refs.values() for down in downs}
         heads = [r for r in revisions if r not in referenced]
 
         if len(heads) > 1:
