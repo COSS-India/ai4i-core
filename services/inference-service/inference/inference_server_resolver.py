@@ -223,11 +223,13 @@ class InferenceServerResolver:
                     "model class must supply a default or this request will fail.",
                     service_id,
                 )
+            class_instance = (data.get("model") or {}).get("classInstance")
             return {
                 "name": data.get("serviceName") or data.get("name"),
                 "endpoint": endpoint,
                 "api_key": data.get("apiKey") or data.get("api_key"),
                 "adapter_config": adapter_config,
+                "class_instance": class_instance,
             }
 
         # Flat shape (legacy/fallback): pass through as-is
