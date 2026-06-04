@@ -4,7 +4,6 @@ import { Box, HStack, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AudioInputSection,
   buildResponseMetadata,
   mapToServiceOptions,
   RequestContainer,
@@ -18,7 +17,6 @@ import {
   listAudioLanguageDetectionServices,
 } from "../services/audioLanguageDetectionService";
 import { parseAudioLanguageDetectionOutput } from "../types/inference";
-import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
@@ -42,36 +40,6 @@ const AudioLanguageDetectionPage: React.FC = () => {
   });
 
   const serviceOptions = useMemo(() => mapToServiceOptions(services), [services]);
-
-  const { isRecording, timer, startRecording, stopRecording } = useAudioRecorder({
-    sampleRate: 16000,
-    onRecordingComplete: (audioBase64: string) => {
-      setAudioData(audioBase64);
-      toast({
-        title: "Recording Complete",
-        description: "Audio recorded successfully. Click Submit to process.",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    },
-  });
-
-  const handleRecordingChange = (recording: boolean) => {
-    if (recording) startRecording();
-    else stopRecording();
-  };
-
-  const handleAudioReady = (audioBase64: string) => {
-    setAudioData(audioBase64);
-    toast({
-      title: "Audio Ready",
-      description: "Audio file loaded. Click Submit to process.",
-      status: "success",
-      duration: 3000,
-      isClosable: true,
-    });
-  };
 
   const handleSubmit = async () => {
     if (!audioData) {
@@ -140,20 +108,13 @@ const AudioLanguageDetectionPage: React.FC = () => {
           }}
           inputType="audio"
           audioInput={{
-            children: (
-              <AudioInputSection
-                audioData={audioData}
-                isRecording={isRecording}
-                onAudioReady={handleAudioReady}
-                onRecordingChange={handleRecordingChange}
-                disabled={fetching || !selectedServiceId}
-                timer={timer}
-                onClear={handleClearAudioInput}
-                clearToken={audioClearToken}
-                readyMessage="Audio ready for processing."
-                showSuccessAlert={!!audioData}
-              />
-            ),
+            value: audioData,
+            onChange: setAudioData,
+            disabled: fetching || !selectedServiceId,
+            onClear: handleClearAudioInput,
+            clearToken: audioClearToken,
+            readyMessage: "Audio ready for processing.",
+            showSuccessAlert: !!audioData,
           }}
           helperText={pageDefaults.helperText}
           submitButton={{

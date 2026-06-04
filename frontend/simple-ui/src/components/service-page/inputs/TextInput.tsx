@@ -22,6 +22,8 @@ const TextInput: React.FC<ServiceTextInputProps> = ({
   disabled = false,
   required = true,
   rows = 8,
+  showCharCounter = true,
+  resize = "vertical",
 }) => {
   const [isInvalid, setIsInvalid] = useState(value.length > maxLength);
   const borderColor = useColorModeValue("gray.300", "gray.600");
@@ -42,7 +44,12 @@ const TextInput: React.FC<ServiceTextInputProps> = ({
   return (
     <Box>
       <FormControl isInvalid={isInvalid}>
-        <FormLabel fontSize="sm" fontWeight="semibold" color="gray.700" className="dview-service-try-option-title">
+        <FormLabel
+          fontSize="sm"
+          fontWeight="semibold"
+          color="gray.700"
+          className="dview-service-try-option-title"
+        >
           {label}{" "}
           {required && (
             <Text as="span" color="red.500">
@@ -55,7 +62,7 @@ const TextInput: React.FC<ServiceTextInputProps> = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          resize="vertical"
+          resize={resize}
           rows={rows}
           isDisabled={disabled}
           maxLength={maxLength}
@@ -71,15 +78,17 @@ const TextInput: React.FC<ServiceTextInputProps> = ({
           </FormErrorMessage>
         )}
       </FormControl>
-      <Box display="flex" justifyContent="flex-end" mt={1}>
-        <Text
-          fontSize="sm"
-          color={getCounterColor()}
-          fontWeight={charCount > maxLength ? "semibold" : "normal"}
-        >
-          {charCount} / {maxLength}
-        </Text>
-      </Box>
+      {showCharCounter && (
+        <Box display="flex" justifyContent="flex-end" mt={1}>
+          <Text
+            fontSize="sm"
+            color={getCounterColor()}
+            fontWeight={charCount > maxLength ? "semibold" : "normal"}
+          >
+            {charCount} / {maxLength}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 };

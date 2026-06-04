@@ -3,7 +3,6 @@
 import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AudioInputSection,
   buildResponseMetadata,
   mapToServiceOptions,
   RequestContainer,
@@ -15,7 +14,6 @@ import LanguageDiarizationResult, {
 } from "../components/service-page/results/LanguageDiarizationResult";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
-import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const pageDefaults = getServicePageDefaults("language-diarization");
@@ -41,36 +39,6 @@ const LanguageDiarizationPage: React.FC = () => {
     () => mapToServiceOptions(languageDiarizationServices ?? []),
     [languageDiarizationServices]
   );
-
-  const { isRecording, timer, startRecording, stopRecording } = useAudioRecorder({
-    sampleRate: 16000,
-    onRecordingComplete: (audioBase64: string) => {
-      setAudioData(audioBase64);
-      toast({
-        title: "Recording Complete",
-        description: "Audio recorded successfully. Click Submit to process.",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    },
-  });
-
-  const handleRecordingChange = (recording: boolean) => {
-    if (recording) startRecording();
-    else stopRecording();
-  };
-
-  const handleAudioReady = (audioBase64: string) => {
-    setAudioData(audioBase64);
-    toast({
-      title: "Audio Ready",
-      description: "Audio file loaded. Click Submit to process.",
-      status: "success",
-      duration: 3000,
-      isClosable: true,
-    });
-  };
 
   const handleSubmit = async () => {
     if (!audioData) {
@@ -145,20 +113,13 @@ const LanguageDiarizationPage: React.FC = () => {
           }}
           inputType="audio"
           audioInput={{
-            children: (
-              <AudioInputSection
-                audioData={audioData}
-                isRecording={isRecording}
-                onAudioReady={handleAudioReady}
-                onRecordingChange={handleRecordingChange}
-                disabled={fetching || !serviceId}
-                timer={timer}
-                onClear={handleClearAudioInput}
-                clearToken={audioClearToken}
-                readyMessage="Audio ready for processing."
-                showSuccessAlert={!!audioData}
-              />
-            ),
+            value: audioData,
+            onChange: setAudioData,
+            disabled: fetching || !serviceId,
+            onClear: handleClearAudioInput,
+            clearToken: audioClearToken,
+            readyMessage: "Audio ready for processing.",
+            showSuccessAlert: !!audioData,
           }}
           helperText={pageDefaults.helperText}
           submitButton={{

@@ -3,7 +3,6 @@
 import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AudioInputSection,
   buildResponseMetadata,
   mapToServiceOptions,
   RequestContainer,
@@ -43,36 +42,6 @@ const SpeakerDiarizationPage: React.FC = () => {
     () => mapToServiceOptions(speakerDiarizationServices ?? []),
     [speakerDiarizationServices]
   );
-
-  const { isRecording, timer, startRecording, stopRecording } = useAudioRecorder({
-    sampleRate: 16000,
-    onRecordingComplete: (audioBase64: string) => {
-      setAudioData(audioBase64);
-      toast({
-        title: "Recording Complete",
-        description: "Audio recorded successfully. Click Submit to process.",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    },
-  });
-
-  const handleRecordingChange = (recording: boolean) => {
-    if (recording) startRecording();
-    else stopRecording();
-  };
-
-  const handleAudioReady = (audioBase64: string) => {
-    setAudioData(audioBase64);
-    toast({
-      title: "Audio Ready",
-      description: "Audio file loaded. Click Submit to process.",
-      status: "success",
-      duration: 3000,
-      isClosable: true,
-    });
-  };
 
   const handleSubmit = async () => {
     if (!audioData) {
@@ -132,20 +101,13 @@ const SpeakerDiarizationPage: React.FC = () => {
           }}
           inputType="audio"
           audioInput={{
-            children: (
-              <AudioInputSection
-                audioData={audioData}
-                isRecording={isRecording}
-                onAudioReady={handleAudioReady}
-                onRecordingChange={handleRecordingChange}
-                disabled={fetching || !serviceId}
-                timer={timer}
-                onClear={handleClearAudioInput}
-                clearToken={audioClearToken}
-                readyMessage="Audio ready for processing."
-                showSuccessAlert={!!audioData}
-              />
-            ),
+            value: audioData,
+            onChange: setAudioData,
+            disabled: fetching || !serviceId,
+            onClear: handleClearAudioInput,
+            clearToken: audioClearToken,
+            readyMessage: "Audio ready for processing.",
+            showSuccessAlert: !!audioData,
           }}
           helperText={pageDefaults.helperText}
           submitButton={{

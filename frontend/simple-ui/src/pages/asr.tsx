@@ -1,13 +1,11 @@
 // ASR service testing page — reusable service page architecture
 
-import { FormControl, FormLabel, Select, Text } from "@chakra-ui/react";
+import { FormControl, FormLabel, Select } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import React, { useMemo } from "react";
 import { FaFileAlt } from "react-icons/fa";
 import {
-  AudioInputSection,
   buildResponseMetadata,
-  downloadTextFile,
   mapToServiceOptions,
   RequestContainer,
   ResponseContainer,
@@ -23,7 +21,7 @@ const pageDefaults = getServicePageDefaults("asr");
 const languageOptions = ASR_SUPPORTED_LANGUAGES.map((l) => ({ code: l.code, label: l.label }));
 
 const ASRPage: React.FC = () => {
-  const { copy } = useCopyToClipboard();
+  const { copy, download } = useCopyToClipboard();
   const [audioClearToken, setAudioClearToken] = React.useState(0);
   const {
     language,
@@ -117,19 +115,16 @@ const ASRPage: React.FC = () => {
             disabled: fetching,
           }}
           audioInput={{
-            children: (
-              <AudioInputSection
-                audioData={pendingAudio}
-                isRecording={recording}
-                onAudioReady={setPendingAudio}
-                onRecordingChange={handleRecordingChange}
-                timer={timer}
-                disabled={fetching || !serviceId || !language}
-                onClear={handleClearAudioInput}
-                clearToken={audioClearToken}
-                readyMessage="Audio ready (recording or upload). Click Transcribe to generate the transcript."
-              />
-            ),
+            value: pendingAudio,
+            onChange: setPendingAudio,
+            isRecording: recording,
+            onRecordingChange: handleRecordingChange,
+            timer,
+            disabled: fetching || !serviceId || !language,
+            onClear: handleClearAudioInput,
+            clearToken: audioClearToken,
+            readyMessage:
+              "Audio ready (recording or upload). Click Transcribe to generate the transcript.",
           }}
           helperText={pageDefaults.helperText}
           submitButton={{
@@ -165,7 +160,12 @@ const ASRPage: React.FC = () => {
                     id: "download",
                     label: "Download",
                     kind: "download",
-                    onClick: () => downloadTextFile(audioText, `transcript_${Date.now()}.txt`),
+                    onClick: () =>
+                      download(
+                        audioText,
+                        `transcript_${Date.now()}.txt`,
+                        { successDescription: "Transcript downloaded." }
+                      ),
                   },
                 ]
               : []
