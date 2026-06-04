@@ -68,7 +68,7 @@ class TextBase(BaseTaskService):
 
     async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         input_data = payload.get(self.payload_key) or []
-        source_texts = await self.extract_field_from_items(input_data, "source")
+        source_texts = self.extract_field_from_items(input_data, "source")
         sanitized = [self._sanitize_source(t) for t in source_texts]
 
         items = []

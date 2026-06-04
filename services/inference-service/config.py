@@ -35,25 +35,11 @@ class Settings(BaseSettings):
 
     # API configuration
     API_PREFIX: str = Field("/api/v1", description="API prefix for routes")
-    API_TITLE: str = Field("Inference Service", description="API title")
-    API_DESCRIPTION: str = Field(
-        "Unified inference endpoint for all task services", description="API description"
+
+    # Resolver cache
+    CACHE_TTL_SECONDS: int = Field(
+        300, description="In-memory service-resolution cache TTL in seconds"
     )
-
-    # Database configuration
-    POSTGRES_HOST: str = Field("postgres", description="PostgreSQL host")
-    POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
-    POSTGRES_USER: str = Field("postgres", description="PostgreSQL user")
-    POSTGRES_PASSWORD: str = Field("postgres", description="PostgreSQL password")
-    POSTGRES_DB: str = Field("core_db", description="PostgreSQL database name")
-    DATABASE_URL: Optional[str] = Field(None, description="Database connection URL")
-    DATABASE_POOL_SIZE: int = Field(10, description="Database connection pool size")
-    DATABASE_ECHO: bool = Field(False, description="Echo SQL statements")
-
-    # Redis configuration
-    REDIS_URL: Optional[str] = Field(None, description="Redis connection URL")
-    REDIS_PASSWORD: Optional[str] = Field(None, description="Redis password")
-    CACHE_TTL_SECONDS: int = Field(300, description="Cache TTL in seconds")
 
     # Model Management Service
     MODEL_MANAGEMENT_SERVICE_URL: Optional[str] = Field(
@@ -64,7 +50,7 @@ class Settings(BaseSettings):
     )
 
     # Triton configuration
-    DEFAULT_TRITON_TIMEOUT: int = Field(60, description="Default Triton timeout in seconds")
+    DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
 
     # OpenAI-compatible LLM proxy configuration
     # Base URL for the upstream LLM server (e.g. "http://13.206.126.62:8000").
@@ -77,12 +63,7 @@ class Settings(BaseSettings):
     )
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
-    # SmartModelRouter configuration
-    SMR_SERVICE_URL: Optional[str] = Field(None, description="SmartModelRouter service URL")
-    SMR_SERVICE_TIMEOUT: int = Field(30, description="SmartModelRouter timeout in seconds")
-
     # Telemetry/Observability
-    ENABLE_TELEMETRY: bool = Field(True, description="Enable telemetry")
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
         None, description="OpenTelemetry OTLP exporter endpoint"
     )

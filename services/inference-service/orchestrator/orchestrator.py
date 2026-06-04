@@ -17,7 +17,6 @@ from trace.request_span import (
     finalize_span,
 )
 
-from models.task_types import task_registry
 from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
@@ -46,7 +45,6 @@ class Orchestrator:
 
     def __init__(self):
         """Initialize orchestrator."""
-        self.task_registry = task_registry
         self.logger = logger
         self.inference_server_resolver = InferenceServerResolver()
         self.task_service_registry: list = TASK_SERVICE_REGISTRY

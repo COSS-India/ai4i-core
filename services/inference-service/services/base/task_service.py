@@ -151,7 +151,7 @@ class BaseTaskService:
             value = value.decode("utf-8", errors="replace")
         return value
 
-    async def extract_field_from_items(
+    def extract_field_from_items(
         self,
         items: List[Any],
         field_name: str,
@@ -211,7 +211,7 @@ class BaseTaskService:
             if not input_items:
                 raise ValueError(f"{self.task_name}: input payload is empty or missing")
 
-            source_texts = await self.extract_field_from_items(input_items, 'source')
+            source_texts = self.extract_field_from_items(input_items, 'source')
             span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
 
             triton_inputs, triton_outputs = await inference_model.convert_payload_to_triton_format(
@@ -262,6 +262,7 @@ class BaseTaskService:
         Raises:
             RuntimeError: If Triton call fails
         """
+        from config import settings
         from utils.http_client import HTTPServiceClient
 
         try:
@@ -275,7 +276,9 @@ class BaseTaskService:
                 headers["Authorization"] = f"Bearer {api_key}"
 
             self.logger.debug(f"Calling Triton: POST {triton_endpoint}")
-            return await HTTPServiceClient(timeout=300).post_json(triton_endpoint, payload, headers)
+            return await HTTPServiceClient(
+                timeout=settings.DEFAULT_TRITON_TIMEOUT
+            ).post_json(triton_endpoint, payload, headers)
 
         except Exception as e:
             self.logger.error(f"Failed to connect to Triton: {str(e)}")
