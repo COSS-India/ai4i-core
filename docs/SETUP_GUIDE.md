@@ -181,17 +181,19 @@ REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
 
 ```bash
 cd services/auth-service
-pip3 install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ```bash
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
 ```
 
 The service is ready when you see `Application startup complete` in the logs. Verify at **http://localhost:8081/docs**.
 
-
 ```bash
+deactivate
 cd ../..
 ```
 
@@ -240,17 +242,19 @@ ALERTMANAGER_CONFIG_PATH=infrastructure/alertmanager/alertmanager.yml
 
 ```bash
 cd services/platform-core-service
-pip3 install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ```bash
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
 ```
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8095/docs**.
 
-
 ```bash
+deactivate
 cd ../..
 ```
 
@@ -288,17 +292,19 @@ LLM_DEFAULT_ENDPOINT=<YOUR_LLM_UPSTREAM_BASE_URL>
 
 ```bash
 cd services/inference-service
-pip3 install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ```bash
-python3 -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 ```
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8090/docs**.
 
-
 ```bash
+deactivate
 cd ../..
 ```
 
