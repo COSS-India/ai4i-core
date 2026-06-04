@@ -375,9 +375,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   colorScheme="blue"
                   isLoading={tm.resendVerificationTenantId === t.tenant_id}
                   loadingText="Sending..."
-                  onClick={() => void tm.handleResendTenantVerification(t)}
+                  onClick={() => void tm.handleResendTenantSetupLink(t)}
                 >
-                  Resend Verification Email
+                  Resend Setup Link
                 </Button>
               )}
               <Button
@@ -451,9 +451,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   // ── Row actions (inline icons, same pattern as service/model management) ─
   function renderTenantRowActions(t: TenantView) {
-    const statusActionTargets = isTenantStatus(t.status, TENANT.STATUS.PENDING)
-      ? [TENANT.STATUS.ACTIVE]
-      : getTenantStatusActionTargets(t.status);
+    const statusActionTargets = getTenantStatusActionTargets(t.status);
 
     return (
       <HStack spacing={1}>
@@ -480,16 +478,16 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           />
         </Tooltip>
         {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
-          <Tooltip label="Resend verification email" placement="top" hasArrow>
+          <Tooltip label="Resend setup link" placement="top" hasArrow>
             <IconButton
-              aria-label="Resend verification email"
+              aria-label="Resend setup link"
               icon={<FiMail />}
               size="sm"
               variant="ghost"
               colorScheme="blue"
               _hover={{ bg: "blue.50" }}
               isLoading={tm.resendVerificationTenantId === t.tenant_id}
-              onClick={() => void tm.handleResendTenantVerification(t)}
+              onClick={() => void tm.handleResendTenantSetupLink(t)}
             />
           </Tooltip>
         )}
