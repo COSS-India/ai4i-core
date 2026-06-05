@@ -165,11 +165,14 @@ class AuthService {
           .join(', ');
       }
 
-      if (withAuth) {
+      if (withAuth && endpoint !== authPath.changePassword) {
         const errorMessageLower = errorMessage.toLowerCase();
         const isInvalidAuth =
           errorMessageLower.includes('invalid authentication credentials') ||
-          (status === 401 && errorMessageLower.includes('invalid'));
+          errorMessageLower.includes('token expired') ||
+          errorMessageLower.includes('token has expired') ||
+          errorMessageLower.includes('token is invalid') ||
+          errorMessageLower.includes('session expired');
 
         if (isInvalidAuth && typeof window !== 'undefined') {
           this.clearAuthTokens();

@@ -25,7 +25,6 @@ import type {
   TenantUserStatusUpdateResponse,
   TenantUserUpdateRequest,
   TenantUserUpdateResponse,
-  TenantUserView,
   TenantView,
   UserRegisterRequest,
   UserRegisterResponse,
@@ -108,13 +107,6 @@ export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
   });
   const users = response.data.data ?? [];
   return { count: users.length, users };
-}
-
-export async function getViewUser(user_id: string): Promise<TenantUserView> {
-  const response = await apiService.get(apiEndpoints.auth.user(user_id), {
-    responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
-  });
-  return response.data.data;
 }
 
 export async function registerUser(

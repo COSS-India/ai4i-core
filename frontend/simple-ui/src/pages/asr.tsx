@@ -6,6 +6,7 @@ import React, { useMemo } from "react";
 import { FaFileAlt } from "react-icons/fa";
 import {
   buildResponseMetadata,
+  GuestUsageLimitBanner,
   mapToServiceOptions,
   RequestContainer,
   ResponseContainer,
@@ -79,6 +80,7 @@ const ASRPage: React.FC = () => {
     <ServicePageLayout
       serviceId="asr"
       headDescription="Test Automatic Speech Recognition with microphone recording and file upload"
+      banner={<GuestUsageLimitBanner />}
       requestPanel={
         <RequestContainer
           inputType="audio"
