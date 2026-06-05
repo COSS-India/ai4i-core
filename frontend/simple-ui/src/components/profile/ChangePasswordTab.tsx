@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -9,6 +9,7 @@ import {
   FormErrorMessage,
   FormLabel,
   Heading,
+  HStack,
   Input,
   InputGroup,
   InputRightElement,
@@ -26,7 +27,19 @@ import PasswordRequirements, {
   passwordPasses,
 } from "../auth/password/PasswordRequirements";
 
-export default function ChangePasswordTab() {
+const CLIENT_MESSAGES = {
+  CURRENT_REQUIRED: "Current password is required.",
+  NEW_SAME_AS_CURRENT: "New password must be different from your current password.",
+  CONFIRM_MISMATCH: "Passwords do not match.",
+} as const;
+
+type FieldKey = "current_password" | "new_password" | "confirm_password";
+
+interface ChangePasswordTabProps {
+  onCancel?: () => void;
+}
+
+export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) {
   const { changePassword, isLoading } = useAuth();
   const toast = useToastWithDeduplication();
   const cardBg = useColorModeValue("white", "gray.800");
@@ -37,30 +50,101 @@ export default function ChangePasswordTab() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({});
+  const [serverErrors, setServerErrors] = useState<Partial<Record<FieldKey, string>>>({});
 
-  const validate = (): boolean => {
-    const next: Record<string, string> = {};
+  const clientErrors = useMemo(() => {
+    const next: Partial<Record<FieldKey, string>> = {};
+
+    if (touched.current_password && !currentPassword) {
+      next.current_password = CLIENT_MESSAGES.CURRENT_REQUIRED;
+    }
+
+    if (newPassword || touched.new_password) {
+      if (currentPassword && newPassword && currentPassword === newPassword) {
+        next.new_password = CLIENT_MESSAGES.NEW_SAME_AS_CURRENT;
+      } else {
+        const pwError = getPasswordValidationError(newPassword);
+        if (pwError) {
+          next.new_password = pwError;
+        }
+      }
+    }
+
+    if (confirmPassword || touched.confirm_password) {
+      if (confirmPassword && newPassword !== confirmPassword) {
+        next.confirm_password = CLIENT_MESSAGES.CONFIRM_MISMATCH;
+      }
+    }
+
+    return next;
+  }, [currentPassword, newPassword, confirmPassword, touched]);
+
+  const errors = { ...clientErrors, ...serverErrors };
+
+  const markTouched = (field: FieldKey) => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+  };
+
+  const clearServerError = (field: FieldKey) => {
+    if (serverErrors[field]) {
+      setServerErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
+
+  const resetForm = () => {
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setShowCurrent(false);
+    setShowNew(false);
+    setShowConfirm(false);
+    setTouched({});
+    setServerErrors({});
+  };
+
+  const handleCancel = () => {
+    resetForm();
+    onCancel?.();
+  };
+
+  const getSubmitErrors = (): Partial<Record<FieldKey, string>> => {
+    const next: Partial<Record<FieldKey, string>> = {};
+
     if (!currentPassword) {
-      next.current_password = "Current password is required.";
-    }
-    const pwError = getPasswordValidationError(newPassword);
-    if (pwError) {
-      next.new_password = pwError;
-    }
-    if (newPassword !== confirmPassword) {
-      next.confirm_password = "Passwords do not match.";
+      next.current_password = CLIENT_MESSAGES.CURRENT_REQUIRED;
     }
     if (currentPassword && newPassword && currentPassword === newPassword) {
-      next.new_password = "New password must be different from your current password.";
+      next.new_password = CLIENT_MESSAGES.NEW_SAME_AS_CURRENT;
+    } else {
+      const pwError = getPasswordValidationError(newPassword);
+      if (pwError) {
+        next.new_password = pwError;
+      }
     }
-    setErrors(next);
-    return Object.keys(next).length === 0;
+    if (newPassword !== confirmPassword) {
+      next.confirm_password = CLIENT_MESSAGES.CONFIRM_MISMATCH;
+    }
+
+    return next;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+    setTouched({
+      current_password: true,
+      new_password: true,
+      confirm_password: true,
+    });
+
+    if (Object.keys(getSubmitErrors()).length > 0) {
+      return;
+    }
 
     try {
       const res = await changePassword({
@@ -68,10 +152,7 @@ export default function ChangePasswordTab() {
         new_password: newPassword,
         confirm_password: confirmPassword,
       });
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setErrors({});
+      resetForm();
       toast({
         title: "Password updated",
         description: res?.message || "Your password has been changed successfully.",
@@ -84,7 +165,7 @@ export default function ChangePasswordTab() {
         err instanceof Error ? err.message : "Failed to change password. Please try again.";
       const lower = message.toLowerCase();
       if (lower.includes("current password")) {
-        setErrors((prev) => ({ ...prev, current_password: message }));
+        setServerErrors((prev) => ({ ...prev, current_password: message }));
       }
       toast({
         title: "Password change failed",
@@ -96,15 +177,12 @@ export default function ChangePasswordTab() {
     }
   };
 
-  const clearFieldError = (field: string) => {
-    if (errors[field]) {
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
-    }
-  };
+  const canSubmit =
+    !isLoading &&
+    !!currentPassword &&
+    passwordPasses(newPassword) &&
+    newPassword !== currentPassword &&
+    newPassword === confirmPassword;
 
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
@@ -127,8 +205,10 @@ export default function ChangePasswordTab() {
                   value={currentPassword}
                   onChange={(e) => {
                     setCurrentPassword(e.target.value);
-                    clearFieldError("current_password");
+                    markTouched("current_password");
+                    clearServerError("current_password");
                   }}
+                  onBlur={() => markTouched("current_password")}
                   autoComplete="current-password"
                   maxLength={PASSWORD_POLICY.MAX_LENGTH}
                 />
@@ -156,8 +236,10 @@ export default function ChangePasswordTab() {
                   value={newPassword}
                   onChange={(e) => {
                     setNewPassword(e.target.value);
-                    clearFieldError("new_password");
+                    markTouched("new_password");
+                    clearServerError("new_password");
                   }}
+                  onBlur={() => markTouched("new_password")}
                   autoComplete="new-password"
                   minLength={PASSWORD_POLICY.MIN_LENGTH}
                   maxLength={PASSWORD_POLICY.MAX_LENGTH}
@@ -181,36 +263,55 @@ export default function ChangePasswordTab() {
 
             <FormControl isRequired isInvalid={!!errors.confirm_password}>
               <FormLabel>Confirm New Password</FormLabel>
-              <Input
-                type={showNew ? "text" : "password"}
-                value={confirmPassword}
-                onChange={(e) => {
-                  setConfirmPassword(e.target.value);
-                  clearFieldError("confirm_password");
-                }}
-                autoComplete="new-password"
-                minLength={PASSWORD_POLICY.MIN_LENGTH}
-                maxLength={PASSWORD_POLICY.MAX_LENGTH}
-              />
+              <InputGroup>
+                <Input
+                  type={showConfirm ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    markTouched("confirm_password");
+                    clearServerError("confirm_password");
+                  }}
+                  onBlur={() => markTouched("confirm_password")}
+                  autoComplete="new-password"
+                  minLength={PASSWORD_POLICY.MIN_LENGTH}
+                  maxLength={PASSWORD_POLICY.MAX_LENGTH}
+                />
+                <InputRightElement width="4.5rem">
+                  <IconButton
+                    aria-label={showConfirm ? "Hide password" : "Show password"}
+                    icon={showConfirm ? <ViewIcon /> : <ViewOffIcon />}
+                    h="1.75rem"
+                    size="sm"
+                    onClick={() => setShowConfirm((v) => !v)}
+                    variant="ghost"
+                  />
+                </InputRightElement>
+              </InputGroup>
               {errors.confirm_password && (
                 <FormErrorMessage>{errors.confirm_password}</FormErrorMessage>
               )}
             </FormControl>
 
-            <Button
-              type="submit"
-              colorScheme="blue"
-              isLoading={isLoading}
-              loadingText="Updating…"
-              isDisabled={
-                isLoading ||
-                !currentPassword ||
-                !passwordPasses(newPassword) ||
-                newPassword !== confirmPassword
-              }
-            >
-              Update Password
-            </Button>
+            <HStack spacing={3}>
+              <Button
+                type="submit"
+                colorScheme="blue"
+                isLoading={isLoading}
+                loadingText="Updating…"
+                isDisabled={!canSubmit}
+              >
+                Update Password
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleCancel}
+                isDisabled={isLoading}
+              >
+                Cancel
+              </Button>
+            </HStack>
           </VStack>
         </Box>
       </CardBody>
