@@ -2,7 +2,7 @@
 LanguageDiarizationTaskService — implements language diarization inference.
 
 Extends AudioBase (base64 passthrough, adapter_config driven).
-Overrides build_response to produce the same
+Overrides postprocess to produce the same
 output structure as the old language-diarization-service.
 
 Triton tensor contract (adapter_config from MMS):
@@ -14,7 +14,7 @@ Triton tensor contract (adapter_config from MMS):
 from typing import Any, Dict, List, Tuple
 
 from services.base.audio_base import AudioBase
-from services.base.config_mapper import GenericTritonMapper
+from services.base.task_service import PostProcessFormat
 
 
 class LanguageDiarizationTaskService(AudioBase):
@@ -23,7 +23,7 @@ class LanguageDiarizationTaskService(AudioBase):
 
     Inherits base64-passthrough preprocessing from AudioBase.
     Overrides convert_payload_to_triton_format (normalise target_language),
-    and build_response (parse DIARIZATION_RESULT JSON + envelope).
+    and postprocess (parse DIARIZATION_RESULT JSON + envelope).
     """
 
     async def convert_payload_to_triton_format(
@@ -36,22 +36,12 @@ class LanguageDiarizationTaskService(AudioBase):
         config["target_language"] = str(
             config.get("target_language") or config.get("targetLanguage") or ""
         )
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
-    async def build_response(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         output_list = []
 
-        for item in response_items:
+        for item in result.response_data:
             # Try the well-known key first; fall back to the first value in the
             # dict so different adapter_config maps_to names still work.
             raw = item.get("diarization_json") or next(iter(item.values()), None)
@@ -79,7 +69,7 @@ class LanguageDiarizationTaskService(AudioBase):
                 "target_language": str(data.get("target_language", "")),
             })
 
-        cfg = payload.get("config") or {}
+        cfg = result.payload.get("config") or {}
         return {
             "taskType": "language-diarization",
             "output": output_list,

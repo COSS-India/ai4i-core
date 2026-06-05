@@ -59,7 +59,6 @@ export type TenantAssignableRole = 'USER' | 'TENANT ADMIN';
 // POST /api/v1/tenants/{tenant_id}/users
 export interface UserRegisterRequest {
   email: string;
-  username: string;
   full_name?: string;
   phone_number?: string;
   role?: TenantAssignableRole;

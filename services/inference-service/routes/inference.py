@@ -5,19 +5,16 @@ Integrates orchestration, factory, and telemetry.
 """
 
 import logging
-import time
 from typing import Any, Dict, Optional, Tuple
 
-from fastapi import APIRouter, Body, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi import (
+    APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
+)
+from fastapi.responses import JSONResponse, PlainTextResponse
 
-from orchestrator import Orchestrator, UnknownTaskTypeError
+from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-from utils.http_client import ServiceCallError, ServiceNotFoundError
-from inference.inference_server_resolver import (
-    ServiceNotFoundError as ResolverServiceNotFoundError,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -49,14 +46,14 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
     """
     Map an orchestration failure to a client-safe HTTPException.
 
-    Walks the exception __cause__ chain (orchestrator wraps with `from exc`)
-    so the original error classifies the response:
-      ValueError / UnknownTaskTypeError → 400 (validation messages are
-                                          user-facing by design)
-      NotImplementedError               → 501 (unimplemented task, e.g. PII)
-      ServiceNotFoundError              → 404 (unknown serviceId)
-      RuntimeError                      → 502 (Triton / MMS dependency failed)
-      anything else                     → 500
+    Walks the exception __cause__ chain (raised with `from exc` throughout)
+    so the original error classifies the response. Builtin exceptions only:
+      ValueError          → 400 (validation messages are user-facing by design)
+      NotImplementedError → 501 (unimplemented task, e.g. PII)
+      LookupError         → 404 (unknown serviceId)
+      ConnectionError     → 502 (MMS / Triton unreachable)
+      RuntimeError        → 502 (server-side config / backend mismatch)
+      anything else       → 500
 
     Only validation messages are echoed to the client. Resolver and backend
     errors previously leaked internal endpoints via str(exc) — those now get
@@ -69,16 +66,18 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
         cause = cause.__cause__
 
     for e in chain:
-        if isinstance(e, (ValueError, UnknownTaskTypeError)):
+        if isinstance(e, ValueError):
             return HTTPException(status_code=400, detail=str(e))
         if isinstance(e, NotImplementedError):
             return HTTPException(status_code=501, detail=str(e))
-        if isinstance(e, (ServiceNotFoundError, ResolverServiceNotFoundError)):
+        # exact type: KeyError/IndexError are LookupError subclasses but are
+        # programming errors, not not-found semantics — they must stay 500
+        if type(e) is LookupError:
             return HTTPException(
                 status_code=404, detail=f"{task_type}: requested service not found"
             )
     for e in chain:
-        if isinstance(e, (RuntimeError, ServiceCallError)):
+        if isinstance(e, (RuntimeError, ConnectionError)):
             return HTTPException(
                 status_code=502, detail=f"{task_type}: upstream inference dependency failed"
             )
@@ -98,8 +97,8 @@ async def _run_inference(
     the endpoint contract excludes, and map failures to client-safe HTTP
     errors (full details logged server-side only).
     """
-    start_time = time.time()
-
+    # No manual timing here: the logging middleware records duration_ms for
+    # every request, and the request span carries total_time_ms.
     if default_task_type and not payload.get("task_type"):
         payload = {**payload, "task_type": default_task_type}
     task_type = str(payload.get("task_type", "")).upper()
@@ -108,18 +107,11 @@ async def _run_inference(
     try:
         result = await orchestrator.route_inference(payload=payload, request=request)
     except Exception as exc:
-        duration_ms = (time.time() - start_time) * 1000
-        logger.error(
-            f"Inference failed: task_type={task_type}, duration_ms={duration_ms:.2f}",
-            exc_info=True,
-        )
+        logger.error(f"Inference failed: task_type={task_type}", exc_info=True)
         raise _http_error_for(exc, task_type) from exc
 
     for key in strip:
         result.pop(key, None)
-
-    duration_ms = (time.time() - start_time) * 1000
-    logger.info(f"Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
     return result
 
 
@@ -404,6 +396,207 @@ async def chat(
 ) -> JSONResponse:
     status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
     return JSONResponse(status_code=status_code, content=body)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenAI-compatible audio endpoints — pure multipart passthrough.
+#
+# Upstream (vLLM/gemma server) is expected to implement /v1/audio/transcriptions
+# and /v1/audio/translations conforming to OpenAI's OpenAPI spec. See
+# DESIGN_audio_llm_endpoints.md §2 for the upstream contract this passthrough
+# assumes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AUDIO_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's documented cap for /audio/*
+
+
+def _audio_error(
+    status: int,
+    *,
+    message: str,
+    type_: str = "invalid_request_error",
+    param: Optional[str] = None,
+    code: Optional[str] = None,
+) -> JSONResponse:
+    """OpenAI-shape error envelope: {"error": {message, type, param?, code?}}."""
+    payload: Dict[str, Any] = {"message": message, "type": type_}
+    if param is not None:
+        payload["param"] = param
+    if code is not None:
+        payload["code"] = code
+    return JSONResponse(status_code=status, content={"error": payload})
+
+
+# Response shapes for OpenAPI docs. The actual body comes from upstream
+# verbatim; this annotation just describes what callers should expect.
+_AUDIO_RESPONSES: Dict[int | str, Dict[str, Any]] = {
+    200: {
+        "description": "Successful transcription/translation.",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["text"],
+                    "properties": {"text": {"type": "string"}},
+                },
+                "example": {"text": "Hello, how are you?"},
+            },
+            "text/plain": {
+                "schema": {"type": "string"},
+                "example": "Hello, how are you?",
+            },
+        },
+    },
+    413: {"description": "Uploaded file exceeds the 25 MB cap."},
+    502: {"description": "Upstream LLM unreachable."},
+    503: {"description": "No upstream LLM endpoint configured."},
+}
+
+
+async def _proxy_audio_upload(
+    file: UploadFile,
+    data: Dict[str, Any],
+    upstream_path: str,
+) -> Response:
+    """Edge cap + multipart forwarding + response shaping. Each route owns
+    its own form-field set and supplies the ``data`` dict; this helper only
+    handles the mechanics shared between transcriptions and translations.
+
+    httpx emits each list value in ``data`` as a repeated form field, which
+    is how OpenAI's array form fields (`timestamp_granularities[]`,
+    `include[]`, etc.) are serialised on the wire."""
+    file_bytes = await file.read()
+    if len(file_bytes) > _AUDIO_MAX_BYTES:
+        return _audio_error(
+            413,
+            message=(
+                f"File exceeds the 25 MB limit "
+                f"(received {len(file_bytes)} bytes)."
+            ),
+            param="file",
+            code="file_too_large",
+        )
+
+    files = {
+        "file": (
+            file.filename,
+            file_bytes,
+            file.content_type or "application/octet-stream",
+        )
+    }
+
+    status_code, body = await OpenAIProxyService().proxy_multipart(
+        path=upstream_path, files=files, data=data,
+    )
+
+    # Body shape decides response type: dict → JSON, str → text/plain.
+    # Preserves both response_format=json and =text behaviours without
+    # peeking at the form field ourselves.
+    if isinstance(body, dict):
+        return JSONResponse(status_code=status_code, content=body)
+    return PlainTextResponse(status_code=status_code, content=body or "")
+
+
+def _build_form_data(**fields: Any) -> Dict[str, Any]:
+    """Drop None / empty-list values; coerce non-list scalars to str.
+    Keeps array form fields (e.g. ``timestamp_granularities[]``) as lists
+    so httpx repeats them as separate parts on the wire."""
+    out: Dict[str, Any] = {}
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, list):
+            if value:  # drop empty lists too
+                out[key] = value
+            continue
+        out[key] = str(value)
+    return out
+
+
+@router.post(
+    "/audio/transcriptions",
+    summary="OpenAI-compatible speech-to-text (same language as audio).",
+    description=(
+        "Multipart passthrough to the upstream LLM at "
+        "/v1/audio/transcriptions. Request and response shapes follow "
+        "OpenAI's OpenAPI spec; this service does not transform either."
+    ),
+    responses=_AUDIO_RESPONSES,
+)
+async def audio_transcriptions(
+    file: UploadFile = File(
+        ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
+    ),
+    model: str = Form(
+        ...,
+        examples=["google/gemma-4-E4B-it"],
+        description="Model identifier, e.g. `google/gemma-4-E4B-it`.",
+    ),
+    language: Optional[str] = Form(
+        None, description="ISO-639-1 source language code (optional).",
+    ),
+    prompt: Optional[str] = Form(
+        None, description="Optional text to guide the model's style.",
+    ),
+    response_format: Optional[str] = Form(
+        "json",
+        description="One of `json`, `text`, `srt`, `verbose_json`, `vtt`. Default `json`.",
+    ),
+    temperature: Optional[float] = Form(
+        0.0, ge=0.0, le=1.0, description="Sampling temperature, 0.0–1.0.",
+    ),
+) -> Response:
+    data = _build_form_data(
+        model=model,
+        language=language,
+        prompt=prompt,
+        response_format=response_format,
+        temperature=temperature,
+    )
+    return await _proxy_audio_upload(file, data, "/audio/transcriptions")
+
+
+@router.post(
+    "/audio/translations",
+    summary="OpenAI-compatible audio → English translation.",
+    description=(
+        "Multipart passthrough to the upstream LLM at "
+        "/v1/audio/translations. Request and response shapes follow "
+        "OpenAI's OpenAPI spec; this service does not transform either."
+    ),
+    responses=_AUDIO_RESPONSES,
+)
+async def audio_translations(
+    file: UploadFile = File(
+        ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
+    ),
+    model: str = Form(
+        ...,
+        examples=["google/gemma-4-E4B-it"],
+        description="Model identifier, e.g. `google/gemma-4-E4B-it`.",
+    ),
+    prompt: Optional[str] = Form(
+        None,
+        description=(
+            "Optional text to guide the model's style or continue a previous "
+            "audio segment. The prompt should be in English."
+        ),
+    ),
+    response_format: Optional[str] = Form(
+        "json",
+        description="One of `json`, `text`, `srt`, `verbose_json`, `vtt`. Default `json`.",
+    ),
+    temperature: Optional[float] = Form(
+        0.0, ge=0.0, le=1.0, description="Sampling temperature, 0.0–1.0.",
+    ),
+) -> Response:
+    data = _build_form_data(
+        model=model,
+        prompt=prompt,
+        response_format=response_format,
+        temperature=temperature,
+    )
+    return await _proxy_audio_upload(file, data, "/audio/translations")
 
 
 @router.get(

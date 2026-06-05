@@ -145,3 +145,7 @@ skills/
 
 # Local dev metadata (analysis docs, prompt snippets, etc.)
 .github/
+
+# Local design / mock artifacts — not for the repo
+services/inference-service/DESIGN_audio_llm_endpoints.md
+services/inference-service/postman_mock_upstream.json

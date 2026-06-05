@@ -809,16 +809,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.username)}>
-                <FormLabel>Username</FormLabel>
-                <Input
-                  value={tm.userForm.username}
-                  onChange={(e) =>
-                    tm.setUserForm({ ...tm.userForm, username: e.target.value })
-                  }
-                />
-                <FormErrorMessage>{tm.userFormErrors.username}</FormErrorMessage>
-              </FormControl>
               <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.full_name)}>
                 <FormLabel>Full Name</FormLabel>
                 <Input

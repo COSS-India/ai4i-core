@@ -2,9 +2,11 @@
 Tenant request/response schemas.
 """
 
+import re
+import unicodedata
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Union
+from typing import Any, Optional, Union
 from uuid import UUID
 
 from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer, field_validator, model_validator
@@ -24,6 +26,95 @@ from app.schemas.tenant_field_validators import (
     validate_person_name,
 )
 
+# Invisible Unicode characters that str.strip() does not remove:
+# soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
+# line/paragraph separators, zero-width no-break space (BOM).
+_INVISIBLE_CHARS = re.compile(
+    "[­​‌‍‎‏﻿]+"
+)
+
+# E.164 phone: + followed by 2–15 digits
+_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
+
+# Formatting chars commonly added to phone numbers by users or stored systems
+_PHONE_FORMAT_RE = re.compile(r"[ \-()\.]")
+
+# Punctuation allowed in organisation names beyond letters/digits
+_ORG_PUNCT = frozenset(" -.'/&(),")
+
+# Punctuation allowed in personal name fields
+_NAME_PUNCT = frozenset(" -'")
+
+
+def _clean_text(v: Any) -> Any:
+    """Strip invisible chars, trim whitespace, and NFC-normalise."""
+    if isinstance(v, str):
+        v = _INVISIBLE_CHARS.sub("", v).strip()
+        v = unicodedata.normalize("NFC", v)
+    return v
+
+
+def _check_org_chars(v: str) -> str:
+    """Validate organisation name character set.
+
+    Allows Unicode letters, combining marks, decimal digits, and common
+    business punctuation. Requires at least one letter or digit so
+    punctuation-only values (e.g. '--') are rejected.
+    """
+    has_alnum = False
+    for c in v:
+        cat = unicodedata.category(c)
+        if cat.startswith(("L", "M")) or cat == "Nd":
+            has_alnum = True
+        elif c not in _ORG_PUNCT:
+            raise ValueError(
+                "may only contain letters, digits, spaces, hyphens, dots, "
+                "apostrophes, ampersands, parentheses, forward slashes, and commas"
+            )
+    if not has_alnum:
+        raise ValueError("must contain at least one letter or digit")
+    return v
+
+
+def _check_name_chars(v: str) -> str:
+    """Validate personal name character set.
+
+    Allows Unicode letters and combining marks (covers Indic scripts,
+    accented Latin, etc.) plus spaces, hyphens, and apostrophes.
+    Requires at least one letter so punctuation-only values are rejected.
+    """
+    has_letter = False
+    for c in v:
+        cat = unicodedata.category(c)
+        if cat.startswith(("L", "M")):
+            has_letter = True
+        elif c not in _NAME_PUNCT:
+            raise ValueError(
+                "may only contain letters, spaces, hyphens, and apostrophes"
+            )
+    if not has_letter:
+        raise ValueError("must contain at least one letter")
+    return v
+
+
+def _normalize_phone(v: Any, *, validate_e164: bool) -> Optional[str]:
+    """Strip common phone formatting chars; coerce blank to None.
+
+    With validate_e164=True (create paths) the result must match E.164.
+    With validate_e164=False (update paths) stored numbers that pre-date
+    the E.164 constraint are accepted as-is after formatting is stripped.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        return v
+    v = _PHONE_FORMAT_RE.sub("", v.strip())
+    if not v:
+        return None
+    if validate_e164 and not _E164_RE.match(v):
+        raise ValueError("must be in E.164 format (e.g. +919876543210)")
+    return v
+
 
 class TenantUserRole(str, Enum):
     """Roles assignable to users provisioned under a tenant."""
@@ -33,55 +124,65 @@ class TenantUserRole(str, Enum):
 
 
 class TenantCreate(BaseSchema):
-    contact_name: str = Field(..., max_length=TENANT_CONTACT_NAME_MAX_LENGTH)
-    organisation: str = Field(..., max_length=TENANT_ORGANISATION_MAX_LENGTH)
+    contact_name: str = Field(..., min_length=2, max_length=80)
+    organisation: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     phone_number: Optional[str] = None
     plan_id: Optional[UUID] = None
 
-    @field_validator("organisation", mode="before")
+    @field_validator("organisation", "contact_name", mode="before")
     @classmethod
-    def _organisation_before(cls, v: object) -> object:
-        if isinstance(v, str):
-            return strip_invisible_chars(v)
-        return v
+    def _clean(cls, v: Any) -> Any:
+        return _clean_text(v)
 
     @field_validator("organisation", mode="after")
     @classmethod
-    def _organisation_after(cls, v: str) -> str:
-        return validate_organisation(v)
+    def _validate_org(cls, v: str) -> str:
+        return _check_org_chars(v)
 
-    @field_validator("contact_name", mode="before")
+    @field_validator("contact_name", mode="after")
     @classmethod
-    def _contact_name_before(cls, v: object) -> object:
-        if isinstance(v, str):
-            return strip_invisible_chars(v)
+    def _validate_contact_name(cls, v: str) -> str:
+        return _check_name_chars(v)
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def _normalize_phone(cls, v: Any) -> Optional[str]:
+        return _normalize_phone(v, validate_e164=True)
+
+
+class TenantUpdate(BaseSchema):
+    # max_length matches DB column (255) so existing stored values round-trip safely
+    contact_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    organisation: Optional[str] = Field(None, min_length=2, max_length=255)
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    status: Optional[TenantStatus] = None
+
+    @field_validator("organisation", "contact_name", mode="before")
+    @classmethod
+    def _clean(cls, v: Any) -> Any:
+        return _clean_text(v)
+
+    @field_validator("organisation", mode="after")
+    @classmethod
+    def _validate_org(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return _check_org_chars(v)
         return v
 
     @field_validator("contact_name", mode="after")
     @classmethod
-    def _contact_name_after(cls, v: str) -> str:
-        return validate_person_name(v, field_label="Contact name")
+    def _validate_contact_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return _check_name_chars(v)
+        return v
 
     @field_validator("phone_number", mode="before")
     @classmethod
-    def _phone_before(cls, v: object) -> object:
-        if isinstance(v, str):
-            return strip_invisible_chars(v)
-        return v
-
-    @field_validator("phone_number", mode="after")
-    @classmethod
-    def _phone_after(cls, v: Optional[str]) -> Optional[str]:
-        return validate_optional_e164_phone(v)
-
-
-class TenantUpdate(BaseSchema):
-    contact_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    organisation: Optional[str] = Field(None, min_length=1, max_length=255)
-    email: Optional[EmailStr] = None
-    phone_number: Optional[str] = Field(None, max_length=20)
-    status: Optional[TenantStatus] = None
+    def _normalize_phone(cls, v: Any) -> Optional[str]:
+        # No strict E.164 check: existing stored numbers pre-date this constraint
+        return _normalize_phone(v, validate_e164=False)
 
 
 class TenantStatusUpdate(BaseSchema):
@@ -110,16 +211,24 @@ class TenantResponse(BaseSchema):
 
 class TenantUserCreate(BaseSchema):
     email: EmailStr
-    full_name: str = Field(..., max_length=TENANT_USER_FULL_NAME_MAX_LENGTH)
+    full_name: str = Field(..., min_length=2, max_length=80)
     phone_number: Optional[str] = None
     role: TenantUserRole = TenantUserRole.USER
 
     @field_validator("full_name", mode="before")
     @classmethod
-    def _full_name_before(cls, v: object) -> object:
-        if isinstance(v, str):
-            return strip_invisible_chars(v)
-        return v
+    def strip_full_name(cls, v: Any) -> Any:
+        return _clean_text(v)
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: str) -> str:
+        return _check_name_chars(v)
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def _normalize_phone(cls, v: Any) -> Optional[str]:
+        return _normalize_phone(v, validate_e164=True)
 
     @field_validator("full_name", mode="after")
     @classmethod
@@ -168,10 +277,29 @@ class TenantUserStatusUpdate(BaseSchema):
 
 class TenantUserUpdate(BaseSchema):
     email: Optional[EmailStr] = None
-    full_name: Optional[str] = Field(None, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
+    # max_length matches DB column (255) so existing stored values round-trip safely
+    full_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    phone_number: Optional[str] = None
     username: Optional[str] = Field(None, min_length=3, max_length=100)
     role: Optional[TenantUserRole] = None
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _strip_full_name(cls, v: Any) -> Any:
+        return _clean_text(v)
+
+    @field_validator("full_name", mode="after")
+    @classmethod
+    def _validate_full_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return _check_name_chars(v)
+        return v
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def _normalize_phone(cls, v: Any) -> Optional[str]:
+        # No strict E.164 check: existing stored numbers pre-date this constraint
+        return _normalize_phone(v, validate_e164=False)
 
     @model_validator(mode='after')
     def at_least_one_field(self) -> 'TenantUserUpdate':

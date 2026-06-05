@@ -25,17 +25,17 @@ depends_on: Union[str, None] = None
 # Mapping from task type stored in mm_models.task->>'type' to the
 # TaskService class name used by the inference-service registry.
 _TASK_TYPE_TO_CLASS = {
-    "ASR":                    "ASRTaskService",
-    "AUDIO_LANGUAGE_DETECTION": "AudioDefaultModel",
-    "LANGUAGE_DETECTION":     "LanguageDetectionTaskService",
-    "LANGUAGE_DIARIZATION":   "LanguageDiarizationTaskService",
-    "NMT":                    "TextDefaultModel",
-    "NER":                    "NERTaskService",
-    "OCR":                    "ImageDefaultModel",
-    "PII":                    "PIITaskService",
-    "SPEAKER_DIARIZATION":    "SpeakerDiarizationTaskService",
-    "TRANSLITERATION":        "TransliterationTaskService",
-    "TTS":                    "TTSTaskService",
+    "asr":                      "ASRTaskService",
+    "audio-lang-detection":     "AudioDefaultModel",
+    "language-detection":       "LanguageDetectionTaskService",
+    "language-diarization":     "LanguageDiarizationTaskService",
+    "nmt":                      "TextDefaultModel",
+    "ner":                      "NERTaskService",
+    "ocr":                      "ImageDefaultModel",
+    "pii":                      "PIITaskService",
+    "speaker-diarization":      "SpeakerDiarizationTaskService",
+    "transliteration":          "TransliterationTaskService",
+    "tts":                      "TTSTaskService",
 }
 
 
