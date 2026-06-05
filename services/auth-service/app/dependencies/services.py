@@ -43,6 +43,12 @@ def get_email_client() -> EmailClient:
     return _email_client_singleton()
 
 
+async def get_user_repository(
+    db: AsyncSession = Depends(get_db),
+) -> UserRepository:
+    return UserRepository(db)
+
+
 async def get_cache_service(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> CacheService:
