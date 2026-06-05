@@ -48,7 +48,6 @@ export interface TenantFormState {
 export interface TenantUserFormState {
   tenant_id: string;
   email: string;
-  username: string;
   full_name: string;
   phone_number: string;
   role: TenantAssignableRole;

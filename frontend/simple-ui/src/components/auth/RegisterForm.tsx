@@ -40,7 +40,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
   const [formData, setFormData] = useState<RegisterRequest>({
     full_name: '',
     email: '',
-    username: '',
     password: '',
     confirm_password: '',
   });
@@ -57,7 +56,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       setFormData({
         full_name: '',
         email: '',
-        username: '',
         password: '',
         confirm_password: '',
       });
@@ -94,10 +92,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       errors.email = 'Please enter a valid email address';
     }
 
-    if (!formData.username || formData.username.length < 3) {
-      errors.username = 'Username must be at least 3 characters long';
-    }
-
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -120,7 +114,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       setFormData({
         full_name: '',
         email: '',
-        username: '',
         password: '',
         confirm_password: '',
       });
@@ -294,23 +287,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             />
             {validationErrors.email && (
               <FormErrorMessage>{validationErrors.email}</FormErrorMessage>
-            )}
-          </FormControl>
-
-          <FormControl isRequired isInvalid={!!validationErrors.username}>
-            <FormLabel>Username</FormLabel>
-            <Input
-              type="text"
-              name="username"
-              value={formData.username}
-              onChange={handleChange}
-              placeholder="Choose a username"
-              size="md"
-              autoComplete="off"
-              data-form-type="other"
-            />
-            {validationErrors.username && (
-              <FormErrorMessage>{validationErrors.username}</FormErrorMessage>
             )}
           </FormControl>
 
