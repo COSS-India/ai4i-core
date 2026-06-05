@@ -43,7 +43,7 @@ const ForgotPasswordPage: React.FC = () => {
 
   const validate = (value: string): string | null => {
     if (!value) return "Please enter your email address.";
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "Please enter a valid email address.";
+    if (!/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value)) return "Please enter a valid email address.";
     return null;
   };
 

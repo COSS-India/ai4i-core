@@ -35,6 +35,10 @@ import {
   TabPanels,
   Tabs,
   Center,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Text,
   Tooltip,
   VStack,
@@ -49,7 +53,7 @@ import {
   FiUserPlus,
   FiUsers,
 } from "react-icons/fi";
-import { DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
@@ -66,13 +70,8 @@ import {
   TENANT_USER_STATUS_LIST,
   formatTenantStatusLabel,
   formatTenantUserStatusLabel,
-  getTenantStatusActionLabel,
-  getTenantStatusActionTargets,
   getTenantStatusColorScheme,
-  getTenantUserStatusActionLabel,
-  getTenantUserStatusToggleTarget,
   isTenantStatus,
-  isTenantUserStatus,
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import type { TenantUserView, TenantView } from "../../types/tenant";
@@ -99,6 +98,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes('ADMIN'));
+  const userListTenantStatus = tm.activeUserListTenant?.status ?? null;
+
+  const resolveUserDisplayStatus = (u: TenantUserView) =>
+    resolveTenantUserDisplayStatus(u, userListTenantStatus);
 
   // Initial fetch when this tab becomes active.
   useEffect(() => {
@@ -139,7 +142,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       { id: "created", header: "Created", cell: (t) => fmtDate(t.created_at) },
       {
         id: "actions",
-        header: "Actions",
+        header: "",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (t) => renderTenantRowActions(t),
       },
@@ -165,8 +168,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         id: "status",
         header: "Status",
         cell: (u) => (
-          <Badge colorScheme={getTenantStatusColorScheme(resolveTenantUserDisplayStatus(u))}>
-            {formatTenantUserStatusLabel(resolveTenantUserDisplayStatus(u))}
+          <Badge colorScheme={getTenantStatusColorScheme(resolveUserDisplayStatus(u))}>
+            {formatTenantUserStatusLabel(resolveUserDisplayStatus(u))}
           </Badge>
         ),
       },
@@ -177,7 +180,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       },
       {
         id: "actions",
-        header: "Actions",
+        header: "",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (u) => renderUserRowActions(u),
       },
@@ -476,143 +479,272 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   }
 
   // ── Row actions (inline icons, same pattern as service/model management) ─
+  type RowActionMenuItem = {
+    key: string;
+    label: string;
+    onSelect: () => void;
+    color: string;
+    hoverBg: string;
+    icon: React.ReactNode;
+    isDisabled?: boolean;
+  };
+
+  function renderOverflowActionMenu(
+    items: RowActionMenuItem[],
+    stopRowClick: (e: React.MouseEvent) => void,
+    menuAriaLabel: string,
+  ) {
+    return (
+      <Menu>
+        <MenuButton
+          as={IconButton}
+          aria-label={menuAriaLabel}
+          icon={<ChevronDownIcon />}
+          size="sm"
+          variant="ghost"
+          colorScheme="gray"
+          _hover={{ bg: "gray.100" }}
+          onClick={stopRowClick}
+        />
+        <MenuList minW="auto" w="auto" py={1}>
+          {items.map((item) => (
+            <Tooltip key={item.key} label={item.label} placement="left" hasArrow openDelay={300}>
+              <MenuItem
+                aria-label={item.label}
+                color={item.color}
+                _hover={{ bg: item.hoverBg }}
+                isDisabled={item.isDisabled}
+                px={2}
+                py={2}
+                minH="8"
+                w="auto"
+                onClick={(e) => {
+                  stopRowClick(e);
+                  item.onSelect();
+                }}
+              >
+                {item.icon}
+              </MenuItem>
+            </Tooltip>
+          ))}
+        </MenuList>
+      </Menu>
+    );
+  }
+
   function renderTenantRowActions(t: TenantView) {
-    const statusActionTargets = getTenantStatusActionTargets(t.status);
+    const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
+
+    const items: RowActionMenuItem[] = (() => {
+      if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
+        return [
+          {
+            key: "resend-verification",
+            label: "Resend verification email",
+            onSelect: () => void tm.handleResendTenantVerificationEmail(t),
+            color: "blue.600",
+            hoverBg: "blue.50",
+            icon: <FiMail size={16} />,
+            isDisabled: tm.resendVerificationTenantId === t.tenant_id,
+          },
+          {
+            key: "deactivate",
+            label: "Deactivate",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
+            color: "red.600",
+            hoverBg: "red.50",
+            icon: <DeleteIcon boxSize={4} />,
+          },
+        ];
+      }
+
+      if (isTenantStatus(t.status, TENANT.STATUS.ACTIVE)) {
+        return [
+          {
+            key: "suspend",
+            label: "Suspend",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.SUSPENDED),
+            color: "orange.600",
+            hoverBg: "orange.50",
+            icon: <FiPauseCircle size={16} />,
+          },
+          {
+            key: "deactivate",
+            label: "Deactivate",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
+            color: "red.600",
+            hoverBg: "red.50",
+            icon: <DeleteIcon boxSize={4} />,
+          },
+        ];
+      }
+
+      if (isTenantStatus(t.status, TENANT.STATUS.SUSPENDED)) {
+        return [
+          {
+            key: "activate",
+            label: "Activate",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
+            color: "green.600",
+            hoverBg: "green.50",
+            icon: <FiPower size={16} />,
+          },
+          {
+            key: "deactivate",
+            label: "Deactivate",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
+            color: "red.600",
+            hoverBg: "red.50",
+            icon: <DeleteIcon boxSize={4} />,
+          },
+        ];
+      }
+
+      // DEACTIVATED
+      return [
+        {
+          key: "activate",
+          label: "Activate",
+          onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
+          color: "green.600",
+          hoverBg: "green.50",
+          icon: <FiPower size={16} />,
+        },
+      ];
+    })();
 
     return (
-      <HStack spacing={1}>
-        <Tooltip label="View" placement="top" hasArrow>
-          <IconButton
-            aria-label="View tenant"
-            icon={<ViewIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="blue"
-            _hover={{ bg: "blue.50" }}
-            onClick={() => tm.handleViewTenant(t)}
-          />
-        </Tooltip>
-        <Tooltip label="Edit" placement="top" hasArrow>
-          <IconButton
-            aria-label="Edit tenant"
-            icon={<EditIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="green"
-            _hover={{ bg: "green.50" }}
-            onClick={() => tm.handleOpenEditTenant(t)}
-          />
-        </Tooltip>
-        {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
-          <Tooltip label="Resend verification email" placement="top" hasArrow>
-            <IconButton
-              aria-label="Resend verification email"
-              icon={<FiMail />}
-              size="sm"
-              variant="ghost"
-              colorScheme="blue"
-              _hover={{ bg: "blue.50" }}
-              isLoading={tm.resendVerificationTenantId === t.tenant_id}
-              onClick={() => void tm.handleResendTenantVerificationEmail(t)}
-            />
-          </Tooltip>
-        )}
-        {statusActionTargets.map((s) => (
-          <Tooltip
-            key={s}
-            label={getTenantStatusActionLabel(s, t.status)}
-            placement="top"
-            hasArrow
-          >
-            <IconButton
-              aria-label={getTenantStatusActionLabel(s, t.status)}
-              icon={
-                isTenantStatus(s, TENANT.STATUS.ACTIVE) ? (
-                  <FiPower />
-                ) : isTenantStatus(s, TENANT.STATUS.SUSPENDED) ? (
-                  <FiPauseCircle />
-                ) : (
-                  <DeleteIcon />
-                )
-              }
-              size="sm"
-              variant="ghost"
-              colorScheme={
-                isTenantStatus(s, TENANT.STATUS.ACTIVE)
-                  ? "green"
-                  : isTenantStatus(s, TENANT.STATUS.SUSPENDED)
-                    ? "orange"
-                    : "red"
-              }
-              _hover={{
-                bg: isTenantStatus(s, TENANT.STATUS.ACTIVE)
-                  ? "green.50"
-                  : isTenantStatus(s, TENANT.STATUS.SUSPENDED)
-                    ? "orange.50"
-                    : "red.50",
-              }}
-              onClick={() => tm.handleOpenTenantStatus(t, s)}
-            />
-          </Tooltip>
-        ))}
+      <HStack spacing={2}>
+        <IconButton
+          aria-label="View tenant"
+          icon={<ViewIcon />}
+          size="sm"
+          variant="ghost"
+          colorScheme="blue"
+          _hover={{ bg: "blue.50" }}
+          onClick={(e) => {
+            stopRowClick(e);
+            tm.handleViewTenant(t);
+          }}
+        />
+        <IconButton
+          aria-label="Edit tenant"
+          icon={<EditIcon />}
+          size="sm"
+          variant="ghost"
+          colorScheme="green"
+          _hover={{ bg: "green.50" }}
+          onClick={(e) => {
+            stopRowClick(e);
+            tm.handleOpenEditTenant(t);
+          }}
+        />
+
+        {renderOverflowActionMenu(items, stopRowClick, "Tenant actions")}
       </HStack>
     );
   }
 
   function renderUserRowActions(u: TenantUserView) {
-    const isActive = isTenantUserStatus(
-      resolveTenantUserDisplayStatus(u),
-      TENANT.USER_STATUS.ACTIVE
-    );
-    const statusToggleTarget = getTenantUserStatusToggleTarget(u);
+    const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
+    const displayStatus = resolveUserDisplayStatus(u);
+
+    const items: RowActionMenuItem[] = (() => {
+      if (
+        displayStatus === TENANT.USER_STATUS.PENDING ||
+        displayStatus === TENANT.USER_STATUS.PENDING_ACTIVATION
+      ) {
+        return [
+          {
+            key: "resend-verification",
+            label: "Resend verification email",
+            onSelect: () => void tm.handleResendTenantUserVerification(u),
+            color: "blue.600",
+            hoverBg: "blue.50",
+            icon: <FiMail size={16} />,
+            isDisabled: tm.resendVerificationUserId === u.user_id,
+          },
+          {
+            key: "delete",
+            label: "Delete",
+            onSelect: () => tm.handleOpenDeleteUser(u),
+            color: "red.600",
+            hoverBg: "red.50",
+            icon: <DeleteIcon boxSize={4} />,
+          },
+        ];
+      }
+
+      if (displayStatus === TENANT.USER_STATUS.ACTIVE) {
+        return [
+          {
+            key: "suspend",
+            label: "Suspend",
+            onSelect: () => tm.handleOpenUserStatus(u, TENANT.USER_STATUS.SUSPENDED),
+            color: "orange.600",
+            hoverBg: "orange.50",
+            icon: <FiPauseCircle size={16} />,
+          },
+          {
+            key: "delete",
+            label: "Delete",
+            onSelect: () => tm.handleOpenDeleteUser(u),
+            color: "red.600",
+            hoverBg: "red.50",
+            icon: <DeleteIcon boxSize={4} />,
+          },
+        ];
+      }
+
+      // SUSPENDED
+      return [
+        {
+          key: "activate",
+          label: "Activate",
+          onSelect: () => tm.handleOpenUserStatus(u, TENANT.USER_STATUS.ACTIVE),
+          color: "green.600",
+          hoverBg: "green.50",
+          icon: <FiPower size={16} />,
+        },
+        {
+          key: "delete",
+          label: "Delete",
+          onSelect: () => tm.handleOpenDeleteUser(u),
+          color: "red.600",
+          hoverBg: "red.50",
+          icon: <DeleteIcon boxSize={4} />,
+        },
+      ];
+    })();
+
     return (
-      <HStack spacing={1}>
-        <Tooltip label="View" placement="top" hasArrow>
-          <IconButton
-            aria-label="View user"
-            icon={<ViewIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="blue"
-            _hover={{ bg: "blue.50" }}
-            onClick={() => tm.handleViewUser(u)}
-          />
-        </Tooltip>
-        <Tooltip label="Edit" placement="top" hasArrow>
-          <IconButton
-            aria-label="Edit user"
-            icon={<EditIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="green"
-            _hover={{ bg: "green.50" }}
-            onClick={() => tm.handleOpenEditUser(u)}
-          />
-        </Tooltip>
-        <Tooltip label={getTenantUserStatusActionLabel(u)} placement="top" hasArrow>
-          <IconButton
-            aria-label={
-              isActive ? "Suspend user" : "Activate user"
-            }
-            icon={isActive ? <FiPauseCircle /> : <FiPower />}
-            size="sm"
-            variant="ghost"
-            colorScheme={isActive ? "orange" : "green"}
-            _hover={{ bg: isActive ? "orange.50" : "green.50" }}
-            onClick={() => tm.handleOpenUserStatus(u, statusToggleTarget)}
-          />
-        </Tooltip>
-        <Tooltip label="Delete" placement="top" hasArrow>
-          <IconButton
-            aria-label="Delete user"
-            icon={<DeleteIcon />}
-            size="sm"
-            variant="ghost"
-            colorScheme="red"
-            _hover={{ bg: "red.50" }}
-            onClick={() => tm.handleOpenDeleteUser(u)}
-          />
-        </Tooltip>
+      <HStack spacing={2}>
+        <IconButton
+          aria-label="View user"
+          icon={<ViewIcon />}
+          size="sm"
+          variant="ghost"
+          colorScheme="blue"
+          _hover={{ bg: "blue.50" }}
+          onClick={(e) => {
+            stopRowClick(e);
+            tm.handleViewUser(u);
+          }}
+        />
+        <IconButton
+          aria-label="Edit user"
+          icon={<EditIcon />}
+          size="sm"
+          variant="ghost"
+          colorScheme="green"
+          _hover={{ bg: "green.50" }}
+          onClick={(e) => {
+            stopRowClick(e);
+            tm.handleOpenEditUser(u);
+          }}
+        />
+
+        {renderOverflowActionMenu(items, stopRowClick, "User actions")}
       </HStack>
     );
   }
@@ -1023,8 +1155,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </Box>
                 <Box>
                   <Text fontWeight="semibold">Status</Text>
-                  <Badge colorScheme={getTenantStatusColorScheme(resolveTenantUserDisplayStatus(u))}>
-                    {formatTenantUserStatusLabel(resolveTenantUserDisplayStatus(u))}
+                  <Badge colorScheme={getTenantStatusColorScheme(resolveUserDisplayStatus(u))}>
+                    {formatTenantUserStatusLabel(resolveUserDisplayStatus(u))}
                   </Badge>
                 </Box>
                 <Box>

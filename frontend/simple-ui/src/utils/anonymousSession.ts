@@ -12,12 +12,14 @@ function generateUUID(): string {
     return window.crypto.randomUUID();
   }
 
-  // Fallback to manual UUID generation
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.trunc(Math.random() * 16);
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
+  // Fallback to manual UUID generation using crypto.getRandomValues()
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant bits
+  return Array.from(bytes).map((b, i) =>
+    [4, 6, 8, 10].includes(i) ? `-${b.toString(16).padStart(2, '0')}` : b.toString(16).padStart(2, '0')
+  ).join('');
 }
 
 /**

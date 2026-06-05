@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Card,
@@ -15,8 +15,20 @@ import {
   AlertIcon,
   AlertDescription,
   Badge,
+  Tooltip,
 } from "@chakra-ui/react";
 import type { APIKeyResponse } from "../../types/auth";
+import { useAuth } from "../../hooks/useAuth";
+import * as tenantService from "../../services/tenantService";
+import {
+  API_KEY,
+  type ApiKeyAccessContext,
+  formatApiKeyDisplayStatusLabel,
+  getApiKeyDisplayStatusColorScheme,
+  getApiKeyInactiveReason,
+  isApiKeyExpired,
+  resolveApiKeyDisplayStatus,
+} from "../../config/constants";
 import { permissionLabelWithFallback } from "../../utils/apiKeyUtils";
 
 export interface ApiKeyTabProps {
@@ -32,9 +44,32 @@ export default function ApiKeyTab({
   isLoadingApiKeys,
   onFetchApiKeys,
 }: ApiKeyTabProps) {
+  const { user } = useAuth();
+  const [tenantStatus, setTenantStatus] = useState<string | null>(null);
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
+
+  const apiKeyAccessContext = useMemo(
+    (): ApiKeyAccessContext => ({
+      userIsActive: user?.is_active,
+      userTenantActive: user?.is_tenant_active,
+      tenantStatus,
+    }),
+    [user?.is_active, user?.is_tenant_active, tenantStatus]
+  );
+
+  useEffect(() => {
+    const tenantId = user?.tenant_id?.trim();
+    if (!tenantId) {
+      setTenantStatus(null);
+      return;
+    }
+    void tenantService.getViewTenant(tenantId).then(
+      (tenant) => setTenantStatus(tenant?.status ?? null),
+      () => setTenantStatus(null)
+    );
+  }, [user?.tenant_id]);
 
   const sortedApiKeys = [...apiKeys].sort((a, b) => {
     const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -81,9 +116,32 @@ export default function ApiKeyTab({
                           <VStack align="stretch" spacing={3}>
                             <HStack justify="space-between" align="flex-start">
                               <Text fontWeight="semibold">{key.key_name}</Text>
-                              <Badge colorScheme={key.is_active ? "green" : "red"}>
-                                {key.is_active ? "Active" : "Inactive"}
-                              </Badge>
+                              {(() => {
+                                const displayStatus = resolveApiKeyDisplayStatus(
+                                  key,
+                                  apiKeyAccessContext
+                                );
+                                const inactiveReason =
+                                  displayStatus === API_KEY.DISPLAY_STATUS.INACTIVE
+                                    ? isApiKeyExpired(key.expires_at)
+                                      ? "This API key has expired."
+                                      : getApiKeyInactiveReason(apiKeyAccessContext)
+                                    : null;
+                                const badge = (
+                                  <Badge
+                                    colorScheme={getApiKeyDisplayStatusColorScheme(displayStatus)}
+                                  >
+                                    {formatApiKeyDisplayStatusLabel(displayStatus)}
+                                  </Badge>
+                                );
+                                return inactiveReason ? (
+                                  <Tooltip label={inactiveReason} placement="top" hasArrow>
+                                    {badge}
+                                  </Tooltip>
+                                ) : (
+                                  badge
+                                );
+                              })()}
                             </HStack>
                             {key.created_at && (
                               <Text fontSize="sm" color="gray.600">

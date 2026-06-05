@@ -107,7 +107,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             if (!extracted) {
               // Pattern matches: 'message': 'value' or "message": "value"
               // Updated pattern to handle more cases including escaped quotes
-              const messageMatch = rawMessage.match(/['"]message['"]\s*:\s*['"]([^'"]+)['"]/);
+              const messageMatch = rawMessage.match(/['"]message['"]\s{0,5}:\s{0,5}['"]([^'"]+)['"]/);
               if (messageMatch && messageMatch[1]) {
                 errorMessage = messageMatch[1];
                 extracted = true;

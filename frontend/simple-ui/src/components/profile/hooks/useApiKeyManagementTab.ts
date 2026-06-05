@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
+import * as tenantService from "../../../services/tenantService";
 import type {
   User,
   Permission,
@@ -8,7 +9,15 @@ import type {
   APIKeyUpdate,
   APIKeyResponse,
 } from "../../../types/auth";
-import { API_KEY, isApiKeyFilterStatus } from "../../../config/constants";
+import {
+  API_KEY,
+  type ApiKeyAccessContext,
+  type ApiKeyDisplayStatusValue,
+  getApiKeyInactiveReason,
+  isApiKeyEffectivelyActive,
+  isApiKeyExpired,
+  resolveApiKeyDisplayStatus,
+} from "../../../config/constants";
 import {
   formatApiKeyDisplayId,
   mergeApiKeyHexFromCache,
@@ -91,6 +100,49 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   });
   const [selectedKeyForView, setSelectedKeyForView] = useState<AdminAPIKeyWithUserResponse | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [tenantStatus, setTenantStatus] = useState<string | null>(null);
+
+  const apiKeyAccessContext = useMemo(
+    (): ApiKeyAccessContext => ({
+      userIsActive: user?.is_active,
+      userTenantActive: user?.is_tenant_active,
+      tenantStatus,
+    }),
+    [user?.is_active, user?.is_tenant_active, tenantStatus]
+  );
+
+  const resolveKeyDisplayStatus = useCallback(
+    (key: APIKeyResponse): ApiKeyDisplayStatusValue =>
+      resolveApiKeyDisplayStatus(key, apiKeyAccessContext),
+    [apiKeyAccessContext]
+  );
+
+  const getKeyInactiveReason = useCallback(
+    (key: APIKeyResponse): string | null => {
+      const status = resolveKeyDisplayStatus(key);
+      if (status !== API_KEY.DISPLAY_STATUS.INACTIVE) return null;
+      if (isApiKeyExpired(key.expires_at)) {
+        return "This API key has expired.";
+      }
+      return getApiKeyInactiveReason(apiKeyAccessContext);
+    },
+    [apiKeyAccessContext, resolveKeyDisplayStatus]
+  );
+
+  const loadTenantContext = useCallback(async () => {
+    const tenantId = user?.tenant_id?.trim();
+    if (!tenantId) {
+      setTenantStatus(null);
+      return;
+    }
+    try {
+      const tenant = await tenantService.getViewTenant(tenantId);
+      setTenantStatus(tenant?.status ?? null);
+    } catch (err) {
+      console.error("Failed to load tenant context for API keys:", err);
+      setTenantStatus(null);
+    }
+  }, [user?.tenant_id]);
 
   const loadPermissionsCatalog = useCallback(async (): Promise<Permission[]> => {
     try {
@@ -111,6 +163,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         const [response] = await Promise.all([
           authService.listApiKeys(),
           permissions.length > 0 ? Promise.resolve(permissions) : loadPermissionsCatalog(),
+          loadTenantContext(),
         ]);
         const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
         setAllApiKeys(mapKeysToAdminRows(keys, user));
@@ -135,7 +188,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         setIsLoadingAllApiKeys(false);
       }
     },
-    [loadPermissionsCatalog, permissions, toast, user],
+    [loadPermissionsCatalog, loadTenantContext, permissions, toast, user],
   );
 
   const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
@@ -331,16 +384,14 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
             );
             if (!has) return false;
           }
-          if (isApiKeyFilterStatus(filterActive, API_KEY.FILTER_STATUS.ACTIVE) && !key.is_active) {
-            return false;
-          }
-          if (isApiKeyFilterStatus(filterActive, API_KEY.FILTER_STATUS.REVOKED) && key.is_active) {
-            return false;
+          if (filterActive !== API_KEY.FILTER_STATUS.ALL) {
+            const displayStatus = resolveApiKeyDisplayStatus(key, apiKeyAccessContext);
+            if (displayStatus !== filterActive) return false;
           }
           return true;
         })
         .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
-    [allApiKeys, filterPermission, filterActive, keyNameSearch, permissions],
+    [allApiKeys, apiKeyAccessContext, filterPermission, filterActive, keyNameSearch, permissions],
   );
 
   /** Static permission names for the filter dropdown (full catalog, not keyed to loaded keys). */
@@ -392,5 +443,11 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     handleOpenViewModal,
     handleCloseViewModal,
     handleFetchAllApiKeys,
+    apiKeyAccessContext,
+    resolveKeyDisplayStatus,
+    getKeyInactiveReason,
+    isKeyEffectivelyActive: (key: APIKeyResponse) =>
+      isApiKeyEffectivelyActive(key, apiKeyAccessContext),
+    isKeyRevocable: (key: APIKeyResponse) => key.is_active !== false && key.is_revoked !== true,
   };
 }

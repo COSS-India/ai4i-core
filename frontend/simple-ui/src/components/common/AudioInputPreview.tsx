@@ -11,7 +11,7 @@ function normalizeAudioInput(value: string): { base64: string; format: string } 
   const trimmed = value.trim();
   if (trimmed.startsWith('data:')) {
     // Safely captures MIME types with parameters (e.g., audio/webm;codecs=opus)
-    const match = trimmed.match(/^data:(audio\/[^;]+)(?:;[^,]*)?,(.*)$/);
+    const match = trimmed.match(/^data:(audio\/[^;,]+)(?:;[^,]*)?,(.*)$/);
     if (match) {
       return { base64: match[2], format: match[1] };
     }

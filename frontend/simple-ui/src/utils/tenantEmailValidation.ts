@@ -18,7 +18,7 @@ export function normalizeEmail(email: string): string {
 
 export function isValidEmailFormat(email: string): boolean {
   const trimmed = (email || "").trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(trimmed);
 }
 
 export function collectTenantContactEmails(tenants: TenantView[]): Set<string> {

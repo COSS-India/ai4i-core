@@ -16,8 +16,9 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 
-# ✅ Correct: copy everything from context
-COPY . .
+COPY src/ ./src/
+COPY public/ ./public/
+COPY next.config.js tsconfig.json ./
 
 # Non-sensitive URL config — not credentials, safe to pass as ARG/ENV.
 ARG NEXT_PUBLIC_API_URL=""
