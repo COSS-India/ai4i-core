@@ -23,7 +23,9 @@ class Settings(BaseSettings):
     # Default matches the Dockerfile EXPOSE/HEALTHCHECK port — a container
     # started without PORT set must still pass its health check.
     PORT: int = Field(8090, description="Port to bind to")
-    WORKERS: int = Field(4, description="Number of worker processes")
+    # Scale via k8s replicas rather than in-pod workers; >1 also requires
+    # prometheus_client multiprocess mode for consistent /metrics.
+    WORKERS: int = Field(1, description="Number of worker processes")
     LOG_LEVEL: str = Field("INFO", description="Logging level")
     DEBUG: bool = Field(False, description="Debug mode")
     ENABLE_DOCS: bool = Field(
