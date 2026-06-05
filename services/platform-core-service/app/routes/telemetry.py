@@ -22,8 +22,8 @@ ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
 
 
 def _check_permission_ids(request: Request, *allowed: int) -> None:
-    """Raise if X-Permission-Ids header does not contain any of the allowed role IDs."""
-    raw = request.headers.get("X-Permission-Ids", "")
+    """Raise if X-Permission-IDS header does not contain any of the allowed role IDs."""
+    raw = request.headers.get("X-Permission-IDS", "")
     ids = {int(m) for m in re.findall(r"\d+", raw)}
 
     if not ids & set(allowed):
