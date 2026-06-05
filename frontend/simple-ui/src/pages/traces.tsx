@@ -1441,7 +1441,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     summary = "Multiple users trying to login simultaneously generated the same session/refresh tokens.";
 
     // Extract exception class
-    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    const exceptionMatch = errorMessage.match(/([A-Za-z]{1,50}(?:Error|Exception)):/);
     if (exceptionMatch) {
       fields.push({ key: "Exception Type", value: exceptionMatch[1] });
     }
@@ -1453,7 +1453,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     }
 
     // Extract the duplicate key information from DETAIL
-    const detailMatch = errorMessage.match(/Details?:\s*(.+?)(?:\n|$)/i);
+    const detailMatch = errorMessage.match(/Details?:\s*([^\n]+)/i);
     if (detailMatch) {
       let detail = detailMatch[1].trim();
       // Extract just the key part if it's formatted like "Key (column_name)=(value) already exists"
@@ -1473,7 +1473,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     }
 
     // Extract SQL operation
-    const operationMatch = errorMessage.match(/Operation:\s*(\w+)\s+on\s+table\s+["']?(\w+)["']?/i);
+    const operationMatch = errorMessage.match(/Operation:\s{0,10}(\w+)\s{1,10}on\s{1,10}table\s{1,10}["']?(\w+)["']?/i);
     if (operationMatch) {
       fields.push({ key: "SQL Operation", value: `${operationMatch[1]} on table "${operationMatch[2]}"` });
     }
@@ -1496,7 +1496,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     summary = "Database accessed incorrectly after transaction rollback - this is a code bug.";
 
     // Extract exception class
-    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    const exceptionMatch = errorMessage.match(/([A-Za-z]{1,50}(?:Error|Exception)):/);
     if (exceptionMatch) {
       fields.push({ key: "Exception Type", value: exceptionMatch[1] });
     }
@@ -1505,7 +1505,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     fields.push({ key: "Fix Required", value: "Move db.refresh() inside try block or use a new session" });
 
     // Try to extract the specific error message
-    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*(.+?)(?:\n|$)/);
+    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*([^\n]+)/);
     if (msgMatch) {
       fields.push({ key: "Error Message", value: msgMatch[1].trim() });
     }
@@ -1516,7 +1516,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     summary = "Failed to connect to or communicate with the database.";
 
     // Extract exception class
-    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    const exceptionMatch = errorMessage.match(/([A-Za-z]{1,50}(?:Error|Exception)):/);
     if (exceptionMatch) {
       fields.push({ key: "Exception Type", value: exceptionMatch[1] });
     }
@@ -1531,7 +1531,7 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     }
 
     // Extract error message
-    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*(.+?)(?:\n|$)/);
+    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*([^\n]+)/);
     if (msgMatch) {
       fields.push({ key: "Error Message", value: msgMatch[1].trim() });
     }
@@ -1558,14 +1558,14 @@ const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
     summary = "An error occurred during request processing.";
 
     // Try to extract exception type
-    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    const exceptionMatch = errorMessage.match(/([A-Za-z]{1,50}(?:Error|Exception)):/);
     if (exceptionMatch) {
       fields.push({ key: "Exception Type", value: exceptionMatch[1] });
       errorType = exceptionMatch[1];
     }
 
     // Extract error message
-    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*(.+?)(?:\n|$)/);
+    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*([^\n]+)/);
     if (msgMatch) {
       fields.push({ key: "Error Message", value: msgMatch[1].trim() });
     } else {

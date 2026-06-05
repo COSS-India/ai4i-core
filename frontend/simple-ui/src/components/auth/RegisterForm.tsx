@@ -88,7 +88,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       errors.password = passwordError;
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+    if (!/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(formData.email)) {
       errors.email = 'Please enter a valid email address';
     }
 
