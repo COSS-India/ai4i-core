@@ -176,11 +176,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantUsers.filter((u) => {
         if (userFilterStatus !== "all") {
           const displayStatus = resolveTenantUserDisplayStatus(u);
-          const matches =
-            userFilterStatus === TENANT.USER_STATUS.ACTIVE
-              ? displayStatus === TENANT.USER_STATUS.ACTIVE
-              : displayStatus === TENANT.USER_STATUS.SUSPENDED;
-          if (!matches) return false;
+          if (displayStatus !== userFilterStatus) return false;
         }
         if (userFilterRole !== "all" && !tenantUserHasRole(u, userFilterRole)) {
           return false;
@@ -392,7 +388,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       toast({
         title: "Tenant created",
-        description: `${created.organisation} has been registered.`,
+        description: `${created.organisation} is pending activation. The contact will receive a setup link by email.`,
         status: "success",
         duration: 5000,
         isClosable: true,
@@ -753,15 +749,27 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsStatusDialogOpen(true);
   };
 
-  const handleResendTenantVerification = async (t: TenantView) => {
+  const handleResendTenantVerificationEmail = async (t: TenantView) => {
+    const email = t.email?.trim();
+    if (!email) {
+      toast({
+        title: "Email required",
+        description: "This tenant has no contact email to resend verification.",
+        status: "warning",
+        isClosable: true,
+        duration: 5000,
+      });
+      return;
+    }
     setResendVerificationTenantId(t.tenant_id);
     try {
-      // TODO: uncomment when auth-service exposes POST /tenants/{id}/resend-verification
-      // await tenantService.resendTenantVerificationEmail(t.tenant_id);
+      const res = await authService.resendSetupLink({ email }, { withAuth: true });
       toast({
-        title: "Resend verification email",
-        description: `This will send a new verification link to ${t.email}. The server endpoint is not enabled yet.`,
-        status: "info",
+        title: "Verification email sent",
+        description:
+          res?.message ??
+          `A new activation link was sent to ${email} if the account is not yet activated.`,
+        status: "success",
         isClosable: true,
         duration: 8000,
       });
@@ -1036,7 +1044,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleConfirmStatusUpdate,
     closeStatusDialog,
     resendVerificationTenantId,
-    handleResendTenantVerification,
+    handleResendTenantVerificationEmail,
     // Edit user
     isEditUserModalOpen,
     editUserRow,

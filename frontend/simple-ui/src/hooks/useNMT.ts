@@ -206,13 +206,13 @@ export const useNMT = (): UseNMTReturn => {
       toast({
         title: 'Rate limit reached',
         description:
-          'You can try up to 5 translations per hour. Please sign in for unlimited access.',
+          'You can try up to 5 translations per hour. Please sign in to get access to all services.',
         status: 'warning',
         duration: 6000,
         isClosable: true,
       });
       setError(
-        'Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.'
+        'Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.'
       );
       return;
     }

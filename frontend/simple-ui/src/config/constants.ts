@@ -1254,6 +1254,8 @@ export const TENANT = {
   },
   USER_STATUS: {
     ACTIVE: "ACTIVE",
+    /** UI-only: user has not completed setup / password (is_active=false, not tenant-suspended). */
+    PENDING_ACTIVATION: "PENDING_ACTIVATION",
     SUSPENDED: "SUSPENDED",
   },
 } as const;
@@ -1280,7 +1282,7 @@ export const TENANT_ADMIN_UPDATABLE_STATUSES: readonly TenantStatusValue[] = [
 export const ALLOWED_TENANT_STATUS_TRANSITIONS: Readonly<
   Record<TenantStatusValue, readonly TenantStatusValue[]>
 > = {
-  [TENANT.STATUS.PENDING]: [TENANT.STATUS.ACTIVE],
+  [TENANT.STATUS.PENDING]: [TENANT.STATUS.DEACTIVATED],
   [TENANT.STATUS.ACTIVE]: [TENANT.STATUS.SUSPENDED, TENANT.STATUS.DEACTIVATED],
   [TENANT.STATUS.SUSPENDED]: [TENANT.STATUS.ACTIVE, TENANT.STATUS.DEACTIVATED],
   [TENANT.STATUS.DEACTIVATED]: [TENANT.STATUS.ACTIVE],
@@ -1289,6 +1291,7 @@ export const ALLOWED_TENANT_STATUS_TRANSITIONS: Readonly<
 /** Tenant-user lifecycle statuses for filters and badges (not tenant PENDING/DEACTIVATED). */
 export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
   TENANT.USER_STATUS.ACTIVE,
+  TENANT.USER_STATUS.PENDING_ACTIVATION,
   TENANT.USER_STATUS.SUSPENDED,
 ];
 
@@ -1298,20 +1301,28 @@ export type TenantUserStatusSource = {
   is_tenant_active?: boolean | null;
 };
 
-/** Active when both user and tenant access flags are true. */
+/** Derive tenant-user display status (API flags unchanged). */
 export function resolveTenantUserDisplayStatus(
   user: TenantUserStatusSource
 ): TenantUserStatusValue {
-  return user.is_active && (user.is_tenant_active ?? true)
-    ? TENANT.USER_STATUS.ACTIVE
-    : TENANT.USER_STATUS.SUSPENDED;
+  if (user.is_active && (user.is_tenant_active ?? true)) {
+    return TENANT.USER_STATUS.ACTIVE;
+  }
+  if (!user.is_active && user.is_tenant_active === false) {
+    return TENANT.USER_STATUS.SUSPENDED;
+  }
+  if (!user.is_active) {
+    return TENANT.USER_STATUS.PENDING_ACTIVATION;
+  }
+  return TENANT.USER_STATUS.SUSPENDED;
 }
 
 /** Status to apply when toggling Suspend/Activate on a tenant user. */
 export function getTenantUserStatusToggleTarget(
   user: TenantUserStatusSource
 ): TenantUserStatusValue {
-  return resolveTenantUserDisplayStatus(user) === TENANT.USER_STATUS.ACTIVE
+  const display = resolveTenantUserDisplayStatus(user);
+  return display === TENANT.USER_STATUS.ACTIVE
     ? TENANT.USER_STATUS.SUSPENDED
     : TENANT.USER_STATUS.ACTIVE;
 }
@@ -1324,7 +1335,7 @@ export function getTenantUserStatusActionLabel(user: TenantUserStatusSource): st
 }
 
 const TENANT_STATUS_LABELS: Record<TenantStatusValue, string> = {
-  [TENANT.STATUS.PENDING]: "Pending",
+  [TENANT.STATUS.PENDING]: "Pending Activation",
   [TENANT.STATUS.ACTIVE]: "Active",
   [TENANT.STATUS.SUSPENDED]: "Suspended",
   [TENANT.STATUS.DEACTIVATED]: "Deactivated",
@@ -1332,6 +1343,7 @@ const TENANT_STATUS_LABELS: Record<TenantStatusValue, string> = {
 
 const TENANT_USER_STATUS_LABELS: Record<TenantUserStatusValue, string> = {
   [TENANT.USER_STATUS.ACTIVE]: "Active",
+  [TENANT.USER_STATUS.PENDING_ACTIVATION]: "Pending Activation",
   [TENANT.USER_STATUS.SUSPENDED]: "Suspended",
 };
 
@@ -1375,7 +1387,8 @@ export function getTenantStatusColorScheme(status?: string | null): string {
   if (isTenantStatus(status, TENANT.STATUS.ACTIVE)) return "green";
   if (isTenantStatus(status, TENANT.STATUS.SUSPENDED)) return "orange";
   if (isTenantStatus(status, TENANT.STATUS.DEACTIVATED)) return "red";
-  if (isTenantStatus(status, TENANT.STATUS.PENDING)) return "gray";
+  if (isTenantStatus(status, TENANT.STATUS.PENDING)) return "blue";
+  if (isTenantUserStatus(status, TENANT.USER_STATUS.PENDING_ACTIVATION)) return "blue";
   if (isTenantUserStatus(status, TENANT.USER_STATUS.SUSPENDED)) return "orange";
   return "gray";
 }

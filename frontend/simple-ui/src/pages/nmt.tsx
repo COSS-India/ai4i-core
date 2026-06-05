@@ -128,8 +128,7 @@ const NMTPage: React.FC = () => {
         <AlertDescription fontSize="sm">
           {anonymousRateLimitReached ? (
             <>
-              You have used all <strong>5 translations</strong> for this hour. Sign in for
-              unlimited access, or try again later.
+              You have used all <strong>5 translations</strong> for this hour. Sign in to get access to all services, or try again later.
             </>
           ) : showRateLimitWarning ? (
             <>
@@ -142,7 +141,7 @@ const NMTPage: React.FC = () => {
           ) : (
             <>
               You&apos;re using NMT without an account. You can try up to{" "}
-              <strong>5 translations per hour</strong>. Sign in for unlimited access.
+              <strong>5 translations per hour</strong>. Sign in to get access to all services.
             </>
           )}
         </AlertDescription>

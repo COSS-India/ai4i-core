@@ -472,7 +472,15 @@ class AuthService {
     );
   }
 
-  async resendSetupLink(data: { email: string }): Promise<{ message: string }> {
+  /**
+   * Re-issue a welcome/set-password link for a user who has not activated yet.
+   * @param withAuth — true when an admin triggers this from Tenant Management (Bearer JWT).
+   */
+  async resendSetupLink(
+    data: { email: string },
+    options: { withAuth?: boolean } = {}
+  ): Promise<{ message: string }> {
+    const withAuth = options.withAuth === true;
     return this.validatedRequest(
       authPath.resendSetupLink,
       authUnwrappedSchema(messageResponseSchema),
@@ -480,7 +488,7 @@ class AuthService {
         method: 'POST',
         body: JSON.stringify(data),
       },
-      { withAuth: false }
+      { withAuth }
     );
   }
 
