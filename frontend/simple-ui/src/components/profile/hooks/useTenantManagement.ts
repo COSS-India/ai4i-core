@@ -115,7 +115,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   // View user modal (tenant detail uses inline panel via tenantDetailView, not a modal)
   const [viewUserDetail, setViewUserDetail] = useState<TenantUserView | null>(null);
   const [isViewUserModalOpen, setIsViewUserModalOpen] = useState(false);
-  const [isLoadingViewUser, setIsLoadingViewUser] = useState(false);
 
   // Tenant detail sub-view
   const [tenantDetailView, setTenantDetailView] = useState<TenantView | null>(null);
@@ -599,20 +598,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setTenantDetailSubTab("overview");
   };
 
-  const handleViewUser = async (u: TenantUserView) => {
-    setIsLoadingViewUser(true);
+  const handleViewUser = (u: TenantUserView) => {
+    setViewUserDetail(normalizeTenantUserRow(u));
     setIsViewUserModalOpen(true);
-    setViewUserDetail(null);
-    try {
-      const detail = await tenantService.getViewUser(u.user_id);
-      setViewUserDetail(normalizeTenantUserRow(detail));
-    } catch (err) {
-      console.error("Failed to fetch user details:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsLoadingViewUser(false);
-    }
   };
 
   const editTenantEmailExclusions = useMemo(
@@ -981,7 +969,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const closeViewUserModal = () => setIsViewUserModalOpen(false);
+  const closeViewUserModal = () => {
+    setIsViewUserModalOpen(false);
+    setViewUserDetail(null);
+  };
 
   return {
     // Data
@@ -1040,7 +1031,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     // View user modal (tenant detail uses inline panel)
     viewUserDetail,
     isViewUserModalOpen,
-    isLoadingViewUser,
     handleViewTenant,
     handleViewUser,
     closeViewUserModal,

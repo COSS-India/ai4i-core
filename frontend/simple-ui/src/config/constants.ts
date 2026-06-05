@@ -137,6 +137,9 @@ export const GENDER_OPTIONS = [
 // Maximum text length
 export const MAX_TEXT_LENGTH = 512;
 
+/** Guest users may make this many inference requests per service per hour. */
+export const GUEST_REQUESTS_PER_HOUR_PER_SERVICE = 10;
+
 // Minimum recording duration in seconds
 export const MIN_RECORDING_DURATION = 1;
 

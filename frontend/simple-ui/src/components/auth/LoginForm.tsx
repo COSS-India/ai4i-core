@@ -201,7 +201,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
               <InputRightElement width="4.5rem">
                 <IconButton
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  icon={showPassword ? <ViewOffIcon /> : <ViewIcon />}
+                  icon={showPassword ? <ViewIcon /> : <ViewOffIcon />}
                   h="1.75rem"
                   size="sm"
                   onClick={() => setShowPassword(!showPassword)}

@@ -1,6 +1,7 @@
 // Reusable AI service page architecture — public API
 
 export { default as ServicePageLayout } from "./ServicePageLayout";
+export { default as GuestUsageLimitBanner } from "./GuestUsageLimitBanner";
 export { default as RequestContainer } from "./RequestContainer";
 export { default as ResponseContainer } from "./ResponseContainer";
 export { default as ServiceDropdown } from "./ServiceDropdown";

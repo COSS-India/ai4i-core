@@ -28,13 +28,11 @@ import {
   ModalOverlay,
   Select,
   SimpleGrid,
-  Spinner,
   Tab,
   TabList,
   TabPanel,
   TabPanels,
   Tabs,
-  Center,
   Menu,
   MenuButton,
   MenuItem,
@@ -1127,11 +1125,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalHeader>User Details</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
-            {tm.isLoadingViewUser ? (
-              <Center py={6}>
-                <Spinner />
-              </Center>
-            ) : u ? (
+            {u ? (
               <VStack align="stretch" spacing={3}>
                 <Box>
                   <Text fontWeight="semibold">Username</Text>

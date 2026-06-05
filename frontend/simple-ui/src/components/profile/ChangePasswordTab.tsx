@@ -82,6 +82,10 @@ export default function ChangePasswordTab() {
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Failed to change password. Please try again.";
+      const lower = message.toLowerCase();
+      if (lower.includes("current password")) {
+        setErrors((prev) => ({ ...prev, current_password: message }));
+      }
       toast({
         title: "Password change failed",
         description: message,
@@ -131,7 +135,7 @@ export default function ChangePasswordTab() {
                 <InputRightElement width="4.5rem">
                   <IconButton
                     aria-label={showCurrent ? "Hide password" : "Show password"}
-                    icon={showCurrent ? <ViewOffIcon /> : <ViewIcon />}
+                    icon={showCurrent ? <ViewIcon /> : <ViewOffIcon />}
                     h="1.75rem"
                     size="sm"
                     onClick={() => setShowCurrent((v) => !v)}
@@ -161,7 +165,7 @@ export default function ChangePasswordTab() {
                 <InputRightElement width="4.5rem">
                   <IconButton
                     aria-label={showNew ? "Hide password" : "Show password"}
-                    icon={showNew ? <ViewOffIcon /> : <ViewIcon />}
+                    icon={showNew ? <ViewIcon /> : <ViewOffIcon />}
                     h="1.75rem"
                     size="sm"
                     onClick={() => setShowNew((v) => !v)}
