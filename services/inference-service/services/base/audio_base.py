@@ -47,9 +47,8 @@ class AudioBase(BaseTaskService):
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
-        Common audio validation pipeline:
-          1. Base null check (super)
-          2. Audio list not empty, each item has audio_content or audio_uri
+        Common audio validation:
+        audio list not empty, each item has audio_content or audio_uri.
 
         Task-specific validation (e.g. ASR's sourceLanguage check) lives in
         the task service's validate_request override.

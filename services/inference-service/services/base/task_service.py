@@ -102,17 +102,12 @@ class BaseTaskService:
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
-        Validate the incoming request payload.
-        Override in subclasses for task-specific validation.
-
-        Args:
-            payload: Raw request payload dictionary
-
-        Raises:
-            ValueError: If request is invalid
+        Hook: validate the incoming request payload; raise ValueError on bad
+        input. No-op anchor for the super() chain — the routes layer already
+        guarantees payload is a dict (FastAPI body validation), and the real
+        checks live in the modality bases (text/audio/image) and task
+        overrides on top of them.
         """
-        if payload is None:
-            raise ValueError(f"{self.task_name}: Request cannot be None")
 
     async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
