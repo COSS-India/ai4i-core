@@ -8,9 +8,11 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from pydantic import BaseModel, Field, model_validator
 
 
-SUPPORTED_OUTPUT_TRANSFORMS = {"json_parse", "base64_encode", "unwrap_scalar"}
+SUPPORTED_OUTPUT_TRANSFORMS = {"json_parse", "base64_encode", "unwrap_scalar", "wrap_list"}
 
-_RESPONSE_KEY_RE = re.compile(r"output\[\]\.(\w+)$")
+# 'output[].<key>' renames the item key; bare 'output[]' splats a dict value
+# into the item (diarization envelopes).
+_RESPONSE_KEY_RE = re.compile(r"output\[\](?:\.(\w+))?$")
 
 SUPPORTED_TRITON_DTYPES = {
     "BOOL",
@@ -66,22 +68,48 @@ class OutputTensorDeclaration(BaseModel):
         "this field is extracted (e.g. Surya's envelope -> 'full_text'). "
         "Values that fail to parse pass through unchanged.",
     )
-    transform: Optional[str] = Field(
+    transform: Optional[Union[str, List[str]]] = Field(
         default=None,
-        description="Post-extraction transform: 'json_parse' (parse JSON -> "
-        "full dict), 'base64_encode' (value -> base64 string), "
-        "'unwrap_scalar' (peel single-element list nesting).",
+        description="Per-item transform (or chain): 'json_parse' (parse JSON "
+        "string -> object), 'base64_encode' (value -> base64 string), "
+        "'unwrap_scalar' (peel single-element list nesting), 'wrap_list' "
+        "(non-list -> [value] if truthy else []). Applied to each output "
+        "item's value after single-element unwrapping.",
     )
     response_key: Optional[str] = Field(
         default=None,
-        description="Final response placement as 'output[].<key>' — renames "
-        "this output's maps_to key per item in the shaped response.",
+        description="Final response placement: 'output[].<key>' renames this "
+        "output's maps_to key per item; bare 'output[]' splats a dict value "
+        "into the item (the parsed object becomes the item).",
     )
     pair_with_input: Optional[str] = Field(
         default=None,
         description="Input field dot-path (e.g. 'input.source', "
         "'audio.audio_uri'); the field is paired into each output item at "
         "the same index under its last path segment.",
+    )
+
+
+class ResponseEnvelopeDeclaration(BaseModel):
+    """Config-driven response envelope for the base postprocess_output."""
+
+    task_type: Optional[str] = Field(
+        default=None, description="If set, emit it as the response 'taskType'."
+    )
+    include_config: bool = Field(
+        default=True,
+        description="Echo the request config as 'config' (default). False "
+        "omits the key (routes serialize it as null where declared).",
+    )
+    config_keys: Optional[List[str]] = Field(
+        default=None,
+        description="Echo only these request-config keys (e.g. ['serviceId']). "
+        "Takes precedence over include_config.",
+    )
+    static_item_fields: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Constant fields added to every output item when absent "
+        "(e.g. {'target': ''} for OCR, {'nBestTokens': null} for ASR).",
     )
 
 
@@ -92,6 +120,7 @@ class AdapterMappingConfig(BaseModel):
     model_version: str = Field(default="1", description="Triton model version")
     inputs: List[InputTensorDeclaration] = Field(..., min_items=1)
     outputs: List[OutputTensorDeclaration] = Field(..., min_items=1)
+    response: Optional[ResponseEnvelopeDeclaration] = None
 
 
 ContextBuilder = Callable[[Dict[str, Any], int, Dict[str, Any]], Dict[str, Any]]
@@ -187,8 +216,6 @@ class GenericTritonMapper:
             decoded = self._decode_output_value(value)
             if output_cfg.json_field:
                 decoded = self._extract_json_field(decoded, output_cfg.json_field)
-            if output_cfg.transform:
-                decoded = self._apply_transform(decoded, output_cfg.transform)
             mapped[output_cfg.maps_to] = decoded
         return mapped
 
@@ -199,16 +226,34 @@ class GenericTritonMapper:
             if isinstance(value, list) and value:
                 batch_size = max(batch_size, len(value))
 
+        transforms = {
+            cfg.maps_to: self._transform_chain(cfg)
+            for cfg in self.adapter_config.outputs
+            if cfg.transform
+        }
+
         items: List[Dict[str, Any]] = []
         for idx in range(batch_size):
             item: Dict[str, Any] = {}
             for key, value in mapped_outputs.items():
                 if isinstance(value, list):
-                    item[key] = value[idx] if idx < len(value) else (value[-1] if value else None)
-                else:
-                    item[key] = value
+                    value = value[idx] if idx < len(value) else (value[-1] if value else None)
+                if key in transforms:
+                    # Transforms see the scalar value (single-element nesting
+                    # peeled first); their result is final — shaping must not
+                    # re-unwrap it (wrap_list would be undone).
+                    value = self.unwrap_scalar(value)
+                    for t in transforms[key]:
+                        value = self._apply_transform(value, t)
+                item[key] = value
             items.append(item)
         return items
+
+    @staticmethod
+    def _transform_chain(cfg: OutputTensorDeclaration) -> List[str]:
+        if not cfg.transform:
+            return []
+        return [cfg.transform] if isinstance(cfg.transform, str) else list(cfg.transform)
 
     # ------------------------------------------------------------------
     # BaseTaskService interface — run_inference calls these
@@ -248,11 +293,12 @@ class GenericTritonMapper:
                 raise RuntimeError(f"Unsupported output dtype '{tensor.dtype}'")
             if not tensor.maps_to.strip():
                 raise RuntimeError(f"Output tensor '{tensor.tensor}' maps_to cannot be empty")
-            if tensor.transform and tensor.transform not in SUPPORTED_OUTPUT_TRANSFORMS:
-                raise RuntimeError(
-                    f"Output tensor '{tensor.tensor}': unsupported transform "
-                    f"'{tensor.transform}' (supported: {sorted(SUPPORTED_OUTPUT_TRANSFORMS)})"
-                )
+            for t in self._transform_chain(tensor):
+                if t not in SUPPORTED_OUTPUT_TRANSFORMS:
+                    raise RuntimeError(
+                        f"Output tensor '{tensor.tensor}': unsupported transform "
+                        f"'{t}' (supported: {sorted(SUPPORTED_OUTPUT_TRANSFORMS)})"
+                    )
             if tensor.response_key and not _RESPONSE_KEY_RE.fullmatch(tensor.response_key):
                 raise RuntimeError(
                     f"Output tensor '{tensor.tensor}': response_key must be "
@@ -375,6 +421,10 @@ class GenericTritonMapper:
         """
         if transform == "unwrap_scalar":
             return self.unwrap_scalar(value)
+        if transform == "wrap_list":
+            if isinstance(value, list):
+                return value
+            return [value] if value else []
         if isinstance(value, list):
             return [self._apply_transform(item, transform) for item in value]
         if transform == "json_parse":
@@ -397,39 +447,81 @@ class GenericTritonMapper:
         input_items: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
-        Config-driven response shaping:
-          response_key 'output[].<key>'  — renames the maps_to key per item
-          pair_with_input '<scope>.<field>' — copies the input field at the
-            same index into the output item under '<field>' (camelCase
-            variants of the field resolve too)
+        Config-driven response shaping, applied per item:
+          1. pair_with_input '<scope>.<field>' — the input field at the same
+             index leads the item under '<field>' (camelCase variants of the
+             field resolve too); an output field of the same name wins.
+          2. response_key 'output[].<key>' renames the maps_to key; bare
+             'output[]' splats a dict value into the item.
+          3. response.static_item_fields are appended where absent.
+
+        Values without a declared transform get single-element unwrapping
+        here; transformed values arrive final from to_output_items.
         """
-        renames = {
-            cfg.maps_to: _RESPONSE_KEY_RE.fullmatch(cfg.response_key).group(1)
-            for cfg in self.adapter_config.outputs
-            if cfg.response_key
+        renames, splat_keys = {}, set()
+        for cfg in self.adapter_config.outputs:
+            if cfg.response_key:
+                target = _RESPONSE_KEY_RE.fullmatch(cfg.response_key).group(1)
+                if target is None:
+                    splat_keys.add(cfg.maps_to)
+                else:
+                    renames[cfg.maps_to] = target
+        transformed = {
+            cfg.maps_to for cfg in self.adapter_config.outputs if cfg.transform
         }
         pair_fields = [
             cfg.pair_with_input.split(".")[-1]
             for cfg in self.adapter_config.outputs
             if cfg.pair_with_input
         ]
+        statics = (
+            self.adapter_config.response.static_item_fields
+            if self.adapter_config.response else None
+        ) or {}
 
         shaped = []
         for idx, item in enumerate(output_items):
-            new_item = {renames.get(k, k): v for k, v in item.items()}
+            new_item: Dict[str, Any] = {}
             src_item = input_items[idx] if idx < len(input_items) else {}
             for field in dict.fromkeys(pair_fields):
                 camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), field)
-                new_item.setdefault(field, src_item.get(field, src_item.get(camel, "")))
+                new_item[field] = src_item.get(field, src_item.get(camel, ""))
+            for k, v in item.items():
+                if k not in transformed:
+                    v = self.unwrap_scalar(v)
+                if k in splat_keys and isinstance(v, dict):
+                    new_item.update(v)
+                else:
+                    new_item[renames.get(k, k)] = v
+            for k, v in statics.items():
+                new_item.setdefault(k, v)
             shaped.append(new_item)
         return shaped
 
     def has_response_shaping(self) -> bool:
-        """True when any output declares response_key or pair_with_input."""
-        return any(
+        """True when the config declares any response shaping: response_key /
+        pair_with_input on an output, or a response envelope block."""
+        return self.adapter_config.response is not None or any(
             cfg.response_key or cfg.pair_with_input
             for cfg in self.adapter_config.outputs
         )
+
+    def build_response_envelope(
+        self, shaped_items: List[Dict[str, Any]], request_config: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Assemble the final response dict per the response declaration:
+        optional taskType, the output list, and the config echo (full /
+        subset keys / omitted)."""
+        resp = self.adapter_config.response or ResponseEnvelopeDeclaration()
+        out: Dict[str, Any] = {}
+        if resp.task_type:
+            out["taskType"] = resp.task_type
+        out["output"] = shaped_items
+        if resp.config_keys is not None:
+            out["config"] = {k: (request_config or {}).get(k) for k in resp.config_keys}
+        elif resp.include_config:
+            out["config"] = request_config
+        return out
 
     def _extract_json_field(self, value: Any, field: str) -> Any:
         """

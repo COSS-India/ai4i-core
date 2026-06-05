@@ -14,7 +14,6 @@ Triton tensor contract (adapter_config from MMS):
 from typing import Any, Dict, List, Tuple
 
 from services.base.audio_base import AudioBase
-from services.base.task_service import PostProcessFormat
 
 
 class LanguageDiarizationTaskService(AudioBase):
@@ -38,43 +37,11 @@ class LanguageDiarizationTaskService(AudioBase):
         )
         return await super().convert_payload_to_triton_format(input_data, config)
 
-    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
-        output_list = []
-
-        for item in result.response_data:
-            # Try the well-known key first; fall back to the first value in the
-            # dict so different adapter_config maps_to names still work.
-            raw = item.get("diarization_json") or next(iter(item.values()), None)
-            data = self._parse_json(raw)
-            if not data:
-                output_list.append({"total_segments": 0, "segments": [], "target_language": ""})
-                continue
-
-            segments = []
-            for seg in data.get("segments", []):
-                start = float(seg.get("start_time", 0.0))
-                end = float(seg.get("end_time", 0.0))
-                segments.append({
-                    "start_time": start,
-                    "end_time": end,
-                    "duration": float(seg.get("duration", end - start)),
-                    "language": str(seg.get("language", "")),
-                    "confidence": float(seg.get("confidence", 0.0)),
-                })
-            segments.sort(key=lambda s: s["start_time"])
-
-            output_list.append({
-                "total_segments": len(segments),
-                "segments": segments,
-                "target_language": str(data.get("target_language", "")),
-            })
-
-        cfg = result.payload.get("config") or {}
-        return {
-            "taskType": "language-diarization",
-            "output": output_list,
-            "config": {"serviceId": cfg.get("serviceId")},
-        }
+    # postprocess_output: adapter_config-driven — DIARIZATION_RESULT is
+    # json_parse'd and splatted into the item (response_key "output[]");
+    # the envelope declares task_type + config_keys ["serviceId"]. The model
+    # emits the contract fields directly (total_segments, sorted segments
+    # with numeric times, target_language), so no reshaping code is needed.
 
 
 __all__ = ["LanguageDiarizationTaskService"]

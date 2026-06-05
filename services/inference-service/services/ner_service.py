@@ -1,29 +1,34 @@
 """NER (Named Entity Recognition) TaskService."""
-import json
 from services.base.text_base import TextBase
 from services.base.task_service import PostProcessFormat
-from services.base.config_mapper import GenericTritonMapper
 
 
 class NERTaskService(TextBase):
     # source_language check handled by base; no target language needed
 
     async def postprocess_output(self, result: PostProcessFormat):
+        """
+        Align the model's entity-level predictions onto the original text as
+        per-token tags with character offsets (the ULCA NER contract).
+
+        JSON parsing is adapter_config-driven (transform "json_parse" on
+        OUTPUT_TEXT) — each response item carries the parsed prediction
+        object; only the alignment algorithm lives here.
+        """
         sources = result.source_texts
-        raw_items = result.response_data
-        json_parts = []
-        for raw_item in raw_items:
-            value = GenericTritonMapper.unwrap_scalar(
-                raw_item.get("target", raw_item.get("nerPrediction", "")) if isinstance(raw_item, dict) else raw_item
-            )
-            text = self._norm_json_str(value if isinstance(value, str) else str(value))
-            if text:
-                json_parts.append(text)
-        # Each part is a complete JSON document (one per batch row) — parse
-        # individually; concatenating two docs would produce invalid JSON.
+        # One parsed JSON document per batch row; a model may wrap multiple
+        # results in {"output": [...]}.
         items = []
-        for part in json_parts:
-            items.extend(self._parse_ner_json(part))
+        for raw_item in result.response_data:
+            value = raw_item.get("target")
+            if isinstance(value, str):
+                # json_parse passes non-JSON through unchanged — same client
+                # error the old in-code parser rejected.
+                raise ValueError(f"NER: model returned non-JSON output: {value[:80]!r}")
+            if isinstance(value, dict):
+                items.extend(value["output"] if "output" in value else [value])
+            elif isinstance(value, list):
+                items.extend(value)
         output_list = []
         for idx, item in enumerate(items):
             source = item.get("source") or (sources[idx] if idx < len(sources) else "")
@@ -47,22 +52,8 @@ class NERTaskService(TextBase):
         return {"taskType": "ner", "output": output_list, "config": None}
 
     # ------------------------------------------------------------------
-    # NER output parsing + BPE-to-word alignment helpers
+    # BPE-to-word alignment helpers
     # ------------------------------------------------------------------
-
-    def _norm_json_str(self, s):
-        s = s.strip()
-        if s.startswith("[b'") and s.endswith("']"): s = s[3:-2]
-        elif s.startswith('[b"') and s.endswith('"]'): s = s[3:-2]
-        return s.replace("\\\\", "\\")
-
-    def _parse_ner_json(self, decoded):
-        if not decoded: return []
-        try: parsed = json.loads(decoded)
-        except json.JSONDecodeError as e: raise ValueError(f"NER: bad JSON: {e}") from e
-        if isinstance(parsed, dict) and "output" in parsed: return parsed["output"]
-        if isinstance(parsed, dict): return [parsed]
-        return parsed if isinstance(parsed, list) else [parsed]
 
     def _entity(self, pred): return str(pred.get("entity") or pred.get("token") or "")
     def _tag(self, pred):

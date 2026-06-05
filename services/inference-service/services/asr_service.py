@@ -8,7 +8,6 @@ import numpy as np
 import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
-from services.base.task_service import PostProcessFormat
 
 
 class ASRTaskService(AudioBase):
@@ -212,66 +211,10 @@ class ASRTaskService(AudioBase):
             audio = audio / max_val
         return audio.astype(np.float32)
 
-    # ------------------------------------------------------------------
-    # Output
-    # ------------------------------------------------------------------
-
-    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
-        """Decode bytes → wrap in TranscriptionOutput list.
-
-        result.source_texts (the audio URIs collected by AudioBase) is
-        intentionally unused: per the ULCA ASR contract, output[].source
-        carries the transcript itself. Transcripts map to audio items by index.
-        """
-        decoded = await self._decode_output_bytes(result.response_data)
-        return self._wrap_transcription_output(decoded)
-
-    async def _decode_transcript(self, transcript: Any) -> str:
-        """
-        Decode a transcript value to a UTF-8 string.
-        Handles bytes, numpy arrays, and plain strings uniformly.
-        """
-        if isinstance(transcript, bytes):
-            return transcript.decode("utf-8")
-        if isinstance(transcript, np.ndarray):
-            if transcript.dtype == object:
-                return str(transcript.item())
-            if transcript.size > 0:
-                if transcript.dtype == np.uint8:
-                    return transcript.tobytes().decode("utf-8")
-                return str(transcript.item())
-            return ""
-        if isinstance(transcript, (str, np.str_)):
-            return str(transcript)
-        return str(transcript)
-
-    async def _decode_output_bytes(
-        self, response_items: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Decode all BYTES output values in a list of response dicts to UTF-8 strings.
-        Calls _decode_transcript() per item.
-        """
-        decoded = []
-        for item in response_items:
-            d = dict(item) if isinstance(item, dict) else {}
-            for key, value in d.items():
-                if isinstance(value, (bytes, np.ndarray)):
-                    d[key] = await self._decode_transcript(value)
-            decoded.append(d)
-        return decoded
-
-    def _wrap_transcription_output(
-        self, decoded_items: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Wrap decoded transcript strings in TranscriptionOutput dicts.
-        Returns {"output": [{"source": <transcript>, "nBestTokens": ...}, ...]} —
-        ULCA ASR contract: output[].source is the transcript.
-        """
-        output = []
-        for item in decoded_items:
-            transcript = item.get("transcript", item.get("source", ""))
-            n_best = item.get("nBestTokens", item.get("n_best_tokens"))
-            output.append({"source": str(transcript), "nBestTokens": n_best})
-        return {"output": output}
+    # postprocess_output: adapter_config-driven — the mapper decodes the
+    # transcript from the Triton JSON (always a plain str; the old numpy/bytes
+    # decode paths were unreachable on this pipeline), response_key renames
+    # transcript -> output[].source per the ULCA ASR contract, and the
+    # response envelope adds the constant nBestTokens: null. source_texts
+    # (audio URIs) are intentionally unpaired: output[].source IS the
+    # transcript for ASR.

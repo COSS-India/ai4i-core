@@ -4,6 +4,7 @@ Base class defining the contract and shared pipeline for all inference task serv
 
 import logging
 from dataclasses import dataclass, field
+from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
 
 
@@ -131,24 +132,27 @@ class BaseTaskService:
         (e.g. NMT); override only when the task contract needs more.
 
         When the adapter_config declares response shaping (response_key /
-        pair_with_input on any output tensor), the shaping is config-driven
-        instead — the declared renames and input pairings replace the
-        implicit "source" pairing above.
+        pair_with_input on any output tensor, or a response envelope block),
+        the shaping is config-driven instead — declared renames, splats,
+        input pairings, static fields, and envelope replace the implicit
+        "source" pairing above.
         """
-        if isinstance(self._adapter_config, dict) and any(
-            o.get("response_key") or o.get("pair_with_input")
-            for o in self._adapter_config.get("outputs", [])
+        if isinstance(self._adapter_config, dict) and (
+            self._adapter_config.get("response")
+            or any(
+                o.get("response_key") or o.get("pair_with_input")
+                for o in self._adapter_config.get("outputs", [])
+            )
         ):
             from services.base.config_mapper import GenericTritonMapper
             mapper = GenericTritonMapper(self._adapter_config)
             shaped = mapper.shape_output_items(
-                [
-                    {k: self.unwrap_output_value(v) for k, v in item.items()}
-                    for item in result.response_data
-                ],
+                result.response_data,
                 result.payload.get(self.payload_key) or [],
             )
-            return {"output": shaped, "config": result.payload.get("config")}
+            return mapper.build_response_envelope(
+                shaped, result.payload.get("config")
+            )
 
         output = []
         for idx, item in enumerate(result.response_data):
@@ -266,6 +270,7 @@ class BaseTaskService:
                 triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
                     group, config_data
                 )
+                #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
