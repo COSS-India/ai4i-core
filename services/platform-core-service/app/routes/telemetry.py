@@ -83,10 +83,10 @@ async def search_traces_opensearch(
     """
     Search traces from OpenSearch using direct queries on nested fields.
     """
-    try:
-        # Validate user has one of the allowed roles (1, 2, or 5)
-        _validate_telemetry_access(request)
+    # Validate user has one of the allowed roles (1, 2, or 5)
+    _validate_telemetry_access(request)
 
+    try:
         is_admin = _is_admin(request)
 
         # Access is already gated at the gateway (traces.read). Here we only decide
@@ -259,10 +259,10 @@ async def get_trace_by_id(
     Returns:
         Complete trace with all spans
     """
-    try:
-        # Validate user has one of the allowed roles (1, 2, or 5)
-        _validate_telemetry_access(request)
+    # Validate user has one of the allowed roles (1, 2, or 5)
+    _validate_telemetry_access(request)
 
+    try:
         is_admin = _is_admin(request)
         tenant_scope = None if is_admin else _get_tenant_id(request)
         if not is_admin and not tenant_scope:
