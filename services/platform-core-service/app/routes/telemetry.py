@@ -1,5 +1,5 @@
 """Telemetry API endpoints for querying traces."""
-
+import re
 import logging
 from typing import Optional
 
@@ -7,19 +7,50 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.schemas.telemetry import SearchTracesResponse, TraceResponse
 from app.utils.opensearch_client import OpenSearchTraceClient
-
+from app.core.exceptions import InsufficientPermissionsError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
+# Role IDs (must match the seeded values in roles table)
+_ROLE_ADMIN = 1
+_ROLE_MODERATOR = 2
+_ROLE_TENANT_ADMIN = 5
+
+# All allowed roles for telemetry access (roles that can access telemetry endpoints)
+ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
+
+
+def _check_permission_ids(request: Request, *allowed: int) -> None:
+    """Raise if X-Permission-IDS header does not contain any of the allowed role IDs."""
+    raw = request.headers.get("X-Permission-IDS", "")
+    ids = {int(m) for m in re.findall(r"\d+", raw)}
+
+    if not ids & set(allowed):
+        raise InsufficientPermissionsError()
+
+
+def _validate_telemetry_access(request: Request) -> None:
+    """Validate that user has one of the allowed roles for telemetry access.
+
+    Only roles 1 (admin), 2 (moderator), or 5 (tenant admin) are allowed.
+    Raises InsufficientPermissionsError if user has role 3 (guest), 4 (user), or no role.
+    """
+    _check_permission_ids(request, *ALLOWED_ROLES)
+
+
+
 
 def _is_admin(request: Request) -> bool:
-    """Admin flag injected by the gateway (auth-service /validate) from the validated token.
-
-    Trusted because the gateway strips any client-supplied X-Is-Admin and sets it
-    itself. Drives breadth only — access is already gated by traces.read at the gateway.
+    """Check if the user has admin/moderator role for trace access.
+    Admin and Moderator can see all traces across all tenants.
+    Returns True if user is admin or moderator, False otherwise.
     """
-    return request.headers.get("X-Is-Admin", "").strip().lower() == "true"
+    try:
+        _check_permission_ids(request, _ROLE_ADMIN, _ROLE_MODERATOR)
+        return True
+    except InsufficientPermissionsError:
+        return False
 
 
 def _get_tenant_id(request: Request) -> Optional[str]:
@@ -53,6 +84,10 @@ async def search_traces_opensearch(
     """
     Search traces from OpenSearch using direct queries on nested fields.
     """
+
+    # Validate user has one of the allowed roles (1, 2, or 5)
+    _validate_telemetry_access(request)
+
     try:
         is_admin = _is_admin(request)
 
@@ -143,6 +178,9 @@ async def search_traces_opensearch(
                 if not trace_id:
                     continue
 
+                span_name = source.get("name")
+                attrs = source.get("attributes", {})
+
                 if trace_id not in traces_map:
                     traces_map[trace_id] = {
                         "trace_id": trace_id,
@@ -154,8 +192,6 @@ async def search_traces_opensearch(
                         "timestamp": source.get("@timestamp") or source.get("timestamp"),
                     }
 
-                span_name = source.get("name")
-                attrs = source.get("attributes", {})
 
                 # Extract task_type from model span
                 if span_name == "model" and not traces_map[trace_id]["task_type"]:
@@ -176,13 +212,14 @@ async def search_traces_opensearch(
         by_level = {}
         by_task = {}
         for trace in data:
-            status = trace.get("status", "unknown")
+            trace_status = trace.get("status", "unknown")
             task_type = trace.get("task_type", "unknown")
 
-            by_level[status] = by_level.get(status, 0) + 1
+            by_level[trace_status] = by_level.get(trace_status, 0) + 1
             by_task[task_type] = by_task.get(task_type, 0) + 1
 
         return SearchTracesResponse(
+            
             data=data,
             total=total,
             page=page,
@@ -221,6 +258,7 @@ async def get_trace_by_id(
         Complete trace with all spans
     """
     try:
+        _validate_telemetry_access(request)
         is_admin = _is_admin(request)
         tenant_scope = None if is_admin else _get_tenant_id(request)
         if not is_admin and not tenant_scope:
