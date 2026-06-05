@@ -200,7 +200,7 @@ export const formatTimestamp = (timestamp: number): string => {
  * @returns True if valid email format
  */
 export const isValidEmail = (email: string): boolean => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const emailRegex = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
   return emailRegex.test(email);
 };
 
