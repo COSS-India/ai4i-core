@@ -257,6 +257,7 @@ async def get_trace_by_id(
         Complete trace with all spans
     """
     try:
+        _validate_telemetry_access(request)
         is_admin = _is_admin(request)
         tenant_scope = None if is_admin else _get_tenant_id(request)
         if not is_admin and not tenant_scope:
