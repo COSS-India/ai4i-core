@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 
 from pydantic import EmailStr, Field
 from pydantic.functional_validators import AfterValidator
+from pydantic import StringConstraints
 
 # email_validator (used by EmailStr) hardcodes a reject-list of special-use
 # domains (RFC 2606: .invalid, .test, .localhost, etc.) regardless of the
@@ -24,7 +25,7 @@ def _loose_email_validator(v: str) -> str:
         raise ValueError("value is not a valid email address")
     return v
 
-_AnyEmail = Annotated[str, AfterValidator(_loose_email_validator)]
+_AnyEmail = Annotated[str, StringConstraints(max_length=254), AfterValidator(_loose_email_validator)]
 
 from app.core.constants import (
     FULL_NAME_MAX_LENGTH,
