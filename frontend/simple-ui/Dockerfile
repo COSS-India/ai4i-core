@@ -61,9 +61,9 @@ ENV HOSTNAME=0.0.0.0
 RUN addgroup --system --gid 1001 nodejs \
  && adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=root:root --chmod=755 /app/public ./public
+COPY --from=builder --chown=root:root --chmod=755 /app/.next/standalone ./
+COPY --from=builder --chown=root:root --chmod=755 /app/.next/static ./.next/static
 
 # Fix the standalone server.js to use HOSTNAME env var instead of hardcoded 'localhost'
 # This is needed because Next.js 13.1.x standalone builds hardcode hostname: 'localhost'
