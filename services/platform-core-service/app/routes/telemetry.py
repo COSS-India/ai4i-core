@@ -40,6 +40,7 @@ def _validate_telemetry_access(request: Request) -> None:
 
 
 
+
 def _is_admin(request: Request) -> bool:
     """Check if the user has admin/moderator role for trace access.
     Admin and Moderator can see all traces across all tenants.
