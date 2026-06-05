@@ -72,6 +72,7 @@ import {
   isTenantStatus,
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
+import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 function dash(v?: string | null): string {
@@ -761,9 +762,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Organisation</FormLabel>
                 <Input
                   value={tm.tenantForm.organisation}
-                  onChange={(e) =>
-                    tm.setTenantForm({ ...tm.tenantForm, organisation: e.target.value })
-                  }
+                  onChange={(e) => tm.handleTenantOrganisationChange(e.target.value)}
+                  onBlur={(e) => tm.handleTenantOrganisationBlur(e.target.value)}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.organisation}</FormErrorMessage>
               </FormControl>
@@ -771,9 +771,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Contact Name</FormLabel>
                 <Input
                   value={tm.tenantForm.contact_name}
-                  onChange={(e) =>
-                    tm.setTenantForm({ ...tm.tenantForm, contact_name: e.target.value })
-                  }
+                  onChange={(e) => tm.handleTenantContactNameChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.contact_name}</FormErrorMessage>
               </FormControl>
@@ -782,23 +780,23 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Input
                   type="email"
                   value={tm.tenantForm.email}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    tm.setTenantForm({ ...tm.tenantForm, email: value });
-                    tm.checkTenantContactEmailUnique(value);
-                  }}
-                  onBlur={(e) => tm.checkTenantContactEmailUnique(e.target.value)}
+                  onChange={(e) => tm.handleTenantEmailChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
+                {tm.tenantEmailStatus === "checking" && !tm.tenantFormErrors.email && (
+                  <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
+                )}
+                {tm.tenantEmailStatus === "available" && !tm.tenantFormErrors.email && (
+                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
+                )}
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={Boolean(tm.tenantFormErrors.phone_number)}>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.tenantForm.phone_number}
-                  onChange={(e) =>
-                    tm.setTenantForm({ ...tm.tenantForm, phone_number: e.target.value })
-                  }
+                  onChange={(e) => tm.handleTenantPhoneChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.tenantFormErrors.phone_number}</FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -833,62 +831,52 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
-              <FormControl isRequired>
+              <FormControl
+                isRequired
+                isInvalid={Boolean(tm.editTenantFormErrors.organisation)}
+              >
                 <FormLabel>Organisation</FormLabel>
                 <Input
                   value={tm.editTenantForm.organisation ?? ""}
-                  onChange={(e) =>
-                    tm.setEditTenantForm({
-                      ...tm.editTenantForm,
-                      organisation: e.target.value,
-                    })
-                  }
+                  onChange={(e) => tm.handleEditTenantOrganisationChange(e.target.value)}
+                  onBlur={(e) => tm.handleEditTenantOrganisationBlur(e.target.value)}
                 />
+                <FormErrorMessage>{tm.editTenantFormErrors.organisation}</FormErrorMessage>
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={Boolean(tm.editTenantFormErrors.contact_name)}>
                 <FormLabel>Contact Name</FormLabel>
                 <Input
                   value={tm.editTenantForm.contact_name ?? ""}
-                  onChange={(e) =>
-                    tm.setEditTenantForm({
-                      ...tm.editTenantForm,
-                      contact_name: e.target.value,
-                    })
-                  }
+                  onChange={(e) => tm.handleEditTenantContactNameChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.editTenantFormErrors.contact_name}</FormErrorMessage>
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(tm.editTenantFormErrors.email)}>
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
                   value={tm.editTenantForm.email ?? ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    tm.setEditTenantForm({
-                      ...tm.editTenantForm,
-                      email: value,
-                    });
-                    tm.checkEditTenantContactEmailUnique(value);
-                  }}
-                  onBlur={(e) => tm.checkEditTenantContactEmailUnique(e.target.value)}
+                  onChange={(e) => tm.handleEditTenantEmailChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.editTenantFormErrors.email}</FormErrorMessage>
+                {tm.editTenantEmailStatus === "checking" && !tm.editTenantFormErrors.email && (
+                  <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
+                )}
+                {tm.editTenantEmailStatus === "available" && !tm.editTenantFormErrors.email && (
+                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
+                )}
                 <FormHelperText>
                   If you change the contact email, the update takes effect only after the new
                   address is verified.
                 </FormHelperText>
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={Boolean(tm.editTenantFormErrors.phone_number)}>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.editTenantForm.phone_number ?? ""}
-                  onChange={(e) =>
-                    tm.setEditTenantForm({
-                      ...tm.editTenantForm,
-                      phone_number: e.target.value,
-                    })
-                  }
+                  onChange={(e) => tm.handleEditTenantPhoneChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.editTenantFormErrors.phone_number}</FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -954,22 +942,21 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Input
                   type="email"
                   value={tm.userForm.email}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    tm.setUserForm({ ...tm.userForm, email: value });
-                    tm.checkUserEmailUnique(value);
-                  }}
-                  onBlur={(e) => tm.checkUserEmailUnique(e.target.value)}
+                  onChange={(e) => tm.handleUserEmailChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
+                {tm.userEmailStatus === "checking" && !tm.userFormErrors.email && (
+                  <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
+                )}
+                {tm.userEmailStatus === "available" && !tm.userFormErrors.email && (
+                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
+                )}
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.full_name)}>
                 <FormLabel>Full Name</FormLabel>
                 <Input
                   value={tm.userForm.full_name}
-                  onChange={(e) =>
-                    tm.setUserForm({ ...tm.userForm, full_name: e.target.value })
-                  }
+                  onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.userFormErrors.full_name}</FormErrorMessage>
               </FormControl>
@@ -991,14 +978,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={Boolean(tm.userFormErrors.phone_number)}>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.userForm.phone_number}
-                  onChange={(e) =>
-                    tm.setUserForm({ ...tm.userForm, phone_number: e.target.value })
-                  }
+                  onChange={(e) => tm.handleUserPhoneChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.userFormErrors.phone_number}</FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1033,17 +1019,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(tm.editUserFormErrors.username)}>
                 <FormLabel>Username</FormLabel>
                 <Input
                   value={tm.editUserForm.username ?? ""}
-                  onChange={(e) =>
-                    tm.setEditUserForm({
-                      ...tm.editUserForm,
-                      username: e.target.value,
-                    })
-                  }
+                  onChange={(e) => tm.handleEditUserUsernameChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.editUserFormErrors.username}</FormErrorMessage>
               </FormControl>
               <FormControl>
                 <FormLabel>Email</FormLabel>
@@ -1055,17 +1037,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   organisation.
                 </Text>
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={Boolean(tm.editUserFormErrors.full_name)}>
                 <FormLabel>Full Name</FormLabel>
                 <Input
                   value={tm.editUserForm.full_name ?? ""}
-                  onChange={(e) =>
-                    tm.setEditUserForm({
-                      ...tm.editUserForm,
-                      full_name: e.target.value,
-                    })
-                  }
+                  onChange={(e) => tm.handleEditUserFullNameChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.editUserFormErrors.full_name}</FormErrorMessage>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -1085,17 +1063,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={Boolean(tm.editUserFormErrors.phone_number)}>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.editUserForm.phone_number ?? ""}
-                  onChange={(e) =>
-                    tm.setEditUserForm({
-                      ...tm.editUserForm,
-                      phone_number: e.target.value,
-                    })
-                  }
+                  onChange={(e) => tm.handleEditUserPhoneChange(e.target.value)}
                 />
+                <FormErrorMessage>{tm.editUserFormErrors.phone_number}</FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1107,6 +1081,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               colorScheme="blue"
               onClick={tm.handleSaveEditUser}
               isLoading={tm.isSubmittingEditUser}
+              isDisabled={!tm.canSubmitEditUserForm}
             >
               Save
             </Button>

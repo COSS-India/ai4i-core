@@ -5,6 +5,10 @@ export const messageResponseSchema = z.object({
   message: z.string(),
 });
 
+export const checkEmailExistsResponseSchema = z.object({
+  exists: z.boolean(),
+});
+
 export const resetPasswordResponseSchema = z.object({
   message: z.string(),
   sign_out_other_sessions: z.boolean().optional(),

@@ -13,6 +13,7 @@ export const apiEndpoints = {
     user: (userId: string) => `${API_V1}/auth/users/${userId}`,
     /** Relative to `base` (prefix: `${API_BASE_URL}${auth.base}`). */
     paths: {
+      checkEmail: '/check-email',
       register: '/register',
       login: '/login',
       guestLogin: '/guest/login',

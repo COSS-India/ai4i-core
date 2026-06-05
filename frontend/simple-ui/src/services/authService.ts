@@ -35,6 +35,7 @@ import {
   apiKeyListResponseSchema,
   apiKeyListUnionSchema,
   apiKeyResponseSchema,
+  checkEmailExistsResponseSchema,
   createApiKeyResponseSchema,
   guestServicesListSchema,
   loginResponseSchema,
@@ -618,6 +619,22 @@ class AuthService {
       },
       { withAuth: false }
     );
+  }
+
+  /** GET /auth/check-email — whether a user account already uses this email. */
+  async checkEmailExists(
+    email: string,
+    options: { withAuth?: boolean } = {}
+  ): Promise<boolean> {
+    const trimmed = email.trim();
+    const withAuth = options.withAuth !== false;
+    const result = await this.validatedRequest(
+      `${authPath.checkEmail}?email=${encodeURIComponent(trimmed)}`,
+      authUnwrappedSchema(checkEmailExistsResponseSchema),
+      { method: 'GET' },
+      { withAuth }
+    );
+    return result.exists;
   }
 
   // User management (Admin / Mod / Tenant Admin)

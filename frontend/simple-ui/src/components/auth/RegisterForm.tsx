@@ -17,6 +17,7 @@ import {
   Link,
   Select,
   FormErrorMessage,
+  FormHelperText,
 } from '@chakra-ui/react';
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useAuth } from '../../hooks/useAuth';
@@ -26,6 +27,12 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 import { PASSWORD_POLICY } from '../../config/constants';
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
+import authService from '../../services/authService';
+
+const SIGNUP_EMAIL_ALREADY_EXISTS_MSG =
+  'An account with this email already exists. Please use a different email or sign in.';
+
+const SIGNUP_EMAIL_INVALID_MSG = 'Please enter a valid email address';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -45,9 +52,11 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
   });
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const prevIsActiveRef = useRef<boolean>(isActive);
+  const emailCheckRequestIdRef = useRef(0);
 
   // Reset form when component becomes active (when switching back to register tab)
   useEffect(() => {
@@ -60,12 +69,59 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         confirm_password: '',
       });
       setValidationErrors({});
+      setIsCheckingEmail(false);
+      emailCheckRequestIdRef.current += 1;
       setShowPassword(false);
       setShowConfirmPassword(false);
       clearError();
     }
     prevIsActiveRef.current = isActive;
   }, [isActive, clearError]);
+
+  const validateEmailFormat = (email: string): string | undefined => {
+    if (!/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email.trim())) {
+      return SIGNUP_EMAIL_INVALID_MSG;
+    }
+    return undefined;
+  };
+
+  const checkEmailAvailability = async (email: string): Promise<string | undefined> => {
+    const formatError = validateEmailFormat(email);
+    if (formatError) return formatError;
+
+    const requestId = ++emailCheckRequestIdRef.current;
+    setIsCheckingEmail(true);
+    try {
+      const exists = await authService.checkEmailExists(email, { withAuth: false });
+      if (requestId !== emailCheckRequestIdRef.current) return undefined;
+      if (exists) return SIGNUP_EMAIL_ALREADY_EXISTS_MSG;
+      return undefined;
+    } catch {
+      if (requestId !== emailCheckRequestIdRef.current) return undefined;
+      return undefined;
+    } finally {
+      if (requestId === emailCheckRequestIdRef.current) {
+        setIsCheckingEmail(false);
+      }
+    }
+  };
+
+  const handleEmailBlur = async () => {
+    const trimmed = formData.email.trim();
+    if (!trimmed) return;
+
+    const error = await checkEmailAvailability(trimmed);
+    if (error) {
+      setValidationErrors(prev => ({ ...prev, email: error }));
+    } else {
+      setValidationErrors(prev => {
+        if (!prev.email) return prev;
+        const next = { ...prev };
+        delete next.email;
+        return next;
+      });
+    }
+  };
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
@@ -88,8 +144,11 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       errors.password = passwordError;
     }
 
-    if (!/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(formData.email)) {
-      errors.email = 'Please enter a valid email address';
+    const emailFormatError = validateEmailFormat(formData.email);
+    if (emailFormatError) {
+      errors.email = emailFormatError;
+    } else if (validationErrors.email === SIGNUP_EMAIL_ALREADY_EXISTS_MSG) {
+      errors.email = SIGNUP_EMAIL_ALREADY_EXISTS_MSG;
     }
 
     setValidationErrors(errors);
@@ -101,6 +160,12 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     clearError();
 
     if (!validateForm()) {
+      return;
+    }
+
+    const emailError = await checkEmailAvailability(formData.email);
+    if (emailError) {
+      setValidationErrors(prev => ({ ...prev, email: emailError }));
       return;
     }
 
@@ -182,7 +247,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
                    errorMessage.toLowerCase().includes('duplicate')) {
           errorTitle = 'Account Already Exists';
           if (errorMessage.toLowerCase().includes('email')) {
-            errorMessage = 'An account with this email already exists. Please use a different email or sign in.';
+            errorMessage = SIGNUP_EMAIL_ALREADY_EXISTS_MSG;
           } else if (errorMessage.toLowerCase().includes('username')) {
             errorMessage = 'This username is already taken. Please choose a different username.';
           } else {
@@ -237,6 +302,11 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       [name]: value,
     }));
 
+    if (name === 'email') {
+      emailCheckRequestIdRef.current += 1;
+      setIsCheckingEmail(false);
+    }
+
     // Clear validation error for this field
     if (validationErrors[name]) {
       setValidationErrors(prev => {
@@ -280,11 +350,15 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               name="email"
               value={formData.email}
               onChange={handleChange}
+              onBlur={handleEmailBlur}
               placeholder="Enter your email"
               size="md"
               autoComplete="off"
               data-form-type="other"
             />
+            {isCheckingEmail && !validationErrors.email && (
+              <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
+            )}
             {validationErrors.email && (
               <FormErrorMessage>{validationErrors.email}</FormErrorMessage>
             )}
@@ -367,6 +441,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             loadingText="Signing up..."
             disabled={
               isLoading ||
+              isCheckingEmail ||
               !passwordPasses(formData.password) ||
               formData.password !== formData.confirm_password
             }
