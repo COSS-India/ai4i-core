@@ -380,7 +380,7 @@ async def run_ocr_inference(
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
 )
 async def chat_completions(
-    payload: Dict[str, Any] = Body(..., example=_CHAT_EXAMPLE),
+    payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> JSONResponse:
     status_code, body = await OpenAIProxyService().proxy(path="/v1/chat/completions", payload=payload)
     return JSONResponse(status_code=status_code, content=body)
@@ -392,7 +392,7 @@ async def chat_completions(
     description="Forwards the request to the upstream LLM at /v1/chat",
 )
 async def chat(
-    payload: Dict[str, Any] = Body(..., example=_CHAT_EXAMPLE),
+    payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> JSONResponse:
     status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
     return JSONResponse(status_code=status_code, content=body)
