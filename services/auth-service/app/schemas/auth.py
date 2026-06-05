@@ -17,9 +17,12 @@ from pydantic.functional_validators import AfterValidator
 _BASIC_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _loose_email_validator(v: str) -> str:
-    if not isinstance(v, str) or not _BASIC_EMAIL_RE.match(v):
+    if not isinstance(v, str):
         raise ValueError("value is not a valid email address")
-    return v.lower().strip()
+    v = v.strip().lower()
+    if not _BASIC_EMAIL_RE.match(v):
+        raise ValueError("value is not a valid email address")
+    return v
 
 _AnyEmail = Annotated[str, AfterValidator(_loose_email_validator)]
 
@@ -73,7 +76,7 @@ class SetPasswordRequest(BaseSchema):
 
 
 class ResendSetupLinkRequest(BaseSchema):
-    email: EmailStr
+    email: _AnyEmail
 
 
 class VerifyEmailRequest(BaseSchema):
