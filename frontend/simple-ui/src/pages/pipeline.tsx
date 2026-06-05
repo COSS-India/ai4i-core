@@ -8,10 +8,6 @@ import {
   Button,
   FormControl,
   FormLabel,
-  Grid,
-  GridItem,
-  Heading,
-  Progress,
   Select,
   SimpleGrid,
   Stat,
@@ -21,29 +17,32 @@ import {
   Text,
   Textarea,
   VStack,
-  HStack,
-  Flex,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
-import Head from "next/head";
 import { useRouter } from "next/router";
 import React, { useEffect, useMemo, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
-import ContentLayout from "../components/common/ContentLayout";
 import AudioInputPreview from "../components/common/AudioInputPreview";
+import {
+  RequestContainer,
+  ResponseContainer,
+  ServicePageLayout,
+} from "../components/service-page";
 import {
   ASR_SUPPORTED_LANGUAGES,
   formatDuration,
   MAX_RECORDING_DURATION,
   TTS_SUPPORTED_LANGUAGES,
 } from "../config/constants";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
+import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useAuth } from "../hooks/useAuth";
 import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
 import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+
+const pageDefaults = getServicePageDefaults("pipeline");
 
 const PipelinePage: React.FC = () => {
   const toast = useToastWithDeduplication();
@@ -214,66 +213,44 @@ const PipelinePage: React.FC = () => {
   };
 
   return (
-    <>
-      <Head>
-        <title>Speech to Speech | AI4Inclusion Console</title>
-        <meta
-          name="description"
-          content="Transform spoken input into translated speech output using chained AI models"
-        />
-      </Head>
-
-      <ContentLayout>
-        <VStack spacing={8} w="full">
-          {/* Page Header */}
-          <Box w="full" maxW="1200px" mx="auto">
-            <Flex
-              direction="row"
-              justify="space-between"
-              align="center"
-              mb={4}
-              w="full"
-            >
-              <Box flex={1} textAlign="center">
-                <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-                  {getServiceTitle("pipeline")}
-                </Heading>
-                <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-                  {getServiceDescription("pipeline")}
-                </Text>
-              </Box>
-              <Button
-                size="sm"
-                variant="outline"
-                colorScheme="orange"
-                onClick={() => router.push("/pipeline-builder")}
-                ml={4}
-              >
-                Customize Pipeline
-              </Button>
-            </Flex>
-
-            {/* Info Alert */}
-            <Alert status="info" borderRadius="md" alignItems="center">
-              <AlertIcon />
-              <AlertDescription>
-                The pipeline chains Automatic Speech Recognition (ASR), Neural
-                Machine Translation (NMT), and Text-to-Speech (TTS) services to
-                convert speech from one language to another.
-              </AlertDescription>
-            </Alert>
-          </Box>
-
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
-            maxW="1200px"
-            mx="auto"
-          >
-            {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+    <ServicePageLayout
+      serviceId="pipeline"
+      headingSize="lg"
+      headTitle="Speech to Speech | AI4Inclusion Console"
+      headDescription="Transform spoken input into translated speech output using chained AI models"
+      headerExtra={
+        <Button
+          size="sm"
+          variant="outline"
+          colorScheme="orange"
+          onClick={() => router.push("/pipeline-builder")}
+          ml={4}
+        >
+          Customize Pipeline
+        </Button>
+      }
+      banner={
+        <Alert status="info" borderRadius="md" alignItems="center" w="full" maxW="1200px" mx="auto">
+          <AlertIcon />
+          <AlertDescription>
+            The pipeline chains Automatic Speech Recognition (ASR), Neural Machine Translation
+            (NMT), and Text-to-Speech (TTS) services to convert speech from one language to another.
+          </AlertDescription>
+        </Alert>
+      }
+      requestPanel={
+        <RequestContainer
+          inputType="custom"
+          helperText={pageDefaults.helperText}
+          submitButton={{
+            label: pageDefaults.submitLabel,
+            loadingLabel: pageDefaults.submitLoadingLabel,
+            onClick: handleRunPipeline,
+            isLoading: isLoading,
+            isDisabled: !canSubmit,
+          }}
+        >
+          <VStack spacing={6} align="stretch">
                 {/* Source Language */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
@@ -577,90 +554,59 @@ const PipelinePage: React.FC = () => {
                       )}
                     </Box>
 
-                    {/* Instruction above Run Pipeline */}
-                    <Text fontSize="sm" color="gray.600">
-                      After recording or uploading audio, click Run Pipeline to
-                      generate the transcribed text, translated text, and synthesized
-                      speech.
-                    </Text>
-
-                    {/* Run Pipeline Button */}
-                    <Button
-                      colorScheme="orange"
-                      size="lg"
-                      onClick={handleRunPipeline}
-                      isLoading={isLoading}
-                      loadingText="Running..."
-                      isDisabled={!canSubmit}
-                      w="full"
-                    >
-                      Run Pipeline
-                    </Button>
                   </VStack>
                 </Box>
-              </VStack>
-            </GridItem>
+          </VStack>
+        </RequestContainer>
+      }
+      responsePanel={
+        <ResponseContainer
+          fetching={isLoading}
+          fetchingLabel="Processing pipeline..."
+          fetched={!!result}
+          hasResult={!!result}
+          result={
+            result ? (
+              <>
+                <SimpleGrid
+                  p={4}
+                  bg="orange.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="orange.200"
+                  columns={2}
+                  spacingX="20px"
+                  spacingY="10px"
+                >
+                  <Stat>
+                    <StatLabel>Source Text</StatLabel>
+                    <StatNumber>{getWordCount(result.sourceText)}</StatNumber>
+                    <StatHelpText>words</StatHelpText>
+                  </Stat>
+                  <Stat>
+                    <StatLabel>Translated Text</StatLabel>
+                    <StatNumber>{getWordCount(result.targetText)}</StatNumber>
+                    <StatHelpText>words</StatHelpText>
+                  </Stat>
+                </SimpleGrid>
 
-            {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Progress Indicator */}
-                {isLoading && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Processing pipeline...
-                    </Text>
-                    <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
-
-                {/* Results Stats */}
-                {result && (
-                  <SimpleGrid
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                    columns={2}
-                    spacingX="20px"
-                    spacingY="10px"
+                <Box>
+                  <FormLabel
+                    mb={2}
+                    fontSize="sm"
+                    fontWeight="semibold"
+                    color="gray.700"
                   >
-                    <Stat>
-                      <StatLabel>Source Text</StatLabel>
-                      <StatNumber>{getWordCount(result.sourceText)}</StatNumber>
-                      <StatHelpText>words</StatHelpText>
-                    </Stat>
-                    <Stat>
-                      <StatLabel>Translated Text</StatLabel>
-                      <StatNumber>{getWordCount(result.targetText)}</StatNumber>
-                      <StatHelpText>words</StatHelpText>
-                    </Stat>
-                  </SimpleGrid>
-                )}
+                    Transcribed Text (Source)
+                  </FormLabel>
+                  <Textarea
+                    readOnly
+                    value={result.sourceText}
+                    rows={4}
+                  />
+                </Box>
 
-                {/* Source Text */}
-                {result && (
-                  <Box>
-                    <FormLabel
-                      mb={2}
-                      fontSize="sm"
-                      fontWeight="semibold"
-                      color="gray.700"
-                    >
-                      Transcribed Text (Source)
-                    </FormLabel>
-                    <Textarea
-                      readOnly
-                      value={result.sourceText}
-                      rows={4}
-                    />
-                  </Box>
-                )}
-
-                {/* Target Text */}
-                {result && (
-                  <Box>
+                <Box>
                     <FormLabel
                       mb={2}
                       fontSize="sm"
@@ -669,16 +615,14 @@ const PipelinePage: React.FC = () => {
                     >
                       Translated Text (Target)
                     </FormLabel>
-                    <Textarea
-                      readOnly
-                      value={result.targetText}
-                      rows={4}
-                    />
-                  </Box>
-                )}
+                  <Textarea
+                    readOnly
+                    value={result.targetText}
+                    rows={4}
+                  />
+                </Box>
 
-                {/* Audio Player */}
-                {result && result.audio && (
+                {result.audio && (
                   <Box>
                     <FormLabel
                       mb={2}
@@ -695,12 +639,12 @@ const PipelinePage: React.FC = () => {
                     />
                   </Box>
                 )}
-              </VStack>
-            </GridItem>
-          </Grid>
-        </VStack>
-      </ContentLayout>
-    </>
+              </>
+            ) : undefined
+          }
+        />
+      }
+    />
   );
 };
 

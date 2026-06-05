@@ -1,7 +1,23 @@
-// Clipboard helper for service page response actions
+// Clipboard and file-download helpers for service page response actions
 
 import { useCallback } from "react";
 import { useToastWithDeduplication } from "./useToastWithDeduplication";
+
+export function downloadTextFile(
+  content: string,
+  filename: string,
+  mimeType = "text/plain"
+): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 export function useCopyToClipboard() {
   const toast = useToastWithDeduplication();
@@ -52,21 +68,35 @@ export function useCopyToClipboard() {
     [toast]
   );
 
-  return { copy };
-}
+  const download = useCallback(
+    (
+      content: string,
+      filename: string,
+      options?: { mimeType?: string; successDescription?: string }
+    ) => {
+      const { mimeType = "text/plain", successDescription = "File downloaded." } =
+        options ?? {};
+      try {
+        downloadTextFile(content, filename, mimeType);
+        toast({
+          title: "Download Started",
+          description: successDescription,
+          status: "success",
+          duration: 2000,
+          isClosable: true,
+        });
+      } catch {
+        toast({
+          title: "Download Failed",
+          description: "Failed to download file.",
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    },
+    [toast]
+  );
 
-export function downloadTextFile(
-  content: string,
-  filename: string,
-  mimeType = "text/plain"
-): void {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  return { copy, download };
 }

@@ -91,14 +91,42 @@ export interface ServiceTextInputProps {
   disabled?: boolean;
   required?: boolean;
   rows?: number;
+  /** Show character counter below the field (default true) */
+  showCharCounter?: boolean;
+  resize?: "vertical" | "horizontal" | "none" | "both";
 }
 
 export interface ServiceAudioInputProps {
-  children?: ReactNode;
-  /** When using built-in recorder wrapper */
+  /** Base64 audio payload (recording or upload) */
+  value: string | null;
+  onChange: (audioBase64: string | null) => void;
   label?: string;
   required?: boolean;
   helperSlot?: ReactNode;
+  disabled?: boolean;
+  sampleRate?: number;
+  /** Show microphone record UI (default true) */
+  showRecording?: boolean;
+  /** Show file upload UI (default true) */
+  showUpload?: boolean;
+  readyMessage?: string;
+  showSuccessAlert?: boolean;
+  /**
+   * Increment to reset recorder/upload UI after parent clears audio.
+   */
+  clearToken?: number;
+  /** Called when user clears audio (in addition to onChange(null)) */
+  onClear?: () => void;
+  /**
+   * External recording state (e.g. useASR). When omitted, AudioInput uses useAudioRecorder internally.
+   */
+  isRecording?: boolean;
+  onRecordingChange?: (recording: boolean) => void;
+  timer?: number;
+  /**
+   * @deprecated Use value/onChange props instead of children.
+   */
+  children?: ReactNode;
 }
 
 export interface ServiceImageInputProps {

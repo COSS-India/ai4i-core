@@ -32,10 +32,13 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   sampleRate,
   disabled = false,
   timer = 0,
+  showRecording = true,
+  showUpload = true,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToastWithDeduplication();
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // When parent clears input, reset our internal uploaded-file display too.
   useEffect(() => {
@@ -46,14 +49,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
     }
   }, [clearToken]);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-
-    // Reset input value immediately to allow selecting the same file again
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-
+  const processAudioFile = (file: File | null | undefined) => {
     if (!file) {
       console.log("No file selected");
       const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
@@ -128,7 +124,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           URL.revokeObjectURL(url);
           const duration = audio.duration;
           console.log("Audio duration:", duration, "seconds");
-          
+
           if (duration < MIN_RECORDING_DURATION) {
             resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
           } else if (duration > MAX_RECORDING_DURATION) {
@@ -276,6 +272,21 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       });
   };
 
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    processAudioFile(file);
+  };
+
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (disabled || isRecording) return;
+    processAudioFile(event.dataTransfer.files?.[0]);
+  };
+
   const handleRecordClick = () => {
     if (isRecording) {
       onRecordingChange(false);
@@ -314,97 +325,111 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
         </Alert>
       )}
 
-      {/* Record: instruction block + button */}
-      <Box
-        p={3}
-        borderRadius="md"
-        borderWidth="1px"
-        borderColor="gray.200"
-        bg="gray.50"
-      >
-        <Text fontSize="sm" color="gray.600" mb={2}>
-          Click Record to record audio from your microphone (max{" "}
-          {MAX_RECORDING_DURATION} seconds).
-        </Text>
-        <Button
-          leftIcon={isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />}
-          colorScheme={isRecording ? "red" : "orange"}
-          variant={isRecording ? "solid" : "outline"}
-          onClick={handleRecordClick}
-          disabled={disabled}
-          w="full"
-          h="50px"
+      {showRecording && (
+        <Box
+          p={3}
+          borderRadius="md"
+          borderWidth="1px"
+          borderColor="gray.200"
+          bg="gray.50"
         >
-          {isRecording ? "Stop" : "Record"}
-        </Button>
-      </Box>
-
-      {/* Upload: instruction block + button + file name display */}
-      <Box
-        p={3}
-        borderRadius="md"
-        borderWidth="1px"
-        borderColor="gray.200"
-        bg="gray.50"
-      >
-        <Text fontSize="sm" color="gray.600" mb={2}>
-          Click Upload to choose an audio file (MP3 or WAV, max{" "}
-          {MAX_RECORDING_DURATION} seconds).
-        </Text>
-        <Button
-          leftIcon={<FaUpload />}
-          colorScheme="blue"
-          variant="outline"
-          onClick={handleUploadClick}
-          disabled={disabled || isRecording}
-          w="full"
-          h="50px"
-        >
-          Upload
-        </Button>
-        {uploadedFileName && (
-          <HStack
-            direction="row"
-            spacing={2}
-            align="center"
-            justify="space-between"
-            mt={2}
+          <Text fontSize="sm" color="gray.600" mb={2}>
+            Click Record to record audio from your microphone (max{" "}
+            {MAX_RECORDING_DURATION} seconds).
+          </Text>
+          <Button
+            leftIcon={isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />}
+            colorScheme={isRecording ? "red" : "orange"}
+            variant={isRecording ? "solid" : "outline"}
+            onClick={handleRecordClick}
+            disabled={disabled}
+            w="full"
+            h="50px"
           >
-            <Text
-              fontSize="sm"
-              color="gray.700"
-              noOfLines={1}
-              title={uploadedFileName}
-            >
-              Uploaded: {uploadedFileName}
-            </Text>
-            {onClear && (
-              <Tooltip label="Remove audio" placement="top" hasArrow>
-                <IconButton
-                  aria-label="Remove audio"
-                  icon={<DeleteIcon />}
-                  size="sm"
-                  variant="ghost"
-                  colorScheme="red"
-                  _hover={{ bg: "red.50" }}
-                  onClick={handleClearUploadedFile}
-                />
-              </Tooltip>
-            )}
-          </HStack>
-        )}
-      </Box>
+            {isRecording ? "Stop" : "Record"}
+          </Button>
+        </Box>
+      )}
 
-      {/* Hidden File Input */}
-      <FormControl display="none">
-        <FormLabel>Audio File</FormLabel>
-        <Input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/mpeg,audio/mp3,.mp3,audio/wav,audio/wave,audio/x-wav,.wav"
-          onChange={handleFileUpload}
-        />
-      </FormControl>
+      {showUpload && (
+        <Box
+          p={3}
+          borderRadius="md"
+          borderWidth="1px"
+          borderColor={isDragging ? "orange.400" : "gray.200"}
+          bg={isDragging ? "orange.50" : "gray.50"}
+          onDragOver={
+            disabled || isRecording
+              ? undefined
+              : (e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }
+          }
+          onDragLeave={disabled || isRecording ? undefined : () => setIsDragging(false)}
+          onDrop={disabled || isRecording ? undefined : handleDrop}
+        >
+          <Text fontSize="sm" color="gray.600" mb={2}>
+            {isDragging
+              ? "Drop audio file here"
+              : `Click Upload or drag and drop an audio file (MP3 or WAV, max ${MAX_RECORDING_DURATION} seconds).`}
+          </Text>
+          <Button
+            leftIcon={<FaUpload />}
+            colorScheme="blue"
+            variant="outline"
+            onClick={handleUploadClick}
+            disabled={disabled || isRecording}
+            w="full"
+            h="50px"
+          >
+            Upload
+          </Button>
+          {uploadedFileName && (
+            <HStack
+              direction="row"
+              spacing={2}
+              align="center"
+              justify="space-between"
+              mt={2}
+            >
+              <Text
+                fontSize="sm"
+                color="gray.700"
+                noOfLines={1}
+                title={uploadedFileName}
+              >
+                Uploaded: {uploadedFileName}
+              </Text>
+              {onClear && (
+                <Tooltip label="Remove audio" placement="top" hasArrow>
+                  <IconButton
+                    aria-label="Remove audio"
+                    icon={<DeleteIcon />}
+                    size="sm"
+                    variant="ghost"
+                    colorScheme="red"
+                    _hover={{ bg: "red.50" }}
+                    onClick={handleClearUploadedFile}
+                  />
+                </Tooltip>
+              )}
+            </HStack>
+          )}
+        </Box>
+      )}
+
+      {showUpload && (
+        <FormControl display="none">
+          <FormLabel>Audio File</FormLabel>
+          <Input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/mpeg,audio/mp3,.mp3,audio/wav,audio/wave,audio/x-wav,.wav"
+            onChange={handleFileUpload}
+          />
+        </FormControl>
+      )}
     </Stack>
   );
 };
