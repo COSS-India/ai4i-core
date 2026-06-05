@@ -1,3 +1,4 @@
+import re
 from fastapi import Request
 
 from app.core.exceptions import InsufficientPermissionsError
