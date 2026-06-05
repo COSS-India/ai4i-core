@@ -211,13 +211,14 @@ async def search_traces_opensearch(
         by_level = {}
         by_task = {}
         for trace in data:
-            status = trace.get("status", "unknown")
+            trace_status = trace.get("status", "unknown")
             task_type = trace.get("task_type", "unknown")
 
-            by_level[status] = by_level.get(status, 0) + 1
+            by_level[trace_status] = by_level.get(trace_status, 0) + 1
             by_task[task_type] = by_task.get(task_type, 0) + 1
 
         return SearchTracesResponse(
+            
             data=data,
             total=total,
             page=page,
