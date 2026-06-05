@@ -106,8 +106,8 @@
 
     { "endpoint": "POST:/api/v1/telemetry/logs",                           "permissionRequired": 132, "description": "Record logs (telemetry.write)" },
     { "endpoint": "POST:/api/v1/telemetry/traces",                         "permissionRequired": 132, "description": "Record traces (telemetry.write)" },
-    { "endpoint": "GET:/api/v1/telemetry/traces/search",                   "permissionRequired": 131, "description": "Search traces (traces.read); gates out non-privileged users. Breadth (all vs own tenant) is decided downstream from the X-Is-Admin header" },
-    { "endpoint": "GET:/api/v1/telemetry/traces/{trace_id}",               "permissionRequired": 131, "description": "Get trace by ID (traces.read); tenant-scoped downstream unless X-Is-Admin is true" },
+    { "endpoint": "GET:/api/v1/telemetry/traces/search",                   "permissionRequired": 131, "description": "Search traces (traces.read); role 1 (admin) or 2 (moderator) see all traces; role 5 (tenant admin) sees own tenant only" },    
+    { "endpoint": "GET:/api/v1/telemetry/traces/{trace_id}",               "permissionRequired": 131, "description": "Get trace by ID (traces.read); role 1 (admin) or 2 (moderator) see all traces; role 5 (tenant admin) sees own tenant only" },
 
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
