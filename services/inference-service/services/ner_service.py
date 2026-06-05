@@ -1,15 +1,16 @@
 """NER (Named Entity Recognition) TaskService."""
 import json
 from services.base.text_base import TextBase
+from services.base.task_service import PostProcessFormat
 from services.base.config_mapper import GenericTritonMapper
 
 
 class NERTaskService(TextBase):
     # source_language check handled by base; no target language needed
 
-    async def build_response(self, payload, response_items, source_texts):
-        sources = source_texts or []
-        raw_items = response_items if isinstance(response_items, list) else [response_items]
+    async def postprocess_output(self, result: PostProcessFormat):
+        sources = result.source_texts
+        raw_items = result.response_data
         json_parts = []
         for raw_item in raw_items:
             value = GenericTritonMapper.unwrap_scalar(

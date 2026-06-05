@@ -77,7 +77,7 @@ async def test_nmt_preprocessing():
         print(f"  [{i}]: '{item['source']}'")
 
     try:
-        cleaned = await service.preprocess_input(raw_input)
+        cleaned = (await service.preprocess_input({"input": raw_input, "config": {}}))["input"]
         print("\n✓ Preprocessing PASSED")
         print("Cleaned input:")
         for i, item in enumerate(cleaned):

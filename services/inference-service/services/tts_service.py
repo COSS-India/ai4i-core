@@ -9,9 +9,7 @@ import scipy.io.wavfile as wav_io
 import scipy.signal as sps
 
 from services.base.text_base import TextBase
-from services.base.config_mapper import GenericTritonMapper
 from pydub import AudioSegment
-
 
 # Triton model always outputs at this rate
 _TRITON_SAMPLE_RATE = 22050
@@ -27,141 +25,119 @@ _MAX_AUDIO_DURATION_S = 300.0
 
 class TTSTaskService(TextBase):
     """
-    TaskService for Text-to-Speech inference.
+    TaskService for Text-to-Speech inference, on the standard pipeline:
 
-    Extends TextBase for text validation and normalization. Follows the
-    standard pipeline with TTS-specific hook implementations:
-      execute_triton_inference → per-item chunking (≤ 400 chars per Triton
-                                 call), audio concatenation across chunks
-      build_response           → resample, duration-adjust, encode to
-                                 audioFormat, base64 + response envelope
+      preprocess_input    → sanitize (TextBase), then expand each input item
+                            into ≤400-char chunk items carrying gender /
+                            language_id (the adapter reads them per item);
+                            per-item call mode = one Triton call per chunk
+      run_inference       → generic (BaseTaskService) — no override
+      convert_triton_output_to_task_format
+                          → waveform extraction: FP32 tensor → int16 samples
+                            (the mapper's to_output_items treats lists as
+                            batch dims, which mangles waveform tensors)
+      postprocess_output  → merge chunk samples back per input item, then
+                            resample / duration-adjust / encode / base64
+                            + response envelope
     """
 
+    # One Triton call per (chunk) item — the TTS model takes one text per call.
+    TRITON_CALL_MODE = "per_item"
+
     # ------------------------------------------------------------------
-    # execute_triton_inference — chunked Triton loop (TTS call pattern)
+    # Preprocess — sanitize, then chunk expansion
     # ------------------------------------------------------------------
 
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        For each input item: normalize text → chunk (≤ 400 chars) → Triton
-        call per chunk → concatenate FP32 arrays → int16.
-        Returns one response item per input with the raw synthesized audio
-        at _TRITON_SAMPLE_RATE; build_response does the shaping.
-        """
-        from trace.span_attributes import count_input_tokens
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload = await super().preprocess_input(payload)
+        config: Dict[str, Any] = payload.get("config") or {}
+        gender = config.get("gender", "female")
+        language_id = self._extract_source_lang(config.get("language") or {}) or ""
 
-        async with self._traced_inference(payload) as span_ctx:
-            span_ctx["output_type"] = "audio"  # TTS output is audio, success or failure
-
-            triton_endpoint = self.service_info.get("endpoint", "")
-            api_key         = self.service_info.get("api_key")
-            adapter_config  = self.service_info.get("adapter_config")
-
-            if not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
-                )
-            if not adapter_config:
-                raise RuntimeError(
-                    f"{self.task_name}: adapter_config missing from service_info. "
-                    "Every TTS service must have an adapter_config seeded in mm_services."
-                )
-
-            input_items: List[Dict[str, Any]] = self.get_payload_object(payload)
-            config: Dict[str, Any] = payload.get("config") or {}
-
-            span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
-
-            # Use TextBase helpers for language extraction
-            language    = self._get_language(payload)
-            source_lang = self._extract_source_lang(language) or ""
-            gender      = config.get("gender", "female")
-
-            # Normalise config for GenericTritonMapper path resolution
-            triton_config = {
-                "language": {"source_language": source_lang},
-                "gender": gender,
-            }
-            mapper = GenericTritonMapper(adapter_config)
-
-            response_data: List[Dict[str, Any]] = []
-            source_texts: List[str] = []
-
-            for item in input_items:
-                item_dict = item if isinstance(item, dict) else item.model_dump(by_alias=False)
-                source_text    = item_dict.get("source", "")
-                audio_duration = item_dict.get("audioDuration") or item_dict.get("audio_duration")
-
-                chunks = self._chunk_text(source_text, _MAX_CHUNK_LENGTH)
-                chunk_arrays: List[np.ndarray] = []
-
-                for chunk in chunks:
-                    chunk_item = {"source": chunk, "gender": gender, "language_id": source_lang}
-                    triton_inputs, triton_outputs = mapper.compose_triton_kserve_v2_payload(
-                        input_data=[chunk_item], config=triton_config
-                    )
-                    raw_output = await self._call_triton_inference(
-                        triton_endpoint=triton_endpoint,
-                        triton_inputs=triton_inputs,
-                        triton_outputs=triton_outputs,
-                        api_key=api_key,
-                    )
-                    chunk_arrays.append(self._extract_audio_array(raw_output))
-
-                combined = np.concatenate(chunk_arrays) if len(chunk_arrays) > 1 else chunk_arrays[0]
-                response_data.append({
-                    "samples":       combined,           # int16 @ _TRITON_SAMPLE_RATE
-                    "audioDuration": audio_duration,     # requested duration, None = as-is
+        chunked: List[Dict[str, Any]] = []
+        for idx, item in enumerate(payload[self.payload_key]):
+            duration = self._validated_duration(
+                item.get("audioDuration") or item.get("audio_duration")
+            )
+            for piece in self._chunk_text(item.get("source", ""), _MAX_CHUNK_LENGTH):
+                chunked.append({
+                    "source": piece,
+                    "gender": gender,
+                    "language_id": language_id,
+                    "_item_index": idx,        # merge key for postprocess
+                    "audioDuration": duration,
                 })
-                source_texts.append(source_text)
-
-            span_ctx["output_tokens"] = len(response_data)
-
-            return {
-                "response_data": response_data,
-                "source_texts": source_texts,
-                "service_id": self.service_info.get("service_id", ""),
-            }
+        payload[self.payload_key] = chunked
+        return payload
 
     # ------------------------------------------------------------------
-    # build_response — resample / duration-adjust / encode + envelope
+    # Output conversion — waveform tensors need raw extraction
     # ------------------------------------------------------------------
 
-    async def build_response(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def convert_triton_output_to_task_format(
+        self, triton_output: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract OUTPUT_GENERATED_AUDIO directly from the Triton response.
+
+        The generic mapper path is unsuitable here: to_output_items treats a
+        list value as a batch dimension and would explode a waveform of N
+        samples into N one-float items. FP32 [-1, 1] → int16.
+        """
+        audio_data = None
+        for output in triton_output.get("outputs", []):
+            if output.get("name") == "OUTPUT_GENERATED_AUDIO":
+                audio_data = output.get("data")
+                break
+        if audio_data is None:
+            raise RuntimeError(
+                f"{self.task_name}: OUTPUT_GENERATED_AUDIO not found in Triton response"
+            )
+
+        audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
+        audio_int16 = np.clip(audio_fp32 * 32767, -32768, 32767).astype(np.int16)
+        return [{"samples": audio_int16}]
+
+    # ------------------------------------------------------------------
+    # postprocess_output — merge chunks per item, resample/encode + envelope
+    # ------------------------------------------------------------------
+
+    async def postprocess_output(self, result) -> Dict[str, Any]:
+        payload = result.payload
         config: Dict[str, Any] = payload.get("config") or {}
         source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
         target_rate  = self._validated_sample_rate(config)
         audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
 
+        # Chunk items (in payload) and chunk results (response_data) are
+        # parallel — regroup samples by the originating input item.
+        chunk_items = payload.get(self.payload_key) or []
+        merged: Dict[int, List[np.ndarray]] = {}
+        durations_req: Dict[int, Any] = {}
+        for chunk, item in zip(chunk_items, result.response_data):
+            idx = chunk.get("_item_index", 0)
+            merged.setdefault(idx, []).append(item["samples"])
+            durations_req[idx] = chunk.get("audioDuration")
+
         audio_outputs: List[Dict[str, Any]] = []
         durations: List[float] = []
+        for idx in sorted(merged):
+            arrays = merged[idx]
+            combined = np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
 
-        for item in response_items:
-            combined = item["samples"]
-            audio_duration = self._validated_duration(item.get("audioDuration"))
-
-            # Resample to requested rate
             if target_rate != _TRITON_SAMPLE_RATE:
                 combined = self._resample_audio(combined, _TRITON_SAMPLE_RATE, target_rate)
 
-            # Duration adjustment
+            audio_duration = durations_req.get(idx)
             if audio_duration is not None:
-                actual_duration = len(combined) / target_rate
-                if actual_duration > audio_duration:
+                actual = len(combined) / target_rate
+                if actual > audio_duration:
                     combined = self._stretch_audio(combined, target_rate, audio_duration)
-                elif actual_duration < audio_duration:
+                elif actual < audio_duration:
                     combined = self._append_silence(combined, target_rate, audio_duration)
 
             duration = len(combined) / target_rate
             durations.append(duration)
-
-            # Format conversion + base64
             audio_bytes = self._to_audio_bytes(combined, target_rate, audio_format)
             audio_outputs.append({
                 "audioContent": base64.b64encode(audio_bytes).decode("utf-8"),
@@ -185,27 +161,6 @@ class TTSTaskService(TextBase):
             },
             "smr_response": None,
         }
-
-    def _extract_audio_array(self, triton_output: Dict[str, Any]) -> np.ndarray:
-        """
-        Extract OUTPUT_GENERATED_AUDIO from Triton response.
-        Triton returns FP32 data; converts to int16 for downstream processing.
-        """
-        audio_data = None
-        for output in triton_output.get("outputs", []):
-            if output.get("name") == "OUTPUT_GENERATED_AUDIO":
-                audio_data = output.get("data")
-                break
-
-        if audio_data is None:
-            raise ValueError(
-                f"{self.task_name}: OUTPUT_GENERATED_AUDIO not found in Triton response"
-            )
-
-        audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
-        # FP32 range assumed [-1, 1] from Triton TTS model
-        audio_int16 = np.clip(audio_fp32 * 32767, -32768, 32767).astype(np.int16)
-        return audio_int16
 
     # ------------------------------------------------------------------
     # Input bounds (user-controlled numerics)

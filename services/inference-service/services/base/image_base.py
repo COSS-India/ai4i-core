@@ -4,13 +4,13 @@ ImageBase — base class for image-backed inference services.
 Works on raw payload dicts (same contract as TextBase / BaseTaskService):
   validate_request   → ensures payload['image'] is non-empty and each item carries content/uri
   preprocess_input   → normalizes each item to base64 under 'image_content'
-  payload_key        → 'image'; the base execute_triton_inference does the rest
+  payload_key        → 'image'; the base run_inference does the rest
 
 All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
 via the adapter_config sourced from MMS — concrete task services don't reimplement it.
 
 Concrete task services (e.g. OCRTaskService) provide:
-  build_response → output shaping + response envelope
+  postprocess → output shaping + response envelope
 """
 
 import base64
@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 
 
 class ImageBase(BaseTaskService):
@@ -43,28 +43,25 @@ class ImageBase(BaseTaskService):
                     f"{self.task_name}: image[{idx}] requires imageContent or imageUri"
                 )
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize each image to base64 under 'image_content' (downloads URI if needed)."""
         items: List[Dict[str, Any]] = []
-        for item in input_data:
-            d = dict(item) if isinstance(item, dict) else item
+        for item in payload.get(self.payload_key) or []:
+            d = dict(item)
             d["image_content"] = await self._resolve_image_base64(d)
             items.append(d)
-        return items
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
     # Image input helpers
     # ------------------------------------------------------------------
 
-    def _item_content(self, item: Any) -> Optional[str]:
-        if isinstance(item, dict):
-            return item.get("imageContent") or item.get("image_content")
-        return getattr(item, "image_content", None)
+    def _item_content(self, item: Dict[str, Any]) -> Optional[str]:
+        return item.get("imageContent") or item.get("image_content")
 
-    def _item_uri(self, item: Any) -> Optional[str]:
-        if isinstance(item, dict):
-            return item.get("imageUri") or item.get("image_uri")
-        return getattr(item, "image_uri", None)
+    def _item_uri(self, item: Dict[str, Any]) -> Optional[str]:
+        return item.get("imageUri") or item.get("image_uri")
 
     async def _resolve_image_base64(self, image_input: Any) -> str:
         """Return image as a base64 string from inline content or downloaded from a URI."""

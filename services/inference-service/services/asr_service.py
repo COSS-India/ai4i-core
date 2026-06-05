@@ -8,7 +8,7 @@ import numpy as np
 import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
-from services.base.config_mapper import GenericTritonMapper
+from services.base.task_service import PostProcessFormat
 
 
 class ASRTaskService(AudioBase):
@@ -19,9 +19,9 @@ class ASRTaskService(AudioBase):
     AudioBase default (base64 passthrough) is overridden here:
       validate_request                  → adds sourceLanguage check
       preprocess_input                  → bytes → decode → mono → resample (16 kHz) → equalize
-      convert_payload_to_triton_format  → GenericTritonMapper + samples context
-      _build_audio_context              → exposes audio.samples (not audio_content)
-      build_response                    → decode bytes → TranscriptionOutput list
+      convert_payload_to_triton_format  → normalises config.language, then super
+      _triton_context_builder           → exposes audio.samples (not audio_content)
+      postprocess                    → decode bytes → TranscriptionOutput list
 
     service_info (including adapter_config) is injected by the Orchestrator.
     """
@@ -63,7 +63,7 @@ class ASRTaskService(AudioBase):
     # Preprocessing — float-PCM pipeline (overrides base64 passthrough)
     # ------------------------------------------------------------------
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Float-PCM preprocessing pipeline, applied to each item in sequence:
           1. Get raw audio bytes (base64 decode or URI download)
@@ -73,12 +73,13 @@ class ASRTaskService(AudioBase):
           5. _equalize_amplitude
         Returns list of item dicts enriched with samples / num_samples / sample_rate.
         """
+        input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
         items = []
 
         for item in input_data:
-            d = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            d = item
 
             audio_bytes             = await self._get_audio_bytes(item)
             audio_data, sample_rate = await self._decode_audio_bytes(audio_bytes)
@@ -93,7 +94,8 @@ class ASRTaskService(AudioBase):
             d["sample_rate"] = self.TARGET_SAMPLE_RATE
             items.append(d)
 
-        return items
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
     # Triton format hooks
@@ -121,32 +123,23 @@ class ASRTaskService(AudioBase):
         elif isinstance(language, str):
             config["language"] = {"source_language": language}
 
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
-    def _build_audio_context(
-        self,
-        item: Dict[str, Any],
-        index: int,
-        config: Dict[str, Any],
-    ) -> Dict[str, Any]:
+    def _triton_context_builder(self):
         """
-        Context dict fed to adapter_config value_path resolution.
-        Exposes audio.samples, audio.num_samples, audio.sample_rate —
-        populated by preprocess_input before the Triton loop.
+        Expose audio.samples / num_samples / sample_rate to value_path
+        resolution — populated by preprocess_input before the Triton loop.
         """
-        samples = item.get("samples") or []
-        return {
-            "audio": {
-                "samples":     samples,
-                "num_samples": item.get("num_samples", len(samples)),
-                "sample_rate": item.get("sample_rate"),
+        def build(item, index, config):
+            samples = item.get("samples") or []
+            return {
+                "audio": {
+                    "samples":     samples,
+                    "num_samples": item.get("num_samples", len(samples)),
+                    "sample_rate": item.get("sample_rate"),
+                }
             }
-        }
+        return build
 
     # ------------------------------------------------------------------
     # Audio decoding helpers (float-PCM path — ASR only)
@@ -159,12 +152,8 @@ class ASRTaskService(AudioBase):
         Returns raw bytes before any format decoding.
         Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
-        if isinstance(audio_input, dict):
-            audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
-            audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
-        else:
-            audio_content = getattr(audio_input, "audio_content", None)
-            audio_uri     = getattr(audio_input, "audio_uri", None)
+        audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
+        audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
 
         if audio_content:
             return base64.b64decode(audio_content)
@@ -177,8 +166,10 @@ class ASRTaskService(AudioBase):
     async def _decode_audio_bytes(self, audio_bytes: bytes) -> Tuple[Any, int]:
         """
         Decode raw audio bytes → (float32 numpy array, sample_rate).
-        Uses soundfile as primary decoder; falls back to raw PCM for unsupported formats.
         """
+        # No fallback on decode failure: silently reinterpreting undecodable
+        # bytes as raw PCM produced "valid" noise that transcribed to garbage.
+        # Undecodable audio is a client error -> ValueError -> 400.
         try:
             import soundfile as sf
             audio_data, sample_rate = sf.read(
@@ -186,18 +177,10 @@ class ASRTaskService(AudioBase):
             )
             return audio_data, sample_rate
         except Exception as sf_err:
-            self.logger.warning(
-                "soundfile failed to decode audio (%s), falling back to raw PCM", sf_err
-            )
-            # Fallback: treat raw bytes as little-endian int16 PCM at 16kHz
-            try:
-                audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-                return audio_data, 16000
-            except Exception as pcm_err:
-                self.logger.error("Failed to decode audio: %s", pcm_err)
-                raise RuntimeError(
-                    f"{self.task_name}: unable to decode audio bytes"
-                ) from pcm_err
+            raise ValueError(
+                f"{self.task_name}: unable to decode audio "
+                f"(expected a valid wav/flac/ogg stream): {sf_err}"
+            ) from sf_err
 
     def _stereo_to_mono(self, audio: Any) -> Any:
         """
@@ -233,19 +216,14 @@ class ASRTaskService(AudioBase):
     # Output
     # ------------------------------------------------------------------
 
-    async def build_response(
-        self,
-        payload: Dict[str, Any],
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         """Decode bytes → wrap in TranscriptionOutput list.
 
-        source_texts (the audio URIs collected by AudioBase) is intentionally
-        unused: per the ULCA ASR contract, output[].source carries the
-        transcript itself. Transcripts map to audio items by index.
+        result.source_texts (the audio URIs collected by AudioBase) is
+        intentionally unused: per the ULCA ASR contract, output[].source
+        carries the transcript itself. Transcripts map to audio items by index.
         """
-        decoded = await self._decode_output_bytes(response_items)
+        decoded = await self._decode_output_bytes(result.response_data)
         return self._wrap_transcription_output(decoded)
 
     async def _decode_transcript(self, transcript: Any) -> str:
