@@ -16,6 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Copy application code ──
 COPY services/platform-core-service/ .
 
+# Run as non-root user for security
+RUN useradd --no-create-home --shell /bin/false appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
 EXPOSE 8095
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
