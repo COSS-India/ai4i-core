@@ -3,8 +3,9 @@
 Adds the config-driven response-shaping fields (response_key / transform /
 pair_with_input on outputs, and the response envelope block) to the
 adapter_configs seeded by a1f2e3d4c5b6. The inference-service postprocess
-overrides for these six task types were replaced by this configuration
-(ai4i-core PR #875) — without these fields the services return the generic
+overrides for six task types were replaced by this configuration, and NER's
+JSON parsing moved to config while keeping its alignment algorithm
+(ai4i-core PR #888) — without these fields the services return the generic
 default shape instead of their task contract.
 
 Values are merged into the existing adapter_config (jsonb read-modify-write
@@ -58,6 +59,13 @@ ADAPTER_ADDITIONS = {
         {0: {"response_key": "output[].source"}},
         {"include_config": False, "static_item_fields": {"nBestTokens": None}},
     ),
+    # NER keeps its code postprocess (BPE/offset alignment) but the JSON
+    # parsing of OUTPUT_TEXT moves to config: the algorithm consumes the
+    # parsed object directly. No response envelope (the override shapes it).
+    "ner": (
+        {0: {"transform": "json_parse"}},
+        None,
+    ),
 }
 
 _RESPONSE_FIELDS = ("task_type", "include_config", "config_keys", "static_item_fields")
@@ -90,7 +98,8 @@ def upgrade() -> None:
                     f"expected index {idx} — refusing to seed mismatched config"
                 )
             outputs[idx].update(adds)
-        adapter["response"] = response_block
+        if response_block is not None:
+            adapter["response"] = response_block
 
         result = conn.execute(
             sa.text(
