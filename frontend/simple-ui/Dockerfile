@@ -18,7 +18,7 @@ COPY --from=deps /app/node_modules ./node_modules
 
 COPY src/ ./src/
 COPY public/ ./public/
-COPY next.config.js tsconfig.json ./
+COPY package.json next.config.js tsconfig.json ./
 
 # Non-sensitive URL config — not credentials, safe to pass as ARG/ENV.
 ARG NEXT_PUBLIC_API_URL=""
