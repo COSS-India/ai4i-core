@@ -1,41 +1,16 @@
 """Language Detection TaskService."""
-import json
 from services.base.text_base import TextBase
-from services.base.task_service import PostProcessFormat
 
 
 class LanguageDetectionTaskService(TextBase):
-    # No language config required — language is DETECTED not specified
+    # No language config required — language is DETECTED not specified.
     # Base validate_request handles input existence; language block skipped.
-
-    async def postprocess_output(self, result: PostProcessFormat):
-        """
-        Return output items with 'source' (input text) and 'langPrediction'
-        as a list of prediction objects: [{langCode, scriptCode, langScore, language}, ...]
-        """
-        output_list = []
-        sources = result.source_texts
-        items = result.response_data
-        for idx, item in enumerate(items):
-            raw_value = item.get("langPrediction", "") if isinstance(item, dict) else item
-            # Unwrap Triton KServe v2 nesting: only peel [bytes] or [string] wrappers
-            while isinstance(raw_value, (list, tuple)) and len(raw_value) == 1 and isinstance(raw_value[0], (bytes, str)):
-                raw_value = raw_value[0]
-            if isinstance(raw_value, bytes):
-                raw_value = raw_value.decode("utf-8", errors="replace")
-            # Parse JSON-encoded prediction string into a list of prediction objects
-            if isinstance(raw_value, str):
-                try:
-                    raw_value = json.loads(raw_value)
-                except (json.JSONDecodeError, ValueError):
-                    raw_value = raw_value.strip()
-            # Always return langPrediction as a list
-            if not isinstance(raw_value, list):
-                raw_value = [raw_value] if raw_value else []
-            source = sources[idx] if idx < len(sources) else ""
-            output_list.append({"source": source, "langPrediction": raw_value})
-        self.logger.debug(f"LANGUAGE_DETECTION post-processed {len(output_list)} results")
-        return {"output": output_list}
+    #
+    # Output is adapter_config-driven: transform ["json_parse", "wrap_list"]
+    # turns the model's JSON prediction string into [prediction], and
+    # pair_with_input "input.source" pairs each item with its input text.
+    # The base default postprocess_output applies that shaping — no code here.
+    pass
 
 
 __all__ = ["LanguageDetectionTaskService"]

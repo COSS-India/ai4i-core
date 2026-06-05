@@ -1,56 +1,18 @@
 """Audio Language Detection TaskService."""
 
-import json
-from typing import Any, Dict, List
-
 from services.base.audio_base import AudioBase
-from services.base.task_service import PostProcessFormat
 
 
 class AudioLanguageDetectionTaskService(AudioBase):
     """
     TaskService for Audio Language Detection inference.
 
-    Inherits base64-passthrough preprocessing and adapter_config-driven
-    Triton I/O from AudioBase; only the response shape is ALD-specific.
+    Fully adapter_config-driven: AudioBase handles base64-passthrough
+    preprocessing and Triton I/O; the adapter parses ALL_SCORES via
+    transform "json_parse" and the response envelope declares
+    task_type + config_keys ["serviceId"]. The base default
+    postprocess_output applies that shaping — no code here.
     """
-
-    async def postprocess_output(self, result: PostProcessFormat):
-        cfg = result.payload.get("config") or {}
-        return {
-            "taskType": "audio-lang-detection",
-            "output": self._unwrap_output_items(result.response_data),
-            "config": {"serviceId": cfg.get("serviceId")},
-        }
-
-    def _unwrap_output_items(
-        self, response_items: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Unwrap single-element nested lists and decode bytes in each output item.
-
-        Triton KServe v2 returns tensors as flat lists (e.g. shape [1,1] → ["hi"]).
-        After GenericTritonMapper processes them they may still be wrapped in a list.
-        Ensures the ALD output fields (language_code, confidence, all_scores) are
-        plain scalars — confidence coerced to float, all_scores JSON-parsed.
-        """
-        unwrapped = []
-        for item in response_items:
-            clean = {}
-            for key, value in item.items():
-                value = self.unwrap_output_value(value)
-                if key == "all_scores" and isinstance(value, str):
-                    try:
-                        value = json.loads(value)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                if key == "confidence":
-                    try:
-                        value = float(value)
-                    except (TypeError, ValueError):
-                        pass
-                clean[key] = value
-            unwrapped.append(clean)
-        return unwrapped
 
 
 __all__ = ["AudioLanguageDetectionTaskService"]
