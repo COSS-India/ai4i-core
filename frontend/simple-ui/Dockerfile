@@ -18,14 +18,21 @@ COPY --from=deps /app/node_modules ./node_modules
 # ✅ Correct: copy everything from context
 COPY . .
 
+# These NEXT_PUBLIC_* variables are intentionally passed as build ARGs.
+# Next.js inlines all NEXT_PUBLIC_* values into the client-side JS bundle at build time
+# (via static replacement), so they are publicly visible in the browser regardless.
+# They are NOT server-side secrets — they are configuration values embedded in the
+# shipped JavaScript. No sensitive server credentials should ever use the NEXT_PUBLIC_ prefix.
+# Build-time injection via --build-arg is the only supported mechanism for NEXT_PUBLIC_ vars.
+# References: https://nextjs.org/docs/app/building-your-application/configuring/environment-variables
 ARG NEXT_PUBLIC_API_URL=""
-ARG NEXT_PUBLIC_API_KEY=""
-ARG NEXT_PUBLIC_ASR_API_KEY=""
-ARG NEXT_PUBLIC_TTS_API_KEY=""
-ARG NEXT_PUBLIC_NMT_API_KEY=""
-ARG NEXT_PUBLIC_PIPELINE_API_KEY=""
-ARG NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=""
 ARG NEXT_PUBLIC_TELEMETRY_SERVICE_URL=""
+ARG NEXT_PUBLIC_API_KEY
+ARG NEXT_PUBLIC_ASR_API_KEY
+ARG NEXT_PUBLIC_TTS_API_KEY
+ARG NEXT_PUBLIC_NMT_API_KEY
+ARG NEXT_PUBLIC_PIPELINE_API_KEY
+ARG NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY
 
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY}
