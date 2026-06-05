@@ -140,6 +140,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     null
   );
 
+  const [resendVerificationUserId, setResendVerificationUserId] = useState<string | null>(null);
+
   // Edit user modal
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editUserRow, setEditUserRow] = useState<TenantUserView | null>(null);
@@ -171,11 +173,22 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     [tenants, tenantFilterStatus, tenantSearch]
   );
 
+  const activeUserListTenant = useMemo(() => {
+    if (tenantDetailView) return tenantDetailView;
+    if (isTenantScopedUser && user?.tenant_id) {
+      return tenants.find((t) => t.tenant_id === user.tenant_id) ?? null;
+    }
+    return null;
+  }, [tenantDetailView, isTenantScopedUser, user?.tenant_id, tenants]);
+
   const filteredTenantUsers = useMemo(
     () =>
       tenantUsers.filter((u) => {
         if (userFilterStatus !== "all") {
-          const displayStatus = resolveTenantUserDisplayStatus(u);
+          const displayStatus = resolveTenantUserDisplayStatus(
+            u,
+            activeUserListTenant?.status
+          );
           if (displayStatus !== userFilterStatus) return false;
         }
         if (userFilterRole !== "all" && !tenantUserHasRole(u, userFilterRole)) {
@@ -186,16 +199,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         }
         return true;
       }),
-    [tenantUsers, userFilterStatus, userFilterRole, userSearch]
+    [tenantUsers, userFilterStatus, userFilterRole, userSearch, activeUserListTenant?.status]
   );
-
-  const activeUserListTenant = useMemo(() => {
-    if (tenantDetailView) return tenantDetailView;
-    if (isTenantScopedUser && user?.tenant_id) {
-      return tenants.find((t) => t.tenant_id === user.tenant_id) ?? null;
-    }
-    return null;
-  }, [tenantDetailView, isTenantScopedUser, user?.tenant_id, tenants]);
 
   const isDefaultTenantUsersView = useMemo(
     () => activeUserListTenant != null && isDefaultTenant(activeUserListTenant),
@@ -782,6 +787,27 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
+  const handleResendTenantUserVerification = async (u: TenantUserView) => {
+    if (!u.email) return;
+    try {
+      setResendVerificationUserId(u.user_id);
+      await authService.resendVerification({ email: u.email });
+      toast({
+        title: "Verification email sent",
+        description: `A new verification link was sent to ${u.email}.`,
+        status: "success",
+        isClosable: true,
+        duration: 5000,
+      });
+    } catch (err) {
+      console.error("Failed to resend tenant user verification:", err);
+      const { title, message } = extractErrorInfo(err);
+      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+    } finally {
+      setResendVerificationUserId(null);
+    }
+  };
+
   const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantUserStatus) => {
     if (
       newStatus !== TENANT.USER_STATUS.ACTIVE &&
@@ -789,7 +815,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     ) {
       return;
     }
-    const currentStatus = resolveTenantUserDisplayStatus(u);
+    const currentStatus = resolveTenantUserDisplayStatus(u, activeUserListTenant?.status);
     setStatusUpdateTarget({
       type: "user",
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -980,6 +1006,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleResetUserFilters,
     tenantUserRoleFilterOptions,
     isDefaultTenantUsersView,
+    activeUserListTenant,
     TENANT_ADMIN_UPDATABLE_STATUSES,
     // Create tenant
     isTenantModalOpen,
@@ -1044,7 +1071,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleConfirmStatusUpdate,
     closeStatusDialog,
     resendVerificationTenantId,
+    resendVerificationUserId,
     handleResendTenantVerificationEmail,
+    handleResendTenantUserVerification,
     // Edit user
     isEditUserModalOpen,
     editUserRow,

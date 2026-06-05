@@ -43,7 +43,9 @@ import StandardModal from "../common/StandardModal";
 import {
   API_KEY,
   API_KEY_FILTER_STATUS_LIST,
+  formatApiKeyDisplayStatusLabel,
   formatApiKeyFilterStatusLabel,
+  getApiKeyDisplayStatusColorScheme,
 } from "../../config/constants";
 
 export interface ApiKeyManagementTabProps {
@@ -121,11 +123,22 @@ export default function ApiKeyManagementTab({
       {
         id: "status",
         header: "Status",
-        cell: (key) => (
-          <Badge colorScheme={key.is_active ? "green" : "red"}>
-            {key.is_active ? "Active" : "Revoked"}
-          </Badge>
-        ),
+        cell: (key) => {
+          const displayStatus = mgmt.resolveKeyDisplayStatus(key);
+          const inactiveReason = mgmt.getKeyInactiveReason(key);
+          const badge = (
+            <Badge colorScheme={getApiKeyDisplayStatusColorScheme(displayStatus)}>
+              {formatApiKeyDisplayStatusLabel(displayStatus)}
+            </Badge>
+          );
+          return inactiveReason ? (
+            <Tooltip label={inactiveReason} placement="top" hasArrow openDelay={300}>
+              {badge}
+            </Tooltip>
+          ) : (
+            badge
+          );
+        },
       },
       {
         id: "created",
@@ -168,9 +181,11 @@ export default function ApiKeyManagementTab({
             <Tooltip
               hasArrow
               label={
-                key.is_active
+                mgmt.isKeyEffectivelyActive(key)
                   ? "Update key"
-                  : "This API key has been revoked and cannot be updated."
+                  : mgmt.isKeyRevocable(key)
+                    ? "Only effectively active API keys can be updated."
+                    : "This API key has been revoked and cannot be updated."
               }
             >
               <IconButton
@@ -184,10 +199,13 @@ export default function ApiKeyManagementTab({
                   e.stopPropagation();
                   mgmt.handleOpenUpdateModal(key);
                 }}
-                isDisabled={!key.is_active}
+                isDisabled={!mgmt.isKeyEffectivelyActive(key)}
               />
             </Tooltip>
-            <Tooltip hasArrow label={key.is_active ? "Revoke key" : "Already revoked"}>
+            <Tooltip
+              hasArrow
+              label={mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked"}
+            >
               <IconButton
                 aria-label="Revoke API key"
                 icon={<FiSlash />}
@@ -199,7 +217,7 @@ export default function ApiKeyManagementTab({
                   e.stopPropagation();
                   mgmt.handleOpenRevokeModal(key);
                 }}
-                isDisabled={!key.is_active}
+                isDisabled={!mgmt.isKeyRevocable(key)}
               />
             </Tooltip>
           </HStack>
@@ -348,12 +366,21 @@ export default function ApiKeyManagementTab({
                     Status
                   </Text>
                   <Badge
-                    colorScheme={mgmt.selectedKeyForView.is_active ? "green" : "red"}
+                    colorScheme={getApiKeyDisplayStatusColorScheme(
+                      mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
+                    )}
                     fontSize="sm"
                     p={2}
                   >
-                    {mgmt.selectedKeyForView.is_active ? "Active" : "Revoked"}
+                    {formatApiKeyDisplayStatusLabel(
+                      mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
+                    )}
                   </Badge>
+                  {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) && (
+                    <Text fontSize="xs" color="gray.500" mt={2}>
+                      {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView)}
+                    </Text>
+                  )}
                 </Box>
                 <Box>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
