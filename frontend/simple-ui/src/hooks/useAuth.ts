@@ -412,6 +412,11 @@ export const useAuth = () => {
       // Update stored user data
       authService.setStoredUser(updatedUser);
 
+      // Notify other hook instances (e.g., the Header) to refresh immediately.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+      }
+
       return updatedUser;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Update failed';

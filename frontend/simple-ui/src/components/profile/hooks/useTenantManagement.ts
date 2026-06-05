@@ -103,7 +103,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [userForm, setUserForm] = useState<TenantUserFormState>({
     tenant_id: "",
     email: "",
-    username: "",
     full_name: "",
     phone_number: "",
     role: DEFAULT_TENANT_USER_ROLE,
@@ -437,7 +436,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const buildDefaultUserForm = (tenantId?: string): TenantUserFormState => ({
     tenant_id: tenantId ?? getDefaultUserTenantId(),
     email: "",
-    username: "",
     full_name: "",
     phone_number: "",
     role: DEFAULT_TENANT_USER_ROLE,
@@ -504,9 +502,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       knownUserEmails
     );
     if (emailError) errors.email = emailError;
-    if (!userForm.username.trim() || userForm.username.trim().length < 3) {
-      errors.username = "Username must be at least 3 characters.";
-    }
     if (Object.keys(errors).length > 0) {
       setUserFormErrors(errors);
       toast({
@@ -523,14 +518,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await tenantService.registerUser({
         tenant_id: tenantId,
         email: userForm.email.trim(),
-        username: userForm.username.trim(),
         full_name: userForm.full_name.trim() || undefined,
         phone_number: userForm.phone_number.trim() || undefined,
         role: userForm.role,
       });
       toast({
         title: "User added",
-        description: `User ${userForm.username} provisioned under tenant.`,
+        description: "User provisioned under tenant. The username is auto-generated from email.",
         status: "success",
         duration: 4000,
         isClosable: true,
@@ -572,7 +566,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (isSubmittingUser || isLoadingKnownEmails) return false;
     const tenantId = lockedUserFormTenantId ?? userForm.tenant_id?.trim() ?? "";
     if (!tenantId || !userForm.full_name.trim()) return false;
-    if (!userForm.username.trim() || userForm.username.trim().length < 3) return false;
     return !validateTenantUserEmail(userForm.email, knownTenantEmails, knownUserEmails);
   }, [
     isSubmittingUser,
@@ -580,7 +573,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     lockedUserFormTenantId,
     userForm.tenant_id,
     userForm.full_name,
-    userForm.username,
     userForm.email,
     knownTenantEmails,
     knownUserEmails,
