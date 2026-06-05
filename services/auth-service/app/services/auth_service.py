@@ -597,6 +597,9 @@ class AuthService:
 
     # ── Email Activation: Resend ──
 
+    async def check_email_exists(self, email: str) -> bool:
+        return await self._users.email_exists(email.lower().strip())
+
     async def resend_setup_link(
         self,
         email: str,

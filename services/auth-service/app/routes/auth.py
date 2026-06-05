@@ -3,15 +3,16 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import EmailStr
 
 from app.core.config import settings
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_user, get_current_user_id
-from app.dependencies.services import get_auth_service, get_user_repository
-from app.repositories.user_repository import UserRepository
+from app.dependencies.services import get_auth_service
 from app.models.user import User
 from app.schemas.auth import (
     ForgotPasswordRequest,
@@ -36,11 +37,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.get("/check-email")
 async def check_email(
-    email: str = Query(...),
-    users: UserRepository = Depends(get_user_repository),
+    email: Annotated[EmailStr, Query()],
+    svc: AuthService = Depends(get_auth_service),
 ):
-    exists = await users.email_exists(email)
-    return {"exists": exists}
+    exists = await svc.check_email_exists(email)
+    return success_response(data={"exists": exists})
 
 
 @router.post("/register", status_code=201)
