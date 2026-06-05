@@ -178,7 +178,7 @@ class JWTVerifier:
         # ``jwt.decode(token, pem, algorithms=["RS256"], ...)``. This is the
         # JWKS kid-selection pattern that python:S5659 itself recommends.
         try:
-            header = jwt.get_unverified_header(token)  # NOSONAR(python:S5659)
+            header = jwt.get_unverified_header(token)  # NOSONAR
         except JWTError as exc:
             raise JWTVerificationError(TOKEN_HEADER_INVALID) from exc
 

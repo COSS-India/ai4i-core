@@ -5,9 +5,9 @@ Unit tests for NMTTaskService — no live Triton required.
 Tests each pipeline stage in isolation:
   1. validate_request      — valid + four error paths
   2. preprocess_input      — sanitisation
-  3. get_payload_object    — reads payload[payload_key]
-  4. build_response        — pairing + unwrap, returns plain dict with output list
-  5. run_inference          — full loop with mocked GenericTritonMapper + Triton
+  3. payload_key           — modality input key
+  4. postprocess_output    — pairing + unwrap, returns plain dict with output list
+  5. process               — full pipeline with mocked GenericTritonMapper + Triton
 
 Triton HTTP is mocked via unittest.mock so no running server is needed.
 """
@@ -15,7 +15,7 @@ Triton HTTP is mocked via unittest.mock so no running server is needed.
 import asyncio
 import logging
 import sys
-from typing import Any, Dict, List
+from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -48,15 +48,16 @@ MOCK_TRITON_OUTPUT = {
 
 
 def _make_mock_inference_model(translated: str = "नमस्ते, आप कैसे हैं?", num_outputs: int = 1) -> MagicMock:
-    """Return a mock InferenceModel that produces `num_outputs` translated items."""
+    """Return a mock GenericTritonMapper that produces `num_outputs` translated items."""
     model = MagicMock()
-    model.convert_payload_to_triton_format = AsyncMock(
+    model.compose_triton_kserve_v2_payload = MagicMock(
         return_value=(
             [{"name": "INPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["hello"]}],
             ["OUTPUT_TEXT"],
         )
     )
-    model.convert_triton_output_to_task_format = AsyncMock(
+    model.map_outputs = MagicMock(return_value={"target": [translated] * num_outputs})
+    model.to_output_items = MagicMock(
         return_value=[{"target": translated}] * num_outputs
     )
     return model
@@ -123,13 +124,13 @@ async def test_preprocess_input():
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
-    raw = [
+    payload = {"input": [
         {"source": "  Hello   world  "},
         {"source": "\nWhat is the weather?\r"},
         {"source": ""},
         {"source": None},
-    ]
-    result = await service.preprocess_input(raw)
+    ], "config": {}}
+    result = (await service.preprocess_input(payload))["input"]
 
     assert len(result) == 4
     assert result[0]["source"] == "Hello world"  # internal whitespace collapsed by _normalize_text
@@ -139,18 +140,15 @@ async def test_preprocess_input():
     logger.info("   [PASS] preprocess_input sanitised correctly")
 
 
-async def test_get_payload_object():
+async def test_payload_key():
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
     assert service.payload_key == "input"
-    items = [{"source": "Hello"}]
-    assert service.get_payload_object({"input": items}) == items
-    assert service.get_payload_object({}) == []
-    logger.info("   [PASS] get_payload_object reads payload['input']")
+    logger.info("   [PASS] payload_key is 'input'")
 
 
-async def test_build_response():
+async def test_postprocess_output():
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -161,7 +159,10 @@ async def test_build_response():
     response_items = [{"target": ["नमस्ते"]}, {"target": b"\xe0\xa4\x86\xe0\xa4\xaa\xe0\xa4\x95\xe0\xa4\xbe \xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\xae \xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\xaf\xe0\xa4\xbe \xe0\xa4\xb9\xe0\xa5\x88?"}]
     source_texts = ["Hello", "What is your name?"]
 
-    response = await service.build_response(payload, response_items, source_texts)
+    from services.base.task_service import PostProcessFormat
+    response = await service.postprocess_output(
+        PostProcessFormat(payload=payload, response_data=response_items, source_texts=source_texts)
+    )
     assert "output" in response
     assert len(response["output"]) == 2
     assert isinstance(response["output"][0], dict)
@@ -170,11 +171,11 @@ async def test_build_response():
     assert response["output"][0]["target"] == "नमस्ते"
     assert response["output"][1]["source"] == "What is your name?"
     assert response["output"][1]["target"] == "आपका नाम क्या है?"
-    logger.info("   [PASS] build_response paired sources, unwrapped values, returned plain dicts")
+    logger.info("   [PASS] postprocess paired sources, unwrapped values, returned plain dicts")
 
 
-async def test_run_inference_full():
-    """Full run_inference with mocked InferenceModel and mocked _call_triton_inference."""
+async def test_process_full():
+    """Full process() pipeline with mocked InferenceModel and mocked Triton."""
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -190,13 +191,9 @@ async def test_run_inference_full():
         },
     }
 
-    # Preprocess mutates payload['input'] (as process() would do)
-    preprocessed = await service.preprocess_input(payload["input"])
-    payload["input"] = preprocessed
-
     mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
 
-    # execute_triton_inference instantiates GenericTritonMapper from its module —
+    # run_inference instantiates GenericTritonMapper from its module —
     # patch the class there so the mock mapper is used.
     with patch(
         "services.base.config_mapper.GenericTritonMapper",
@@ -207,17 +204,17 @@ async def test_run_inference_full():
             "_call_triton_inference",
             new=AsyncMock(return_value=MOCK_TRITON_OUTPUT),
         ):
-            response = await service.run_inference(payload)
+            response = await service.process(payload, MOCK_SERVICE_INFO)
 
     assert isinstance(response, dict)
     assert len(response["output"]) == 2  # one per input item
     assert response["output"][0]["source"] == "Hello, how are you?"
     assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
-    logger.info("   [PASS] run_inference returned dict with correct sources")
+    logger.info("   [PASS] process returned dict with correct sources")
 
 
-async def test_run_inference_missing_endpoint():
-    """run_inference raises RuntimeError when service_info lacks endpoint."""
+async def test_process_missing_endpoint():
+    """process raises RuntimeError when service_info lacks endpoint."""
     from services.nmt_service import NMTTaskService
 
     bad_service_info = {"service_id": "x", "name": "model", "endpoint": "", "api_key": None}
@@ -228,7 +225,7 @@ async def test_run_inference_missing_endpoint():
         "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
     }
     try:
-        await service.run_inference(payload)
+        await service.process(payload)
         raise AssertionError("Should have raised RuntimeError")
     except RuntimeError as e:
         assert "endpoint" in str(e)
@@ -237,7 +234,6 @@ async def test_run_inference_missing_endpoint():
 
 async def test_resolver_url_construction():
     """InferenceServerResolver builds /api/v1/services/{id} regardless of trailing slash."""
-    import os
     from unittest.mock import patch as _patch
     from inference.inference_server_resolver import InferenceServerResolver
 
@@ -286,10 +282,10 @@ async def run_all():
         ("validate_request — valid", test_validate_request_valid),
         ("validate_request — error paths", test_validate_request_errors),
         ("preprocess_input — sanitise", test_preprocess_input),
-        ("get_payload_object — payload_key", test_get_payload_object),
-        ("build_response — pairing + unwrap", test_build_response),
-        ("run_inference — full pipeline (mocked)", test_run_inference_full),
-        ("run_inference — missing endpoint", test_run_inference_missing_endpoint),
+        ("payload_key", test_payload_key),
+        ("postprocess_output — pairing + unwrap", test_postprocess_output),
+        ("process — full pipeline (mocked)", test_process_full),
+        ("process — missing endpoint", test_process_missing_endpoint),
         ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),
     ]
 

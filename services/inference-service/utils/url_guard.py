@@ -21,23 +21,19 @@ from urllib.parse import urlparse
 from config import settings
 
 
-class UnsafeURLError(ValueError):
-    """Raised when a user-supplied download URL fails the SSRF guard."""
-
-
 def validate_external_url(url: str) -> None:
     """
     Validate a user-supplied URL before the service fetches it.
 
     Raises:
-        UnsafeURLError: If the scheme is not http(s), the host is missing,
+        ValueError: If the scheme is not http(s), the host is missing,
             cannot be resolved, or resolves to a non-public address.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise UnsafeURLError(f"URL scheme '{parsed.scheme}' is not allowed; use http(s)")
+        raise ValueError(f"URL scheme '{parsed.scheme}' is not allowed; use http(s)")
     if not parsed.hostname:
-        raise UnsafeURLError("URL has no hostname")
+        raise ValueError("URL has no hostname")
 
     if settings.ALLOW_PRIVATE_DOWNLOAD_HOSTS:
         return
@@ -45,7 +41,7 @@ def validate_external_url(url: str) -> None:
     try:
         addr_infos = socket.getaddrinfo(parsed.hostname, None)
     except socket.gaierror as exc:
-        raise UnsafeURLError(f"Cannot resolve host '{parsed.hostname}'") from exc
+        raise ValueError(f"Cannot resolve host '{parsed.hostname}'") from exc
 
     for info in addr_infos:
         ip = ipaddress.ip_address(info[4][0])
@@ -57,7 +53,7 @@ def validate_external_url(url: str) -> None:
             or ip.is_reserved
             or ip.is_unspecified
         ):
-            raise UnsafeURLError(
+            raise ValueError(
                 f"Host '{parsed.hostname}' resolves to a non-public address; "
                 "downloads from internal networks are not allowed"
             )

@@ -28,10 +28,6 @@ All 7 steps have been completed. The monolith inference service now provides a u
 │       ├── audio_language_detection.py
 │       └── pii.py
 │
-├── interfaces/                          # Service interfaces & base classes
-│   ├── __init__.py
-│   └── task_service.py                  # BaseTaskService — pipeline template base class
-│
 ├── orchestrator/                        # Orchestration layer
 │   ├── __init__.py
 │   └── orchestrator.py                  # Orchestrator with polymorphic routing
@@ -108,16 +104,27 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - Config models with discriminated unions (e.g., `NMTConfig`)
   - Response models (e.g., `NMTInferenceResponse`)
 
-### 2. **Interfaces Layer** (`interfaces/`)
+### 2. **Pipeline Base** (`services/base/task_service.py`)
 - **`BaseTaskService`** — pipeline template all services inherit (Template Method):
-  - `process()` / `run_inference()` — the template; never overridden
-  - `validate_request()` — input validation (modality bases + task overrides)
-  - `preprocess_input()` — data preprocessing (modality bases + ASR)
-  - `execute_triton_inference()` — Triton call topology
-    (base = one batch call; AudioBase = per-item; TTS = per-chunk)
-  - `build_response()` — output shaping + response envelope (one per task)
-  - `_traced_inference()` — owns the `ai-inference` span (single definition)
+  ```
+  process():
+      validate_request(payload)                      # throws on bad input
+      preprocessed = preprocess_input(payload)
+      result: PostProcessFormat = run_inference(preprocessed)
+      return postprocess_output(result)
+  ```
+  - `run_inference()` — generic, the ONLY implementation (no overrides);
+    call topology is data/class-driven (`adapter_config["call_mode"]` or
+    `TRITON_CALL_MODE`: batch vs per-item). TTS expands items into chunks in
+    preprocess_input and merges results in postprocess_output. Output
+    conversion is adapter_config-driven via GenericTritonMapper, incl.
+    transforms like `json_field` (Surya envelope unwrap)
+  - `postprocess_output(result)` — post-inference only (audit/observability/
+    model-specific final shaping); base default pairs sources + echoes config,
+    which is the full contract for e.g. NMT
   - `payload_key` — modality input key (`input` / `audio` / `image`)
+- Span handling lives in `trace/request_span.py` (`traced_inference`,
+  `finalize_span`) — no tracing code in the service classes.
 
 ### 3. **Orchestration Layer** (`orchestrator/`)
 - **`Orchestrator`** — Polymorphic request router:
@@ -216,14 +223,13 @@ Orchestrator.route_inference(payload)
         TaskFactory.create_service(task_type, dependencies)
                 ↓
         TaskService.process(payload, serviceInfo)
-                ├─ Validate request
-                ├─ Preprocess input (payload[payload_key])
-                └─ run_inference
-                    ├─ execute_triton_inference (inside ai-inference span)
-                    │   ├─ Convert payload to Triton format (GenericTritonMapper)
-                    │   ├─ Call Triton inference server
-                    │   └─ Convert Triton output to task format
-                    └─ build_response (output shaping + envelope)
+                ├─ validate_request
+                ├─ preprocess_input (payload → preprocessed payload)
+                ├─ run_inference → PostProcessFormat (inside ai-inference span)
+                │   ├─ Convert payload to Triton format (GenericTritonMapper)
+                │   ├─ Call Triton inference server
+                │   └─ Convert Triton output to task format
+                └─ postprocess_output (output shaping + envelope)
                 └─ Postprocess output
                         ↓
         Response (JSON)

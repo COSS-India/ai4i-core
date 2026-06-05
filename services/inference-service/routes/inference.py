@@ -5,7 +5,6 @@ Integrates orchestration, factory, and telemetry.
 """
 
 import logging
-import time
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import (
@@ -13,13 +12,9 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from orchestrator import Orchestrator, UnknownTaskTypeError
+from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-from utils.http_client import ServiceCallError, ServiceNotFoundError
-from inference.inference_server_resolver import (
-    ServiceNotFoundError as ResolverServiceNotFoundError,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -51,14 +46,14 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
     """
     Map an orchestration failure to a client-safe HTTPException.
 
-    Walks the exception __cause__ chain (orchestrator wraps with `from exc`)
-    so the original error classifies the response:
-      ValueError / UnknownTaskTypeError → 400 (validation messages are
-                                          user-facing by design)
-      NotImplementedError               → 501 (unimplemented task, e.g. PII)
-      ServiceNotFoundError              → 404 (unknown serviceId)
-      RuntimeError                      → 502 (Triton / MMS dependency failed)
-      anything else                     → 500
+    Walks the exception __cause__ chain (raised with `from exc` throughout)
+    so the original error classifies the response. Builtin exceptions only:
+      ValueError          → 400 (validation messages are user-facing by design)
+      NotImplementedError → 501 (unimplemented task, e.g. PII)
+      LookupError         → 404 (unknown serviceId)
+      ConnectionError     → 502 (MMS / Triton unreachable)
+      RuntimeError        → 502 (server-side config / backend mismatch)
+      anything else       → 500
 
     Only validation messages are echoed to the client. Resolver and backend
     errors previously leaked internal endpoints via str(exc) — those now get
@@ -71,16 +66,18 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
         cause = cause.__cause__
 
     for e in chain:
-        if isinstance(e, (ValueError, UnknownTaskTypeError)):
+        if isinstance(e, ValueError):
             return HTTPException(status_code=400, detail=str(e))
         if isinstance(e, NotImplementedError):
             return HTTPException(status_code=501, detail=str(e))
-        if isinstance(e, (ServiceNotFoundError, ResolverServiceNotFoundError)):
+        # exact type: KeyError/IndexError are LookupError subclasses but are
+        # programming errors, not not-found semantics — they must stay 500
+        if type(e) is LookupError:
             return HTTPException(
                 status_code=404, detail=f"{task_type}: requested service not found"
             )
     for e in chain:
-        if isinstance(e, (RuntimeError, ServiceCallError)):
+        if isinstance(e, (RuntimeError, ConnectionError)):
             return HTTPException(
                 status_code=502, detail=f"{task_type}: upstream inference dependency failed"
             )
@@ -100,8 +97,8 @@ async def _run_inference(
     the endpoint contract excludes, and map failures to client-safe HTTP
     errors (full details logged server-side only).
     """
-    start_time = time.time()
-
+    # No manual timing here: the logging middleware records duration_ms for
+    # every request, and the request span carries total_time_ms.
     if default_task_type and not payload.get("task_type"):
         payload = {**payload, "task_type": default_task_type}
     task_type = str(payload.get("task_type", "")).upper()
@@ -110,18 +107,11 @@ async def _run_inference(
     try:
         result = await orchestrator.route_inference(payload=payload, request=request)
     except Exception as exc:
-        duration_ms = (time.time() - start_time) * 1000
-        logger.error(
-            f"Inference failed: task_type={task_type}, duration_ms={duration_ms:.2f}",
-            exc_info=True,
-        )
+        logger.error(f"Inference failed: task_type={task_type}", exc_info=True)
         raise _http_error_for(exc, task_type) from exc
 
     for key in strip:
         result.pop(key, None)
-
-    duration_ms = (time.time() - start_time) * 1000
-    logger.info(f"Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
     return result
 
 

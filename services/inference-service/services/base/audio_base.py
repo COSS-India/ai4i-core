@@ -4,15 +4,15 @@ AudioBase — base class for all audio-backed inference services.
 Covers: ASR, Audio Language Detection, Language Diarization, Speaker Diarization.
 
 Inherits the BaseTaskService pipeline (process → validate → preprocess →
-run_inference) and overrides:
+execute → postprocess) and overrides:
   validate_request          → common audio validation (audio items only)
   preprocess_input          → base64 passthrough (downloads audio_uri if needed)
-  execute_triton_inference  → one Triton call per audio item (vs. one batch call)
+  TRITON_CALL_MODE          → 'per_item': one Triton call per audio item
   convert_* hooks           → adapter_config-driven via GenericTritonMapper
 
 The passthrough default fits tasks where Triton decodes audio internally
 (ALD, Speaker Diarization, Language Diarization) — they extend this class
-directly and implement build_response. ASR is the exception: it needs
+directly and implement postprocess. ASR is the exception: it needs
 float-PCM preprocessing and overrides preprocess_input plus the convert
 hooks in asr_service.py.
 
@@ -24,12 +24,11 @@ overrides.
 import base64
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import httpx
 
-from interfaces.task_service import BaseTaskService
-from services.base.config_mapper import GenericTritonMapper
+from services.base.task_service import BaseTaskService
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +47,8 @@ class AudioBase(BaseTaskService):
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
-        Common audio validation pipeline:
-          1. Base null check (super)
-          2. Audio list not empty, each item has audio_content or audio_uri
+        Common audio validation:
+        audio list not empty, each item has audio_content or audio_uri.
 
         Task-specific validation (e.g. ASR's sourceLanguage check) lives in
         the task service's validate_request override.
@@ -62,7 +60,7 @@ class AudioBase(BaseTaskService):
     # Preprocessing — base64 passthrough (default)
     # ------------------------------------------------------------------
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         No float decode. Each item is passed through as-is.
         If only audioUri is provided, downloads and base64-encodes it
@@ -70,12 +68,13 @@ class AudioBase(BaseTaskService):
 
         ASR overrides this with its float-PCM pipeline (see asr_service.py).
         """
+        input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
 
         items = []
         for item in input_data:
-            d = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            d = item
             has_content = d.get("audio_content") or d.get("audioContent")
             if not has_content:
                 has_uri = d.get("audio_uri") or d.get("audioUri")
@@ -83,151 +82,33 @@ class AudioBase(BaseTaskService):
                     d = dict(d)
                     d["audio_content"] = await self._resolve_audio_base64(item)
             items.append(d)
-        return items
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
-    # execute_triton_inference — audio-specific override
-    # ------------------------------------------------------------------
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Audio inference loop — overrides BaseTaskService.execute_triton_inference.
-
-        Differences from the text base:
-          - Calls Triton once per audio item (one file per call)
-          - Raises RuntimeError if adapter_config is missing from service_info
-          - convert_payload_to_triton_format / convert_triton_output_to_task_format
-            are called on self (task-service methods), not on a separate mapper instance
-
-        VAD / chunk-batching is a future enhancement; add it here when ready.
-        """
-        from trace.span_attributes import get_output_type, count_input_tokens, count_output_tokens
-
-        async with self._traced_inference(payload) as span_ctx:
-            service_id      = self.service_info.get("service_id", "")
-            model_name      = self.service_info.get("name", "")
-            triton_endpoint = self.service_info.get("endpoint", "")
-            api_key         = self.service_info.get("api_key")
-            adapter_config  = self.service_info.get("adapter_config")
-
-            if not model_name or not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
-                )
-
-            if not adapter_config:
-                raise RuntimeError(
-                    f"{self.task_name}: adapter_config missing from service_info. "
-                    "Every audio service must have an adapter_config seeded in mm_services."
-                )
-
-            # Store so convert_payload_to_triton_format can access via self._adapter_config
-            self._adapter_config = adapter_config
-
-            # Audio items are already preprocessed by process() via preprocess_input.
-            # Config is the raw payload dict — field names match the schema (snake_case for ASR).
-            audio_items: List[Any] = self.get_payload_object(payload)
-            config_dict: Dict[str, Any] = payload.get("config") or {}
-            all_response_data: List[Dict[str, Any]] = []
-
-            span_ctx["input_tokens"] = count_input_tokens(audio_items, span_ctx["input_type"])
-
-            for idx, audio_item in enumerate(audio_items):
-                item_dict = (
-                    audio_item if isinstance(audio_item, dict)
-                    else audio_item.model_dump(by_alias=False)
-                )
-
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    [item_dict], config_dict
-                )
-
-                self.logger.debug(
-                    "%s: Triton call %d / %d  endpoint=%s",
-                    self.task_name, idx + 1, len(audio_items), triton_endpoint,
-                )
-                raw_output = await self._call_triton_inference(
-                    triton_endpoint=triton_endpoint,
-                    triton_inputs=triton_inputs,
-                    triton_outputs=triton_outputs,
-                    api_key=api_key,
-                )
-
-                response_data = await self.convert_triton_output_to_task_format(raw_output)
-                all_response_data.extend(response_data)
-
-            # Collect audio URIs to surface as 'source' in build_response (e.g. ASR).
-            # Preprocessed items retain audio_uri / audioUri from the original request.
-            source_uris = [
-                (
-                    audio_item.get("audio_uri") or audio_item.get("audioUri") or ""
-                    if isinstance(audio_item, dict)
-                    else getattr(audio_item, "audio_uri", "") or ""
-                )
-                for audio_item in audio_items
-            ]
-
-            span_ctx["output_type"] = get_output_type(all_response_data)
-            span_ctx["output_tokens"] = count_output_tokens(all_response_data, span_ctx["output_type"])
-
-            return {
-                "response_data": all_response_data,
-                "source_texts": source_uris,
-                "service_id": service_id,
-            }
-
-    # ------------------------------------------------------------------
-    # Triton format hooks — adapter_config driven (default)
+    # Triton call topology + mapper context
     # ------------------------------------------------------------------
 
-    async def convert_payload_to_triton_format(
-        self,
-        input_data: List[Dict[str, Any]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Build Triton inputs from adapter_config tensor declarations.
+    # Audio Triton models accept one file per request — the generic
+    # run_inference loops per item instead of one batch call.
+    TRITON_CALL_MODE = "per_item"
 
-        num_speakers defaults to "" so an adapter that declares a NUM_SPEAKERS
-        tensor (speaker diarization) still resolves when the task config omits
-        it — e.g. ALD can run against the sd-gpu model (registered under both
-        task types in task_service_registry).
-        """
+    async def convert_payload_to_triton_format(self, input_data, config):
+        """num_speakers defaults to "" so an adapter that declares a
+        NUM_SPEAKERS tensor (speaker diarization) still resolves when the
+        task config omits it — e.g. ALD can run against the sd-gpu model."""
         config = dict(config)
         if "num_speakers" not in config and "numSpeakers" not in config:
             config["num_speakers"] = ""
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
-    async def convert_triton_output_to_task_format(
-        self,
-        triton_output: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Map Triton output tensors to result dicts via adapter_config."""
-        mapper = GenericTritonMapper(self._adapter_config)
-        mapped = mapper.map_outputs(triton_output)
-        return mapper.to_output_items(mapped)
-
-    def _build_audio_context(
-        self,
-        item: Dict[str, Any],
-        index: int,
-        config: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Context for adapter_config value_path resolution.
-        Exposes audio.audio_content — the base64 string passed to Triton.
-        ASR overrides this to expose float samples instead.
-        """
-        audio_content = item.get("audio_content") or item.get("audioContent") or ""
-        return {
-            "audio": {
-                "audio_content": audio_content,
-            }
-        }
+    def _triton_context_builder(self):
+        """Expose audio.audio_content (the base64 string) to value_path
+        resolution. ASR overrides to expose float samples instead."""
+        def build(item, index, config):
+            audio_content = item.get("audio_content") or item.get("audioContent") or ""
+            return {"audio": {"audio_content": audio_content}}
+        return build
 
     # ------------------------------------------------------------------
     # Audio input helpers
@@ -239,12 +120,8 @@ class AudioBase(BaseTaskService):
         Returns audioContent directly, or downloads from audioUri and base64-encodes.
         Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
-        if isinstance(audio_input, dict):
-            audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
-            audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
-        else:
-            audio_content = getattr(audio_input, "audio_content", None)
-            audio_uri     = getattr(audio_input, "audio_uri", None)
+        audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
+        audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
 
         if audio_content:
             return audio_content
@@ -295,12 +172,8 @@ class AudioBase(BaseTaskService):
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
 
         for idx, item in enumerate(audio_items):
-            if isinstance(item, dict):
-                has_content = bool(item.get("audio_content") or item.get("audioContent"))
-                has_uri     = bool(item.get("audio_uri") or item.get("audioUri"))
-            else:
-                has_content = bool(getattr(item, "audio_content", None))
-                has_uri     = bool(getattr(item, "audio_uri", None))
+            has_content = bool(item.get("audio_content") or item.get("audioContent"))
+            has_uri     = bool(item.get("audio_uri") or item.get("audioUri"))
 
             if not has_content and not has_uri:
                 raise ValueError(
@@ -308,7 +181,7 @@ class AudioBase(BaseTaskService):
                 )
 
     # ------------------------------------------------------------------
-    # Output helpers — opt-in from task service build_response
+    # Output helpers — opt-in from task service postprocess
     # ------------------------------------------------------------------
 
     def _parse_json(self, value: Any) -> Dict[str, Any]:
