@@ -26,5 +26,7 @@ numpy==2.4.6
 soundfile==0.13.1
 
 # JSON Mapping and Conversion
+
+python-multipart>=0.0.6
 kafka-python==2.3.2
 pydub==0.25.1
