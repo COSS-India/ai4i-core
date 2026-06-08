@@ -19,6 +19,36 @@ export function mapToServiceOptions(services: ServiceListItem[]): ServiceOption[
   }));
 }
 
+/**
+ * Validates if a URL is safe to use as an image source.
+ * Only allows http:, https:, blob:, and data:image/* protocols.
+ */
+export function isSafeImageUrl(url: string): boolean {
+  if (!url || url.trim() === "") {
+    return false;
+  }
+
+  try {
+    if (url.startsWith("blob:")) {
+      return true;
+    }
+
+    const parsedUrl = new URL(url);
+
+    if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+      return true;
+    }
+
+    if (parsedUrl.protocol === "data:") {
+      return /^data:image\//.test(url);
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export const INDIC_LANGUAGE_OPTIONS: LanguageOption[] = [
   { code: "en", label: "English" },
   { code: "hi", label: "Hindi" },

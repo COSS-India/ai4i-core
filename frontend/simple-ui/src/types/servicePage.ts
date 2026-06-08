@@ -133,12 +133,19 @@ export interface ServiceImageInputProps {
   file: File | null;
   onFileChange: (file: File | null) => void;
   previewUrl?: string | null;
+  /** Optional image URL tab */
+  imageUrl?: string;
+  onImageUrlChange?: (url: string) => void;
+  showUrlTab?: boolean;
+  urlPlaceholder?: string;
   label?: string;
   required?: boolean;
   disabled?: boolean;
   maxSizeBytes?: number;
   acceptedFormats?: string;
   formatHint?: string;
+  /** Return an error message to reject the file; return null to accept */
+  validateFile?: (file: File) => string | null;
 }
 
 export interface SubmitButtonProps {

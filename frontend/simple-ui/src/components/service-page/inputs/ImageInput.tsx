@@ -10,6 +10,11 @@ import {
   Icon,
   IconButton,
   Input,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -18,20 +23,27 @@ import { FaUpload } from "react-icons/fa";
 import { MAX_IMAGE_FILE_SIZE } from "../../../config/constants";
 import type { ServiceImageInputProps } from "../../../types/servicePage";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { isSafeImageUrl } from "../utils";
 
 const ImageInput: React.FC<ServiceImageInputProps> = ({
   file,
   onFileChange,
   previewUrl,
+  imageUrl = "",
+  onImageUrlChange,
+  showUrlTab = false,
+  urlPlaceholder = "https://example.com/image.jpg",
   label = "Upload Image",
   required = true,
   disabled = false,
   maxSizeBytes = MAX_IMAGE_FILE_SIZE,
   acceptedFormats = "image/*",
   formatHint = "Supported formats: PNG, JPG, JPEG, WebP (Max size: 10MB)",
+  validateFile,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [activeTab, setActiveTab] = useState(0);
   const toast = useToastWithDeduplication();
 
   const validateAndSet = useCallback(
@@ -40,6 +52,19 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
         onFileChange(null);
         return;
       }
+
+      const customError = validateFile?.(next);
+      if (customError) {
+        toast({
+          title: "Invalid file",
+          description: customError,
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
+
       if (!next.type.startsWith("image/")) {
         toast({
           title: "Invalid file",
@@ -60,9 +85,22 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
         });
         return;
       }
+      if (next.size === 0) {
+        toast({
+          title: "Empty file",
+          description: "The selected file is empty.",
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
+
       onFileChange(next);
+      onImageUrlChange?.("");
+      setActiveTab(0);
     },
-    [maxSizeBytes, onFileChange, toast]
+    [maxSizeBytes, onFileChange, onImageUrlChange, toast, validateFile]
   );
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,20 +117,26 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
     if (dropped) validateAndSet(dropped);
   };
 
-  return (
-    <FormControl>
-      <FormLabel fontSize="sm" fontWeight="semibold">
-        {label}{" "}
-        {required && (
-          <Text as="span" color="red.500">
-            *
-          </Text>
-        )}
-      </FormLabel>
-      <Text fontSize="xs" color="gray.500" mb={3}>
-        {formatHint}
-      </Text>
+  const handleUriChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    onImageUrlChange?.(value);
+    if (value) {
+      onFileChange(null);
+      setActiveTab(1);
+    }
+    if (value && value.trim() !== "" && !isSafeImageUrl(value)) {
+      toast({
+        title: "Invalid URL",
+        description: "Please provide a valid image URL (http://, https://, or data:image/*).",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  };
 
+  const fileUploadZone = (
+    <>
       <Input
         ref={fileInputRef}
         type="file"
@@ -153,38 +197,91 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
           </VStack>
         </Box>
       ) : (
-        <VStack spacing={3} align="stretch">
-          <Box border="2px solid" borderColor="green.300" borderRadius="lg" p={4} bg="green.50">
-            <HStack justify="space-between" align="center">
-              <HStack spacing={3} flex={1} minW={0}>
-                <Icon as={AttachmentIcon} boxSize={6} color="green.600" />
-                <VStack align="start" spacing={0} flex={1} minW={0}>
-                  <Text fontSize="sm" fontWeight="semibold" color="green.800" isTruncated>
-                    {file.name}
-                  </Text>
-                  <Text fontSize="xs" color="green.600">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
-                  </Text>
-                </VStack>
-              </HStack>
-              <IconButton
-                aria-label="Remove file"
-                icon={<DeleteIcon />}
-                size="sm"
-                variant="ghost"
-                colorScheme="red"
-                isDisabled={disabled}
-                onClick={() => onFileChange(null)}
-              />
+        <Box border="2px solid" borderColor="green.300" borderRadius="lg" p={4} bg="green.50">
+          <HStack justify="space-between" align="center">
+            <HStack spacing={3} flex={1} minW={0}>
+              <Icon as={AttachmentIcon} boxSize={6} color="green.600" />
+              <VStack align="start" spacing={0} flex={1} minW={0}>
+                <Text fontSize="sm" fontWeight="semibold" color="green.800" isTruncated>
+                  {file.name}
+                </Text>
+                <Text fontSize="xs" color="green.600">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                </Text>
+              </VStack>
             </HStack>
-          </Box>
-          {previewUrl && (
-            <Box borderRadius="md" overflow="hidden" border="1px" borderColor="gray.200">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={previewUrl} alt="Upload preview" style={{ maxWidth: "100%", display: "block" }} />
-            </Box>
-          )}
-        </VStack>
+            <IconButton
+              aria-label="Remove file"
+              icon={<DeleteIcon />}
+              size="sm"
+              variant="ghost"
+              colorScheme="red"
+              isDisabled={disabled}
+              onClick={() => onFileChange(null)}
+            />
+          </HStack>
+        </Box>
+      )}
+    </>
+  );
+
+  const urlInput = (
+    <Input
+      type="url"
+      value={imageUrl}
+      onChange={handleUriChange}
+      placeholder={urlPlaceholder}
+      isDisabled={disabled}
+      size="md"
+      borderColor="gray.300"
+      _focus={{
+        borderColor: "orange.400",
+        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+      }}
+    />
+  );
+
+  return (
+    <FormControl>
+      <FormLabel fontSize="sm" fontWeight="semibold">
+        {label}{" "}
+        {required && (
+          <Text as="span" color="red.500">
+            *
+          </Text>
+        )}
+      </FormLabel>
+
+      {showUrlTab ? (
+        <Tabs index={activeTab} onChange={setActiveTab} mb={4}>
+          <TabList>
+            <Tab fontSize="sm">Upload File</Tab>
+            <Tab fontSize="sm">Image URL</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel px={0}>
+              <Text fontSize="xs" color="gray.500" mb={3}>
+                {formatHint}
+              </Text>
+              {fileUploadZone}
+            </TabPanel>
+            <TabPanel px={0}>{urlInput}</TabPanel>
+          </TabPanels>
+        </Tabs>
+      ) : (
+        <>
+          <Text fontSize="xs" color="gray.500" mb={3}>
+            {formatHint}
+          </Text>
+          {fileUploadZone}
+        </>
+      )}
+
+      {previewUrl && (
+        <Box mt={3} borderRadius="md" overflow="hidden" border="1px" borderColor="gray.200">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={previewUrl} alt="Upload preview" style={{ maxWidth: "100%", display: "block" }} />
+        </Box>
       )}
     </FormControl>
   );
