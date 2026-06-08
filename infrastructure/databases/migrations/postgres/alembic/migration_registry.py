@@ -321,7 +321,8 @@ def ensure_database_exists(name: str) -> None:
                     return
                 if maintenance_db == target_database:
                     return
-                connection.execute(text(f'CREATE DATABASE "{target_database}"'))
+                quoted_db = engine.dialect.identifier_preparer.quote(target_database)
+                connection.execute(text(f"CREATE DATABASE {quoted_db}"))
                 return
         except Exception as exc:
             last_error = exc
