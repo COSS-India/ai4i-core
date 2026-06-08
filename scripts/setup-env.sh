@@ -46,6 +46,8 @@ REDIS_PASSWORD="$(read_env_var REDIS_PASSWORD)"
 ALEMBIC_DB_HOST="$(read_env_var ALEMBIC_DB_HOST)"
 ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
 
+LLM_UPSTREAM_BASE_URL="$(read_env_var LLM_UPSTREAM_BASE_URL)"
+
 # ── 3. Build sed replacement expressions ─────────────────────────────────────
 SED_ARGS=()
 
@@ -71,6 +73,7 @@ add_sed_replacement "MODEL_MANAGEMENT_DB_NAME" "${MODEL_MANAGEMENT_DB_NAME}"
 add_sed_replacement "YOUR_REDIS_PASSWORD" "${REDIS_PASSWORD}"
 add_sed_replacement "ALEMBIC_DB_HOST" "${ALEMBIC_DB_HOST}"
 add_sed_replacement "ALEMBIC_DB_PORT" "${ALEMBIC_DB_PORT}"
+add_sed_replacement "YOUR_LLM_UPSTREAM_BASE_URL" "${LLM_UPSTREAM_BASE_URL}"
 
 # ── 4. Process every env.template ────────────────────────────────────────────
 generated=0
