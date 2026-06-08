@@ -13,8 +13,10 @@ from pydantic import StringConstraints
 # domains (RFC 2606: .invalid, .test, .localhost, etc.) regardless of the
 # check_deliverability flag. For anti-enumeration endpoints we need a looser
 # check: any string that looks like an email must reach business logic and
-# return 200 silently. We only reject obvious non-email strings (no @ or no dot
-# in the domain) so legitimate users still get helpful format errors.
+# return 200 silently. We enforce RFC 5321 structural bounds (local part ≤ 64
+# chars, domain ≤ 253 chars, TLD ≥ 2 chars) to block obvious non-emails, but
+# intentionally skip deliverability checks so legitimate users still get
+# helpful format errors.
 _BASIC_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,253}\.[^@\s]{2,63}$")
 
 def _loose_email_validator(v: str) -> str:
