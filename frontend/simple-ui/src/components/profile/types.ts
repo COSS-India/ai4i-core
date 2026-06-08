@@ -48,16 +48,15 @@ export interface TenantFormState {
 export interface TenantUserFormState {
   tenant_id: string;
   email: string;
-  username: string;
   full_name: string;
   phone_number: string;
   role: TenantAssignableRole;
 }
 
-/** Static tenant user role values for list filters (Tenant Admin, User). */
+/** Assignable tenant-user roles (create/edit forms). */
 export const TENANT_USER_ROLE_OPTIONS = [
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
   { value: "USER", label: "User" },
+  { value: "TENANT ADMIN", label: "Tenant Admin" },
 ] as const satisfies ReadonlyArray<{ value: TenantAssignableRole; label: string }>;
 
 export interface EditTenantFormState {

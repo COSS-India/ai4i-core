@@ -131,10 +131,7 @@ async def lifespan(app: FastAPI):
     sync_task = getattr(app.state, "alert_sync_task", None)
     if sync_task is not None:
         sync_task.cancel()
-        try:
-            await sync_task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(sync_task, return_exceptions=True)
 
     # ── Shutdown ──────────────────────────────────────────────────────────
     await policy_sync.stop_listener()

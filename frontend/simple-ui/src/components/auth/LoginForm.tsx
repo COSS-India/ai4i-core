@@ -8,6 +8,7 @@ import {
   AlertIcon,
   AlertTitle,
   Box,
+  CloseButton,
   Button,
   Checkbox,
   FormControl,
@@ -57,34 +58,47 @@ const LoginForm: React.FC<LoginFormProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update loginError when error changes, but only after a login attempt
-  React.useEffect(() => {
-    if (loginAttempted && error) {
-      // Only show login-related errors, not initialization errors
-      if (error !== "Failed to initialize authentication") {
-        // Ensure error is always a string, not an object
-        let errorMessage = 'Login failed';
-        if (typeof error === 'string') {
-          errorMessage = error;
-        } else if (error && typeof error === 'object') {
-          // Try to extract error message from various possible formats
-          // Type assertion to handle error object properties
-          const errorObj = error as any;
-          errorMessage = errorObj.message || 
-                       errorObj.detail || 
-                       errorObj.error || 
-                       (errorObj.response?.data?.detail) ||
-                       (errorObj.response?.data?.message) ||
-                       (typeof errorObj.toString === 'function' && errorObj.toString() !== '[object Object]' ? errorObj.toString() : JSON.stringify(errorObj));
-        }
-        setLoginError(errorMessage);
-      } else {
-        setLoginError(null);
-      }
-    } else if (!error) {
-      setLoginError(null);
+  const extractLoginErrorMessage = (err: unknown): string => {
+    if (typeof err === 'string') return err;
+    if (err instanceof Error && err.message) return err.message;
+    if (err && typeof err === 'object') {
+      const errorObj = err as {
+        message?: string;
+        detail?: string;
+        error?: string;
+        response?: { data?: { detail?: string | { message?: string }; message?: string } };
+      };
+      const detail = errorObj.response?.data?.detail;
+      const detailMessage =
+        typeof detail === 'object' && detail !== null && detail.message != null
+          ? String(detail.message)
+          : detail != null
+            ? String(detail)
+            : undefined;
+      return (
+        errorObj.message ||
+        detailMessage ||
+        errorObj.detail ||
+        errorObj.error ||
+        errorObj.response?.data?.message ||
+        'Login failed'
+      );
     }
+    return 'Login failed';
+  };
+
+  // Sync hook error into local state after a login attempt (kept if global error is cleared elsewhere)
+  React.useEffect(() => {
+    if (!loginAttempted || !error || error === 'Failed to initialize authentication') {
+      return;
+    }
+    setLoginError(extractLoginErrorMessage(error));
   }, [error, loginAttempted]);
+
+  const dismissLoginError = () => {
+    setLoginError(null);
+    clearError();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,15 +116,9 @@ const LoginForm: React.FC<LoginFormProps> = ({
       onSuccess?.();
       setLoginAttempted(false);
       setLoginError(null);
-    } catch (error) {
-      // Error is handled by the hook, but log details for debugging
-      console.error("LoginForm: Login failed with error:", error);
-      if (error instanceof Error) {
-        console.error("LoginForm: Error message:", error.message);
-        console.error("LoginForm: Error stack:", error.stack);
-      }
-      // The error state will be updated by the hook, which will trigger the useEffect
-      // that updates loginError
+    } catch (err) {
+      console.error("LoginForm: Login failed with error:", err);
+      setLoginError(extractLoginErrorMessage(err));
     }
   };
 
@@ -124,8 +132,9 @@ const LoginForm: React.FC<LoginFormProps> = ({
       onSuccess?.();
       setLoginAttempted(false);
       setLoginError(null);
-    } catch (error) {
-      console.error("LoginForm: Guest login failed with error:", error);
+    } catch (err) {
+      console.error("LoginForm: Guest login failed with error:", err);
+      setLoginError(extractLoginErrorMessage(err));
     }
   };
 
@@ -135,11 +144,6 @@ const LoginForm: React.FC<LoginFormProps> = ({
       ...prev,
       [name]: type === "checkbox" ? checked : value,
     }));
-    // Clear error when user starts typing
-    if (loginError) {
-      setLoginError(null);
-      clearError();
-    }
   };
 
   return (
@@ -159,6 +163,14 @@ const LoginForm: React.FC<LoginFormProps> = ({
                   {loginError}
                 </AlertDescription>
               </Box>
+              <CloseButton
+                alignSelf="flex-start"
+                position="relative"
+                right={-1}
+                top={-1}
+                onClick={dismissLoginError}
+                aria-label="Dismiss login error"
+              />
             </Alert>
           )}
 
@@ -189,7 +201,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
               <InputRightElement width="4.5rem">
                 <IconButton
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  icon={showPassword ? <ViewOffIcon /> : <ViewIcon />}
+                  icon={showPassword ? <ViewIcon /> : <ViewOffIcon />}
                   h="1.75rem"
                   size="sm"
                   onClick={() => setShowPassword(!showPassword)}

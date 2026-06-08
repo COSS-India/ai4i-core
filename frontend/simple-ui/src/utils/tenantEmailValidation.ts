@@ -11,6 +11,7 @@ export const EMAIL_USER_ALREADY_EXISTS_MSG =
 /** Tenant user (or tenant contact) email already in use. */
 export const EMAIL_ALREADY_EXISTS_MSG =
   "This email is already associated with an existing account";
+export const EMAIL_AVAILABLE_MSG = "Email is available.";
 
 export function normalizeEmail(email: string): string {
   return (email || "").trim().toLowerCase();
@@ -18,7 +19,7 @@ export function normalizeEmail(email: string): string {
 
 export function isValidEmailFormat(email: string): boolean {
   const trimmed = (email || "").trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(trimmed);
 }
 
 export function collectTenantContactEmails(tenants: TenantView[]): Set<string> {
@@ -59,6 +60,27 @@ function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions):
     tenant: Boolean(excludedTenant) && lower === excludedTenant,
     user: Boolean(excludedUser) && lower === excludedUser,
   };
+}
+
+export function validateEmailFormatOnly(email: string): string | undefined {
+  const trimmed = (email || "").trim();
+  if (!trimmed) return EMAIL_REQUIRED_MSG;
+  if (!isValidEmailFormat(trimmed)) return EMAIL_INVALID_FORMAT_MSG;
+  return undefined;
+}
+
+/** Sync check: tenant contact email already registered on another tenant. */
+export function validateTenantContactEmailTaken(
+  email: string,
+  tenantEmails: Set<string>,
+  exclusions?: EmailUniquenessExclusions
+): string | undefined {
+  const formatError = validateEmailFormatOnly(email);
+  if (formatError) return formatError;
+  const lower = normalizeEmail(email);
+  const skip = isExcludedEmail(lower, exclusions);
+  if (tenantEmails.has(lower) && !skip.tenant) return EMAIL_ALREADY_EXISTS_MSG;
+  return undefined;
 }
 
 /** Validate email for Create Tenant (contact + auto-provisioned tenant admin). */

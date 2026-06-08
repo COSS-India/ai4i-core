@@ -1,32 +1,35 @@
-// NER service testing page
+// NER service testing page — reusable service page architecture
 
-import {
-  Box,
-  Button,
-  FormControl,
-  FormLabel,
-  Grid,
-  GridItem,
-  Heading,
-  HStack,
-  Progress,
-  Select,
-  Spinner,
-  Text,
-  Textarea,
-  VStack,
-  Badge,
-} from "@chakra-ui/react";
-import Head from "next/head";
-import React, { useState } from "react";
+import { Badge, Box, HStack, Text, VStack } from "@chakra-ui/react";
+import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import ContentLayout from "../components/common/ContentLayout";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
+import {
+  buildResponseMetadata,
+  INDIC_LANGUAGE_OPTIONS,
+  mapToServiceOptions,
+  RequestContainer,
+  ResponseContainer,
+  ServicePageLayout,
+} from "../components/service-page";
+import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { parseNerEntities } from "../types/inference";
 import { extractErrorInfo } from "../utils/errorHandler";
-import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+
+const pageDefaults = getServicePageDefaults("ner");
+
+const getEntityColor = (label: string) => {
+  const colors: Record<string, string> = {
+    ORG: "orange",
+    LOC: "blue",
+    PER: "green",
+    MISC: "purple",
+    O: "gray",
+  };
+  return colors[label] || "gray";
+};
 
 const NERPage: React.FC = () => {
   const toast = useToastWithDeduplication();
@@ -34,21 +37,22 @@ const NERPage: React.FC = () => {
   const [sourceLanguage, setSourceLanguage] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<unknown>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
 
-  // Fetch available NER services
   const {
     data: services = [],
     isLoading: isLoadingServices,
-    error: servicesError,
+    isError: servicesError,
   } = useQuery({
     queryKey: ["nerServices"],
     queryFn: listNERServices,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
+
+  const serviceOptions = useMemo(() => mapToServiceOptions(services), [services]);
 
   const canDetect =
     !!selectedServiceId?.trim() &&
@@ -59,88 +63,44 @@ const NERPage: React.FC = () => {
 
   const handleProcess = async () => {
     const trimmedText = inputText.trim();
-
-    // Validate input text
     if (!trimmedText) {
       const err = NER_ERRORS.TEXT_REQUIRED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
       return;
     }
-
     if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
       return;
     }
-
     if (trimmedText.length > MAX_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_LONG;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
       return;
     }
-
     if (!selectedServiceId) {
-      toast({
-        title: "No Service Selected",
-        description: "Please select a NER service.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      toast({ title: "No Service Selected", description: "Please select a NER service.", status: "warning", duration: 3000, isClosable: true });
       return;
     }
-
     if (!sourceLanguage?.trim()) {
-      toast({
-        title: "Language Required",
-        description: "Please select a language.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      toast({ title: "Language Required", description: "Please select a language.", status: "warning", duration: 3000, isClosable: true });
       return;
     }
 
     setFetching(true);
     setError(null);
     setFetched(false);
-
     try {
       const startTime = Date.now();
       const response = await performNERInference(trimmedText, {
         serviceId: selectedServiceId,
-        language: {
-          sourceLanguage,
-        },
+        language: { sourceLanguage },
       });
-      const endTime = Date.now();
-      const calculatedTime = ((endTime - startTime) / 1000).toFixed(3);
-
       setResult(response.data);
-      setResponseTime(parseFloat(calculatedTime));
+      setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
-    } catch (err: any) {
-      // Use centralized error handler (ner context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ner');
-
+    } catch (err: unknown) {
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "ner");
       setError(errorMessage);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
@@ -161,321 +121,89 @@ const NERPage: React.FC = () => {
     setError(null);
   };
 
-  const getEntityColor = (label: string) => {
-    const colors: { [key: string]: string } = {
-      ORG: "orange",
-      LOC: "blue",
-      PER: "green",
-      MISC: "purple",
-      O: "gray", // Other/Outside tag
-    };
-    return colors[label] || "gray";
-  };
+  const entities = result ? parseNerEntities(result) : [];
 
   return (
-    <>
-      <Head>
-        <title>Named Entity Recognition (NER) | AI4Inclusion Console</title>
-        <meta
-          name="description"
-          content="Test Named Entity Recognition to identify entities in text"
+    <ServicePageLayout
+      serviceId="ner"
+      headDescription="Test Named Entity Recognition to identify entities in text"
+      requestPanel={
+        <RequestContainer
+          serviceDropdown={{
+            label: "NER Service",
+            value: selectedServiceId,
+            onChange: setSelectedServiceId,
+            options: serviceOptions,
+            loading: isLoadingServices,
+            disabled: fetching,
+            error: servicesError ? "Failed to load services. Please refresh the page." : null,
+          }}
+          languageConfig={{
+            mode: "source-only",
+            sourceLanguage,
+            onSourceChange: setSourceLanguage,
+            sourceOptions: INDIC_LANGUAGE_OPTIONS,
+            disabled: fetching || !selectedServiceId,
+          }}
+          inputType="text"
+          textInput={{
+            value: inputText,
+            onChange: setInputText,
+            placeholder: pageDefaults.textPlaceholder,
+            maxLength: MAX_TEXT_LENGTH,
+            disabled: fetching || !selectedServiceId,
+          }}
+          helperText={pageDefaults.helperText}
+          submitButton={{
+            label: pageDefaults.submitLabel,
+            loadingLabel: pageDefaults.submitLoadingLabel,
+            onClick: handleProcess,
+            isLoading: fetching,
+            isDisabled: !canDetect,
+          }}
         />
-      </Head>
-
-      <ContentLayout>
-        <VStack spacing={8} w="full">
-          {/* Page Header */}
-          <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("ner")}
-            </Heading>
-            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("ner")}
-            </Text>
-          </Box>
-
-        <Grid
-          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-          gap={8}
-          w="full"
-            maxW="1200px"
-          mx="auto"
-        >
-            {/* Configuration Panel */}
-          <GridItem pt={0} mt={0} alignSelf="flex-start">
-            <VStack spacing={6} align="stretch" pt={0} mt={0}>
-
-              {/* Service Selection */}
-              <FormControl>
-                <FormLabel fontSize="sm" fontWeight="semibold">
-                  NER Service{" "}
-                  <Text as="span" color="red.500">*</Text>
-                </FormLabel>
-                {isLoadingServices ? (
-                  <HStack spacing={2} p={2}>
-                    <Spinner size="sm" color="orange.500" />
-                    <Text fontSize="sm" color="gray.600">
-                      Loading services...
+      }
+      responsePanel={
+        <ResponseContainer
+          fetching={fetching}
+          fetchingLabel="Processing text..."
+          error={error}
+          fetched={fetched}
+          hasResult={!!result}
+          metadata={
+            fetched ? buildResponseMetadata({ responseTimeMs: responseTime * 1000 }) : []
+          }
+          result={
+            fetched && result ? (
+              <Box p={4} bg="gray.50" borderRadius="md" border="1px" borderColor="gray.200">
+                <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                  Identified Entities:
+                </Text>
+                <VStack align="stretch" spacing={2}>
+                  {entities.length === 0 ? (
+                    <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                      No entities found in the text.
                     </Text>
-                  </HStack>
-                ) : servicesError ? (
-                  <Box p={3} bg="red.50" borderRadius="md" border="1px" borderColor="red.200">
-                    <Text fontSize="sm" color="red.700">
-                      Failed to load services. Please try refreshing the page.
-                    </Text>
-                  </Box>
-                ) : (
-                  <Select
-                    value={selectedServiceId}
-                    onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder={isLoadingServices ? "Loading..." : "Select"}
-                    disabled={fetching}
-                    size="md"
-                    borderColor="gray.300"
-                    _focus={{
-                      borderColor: "orange.400",
-                      boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
-                    }}
-                  >
-                    {services.map((service) => (
-                      <option key={service.service_id} value={service.service_id}>
-                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-                {selectedServiceId && services.length > 0 && (
-                  <Box
-                    mt={2}
-                    p={3}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                  >
-                    {(() => {
-                      const selectedService = services.find(
-                        (s) => s.service_id === selectedServiceId
-                      );
-                      return selectedService ? (
-                        <>
-                          <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service Name:</strong>{" "}
-                            {selectedService.name || selectedService.service_id}
-                          </Text>
-                          <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service Description:</strong>{" "}
-                            {selectedService.serviceDescription || "No description available"}
-                          </Text>
-                        </>
-                      ) : null;
-                    })()}
-                  </Box>
-                )}
-              </FormControl>
-
-              <FormControl>
-                <FormLabel fontSize="sm" fontWeight="semibold">
-                  Language{" "}
-                  <Text as="span" color="red.500">*</Text>
-                </FormLabel>
-                <Select
-                  value={sourceLanguage}
-                  onChange={(e) => setSourceLanguage(e.target.value)}
-                  isDisabled={fetching || !selectedServiceId}
-                  size="md"
-                  placeholder="Select"
-                  borderColor="gray.300"
-                  _focus={{
-                    borderColor: "orange.400",
-                    boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
-                  }}
-                >
-                  <option value="en">English</option>
-                  <option value="hi">Hindi</option>
-                  <option value="ta">Tamil</option>
-                  <option value="te">Telugu</option>
-                  <option value="kn">Kannada</option>
-                  <option value="ml">Malayalam</option>
-                  <option value="mr">Marathi</option>
-                  <option value="gu">Gujarati</option>
-                  <option value="bn">Bengali</option>
-                  <option value="pa">Punjabi</option>
-                  <option value="or">Odia</option>
-                  <option value="as">Assamese</option>
-                </Select>
-              </FormControl>
-
-              <FormControl isInvalid={inputText.length > MAX_TEXT_LENGTH}>
-                <FormLabel fontSize="sm" fontWeight="semibold">
-                  Source Text{" "}
-                  <Text as="span" color="red.500">*</Text>
-                </FormLabel>
-                <Textarea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Enter text to identify entities..."
-                  rows={6}
-                  isDisabled={fetching || !selectedServiceId}
-                  bg="white"
-                  maxLength={MAX_TEXT_LENGTH}
-                  borderColor={inputText.length > MAX_TEXT_LENGTH ? "red.400" : "gray.300"}
-                />
-                {inputText.length > MAX_TEXT_LENGTH && (
-                  <Text fontSize="sm" color="red.500" mt={1}>
-                    Text exceeds the maximum limit of {MAX_TEXT_LENGTH} characters. Please reduce the length.
-                  </Text>
-                )}
-                <Box display="flex" justifyContent="flex-end" mt={1}>
-                  <Text
-                    fontSize="sm"
-                    color={inputText.length > MAX_TEXT_LENGTH ? "red.500" : "gray.500"}
-                    fontWeight={inputText.length > MAX_TEXT_LENGTH ? "semibold" : "normal"}
-                  >
-                    {inputText.length} / {MAX_TEXT_LENGTH}
-                  </Text>
-                </Box>
-              </FormControl>
-
-              {/* Instruction above Detect Entities (consistent with other services) */}
-              <Text fontSize="sm" color="gray.600">
-                Enter text and select language above, then click &quot;Detect Entities&quot; to extract entities.
-              </Text>
-
-              <Button
-                colorScheme="orange"
-                onClick={handleProcess}
-                isLoading={fetching}
-                loadingText="Processing..."
-                size="md"
-                w="full"
-                isDisabled={!canDetect}
-              >
-                {fetching ? "Processing..." : "Detect Entities"}
-              </Button>
-              </VStack>
-            </GridItem>
-
-            {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Progress Indicator */}
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing text...
-                  </Text>
-                  <Progress size="xs" isIndeterminate colorScheme="orange" />
-                </Box>
-              )}
-
-                {/* Error Display */}
-              {error && (
-                <Box
-                  p={4}
-                  bg="red.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="red.200"
-                >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
-                  </Text>
-                </Box>
-              )}
-
-                {/* Metrics Box */}
-                {fetched && (
-                  <Box
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                  >
-                    <HStack spacing={6}>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Response Time
+                  ) : (
+                    entities.map((entity, index) => (
+                      <HStack key={index} spacing={2}>
+                        <Badge colorScheme={getEntityColor(entity.label)} fontSize="xs" px={2} py={1} borderRadius="full">
+                          {entity.label}
+                        </Badge>
+                        <Text fontSize="sm" color="gray.700">
+                          {entity.text}
                         </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {responseTime.toFixed(3)} seconds
-                        </Text>
-                      </VStack>
-                    </HStack>
-                  </Box>
-                )}
-
-                {/* NER Results */}
-              {fetched && result && (
-                  <>
-                <Box
-                  p={4}
-                  bg="gray.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="gray.200"
-                >
-                  <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
-                    Identified Entities:
-                  </Text>
-                  <VStack align="stretch" spacing={2}>
-                    {(() => {
-                      const entities = parseNerEntities(result);
-
-                      if (entities.length === 0) {
-                        return (
-                          <Text fontSize="sm" color="gray.500" fontStyle="italic">
-                            No entities found in the text.
-                          </Text>
-                        );
-                      }
-
-                      return entities.map((entity, index) => (
-                        <HStack key={index} spacing={2}>
-                          <Badge
-                            colorScheme={getEntityColor(entity.label)}
-                            fontSize="xs"
-                            px={2}
-                            py={1}
-                            borderRadius="full"
-                          >
-                            {entity.label}
-                          </Badge>
-                          <Text fontSize="sm" color="gray.700">
-                            {entity.text}
-                          </Text>
-                        </HStack>
-                      ));
-                    })()}
-                  </VStack>
-                </Box>
-
-                    {/* Clear Results Button */}
-                    <Box textAlign="center">
-                      <button
-                  onClick={clearResults}
-                        style={{
-                          padding: "8px 16px",
-                          backgroundColor: "#f7fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                          color: "#4a5568",
-                        }}
-                >
-                  Clear Results
-                      </button>
-                    </Box>
-                  </>
-              )}
-            </VStack>
-          </GridItem>
-        </Grid>
-        </VStack>
-      </ContentLayout>
-    </>
+                      </HStack>
+                    ))
+                  )}
+                </VStack>
+              </Box>
+            ) : undefined
+          }
+          onClear={clearResults}
+        />
+      }
+    />
   );
 };
 

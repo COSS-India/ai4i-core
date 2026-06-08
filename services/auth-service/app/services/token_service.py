@@ -167,8 +167,13 @@ class TokenService:
         Verifies: signature, expiry, kid, alg, issuer, audience (if configured).
         Raises TokenInvalidError or TokenExpiredError on failure.
         """
+        # Header-only read to pick the right public key by ``kid`` before
+        # signature verification. The signature is verified below by
+        # ``jwt.decode(token, public_pem, algorithms=["RS256"], ...)``. This
+        # is the JWKS kid-selection pattern that python:S5659 itself
+        # recommends — see the rule's own note about ``get_unverified_header``.
         try:
-            header = jwt.get_unverified_header(token)
+            header = jwt.get_unverified_header(token)  # NOSONAR
             kid = header.get("kid")
             alg = header.get("alg")
 

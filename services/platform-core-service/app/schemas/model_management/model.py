@@ -43,6 +43,7 @@ class ModelCreateRequest(BaseSchema):
     inferenceEndPoint: InferenceEndPoint
     benchmarks: List[Benchmark] = Field(default_factory=list)
     submitter: Submitter
+    classInstance: Optional[str] = None
 
     @field_validator("version", mode="before")
     @classmethod
@@ -57,6 +58,17 @@ class ModelCreateRequest(BaseSchema):
     @classmethod
     def _validate_name(cls, v: str) -> str:
         return validate_entity_name(v, field="Model name")
+
+    @field_validator("versionStatus", mode="before")
+    @classmethod
+    def _validate_version_status(cls, v: Any) -> Any:
+        if v is not None and str(v).upper() == VersionStatusEnum.DEPRECATED.value:
+            raise ValueError(
+                "Models cannot be created with 'DEPRECATED' status. "
+                "Newly created models must start in 'ACTIVE' status. "
+                "Deprecation is only allowed as a lifecycle transition after creation."
+            )
+        return v
 
     @field_validator("license", mode="before")
     @classmethod
@@ -81,6 +93,7 @@ class ModelUpdateRequest(BaseSchema):
     inferenceEndPoint: Optional[InferenceEndPoint] = None
     benchmarks: Optional[List[Benchmark]] = None
     submitter: Optional[Submitter] = None
+    classInstance: Optional[str] = None
 
     @field_validator("license", mode="before")
     @classmethod
@@ -114,6 +127,7 @@ class ModelResponse(BaseSchema):
     inferenceEndPoint: Optional[InferenceEndPoint] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
+    classInstance: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 

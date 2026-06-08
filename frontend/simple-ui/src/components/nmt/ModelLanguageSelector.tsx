@@ -58,7 +58,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   });
 
   // Find selected service
-  const selectedService = services?.find(s => s.service_id === currentServiceId);
+  const selectedService = services?.find((s) => s.service_id === currentServiceId);
 
   // Fetch languages for selected service
   const { data: languagesData, isLoading: languagesLoading } = useQuery({
@@ -255,9 +255,10 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
               >
                 {services?.map((service) => {
                   const version = service.modelVersion || service.model_version;
-                  const displayText = version ? `${service.name || service.service_id} (${version})` : (service.name || service.service_id);
+                  const id = service.service_id;
+                  const displayText = version ? `${service.name || id} (${version})` : (service.name || id);
                   return (
-                    <option key={service.service_id} value={service.service_id}>
+                    <option key={id} value={id}>
                       {displayText}
                     </option>
                   );

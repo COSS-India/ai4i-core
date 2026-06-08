@@ -4,36 +4,27 @@ ImageBase — base class for image-backed inference services.
 Works on raw payload dicts (same contract as TextBase / BaseTaskService):
   validate_request   → ensures payload['image'] is non-empty and each item carries content/uri
   preprocess_input   → normalizes each item to base64 under 'image_content'
-  get_payload_object → returns payload['image']; the base execute_triton_inference does the rest
+  payload_key        → 'image'; the base run_inference does the rest
 
 All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
 via the adapter_config sourced from MMS — concrete task services don't reimplement it.
 
-Concrete task services (e.g. ImageDefaultModel) provide:
-  postprocess_output → response shaping
-  _build_response    → typed response model
+Concrete task services (e.g. OCRTaskService) provide:
+  postprocess → output shaping + response envelope
 """
 
 import base64
-import json
-import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from interfaces.task_service import BaseTaskService
+from services.base.task_service import BaseTaskService
 
 
 class ImageBase(BaseTaskService):
     """Generic image task service base."""
 
-    def __init__(
-        self,
-        service_info: Optional[Dict[str, Any]] = None,
-        **dependencies: Any,
-    ):
-        super().__init__(service_info=service_info)
-        self.logger = logging.getLogger(self.__class__.__module__)
+    payload_key = "image"  # image input list lives under payload['image']
 
     # ------------------------------------------------------------------
     # Pipeline hooks called by BaseTaskService.process
@@ -52,33 +43,25 @@ class ImageBase(BaseTaskService):
                     f"{self.task_name}: image[{idx}] requires imageContent or imageUri"
                 )
 
-    async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
+    async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize each image to base64 under 'image_content' (downloads URI if needed)."""
-        await super().preprocess_input(input_data)
         items: List[Dict[str, Any]] = []
-        for item in input_data:
-            d = dict(item) if isinstance(item, dict) else item
+        for item in payload.get(self.payload_key) or []:
+            d = dict(item)
             d["image_content"] = await self._resolve_image_base64(d)
             items.append(d)
-        return items
-
-    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
-        """Image input list lives under payload['image']."""
-        return payload.get("image") or []
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
     # Image input helpers
     # ------------------------------------------------------------------
 
-    def _item_content(self, item: Any) -> Optional[str]:
-        if isinstance(item, dict):
-            return item.get("imageContent") or item.get("image_content")
-        return getattr(item, "image_content", None)
+    def _item_content(self, item: Dict[str, Any]) -> Optional[str]:
+        return item.get("imageContent") or item.get("image_content")
 
-    def _item_uri(self, item: Any) -> Optional[str]:
-        if isinstance(item, dict):
-            return item.get("imageUri") or item.get("image_uri")
-        return getattr(item, "image_uri", None)
+    def _item_uri(self, item: Dict[str, Any]) -> Optional[str]:
+        return item.get("imageUri") or item.get("image_uri")
 
     async def _resolve_image_base64(self, image_input: Any) -> str:
         """Return image as a base64 string from inline content or downloaded from a URI."""
@@ -92,7 +75,10 @@ class ImageBase(BaseTaskService):
         raise ValueError(f"{self.task_name}: image item has no imageContent or imageUri")
 
     async def _download_image(self, uri: str) -> bytes:
-        """Download raw image bytes from an HTTP(S) URI."""
+        """Download raw image bytes from an HTTP(S) URI.
+        The URI is user-supplied — validated against the SSRF guard first."""
+        from utils.url_guard import validate_external_url
+        validate_external_url(uri)
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(uri)
@@ -110,30 +96,3 @@ class ImageBase(BaseTaskService):
             raise RuntimeError(
                 f"{self.task_name}: request error downloading image from {uri}: {exc}"
             ) from exc
-
-    # ------------------------------------------------------------------
-    # Output decoding helper
-    # ------------------------------------------------------------------
-
-    def _decode_text(self, value: Any) -> str:
-        """Decode any output value to a UTF-8 string."""
-        if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
-        if value is None:
-            return ""
-        return str(value)
-
-    def _unwrap_surya_envelope(self, raw_text: Any) -> str:
-        """
-        Surya ensembles return a JSON envelope per image with a 'full_text' field.
-        Unwrap when present; return the value as-is otherwise.
-        """
-        text = self._decode_text(raw_text)
-        if text.lstrip().startswith("{"):
-            try:
-                parsed = json.loads(text)
-                if isinstance(parsed, dict) and "full_text" in parsed:
-                    return str(parsed.get("full_text", ""))
-            except json.JSONDecodeError:
-                pass
-        return text

@@ -82,7 +82,7 @@ async def update_api_key(
     if not update_data:
         from app.core.exceptions import ValidationError
         raise ValidationError(
-            message="No fields to update. Provide at least one of: key_name, permissions, expires_days, is_active.",
+            message="No fields to update. Provide at least one of: key_name, permissions, expires_days.",
             code="NOTHING_TO_UPDATE",
         )
 

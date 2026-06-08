@@ -1,42 +1,31 @@
-// ASR service testing page with recording, file upload, and results display
+// ASR service testing page — reusable service page architecture
 
-import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  Box,
-  Button,
-  FormControl,
-  FormLabel,
-  Grid,
-  GridItem,
-  Heading,
-  Progress,
-  Select,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { FormControl, FormLabel, Select } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
-import Head from "next/head";
-import React from "react";
+import React, { useMemo } from "react";
 import { FaFileAlt } from "react-icons/fa";
-import ASRResults from "../components/asr/ASRResults";
-import AudioRecorder from "../components/asr/AudioRecorder";
-import ContentLayout from "../components/common/ContentLayout";
-import LoadingSpinner from "../components/common/LoadingSpinner";
-import AudioInputPreview from "../components/common/AudioInputPreview";
+import {
+  buildResponseMetadata,
+  GuestUsageLimitBanner,
+  mapToServiceOptions,
+  RequestContainer,
+  ResponseContainer,
+  ServicePageLayout,
+  useCopyToClipboard,
+} from "../components/service-page";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
+import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useASR } from "../hooks/useASR";
-import { listASRServices, ASRServiceDetails } from "../services/asrService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { listASRServices } from "../services/asrService";
+
+const pageDefaults = getServicePageDefaults("asr");
+const languageOptions = ASR_SUPPORTED_LANGUAGES.map((l) => ({ code: l.code, label: l.label }));
 
 const ASRPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
+  const { copy, download } = useCopyToClipboard();
   const [audioClearToken, setAudioClearToken] = React.useState(0);
   const {
     language,
-    sampleRate,
     serviceId,
     inferenceMode,
     recording,
@@ -53,7 +42,6 @@ const ASRPage: React.FC = () => {
     stopRecording,
     runTranscribe,
     setLanguage,
-    setSampleRate,
     setServiceId,
     setInferenceMode,
     clearResults,
@@ -64,271 +52,130 @@ const ASRPage: React.FC = () => {
     setAudioClearToken((t) => t + 1);
   };
 
-  // Fetch available ASR services from model management
-  const { data: asrServices, isLoading: servicesLoading } = useQuery<ASRServiceDetails[]>({
+  const { data: asrServices, isLoading: servicesLoading } = useQuery({
     queryKey: ["asr-services"],
     queryFn: listASRServices,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
-  const handleRecordingChange = (isRecording: boolean) => {
-    if (isRecording) {
-      startRecording();
-    } else {
-      stopRecording();
-    }
-  };
+  const serviceOptions = useMemo(
+    () => mapToServiceOptions(asrServices ?? []),
+    [asrServices]
+  );
 
-  const handleAudioReady = (audioBase64: string) => {
-    setPendingAudio(audioBase64);
+  const handleRecordingChange = (isRecording: boolean) => {
+    if (isRecording) startRecording();
+    else stopRecording();
   };
 
   const canTranscribe =
     !!pendingAudio && !!serviceId?.trim() && !!language?.trim() && !fetching;
 
+  const metadata = buildResponseMetadata({
+    responseWordCount,
+    responseTimeMs: Number(requestTime),
+  });
+
   return (
-    <>
-      <Head>
-        <title>ASR - Speech Recognition | AI4Inclusion Console</title>
-        <meta
-          name="description"
-          content="Test Automatic Speech Recognition with microphone recording and file upload"
+    <ServicePageLayout
+      serviceId="asr"
+      headDescription="Test Automatic Speech Recognition with microphone recording and file upload"
+      banner={<GuestUsageLimitBanner />}
+      requestPanel={
+        <RequestContainer
+          inputType="audio"
+          topSlot={
+            <FormControl mt={0} pt={0}>
+              <FormLabel className="dview-service-try-option-title" mt={0}>
+                Inference Mode
+              </FormLabel>
+              <Select
+                value={inferenceMode}
+                onChange={(e) =>
+                  setInferenceMode(e.target.value as "" | "rest" | "streaming")
+                }
+                placeholder="Select"
+              >
+                <option value="rest">REST API</option>
+                <option value="streaming">WebSocket Streaming</option>
+              </Select>
+            </FormControl>
+          }
+          serviceDropdown={{
+            label: "ASR Service",
+            value: serviceId,
+            onChange: setServiceId,
+            options: serviceOptions,
+            loading: servicesLoading,
+            disabled: fetching,
+          }}
+          languageConfig={{
+            mode: "source-only",
+            sourceLanguage: language,
+            onSourceChange: setLanguage,
+            sourceOptions: languageOptions,
+            disabled: fetching,
+          }}
+          audioInput={{
+            value: pendingAudio,
+            onChange: setPendingAudio,
+            isRecording: recording,
+            onRecordingChange: handleRecordingChange,
+            timer,
+            disabled: fetching || !serviceId || !language,
+            onClear: handleClearAudioInput,
+            clearToken: audioClearToken,
+            readyMessage:
+              "Audio ready (recording or upload). Click Transcribe to generate the transcript.",
+          }}
+          helperText={pageDefaults.helperText}
+          submitButton={{
+            label: pageDefaults.submitLabel,
+            loadingLabel: pageDefaults.submitLoadingLabel,
+            onClick: runTranscribe,
+            isLoading: fetching,
+            isDisabled: !canTranscribe,
+            icon: <FaFileAlt />,
+          }}
         />
-      </Head>
-
-      <ContentLayout>
-        <VStack spacing={8} w="full">
-          {/* Page Header */}
-          <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("asr")}
-            </Heading>
-            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("asr")}
-            </Text>
-          </Box>
-
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
-            maxW="1200px"
-            mx="auto"
-          >
-            {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Inference Mode Selection */}
-                <FormControl mt={0} pt={0}>
-                  <FormLabel className="dview-service-try-option-title" mt={0}>
-                    Inference Mode
-                  </FormLabel>
-                  <Select
-                    value={inferenceMode}
-                    onChange={(e) =>
-                      setInferenceMode(e.target.value as "" | "rest" | "streaming")
-                    }
-                    placeholder="Select"
-                  >
-                    <option value="rest">REST API</option>
-                    <option value="streaming">WebSocket Streaming</option>
-                  </Select>
-                </FormControl>
-
-                {/* ASR Service Selection */}
-                <FormControl>
-                  <FormLabel className="dview-service-try-option-title">
-                    ASR Service{" "}
-                    <Text as="span" color="red.500">
-                      *
-                    </Text>
-                  </FormLabel>
-                  <Select
-                    value={serviceId}
-                    onChange={(e) => setServiceId(e.target.value)}
-                    isDisabled={fetching || servicesLoading}
-                    placeholder={servicesLoading ? "Loading..." : "Select"}
-                  >
-                    {asrServices?.map((service) => {
-                      const version = service.modelVersion || service.model_version;
-                      // Show the human-friendly service name in the dropdown,
-                      // but keep the underlying value as the service_id.
-                      const displayName = service.name || service.service_id;
-                      const displayText = version ? `${displayName} (${version})` : displayName;
-                      return (
-                        <option key={service.service_id} value={service.service_id}>
-                          {displayText}
-                        </option>
-                      );
-                    })}
-                  </Select>
-                  {serviceId && asrServices && (
-                    <Box
-                      mt={2}
-                      p={3}
-                      bg="orange.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="orange.200"
-                    >
-                      {(() => {
-                        const selectedService = asrServices.find((s) => s.service_id === serviceId);
-                        return selectedService ? (
-                          <>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Name:</strong>{" "}
-                              {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Description:</strong>{" "}
-                              {selectedService.description || "No description available"}
-                            </Text>
-                          </>
-                        ) : null;
-                      })()}
-                    </Box>
-                  )}
-                </FormControl>
-
-                {/* Language Selection */}
-                <FormControl>
-                  <FormLabel className="dview-service-try-option-title">
-                    Language{" "}
-                    <Text as="span" color="red.500">
-                      *
-                    </Text>
-                  </FormLabel>
-                  <Select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    placeholder="Select"
-                  >
-                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
-                      <option key={lang.code} value={lang.code}>
-                        {lang.label}
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                {/* Audio Input */}
-                <Box>
-                  <FormLabel className="dview-service-try-option-title" mb={4}>
-                    Audio Input{" "}
-                    <Text as="span" color="red.500">
-                      *
-                    </Text>
-                  </FormLabel>
-                  <AudioRecorder
-                    onAudioReady={handleAudioReady}
-                    isRecording={recording}
-                    onRecordingChange={handleRecordingChange}
-                    sampleRate={sampleRate}
-                    disabled={fetching || !serviceId || !language}
-                    timer={timer}
-                    onClear={handleClearAudioInput}
-                    clearToken={audioClearToken}
-                  />
-                  {/* Upload / recording confirmation - show when audio is ready */}
-                  {!recording && pendingAudio && (
-                    <>
-                      <Alert status="success" borderRadius="md" mt={4}>
-                        <AlertIcon />
-                        <AlertDescription>
-                          Audio ready (recording or upload). Click Transcribe to generate the transcript.
-                        </AlertDescription>
-                      </Alert>
-                      <AudioInputPreview
-                        audioBase64OrDataUrl={pendingAudio}
-                        label="Review your audio"
-                    onClear={handleClearAudioInput}
-                      />
-                    </>
-                  )}
-                </Box>
-
-                {/* Helper text above action button only (record/upload are separate blocks in AudioRecorder above) */}
-                <Text fontSize="sm" color="gray.600">
-                  Record or upload audio above, then click Transcribe to generate the transcript.
-                </Text>
-
-                {/* Transcribe Button - same UI order as TTS Generate Audio */}
-                <Button
-                  leftIcon={<FaFileAlt />}
-                  colorScheme="orange"
-                  size="lg"
-                  onClick={runTranscribe}
-                  isLoading={fetching}
-                  loadingText="Transcribing..."
-                  isDisabled={!canTranscribe}
-                >
-                  Transcribe
-                </Button>
-              </VStack>
-            </GridItem>
-
-            {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Progress Indicator */}
-                {fetching && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Processing audio...
-                    </Text>
-                    <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
-
-                {/* Error Display */}
-                {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
-                    <Text color="red.600" fontSize="sm">
-                      {error}
-                    </Text>
-                  </Box>
-                )}
-
-                {/* ASR Results */}
-                {fetched && audioText && (
-                  <>
-                    <ASRResults
-                      transcript={audioText}
-                      responseWordCount={responseWordCount}
-                      responseTime={Number(requestTime)}
-                    />
-
-                    {/* Clear Results Button */}
-                    <Box textAlign="center">
-                      <button
-                      onClick={handleClearAudioInput}
-                        style={{
-                          padding: "8px 16px",
-                          backgroundColor: "#f7fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                          color: "#4a5568",
-                        }}
-                      >
-                        Clear Results
-                      </button>
-                    </Box>
-                  </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
-        </VStack>
-      </ContentLayout>
-    </>
+      }
+      responsePanel={
+        <ResponseContainer
+          fetching={fetching}
+          fetchingLabel="Processing audio..."
+          error={error}
+          fetched={fetched}
+          hasResult={!!audioText}
+          resultTitle="Transcript"
+          resultContent={audioText}
+          metadata={fetched && audioText ? metadata : []}
+          actions={
+            fetched && audioText
+              ? [
+                  {
+                    id: "copy",
+                    label: "Copy",
+                    kind: "copy",
+                    onClick: () => copy(audioText, "Transcript copied to clipboard."),
+                  },
+                  {
+                    id: "download",
+                    label: "Download",
+                    kind: "download",
+                    onClick: () =>
+                      download(
+                        audioText,
+                        `transcript_${Date.now()}.txt`,
+                        { successDescription: "Transcript downloaded." }
+                      ),
+                  },
+                ]
+              : []
+          }
+          onClear={handleClearAudioInput}
+        />
+      }
+    />
   );
 };
 

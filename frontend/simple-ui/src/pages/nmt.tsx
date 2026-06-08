@@ -1,31 +1,19 @@
-// NMT service testing page with language pair selection and translation
+// NMT service testing page — uses reusable service page architecture
 
-import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  AlertTitle,
-  Box,
-  Button,
-  Grid,
-  GridItem,
-  Heading,
-  HStack,
-  Progress,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { Alert, AlertDescription, AlertIcon, AlertTitle, Box, Button } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
-import Head from "next/head";
 import { useRouter } from "next/router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FaLanguage } from "react-icons/fa";
-import ContentLayout from "../components/common/ContentLayout";
-import LoadingSpinner from "../components/common/LoadingSpinner";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import ModelLanguageSelector from "../components/nmt/ModelLanguageSelector";
-import TextTranslator from "../components/nmt/TextTranslator";
-import TranslationResults from "../components/nmt/TranslationResults";
+import {
+  buildResponseMetadata,
+  RequestContainer,
+  ResponseContainer,
+  ServicePageLayout,
+  useCopyToClipboard,
+} from "../components/service-page";
+import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
 import {
@@ -33,11 +21,12 @@ import {
   listNMTServices,
 } from "../services/nmtService";
 import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+
+const pageDefaults = getServicePageDefaults("nmt");
 
 const NMTPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const router = useRouter();
+  const { copy } = useCopyToClipboard();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
   const [remainingRequests, setRemainingRequests] = useState(5);
@@ -60,7 +49,6 @@ const NMTPage: React.FC = () => {
     clearResults,
   } = useNMT();
 
-  // Fetch available services (anonymous: try-it API with X-Try-It: true; logged-in: model management with auth)
   const {
     data: services,
     isLoading: servicesLoading,
@@ -70,11 +58,10 @@ const NMTPage: React.FC = () => {
     queryKey: ["nmt-services", isAuthenticated],
     queryFn: listNMTServices,
     enabled: !authLoading,
-    staleTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 10 * 60 * 1000,
     retry: 1,
   });
 
-  // Check if user is anonymous and update rate limit info
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       setShowRateLimitWarning(shouldWarnAboutRateLimit());
@@ -82,7 +69,6 @@ const NMTPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, fetched]);
 
-  // Update remaining requests after each translation
   useEffect(() => {
     if (!isAuthenticated && fetched) {
       setRemainingRequests(getRemainingTryItRequests());
@@ -90,13 +76,12 @@ const NMTPage: React.FC = () => {
     }
   }, [isAuthenticated, fetched]);
 
-  // Fetch available language pairs for selected service
   const { data: languagePairs, isLoading: pairsLoading } = useQuery({
     queryKey: ["nmt-language-pairs", selectedServiceId],
     queryFn: () =>
       getSupportedLanguagePairsForService(selectedServiceId, services || []),
     enabled: !!selectedServiceId && !!services && services.length > 0,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
   const anonymousRateLimitReached =
@@ -110,220 +95,152 @@ const NMTPage: React.FC = () => {
     !!inputText?.trim() &&
     !anonymousRateLimitReached;
 
-  const handleTranslate = () => {
-    if (!canTranslate) return;
-    performInference(inputText);
-  };
+  const responseMetadata = useMemo(
+    () =>
+      buildResponseMetadata({
+        requestWordCount,
+        responseWordCount,
+        responseTimeMs: Number(requestTime),
+      }),
+    [requestWordCount, responseWordCount, requestTime]
+  );
+
+  const rateLimitBanner = !authLoading && !isAuthenticated && (
+    <Alert
+      status={
+        anonymousRateLimitReached ? "error" : showRateLimitWarning ? "warning" : "info"
+      }
+      variant="left-accent"
+      borderRadius="md"
+      w="full"
+      maxW="1200px"
+      mx="auto"
+    >
+      <AlertIcon />
+      <Box flex="1">
+        <AlertTitle fontSize="md">
+          {anonymousRateLimitReached
+            ? "Rate Limit Reached"
+            : showRateLimitWarning
+              ? "Rate Limit Warning"
+              : "Try Neural Machine Translation"}
+        </AlertTitle>
+        <AlertDescription fontSize="sm">
+          {anonymousRateLimitReached ? (
+            <>
+              You have used all <strong>5 translations</strong> for this hour. Sign in to get access to all services, or try again later.
+            </>
+          ) : showRateLimitWarning ? (
+            <>
+              You have approximately{" "}
+              <strong>
+                {remainingRequests} translation{remainingRequests !== 1 ? "s" : ""}
+              </strong>{" "}
+              remaining. Sign in to get access to all services.
+            </>
+          ) : (
+            <>
+              You&apos;re using NMT without an account. You can try up to{" "}
+              <strong>5 translations per hour</strong>. Sign in to get access to all services.
+            </>
+          )}
+        </AlertDescription>
+      </Box>
+      {!anonymousRateLimitReached && (
+        <Button
+          size="sm"
+          colorScheme="orange"
+          variant="outline"
+          onClick={() => router.push("/auth")}
+        >
+          Sign In
+        </Button>
+      )}
+    </Alert>
+  );
 
   return (
-    <>
-      <Head>
-        <title>NMT - Neural Machine Translation | AI4Inclusion Console</title>
-        <meta
-          name="description"
-          content="Test Neural Machine Translation across Indic languages"
-        />
-      </Head>
-
-      <ContentLayout>
-        <VStack spacing={8} w="full">
-          {/* Page Header */}
-          <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("nmt")}
-            </Heading>
-            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("nmt")}
-            </Text>
-          </Box>
-
-          {/* Anonymous User Alert */}
-          {!authLoading && !isAuthenticated && (
-            <Alert
-              status={
-                anonymousRateLimitReached
-                  ? "error"
-                  : showRateLimitWarning
-                    ? "warning"
-                    : "info"
-              }
-              variant="left-accent"
-              borderRadius="md"
-              maxW="1200px"
-              w="full"
-            >
-              <AlertIcon />
-              <Box flex="1">
-                <AlertTitle>
-                  {anonymousRateLimitReached
-                    ? "Rate Limit Reached"
-                    : showRateLimitWarning
-                      ? "Rate Limit Warning"
-                      : "Try Neural Machine Translation"}
-                </AlertTitle>
+    <ServicePageLayout
+      serviceId="nmt"
+      headDescription="Test Neural Machine Translation across Indic languages"
+      banner={rateLimitBanner}
+      requestPanel={
+        <RequestContainer
+          inputType="text"
+          topSlot={
+            servicesError ? (
+              <Alert status="error" borderRadius="md">
+                <AlertIcon />
                 <AlertDescription fontSize="sm">
-                  {anonymousRateLimitReached ? (
-                    <>
-                      You have used all <strong>5 translations</strong> for this hour. Sign in for
-                      unlimited access, or try again later.
-                    </>
-                  ) : showRateLimitWarning ? (
-                    <>
-                      You have approximately <strong>{remainingRequests} translation{remainingRequests !== 1 ? 's' : ''}</strong> remaining.
-                      Sign in to get access to all services.
-                    </>
-                  ) : (
-                    <>
-                      You&apos;re using NMT without an account. You can try up to{" "}
-                      <strong>5 translations per hour</strong>. Sign in for unlimited access.
-                    </>
-                  )}
+                  Could not load NMT services.{" "}
+                  {servicesLoadError instanceof Error
+                    ? servicesLoadError.message
+                    : "Please refresh the page or try again later."}
                 </AlertDescription>
-              </Box>
-
-            </Alert>
-          )}
-
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
-            maxW="1200px"
-            mx="auto"
-          >
-            {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {servicesError && (
-                  <Alert status="error" borderRadius="md">
-                    <AlertIcon />
-                    <AlertDescription fontSize="sm">
-                      Could not load NMT services.{" "}
-                      {servicesLoadError instanceof Error
-                        ? servicesLoadError.message
-                        : "Please refresh the page or try again later."}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {/* Service and Language Selector - same layout for all users (anonymous can change service from try-it API list) */}
-                <Box pt={0} mt={0}>
-                  <ModelLanguageSelector
-                    languagePair={languagePair}
-                    onLanguagePairChange={setLanguagePair}
-                    availableLanguagePairs={languagePairs || []}
-                    loading={pairsLoading || servicesLoading}
-                    selectedServiceId={selectedServiceId}
-                    onServiceChange={setSelectedServiceId}
-                    hideServiceSelector={false}
-                    inferenceInProgress={fetching}
-                  />
-                </Box>
-
-                {/* Source Text */}
-                <Box>
-                  <TextTranslator
-                    inputText={inputText}
-                    onInputChange={setInputText}
-                    maxLength={512}
-                    disabled={fetching || !selectedServiceId}
-                  />
-                </Box>
-
-                {/* Instruction above Translate (same order as TTS/ASR) */}
-                <Text fontSize="sm" color="gray.600">
-                  Select an NMT service and languages above, enter text, then click &quot;Translate&quot;.
-                </Text>
-
-                {/* Translate Button */}
-                <Button
-                  leftIcon={<FaLanguage />}
-                  colorScheme="orange"
-                  size="lg"
-                  onClick={handleTranslate}
-                  isLoading={fetching}
-                  loadingText="Translating..."
-                  isDisabled={!canTranslate || fetching}
-                  w="full"
-                >
-                  Translate
-                </Button>
-              </VStack>
-            </GridItem>
-
-            {/* Results Panel - translation output on right, aligned with left */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {fetching && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Translating text...
-                    </Text>
-                    <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
-
-                {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
-                    <Text color="red.600" fontSize="sm">
-                      {error}
-                    </Text>
-                  </Box>
-                )}
-
-                {fetched && translatedText && (
-                  <>
-                    <Box
-                      p={4}
-                      bg="gray.50"
-                      borderRadius="md"
-                      borderWidth="1px"
-                      borderColor="gray.200"
-                      w="full"
-                    >
-                      <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={2}>
-                        Translation
-                      </Text>
-                      <Text fontSize="sm" color="gray.800" whiteSpace="pre-wrap">
-                        {translatedText}
-                      </Text>
-                    </Box>
-                    <TranslationResults
-                      sourceText={inputText}
-                      translatedText={translatedText}
-                      requestWordCount={requestWordCount}
-                      responseWordCount={responseWordCount}
-                      responseTime={Number(requestTime)}
-                    />
-                    <Box textAlign="center">
-                      <button
-                        onClick={clearResults}
-                        style={{
-                          padding: "8px 16px",
-                          backgroundColor: "#f7fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                          color: "#4a5568",
-                        }}
-                      >
-                        Clear Results
-                      </button>
-                    </Box>
-                  </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
-        </VStack>
-      </ContentLayout>
-    </>
+              </Alert>
+            ) : undefined
+          }
+          textInput={{
+            value: inputText,
+            onChange: setInputText,
+            placeholder: pageDefaults.textPlaceholder,
+            maxLength: pageDefaults.maxTextLength,
+            disabled: fetching || !selectedServiceId,
+          }}
+          helperText={pageDefaults.helperText}
+          submitButton={{
+            label: pageDefaults.submitLabel,
+            loadingLabel: pageDefaults.submitLoadingLabel,
+            onClick: () => canTranslate && performInference(inputText),
+            isLoading: fetching,
+            isDisabled: !canTranslate || fetching,
+            icon: <FaLanguage />,
+          }}
+        >
+          <ModelLanguageSelector
+            languagePair={languagePair}
+            onLanguagePairChange={setLanguagePair}
+            availableLanguagePairs={languagePairs || []}
+            loading={pairsLoading || servicesLoading}
+            selectedServiceId={selectedServiceId}
+            onServiceChange={setSelectedServiceId}
+            hideServiceSelector={false}
+            inferenceInProgress={fetching}
+          />
+        </RequestContainer>
+      }
+      responsePanel={
+        <ResponseContainer
+          fetching={fetching}
+          fetchingLabel="Translating text..."
+          error={error}
+          fetched={fetched}
+          hasResult={!!translatedText}
+          resultTitle="Translation"
+          resultContent={translatedText}
+          metadata={fetched && translatedText ? responseMetadata : []}
+          actions={
+            fetched && translatedText
+              ? [
+                  {
+                    id: "copy-source",
+                    label: "Copy Source",
+                    kind: "copy",
+                    onClick: () => copy(inputText, "Source text copied to clipboard."),
+                  },
+                  {
+                    id: "copy-translation",
+                    label: "Copy Translation",
+                    kind: "copy",
+                    onClick: () => copy(translatedText, "Translation copied to clipboard."),
+                  },
+                ]
+              : []
+          }
+          onClear={clearResults}
+        />
+      }
+    />
   );
 };
 

@@ -51,7 +51,10 @@ const Header: React.FC = () => {
 
   // Determine if we should show user menu or sign in button
   const showUserMenu =
-    !isAuthLoading && isUserAuthenticated && user && user.username;
+    !isAuthLoading && isUserAuthenticated && !!user;
+
+  const profileDisplayName =
+    (user?.full_name ?? "").trim() || "N/A";
 
   // Check session expiry on mount and when user changes
   useEffect(() => {
@@ -198,7 +201,7 @@ const Header: React.FC = () => {
 
           {/* Right side - Menu and Auth */}
           <HStack spacing={4}>
-            {/* Authentication: Show username badge or Sign In button */}
+            {/* Authentication: Show full name badge or Sign In button */}
             {showUserMenu ? (
               <Badge
                 colorScheme="gray"
@@ -207,7 +210,7 @@ const Header: React.FC = () => {
                 py={1}
                 borderRadius="md"
               >
-                {user.username}
+                {profileDisplayName}
               </Badge>
             ) : (
               <Button

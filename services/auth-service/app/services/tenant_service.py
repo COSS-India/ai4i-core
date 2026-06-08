@@ -33,6 +33,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
+from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
@@ -54,7 +55,13 @@ from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
-from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
+from app.services.email_helpers import (
+    enqueue_email,
+    persist_token_verification,
+    reissue_setup_token,
+    resolve_tenant_id,
+    setup_token_expires_at,
+)
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
@@ -130,6 +137,7 @@ class TenantService:
         user_repo: UserRepository,
         role_service: RoleService,
         verification_repo: VerificationRepository,
+        credentials_repo: CredentialsRepository,
         token_service: TokenService,
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
@@ -138,6 +146,7 @@ class TenantService:
         self._users = user_repo
         self._roles = role_service
         self._verifications = verification_repo
+        self._credentials = credentials_repo
         self._tokens = token_service
         self._email = email_client
         self._api_keys = api_key_service
@@ -174,6 +183,32 @@ class TenantService:
     async def is_system_admin(self, user: User) -> bool:
         roles = await self._roles.get_user_roles(user.id)
         return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
+
+    async def _deny_moderator(self, user: User) -> None:
+        """Raise 403 if the caller is a Moderator. Use after enforce_scope on tenant-user operations."""
+        roles = await self._roles.get_user_roles(user.id)
+        if RoleName.MODERATOR.value in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Moderators cannot perform this action.",
+                },
+            )
+
+    async def _deny_tenant_admin_tenant_flag(self, user: User, body: TenantUserStatusUpdate) -> None:
+        """Raise 403 if a Tenant Admin tries to set is_tenant_active. Only Admin may suspend tenant access."""
+        if "is_tenant_active" not in body.model_fields_set:
+            return
+        roles = await self._roles.get_user_roles(user.id)
+        if RoleName.TENANT_ADMIN.value in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Tenant Admins cannot modify the is_tenant_active flag.",
+                },
+            )
 
     @staticmethod
     def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
@@ -240,7 +275,7 @@ class TenantService:
         - ``verify``: verify-email link (/auth/register self-signup only)
         - ``none``: no email
         """
-        if await self._users.get_by_email(email):
+        if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
@@ -366,7 +401,6 @@ class TenantService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "DUPLICATE_TENANT_EMAIL", "message": "A tenant with this email already exists."},
             )
-
         if await self._tenants.get_by_organisation(body.organisation):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -416,22 +450,52 @@ class TenantService:
         limit: int,
         status_filter: Optional[TenantStatus],
     ) -> list[Tenant]:
-        if await self.is_system_admin(current_user):
-            return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
-        if current_user.tenant_id is None:
-            return []
-        own = await self._tenants.get_by_id(current_user.tenant_id)
-        if own and (status_filter is None or own.status == status_filter):
-            return [own]
-        return []
+        # Only ADMIN may list all tenants. MODERATOR and TENANT ADMIN both hold
+        # the gateway-level tenant.read permission (needed for GET by ID and
+        # tenant-user endpoints), so they reach this method — but listing every
+        # tenant in the system is an admin-only operation.
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can list all tenants.",
+                },
+            )
+        return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
 
     async def get_tenant(self, current_user: User, tenant_id: int) -> Tenant:
         await self.enforce_scope(current_user, tenant_id)
         return await self._load_tenant_or_404(tenant_id)
 
     async def update_tenant(
-        self, current_user: User, tenant_id: int, body: TenantUpdate
+        self,
+        current_user: User,
+        tenant_id: int,
+        body: TenantUpdate,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
+        """Patch a tenant's editable fields.
+
+        When the tenant is ``PENDING`` and the email changes, the
+        auto-provisioned admin user's email is updated to match, their
+        outstanding SETUP tokens are deactivated, and a fresh activation
+        email is enqueued to the new address.
+
+        Transactional contract: every write — tenant column update, admin's
+        ``users.email``, token deactivation, new ``token_verification`` row
+        — flushes against the SAME ``AsyncSession`` and is committed once
+        at the end. Any pre-commit failure (409 on duplicate email, admin
+        not found, helper raise) aborts the whole change. The activation
+        email is enqueued **after** commit, so a rolled-back transaction
+        can never leak a delivered email whose token no longer exists.
+        """
+        # TENANT ADMIN now holds tenant.update (perm 42), which the gateway
+        # shares between this profile endpoint and the status endpoint. Without
+        # a scope check a Tenant Admin could PATCH any tenant by id; restrict
+        # non-admins to their own tenant (system admins pass through).
+        await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         data = body.model_dump(exclude_unset=True)
         # Status changes go through PATCH /status to keep authorization split clean.
@@ -439,9 +503,126 @@ class TenantService:
         # Schema uses `contact_name` (frontend-aligned); model column is `name`.
         if "contact_name" in data:
             data["name"] = data.pop("contact_name")
+
+        # ── Pre-validation. Every failure-prone check runs BEFORE any write,
+        # so the tenant.email change is never committed without the matching
+        # admin-email update + token invalidation.
+        if "organisation" in data:
+            existing = await self._tenants.get_by_organisation(data["organisation"])
+            if existing and existing.id != tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "DUPLICATE_TENANT_ORGANISATION",
+                        "message": "A tenant with this organisation name already exists.",
+                    },
+                )
+
+        # Normalise old/new email and decide whether this is a PENDING-tenant
+        # email change (the only case that triggers admin re-alignment).
+        old_email = (tenant.email or "").lower().strip()
+        new_email_raw = data.get("email")
+        new_email = (new_email_raw or "").lower().strip() if new_email_raw else ""
+        email_changed = bool(new_email) and new_email != old_email
+        is_pending_email_change = (
+            email_changed and tenant.status == TenantStatus.PENDING
+        )
+
+        # Look up the admin user BEFORE the email-uniqueness check below, so
+        # that check can be admin-aware (a user row whose id matches the
+        # admin we're about to re-align is not a real collision).
+        admin: Optional[User] = None
+        if is_pending_email_change:
+            admin = await self._users.get_by_email(old_email)
+            if admin is None or admin.tenant_id != tenant.id:
+                # No admin to re-issue against → fail loudly. Otherwise the
+                # tenant.email would change while the original activation link
+                # (bound to whichever user actually exists) stays live, which
+                # is the inconsistency this flow exists to prevent.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "TENANT_ADMIN_NOT_FOUND",
+                        "message": (
+                            "Cannot update tenant email: the tenant's admin "
+                            "user could not be located, so the existing "
+                            "activation link cannot be invalidated."
+                        ),
+                    },
+                )
+
+        # ── Single, admin-aware email-uniqueness check. Consolidates what
+        # PR #828 added (cross-tenant tenant+user collision) with the
+        # reissue-time check this PR needed (any non-admin user collision),
+        # so there is exactly one query per table and one place that owns
+        # email uniqueness for this endpoint.
+        if "email" in data:
+            existing_tenant = await self._tenants.get_by_email(data["email"])
+            if existing_tenant and existing_tenant.id != tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "DUPLICATE_TENANT_EMAIL",
+                        "message": "A tenant with this email already exists.",
+                    },
+                )
+            existing_user = await self._users.get_by_email(data["email"])
+            if existing_user is not None:
+                if admin is not None:
+                    # Reissue flow will assign ``admin.email = new_email``.
+                    # Any other holder — same-tenant or cross-tenant — breaks
+                    # the users.email UNIQUE constraint at flush time, so
+                    # only the admin themselves is an allowed match.
+                    collides = existing_user.id != admin.id
+                else:
+                    # No reissue planned: tenant.email is independent of
+                    # users.email, so a same-tenant user happening to share
+                    # the address is harmless. Only reject cross-tenant.
+                    collides = existing_user.tenant_id != tenant_id
+                if collides:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "DUPLICATE_EMAIL",
+                            "message": "This email is already in use.",
+                        },
+                    )
+
+        # ── Stage writes against the open session (flush only, no commit).
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
-        await self._tenants.save_and_refresh(tenant)
+
+        new_setup_token: Optional[str] = None
+        if admin is not None:
+            # Aligns admin's email with the tenant's, then delegates the
+            # SETUP-token deactivation + new token mint to the shared helper
+            # (same path used by AuthService.resend_setup_link, so the
+            # token-type scoping and credentials guard stay in lockstep).
+            admin.email = new_email
+            new_setup_token = await reissue_setup_token(
+                admin,
+                credentials_repo=self._credentials,
+                verifications_repo=self._verifications,
+                token_service=self._tokens,
+                background_tasks=background_tasks,
+            )
+
+        # ── Single atomic commit + refresh.
+        await self._tenants.commit()
+        await self._tenants.refresh(tenant)
+
+        # ── Email enqueue happens AFTER the commit so a rolled-back tx can't
+        # leak a delivered email whose token row was never persisted.
+        if admin is not None and new_setup_token is not None:
+            logger.info(
+                "Re-issued tenant activation link for tenant %s: %s → %s",
+                tenant.id, old_email, new_email,
+            )
+            enqueue_email(
+                background_tasks,
+                self._email,
+                lambda: render_setup_link(admin, new_setup_token),
+            )
         return tenant
 
     async def update_tenant_status(
@@ -451,18 +632,13 @@ class TenantService:
         body: TenantStatusUpdate,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
-        await self.enforce_scope(current_user, tenant_id)
-        if body.status in (
-            TenantStatus.SUSPENDED,
-            TenantStatus.DEACTIVATED,
-        ) and not await self.is_system_admin(current_user):
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.ADMIN.value not in roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
-                    "code": "TENANT_STATUS_FORBIDDEN",
-                    "message": (
-                        "Only system administrators can suspend or deactivate a tenant."
-                    ),
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                    "message": "Only administrators can change tenant status.",
                 },
             )
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
@@ -512,6 +688,8 @@ class TenantService:
         self, current_user: User, tenant_id: int, offset: int, limit: int
     ) -> list[User]:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
+        await self._load_tenant_or_404(tenant_id)
         return await self._users.list_by_tenant(tenant_id, offset=offset, limit=limit)
 
     async def create_tenant_user(
@@ -523,6 +701,7 @@ class TenantService:
     ) -> tuple[str, str]:
         """Provision an inactive user for the tenant. Returns (user_id, setup_token)."""
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
         # Lock tenant row until provision_user commits — prevents suspend/deactivate
         # between the ACTIVE check and user insert in the same request.
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
@@ -551,6 +730,7 @@ class TenantService:
         body: TenantUserUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
         await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
@@ -571,6 +751,8 @@ class TenantService:
         body: TenantUserStatusUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
+        await self._deny_tenant_admin_tenant_flag(current_user, body)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
@@ -587,6 +769,7 @@ class TenantService:
         self, current_user: User, tenant_id: int, user_id: UUID
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         await self._users.update(

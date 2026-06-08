@@ -196,6 +196,7 @@ class ModelService:
             inference_endpoint=encoded.get("inferenceEndPoint") or {},
             benchmarks=encoded.get("benchmarks") or [],
             submitter=encoded.get("submitter") or {},
+            class_instance=encoded.get("classInstance"),
             created_by=created_by,
         )
         try:
@@ -228,6 +229,16 @@ class ModelService:
 
         instance = await self._models.get_by_id_version(payload.modelId, payload.version)
         if instance is None:
+            existing_model = await self._models.get_by_model_id(payload.modelId)
+            if existing_model is not None:
+                conflict = await self._models.get_by_name_version(
+                    existing_model.name, payload.version
+                )
+                if conflict is not None:
+                    raise DuplicateModelVersionError(
+                        f"Model with name '{existing_model.name}' and version "
+                        f"'{payload.version}' already exists.",
+                    )
             raise EntityNotFoundError(
                 f"Model '{payload.modelId}' v{payload.version}"
             )
@@ -301,6 +312,8 @@ class ModelService:
                 update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(ep_dict))
             elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
                 update_data[key] = jsonable_encoder(value)
+            elif key == "classInstance":
+                update_data["class_instance"] = value
             else:
                 update_data[key] = value
 

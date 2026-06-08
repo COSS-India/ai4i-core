@@ -35,6 +35,7 @@ import {
   apiKeyListResponseSchema,
   apiKeyListUnionSchema,
   apiKeyResponseSchema,
+  checkEmailExistsResponseSchema,
   createApiKeyResponseSchema,
   guestServicesListSchema,
   loginResponseSchema,
@@ -165,11 +166,14 @@ class AuthService {
           .join(', ');
       }
 
-      if (withAuth) {
+      if (withAuth && endpoint !== authPath.changePassword) {
         const errorMessageLower = errorMessage.toLowerCase();
         const isInvalidAuth =
           errorMessageLower.includes('invalid authentication credentials') ||
-          (status === 401 && errorMessageLower.includes('invalid'));
+          errorMessageLower.includes('token expired') ||
+          errorMessageLower.includes('token has expired') ||
+          errorMessageLower.includes('token is invalid') ||
+          errorMessageLower.includes('session expired');
 
         if (isInvalidAuth && typeof window !== 'undefined') {
           this.clearAuthTokens();
@@ -472,7 +476,15 @@ class AuthService {
     );
   }
 
-  async resendSetupLink(data: { email: string }): Promise<{ message: string }> {
+  /**
+   * Re-issue a welcome/set-password link for a user who has not activated yet.
+   * @param withAuth — true when an admin triggers this from Tenant Management (Bearer JWT).
+   */
+  async resendSetupLink(
+    data: { email: string },
+    options: { withAuth?: boolean } = {}
+  ): Promise<{ message: string }> {
+    const withAuth = options.withAuth === true;
     return this.validatedRequest(
       authPath.resendSetupLink,
       authUnwrappedSchema(messageResponseSchema),
@@ -480,7 +492,7 @@ class AuthService {
         method: 'POST',
         body: JSON.stringify(data),
       },
-      { withAuth: false }
+      { withAuth }
     );
   }
 
@@ -607,6 +619,22 @@ class AuthService {
       },
       { withAuth: false }
     );
+  }
+
+  /** GET /auth/check-email — whether a user account already uses this email. */
+  async checkEmailExists(
+    email: string,
+    options: { withAuth?: boolean } = {}
+  ): Promise<boolean> {
+    const trimmed = email.trim();
+    const withAuth = options.withAuth !== false;
+    const result = await this.validatedRequest(
+      `${authPath.checkEmail}?email=${encodeURIComponent(trimmed)}`,
+      authUnwrappedSchema(checkEmailExistsResponseSchema),
+      { method: 'GET' },
+      { withAuth }
+    );
+    return result.exists;
   }
 
   // User management (Admin / Mod / Tenant Admin)

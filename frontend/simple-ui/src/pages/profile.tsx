@@ -160,7 +160,15 @@ const ProfilePage: React.FC = () => {
                 {tabConfig.map((t) => (
                   <TabPanel key={t.id} px={0} pt={6}>
                     {t.id === "user-details" && <UserDetailsTab />}
-                    {t.id === "change-password" && <ChangePasswordTab />}
+                    {t.id === "change-password" && (
+                      <ChangePasswordTab
+                        onCancel={() =>
+                          setActiveTabIndex(
+                            tabConfig.findIndex((tab) => tab.id === "user-details")
+                          )
+                        }
+                      />
+                    )}
                     {t.id === "roles" && (
                       <RolesTab
                         users={users}

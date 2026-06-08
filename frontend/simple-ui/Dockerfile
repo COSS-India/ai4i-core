@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ---------------- Stage 1: Dependencies ----------------
 FROM node:18-alpine AS deps
 WORKDIR /app
@@ -15,30 +16,38 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 
-# ✅ Correct: copy everything from context
-COPY . .
+COPY src/ ./src/
+COPY public/ ./public/
+COPY package.json next.config.js tsconfig.json ./
 
+# Non-sensitive URL config — not credentials, safe to pass as ARG/ENV.
 ARG NEXT_PUBLIC_API_URL=""
-ARG NEXT_PUBLIC_API_KEY=""
-ARG NEXT_PUBLIC_ASR_API_KEY=""
-ARG NEXT_PUBLIC_TTS_API_KEY=""
-ARG NEXT_PUBLIC_NMT_API_KEY=""
-ARG NEXT_PUBLIC_PIPELINE_API_KEY=""
-ARG NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=""
 ARG NEXT_PUBLIC_TELEMETRY_SERVICE_URL=""
 
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-ENV NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY}
-ENV NEXT_PUBLIC_ASR_API_KEY=${NEXT_PUBLIC_ASR_API_KEY}
-ENV NEXT_PUBLIC_TTS_API_KEY=${NEXT_PUBLIC_TTS_API_KEY}
-ENV NEXT_PUBLIC_NMT_API_KEY=${NEXT_PUBLIC_NMT_API_KEY}
-ENV NEXT_PUBLIC_PIPELINE_API_KEY=${NEXT_PUBLIC_PIPELINE_API_KEY}
-ENV NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY}
 ENV NEXT_PUBLIC_TELEMETRY_SERVICE_URL=${NEXT_PUBLIC_TELEMETRY_SERVICE_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
-RUN npm run build
+# API keys are injected via BuildKit secret mounts so they are never persisted
+# in image layers or visible via `docker inspect` / `docker history`.
+# Next.js statically inlines NEXT_PUBLIC_* values into the client JS bundle —
+# these are not server-side credentials, but keeping them out of image metadata
+# follows least-privilege and satisfies docker:S6472.
+# Build with: --secret id=NEXT_PUBLIC_API_KEY,env=NEXT_PUBLIC_API_KEY (etc.)
+RUN --mount=type=secret,id=NEXT_PUBLIC_API_KEY \
+    --mount=type=secret,id=NEXT_PUBLIC_ASR_API_KEY \
+    --mount=type=secret,id=NEXT_PUBLIC_TTS_API_KEY \
+    --mount=type=secret,id=NEXT_PUBLIC_NMT_API_KEY \
+    --mount=type=secret,id=NEXT_PUBLIC_PIPELINE_API_KEY \
+    --mount=type=secret,id=NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY \
+    export NEXT_PUBLIC_API_KEY=$(cat /run/secrets/NEXT_PUBLIC_API_KEY 2>/dev/null || echo "") \
+    && export NEXT_PUBLIC_ASR_API_KEY=$(cat /run/secrets/NEXT_PUBLIC_ASR_API_KEY 2>/dev/null || echo "") \
+    && export NEXT_PUBLIC_TTS_API_KEY=$(cat /run/secrets/NEXT_PUBLIC_TTS_API_KEY 2>/dev/null || echo "") \
+    && export NEXT_PUBLIC_NMT_API_KEY=$(cat /run/secrets/NEXT_PUBLIC_NMT_API_KEY 2>/dev/null || echo "") \
+    && export NEXT_PUBLIC_PIPELINE_API_KEY=$(cat /run/secrets/NEXT_PUBLIC_PIPELINE_API_KEY 2>/dev/null || echo "") \
+    && export NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=$(cat /run/secrets/NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY 2>/dev/null || echo "") \
+    && npm run build
 
 # ---------------- Stage 3: Runner ----------------
 FROM node:18-alpine AS runner
@@ -53,9 +62,9 @@ ENV HOSTNAME=0.0.0.0
 RUN addgroup --system --gid 1001 nodejs \
  && adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=root:root --chmod=755 /app/public ./public
+COPY --from=builder --chown=root:root --chmod=755 /app/.next/standalone ./
+COPY --from=builder --chown=root:root --chmod=755 /app/.next/static ./.next/static
 
 # Fix the standalone server.js to use HOSTNAME env var instead of hardcoded 'localhost'
 # This is needed because Next.js 13.1.x standalone builds hardcode hostname: 'localhost'

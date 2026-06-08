@@ -109,7 +109,12 @@ const SERVICE_BASE_PATHS = [
 
 const extractErrorMessage = (data: any, fallback: string): string => {
   if (!data) return fallback;
-  if (data?.detail != null) return String(data.detail);
+  const detail = data?.detail;
+  if (detail != null) {
+    if (typeof detail === 'string') return detail;
+    if (typeof detail === 'object' && detail.message != null) return String(detail.message);
+    return fallback;
+  }
   if (data?.message != null) return String(data.message);
   return fallback;
 };
@@ -126,6 +131,27 @@ const clearSessionAndRedirect = async (href: '/auth' | '/') => {
   if (typeof window !== 'undefined') {
     window.location.href = href;
   }
+};
+
+/** Login/register/guest sign-in: inactive responses must stay on the form, not reload /auth. */
+const isUnauthenticatedAuthSubmissionUrl = (rawUrl: string): boolean => {
+  const pathNoQuery = (rawUrl.split('?')[0] || '').toLowerCase();
+  const suffixes = [
+    apiEndpoints.auth.paths.login,
+    apiEndpoints.auth.paths.guestLogin,
+    apiEndpoints.auth.paths.register,
+  ].map((s) => s.toLowerCase());
+  return suffixes.some((suffix) => pathNoQuery.endsWith(suffix));
+};
+
+/**
+ * Authenticated auth routes where 401 is a validation/business error (e.g. wrong
+ * current password), not an expired or invalid session token.
+ */
+const isAuthenticatedAuthValidationUrl = (rawUrl: string): boolean => {
+  const pathNoQuery = (rawUrl.split('?')[0] || '').toLowerCase();
+  const suffixes = [apiEndpoints.auth.paths.changePassword].map((s) => s.toLowerCase());
+  return suffixes.some((suffix) => pathNoQuery.endsWith(suffix));
 };
 
 const getEndpointContext = (rawUrl: string): EndpointContext => {
@@ -233,16 +259,21 @@ apiClient.interceptors.response.use(
       const status = error?.response?.status;
       const data = error?.response?.data;
 
-      if (
-        typeof window !== 'undefined' &&
-        responseIndicatesTenantSuspendedOrInactive(status, data)
-      ) {
-        console.warn('API: tenant suspended/deactivated or user inactive — ending session');
-        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-        forceFrontendSessionEnd();
-        return Promise.reject(
-          new Error('Your organization account is no longer active. Please sign in again.')
-        );
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        const requestUrl = error?.config?.url || '';
+        // Failed sign-in (no session yet): surface the server message on the login form.
+        if (isUnauthenticatedAuthSubmissionUrl(requestUrl)) {
+          return Promise.reject(error);
+        }
+        if (typeof window !== 'undefined' && getJwtToken()) {
+          console.warn('API: tenant suspended/deactivated or user inactive — ending session');
+          const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+          forceFrontendSessionEnd();
+          return Promise.reject(
+            new Error('Your organization account is no longer active. Please sign in again.')
+          );
+        }
+        return Promise.reject(error);
       }
 
       switch (status) {
@@ -250,6 +281,15 @@ apiClient.interceptors.response.use(
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
             const url = error?.config?.url || '';
+
+            if (isAuthenticatedAuthValidationUrl(url)) {
+              const errorMessage = extractErrorMessage(data, 'Request failed');
+              const enhancedError = new Error(errorMessage);
+              (enhancedError as any).status = 401;
+              (enhancedError as any).response = error?.response;
+              return Promise.reject(enhancedError);
+            }
+
             const context = getEndpointContext(url);
 
             // A failed /refresh must not trigger another refresh — authService.refreshToken()

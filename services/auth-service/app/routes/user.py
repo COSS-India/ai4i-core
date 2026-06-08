@@ -7,15 +7,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import RoleId
 from app.core.exceptions import UserNotFoundError
+from app.utils.auth_helper import check_permission_ids
 from app.core.responses import success_response, to_response
 from app.dependencies.auth import get_current_user
-from app.dependencies.permissions import require_any_role
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.core.database import get_db
 from app.dependencies.services import get_user_service
 from app.models.role_name import RoleName
 from app.models.user import User
+from app.repositories.role_repository import RoleRepository
 from app.schemas.user import UserListResponse, UserUpdate
 from app.services.user_service import UserService
 
@@ -53,11 +55,14 @@ async def list_users(
     request: Request,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    caller: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    caller: User = Depends(get_current_user),
     svc: UserService = Depends(get_user_service),
+    db: AsyncSession = Depends(get_db),
 ):
-    role_set = set(getattr(request.state, "user_roles", []) or [])
-    users = await svc.list_users_for_caller(caller, offset, limit, role_set=role_set)
+    check_permission_ids(request, RoleId.ADMIN, RoleId.MODERATOR, RoleId.TENANT_ADMIN)
+    user_roles = await RoleRepository(db).get_user_roles(caller.id)
+    request.state.user_roles = user_roles
+    users = await svc.list_users_for_caller(caller, offset, limit, role_set=set(user_roles))
     items = [to_response(u, UserListResponse) for u in users]
     return success_response(data=items)
 
@@ -66,20 +71,20 @@ async def list_users(
 async def get_user(
     request: Request,
     user_id: UUID,
-    caller: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    caller: User = Depends(get_current_user),
     svc: UserService = Depends(get_user_service),
     db: AsyncSession = Depends(get_db),
 ):
-    # Enforce tenant isolation for TENANT ADMIN using the shared helper.
+    check_permission_ids(request, RoleId.ADMIN, RoleId.TENANT_ADMIN)
     await enforce_target_user_same_tenant(
         request,
         caller,
         user_id,
         db,
-        bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR),
+        bypass_roles=(RoleName.ADMIN,),
     )
-    role_set = set(getattr(request.state, "user_roles", []) or [])
-    user = await svc.get_user_by_id_for_caller(caller, user_id, role_set=role_set)
+    user_roles = await RoleRepository(db).get_user_roles(caller.id)
+    user = await svc.get_user_by_id_for_caller(caller, user_id, role_set=set(user_roles))
     if not user:
         raise UserNotFoundError()
     profile = await svc.get_user_profile(user)

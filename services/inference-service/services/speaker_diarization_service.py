@@ -1,8 +1,8 @@
 """
 SpeakerDiarizationTaskService — implements speaker diarization inference.
 
-Extends AudioDefaultModel (base64 passthrough, adapter_config driven).
-Overrides postprocess_output and _build_response to produce the same
+Extends AudioBase (base64 passthrough, adapter_config driven).
+Overrides postprocess to produce the same
 output structure as the old speaker-diarization-service.
 
 Triton tensor contract (adapter_config from MMS):
@@ -11,28 +11,20 @@ Triton tensor contract (adapter_config from MMS):
   Output:  DIARIZATION_RESULT (BYTES) — JSON blob
 """
 
-import json
-import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from services.models.audio_default_model import AudioDefaultModel
-from services.base.config_mapper import GenericTritonMapper
-
-logger = logging.getLogger(__name__)
+from services.base.audio_base import AudioBase
+from services.base.task_service import PostProcessFormat
 
 
-class SpeakerDiarizationTaskService(AudioDefaultModel):
+class SpeakerDiarizationTaskService(AudioBase):
     """
     TaskService for Speaker Diarization inference.
 
-    Inherits base64-passthrough preprocessing from AudioDefaultModel.
+    Inherits base64-passthrough preprocessing from AudioBase.
     Overrides convert_payload_to_triton_format (normalise num_speakers),
-    postprocess_output (parse DIARIZATION_RESULT JSON), and _build_response.
+    and postprocess (parse DIARIZATION_RESULT JSON + envelope).
     """
-
-    def __init__(self, service_info: Optional[Dict[str, Any]] = None, **kwargs: Any):
-        super().__init__(service_info=service_info, **kwargs)
-        self.logger = logger
 
     async def convert_payload_to_triton_format(
         self,
@@ -43,19 +35,12 @@ class SpeakerDiarizationTaskService(AudioDefaultModel):
         config = dict(config)
         raw = config.get("num_speakers") or config.get("numSpeakers")
         config["num_speakers"] = "" if not raw else str(raw)
-        mapper = GenericTritonMapper(self._adapter_config)
-        return mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data,
-            config=config,
-            context_builder=self._build_audio_context,
-        )
+        return await super().convert_payload_to_triton_format(input_data, config)
 
-    async def postprocess_output(
-        self, response_items: List[Dict[str, Any]], **kwargs: Any
-    ) -> Dict[str, Any]:
+    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
         output_list = []
 
-        for item in response_items:
+        for item in result.response_data:
             # Try the well-known key first; fall back to the first value in the
             # dict so different adapter_config maps_to names still work.
             raw = item.get("diarization_json") or next(iter(item.values()), None)
@@ -87,39 +72,15 @@ class SpeakerDiarizationTaskService(AudioDefaultModel):
                 "segments": segments,
             })
 
-        return {"output": output_list}
-
-    def _build_response(
-        self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        cfg = payload.get("config") or {}
+        cfg = result.payload.get("config") or {}
         return {
             "taskType": "speaker-diarization",
-            "output": postprocessed["output"],
+            "output": output_list,
             "config": {
                 "serviceId": cfg.get("serviceId"),
                 "language": cfg.get("language"),
             },
         }
-
-    def _parse_json(self, value: Any) -> Dict[str, Any]:
-        if value is None:
-            return {}
-        if isinstance(value, dict):
-            return value
-        # Unwrap single-element list nesting from Triton KServe v2 responses
-        # e.g. to_output_items peels [["json"]] → ["json"]; we peel once more → "json"
-        while isinstance(value, (list, tuple)) and len(value) == 1:
-            value = value[0]
-        if isinstance(value, bytes):
-            value = value.decode("utf-8", errors="replace")
-        if isinstance(value, str):
-            try:
-                return json.loads(value) or {}
-            except json.JSONDecodeError:
-                logger.warning("%s: failed to parse diarization JSON: %r", self.task_name, value[:200])
-                return {}
-        return {}
 
 
 __all__ = ["SpeakerDiarizationTaskService"]

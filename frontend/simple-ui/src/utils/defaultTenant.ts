@@ -37,6 +37,29 @@ export function resolveDefaultTenantId(tenants: TenantView[]): string | null {
   return match?.tenant_id?.trim() || null;
 }
 
+export function isDefaultTenantOrg(organisation?: string | null): boolean {
+  return (organisation ?? "").trim().toLowerCase() === DEFAULT_TENANT_ORGANISATION.toLowerCase();
+}
+
+export function isDefaultTenant(tenant: { organisation?: string | null }): boolean {
+  return isDefaultTenantOrg(tenant.organisation);
+}
+
+/** Role filter options for Default Tenant user list (Tenant Management). */
+export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
+  { value: "ADMIN", label: "Admin" },
+  { value: "USER", label: "User" },
+  { value: "MODERATOR", label: "Moderator" },
+  { value: "GUEST", label: "Guest" },
+  { value: "TENANT ADMIN", label: "Tenant Admin" },
+] as const;
+
+export function formatPlatformRoleLabel(role: string): string {
+  const normalized = role.trim().toUpperCase();
+  const match = DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST.find((o) => o.value === normalized);
+  return match?.label ?? role;
+}
+
 /** Map tenant user rows for Profile → Roles picker (auth `User` shape). */
 export function tenantUsersToAuthUsers(rows: TenantUserView[]): User[] {
   return rows.map((u) => ({

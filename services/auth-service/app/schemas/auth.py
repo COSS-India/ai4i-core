@@ -2,9 +2,30 @@
 Authentication request/response schemas.
 """
 
-from typing import Optional
+import re
+from typing import Annotated, Optional
 
 from pydantic import EmailStr, Field
+from pydantic.functional_validators import AfterValidator
+from pydantic import StringConstraints
+
+# email_validator (used by EmailStr) hardcodes a reject-list of special-use
+# domains (RFC 2606: .invalid, .test, .localhost, etc.) regardless of the
+# check_deliverability flag. For anti-enumeration endpoints we need a looser
+# check: any string that looks like an email must reach business logic and
+# return 200 silently. We only reject obvious non-email strings (no @ or no dot
+# in the domain) so legitimate users still get helpful format errors.
+_BASIC_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+def _loose_email_validator(v: str) -> str:
+    if not isinstance(v, str):
+        raise ValueError("value is not a valid email address")
+    v = v.strip().lower()
+    if not _BASIC_EMAIL_RE.match(v):
+        raise ValueError("value is not a valid email address")
+    return v
+
+_AnyEmail = Annotated[str, StringConstraints(max_length=254), AfterValidator(_loose_email_validator)]
 
 from app.core.constants import (
     FULL_NAME_MAX_LENGTH,
@@ -46,6 +67,7 @@ class PasswordChangeRequest(BaseSchema):
     current_password: str
     new_password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
+    current_refresh_token: str | None = None
 
 
 class SetPasswordRequest(BaseSchema):
@@ -55,7 +77,7 @@ class SetPasswordRequest(BaseSchema):
 
 
 class ResendSetupLinkRequest(BaseSchema):
-    email: EmailStr
+    email: _AnyEmail
 
 
 class VerifyEmailRequest(BaseSchema):
@@ -63,11 +85,11 @@ class VerifyEmailRequest(BaseSchema):
 
 
 class ResendVerificationRequest(BaseSchema):
-    email: EmailStr
+    email: _AnyEmail
 
 
 class ForgotPasswordRequest(BaseSchema):
-    email: EmailStr
+    email: _AnyEmail
 
 
 class ResetPasswordRequest(BaseSchema):

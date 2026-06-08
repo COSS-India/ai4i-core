@@ -133,6 +133,7 @@ def _tenant_service_with_mocks() -> TenantService:
         user_repo=user_repo,
         role_service=MagicMock(),
         verification_repo=MagicMock(),
+        credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
     )
@@ -153,7 +154,7 @@ class TestUpdateTenantStatusAuthorization:
             username="tenant_admin",
             tenant_id=1,
         )
-        svc.is_system_admin = AsyncMock(return_value=False)
+        svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
 
         with pytest.raises(HTTPException) as exc_info:
             await svc.update_tenant_status(
@@ -163,7 +164,7 @@ class TestUpdateTenantStatusAuthorization:
             )
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail["code"] == "TENANT_STATUS_FORBIDDEN"
+        assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
         svc._tenants.get_by_id_for_update.assert_not_called()
 
     @pytest.mark.asyncio
@@ -187,7 +188,7 @@ class TestUpdateTenantStatusAuthorization:
             email="contact@acme.com",
             status=TenantStatus.ACTIVE,
         )
-        svc.is_system_admin = AsyncMock(return_value=True)
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
 
         await svc.update_tenant_status(
@@ -201,7 +202,9 @@ class TestUpdateTenantStatusAuthorization:
         assert svc._tenants.update.await_args.args[1]["status"] == target
 
     @pytest.mark.asyncio
-    async def test_tenant_admin_can_activate_pending_tenant(self) -> None:
+    async def test_tenant_admin_cannot_activate_pending_tenant(self) -> None:
+        """Status changes are admin-only (AI4IDS-1750): a tenant admin cannot
+        activate even their own pending tenant via this endpoint."""
         svc = _tenant_service_with_mocks()
         tenant_admin = User(
             id=uuid4(),
@@ -209,22 +212,16 @@ class TestUpdateTenantStatusAuthorization:
             username="tenant_admin",
             tenant_id=1,
         )
-        tenant = Tenant(
-            id=1,
-            name="Acme",
-            organisation="Acme",
-            email="contact@acme.com",
-            status=TenantStatus.PENDING,
-        )
-        svc.is_system_admin = AsyncMock(return_value=False)
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
 
-        await svc.update_tenant_status(
-            tenant_admin,
-            1,
-            _status_body(TenantStatus.ACTIVE),
-        )
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.update_tenant_status(
+                tenant_admin,
+                1,
+                _status_body(TenantStatus.ACTIVE),
+            )
 
-        svc._tenants.update.assert_awaited_once()
-        svc._users.unlock_tenant_users_for_status.assert_awaited_once()
-        assert svc._tenants.update.await_args.args[1]["status"] == TenantStatus.ACTIVE
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
+        svc._tenants.get_by_id_for_update.assert_not_called()
+        svc._tenants.update.assert_not_awaited()

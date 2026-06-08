@@ -15,24 +15,17 @@ configure_logging(service_name="ai4x-inference", log_level="INFO")
 
 # NOW import the rest
 import uvicorn
-import asyncio
 from app_factory import create_inference_app
 from config import settings
 
-async def main():
-    """Main async entry point for inference service."""
-    app = await create_inference_app()
-    
-    config = uvicorn.Config(
-        app,
+app = create_inference_app()
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
         host=settings.HOST,
         port=settings.PORT,
         workers=settings.WORKERS,
         log_level=settings.LOG_LEVEL.lower(),
     )
-    server = uvicorn.Server(config)
-    await server.serve()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

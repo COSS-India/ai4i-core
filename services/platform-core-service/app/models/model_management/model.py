@@ -57,6 +57,7 @@ class Model(Base):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB, nullable=True)
     submitter = Column(JSONB, nullable=False)
+    class_instance = Column(String(100), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

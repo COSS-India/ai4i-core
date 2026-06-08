@@ -59,10 +59,8 @@ class DatabaseSpec:
 
 DATABASE_ORDER = [
     "ai4iplatform_auth",
-    "config_db",
     "ai4i_platform_db",
     "ai4iplatform_core",
-    "telemetry_db",
 ]
 
 
@@ -199,14 +197,6 @@ DATABASE_SPECS = {
         database_name_key="AUTH_SERVICE_DB_NAME",
         metadata_loader=_load_auth_service_metadata,
     ),
-    "config_db": DatabaseSpec(
-        name="config_db",
-        user_key="POSTGRES_USER",
-        password_key="POSTGRES_PASSWORD",
-        host_key="POSTGRES_HOST",
-        port_key="POSTGRES_PORT",
-        database_name_key="CONFIG_DB_NAME",
-    ),
     "ai4i_platform_db": DatabaseSpec(
         name="ai4i_platform_db",
         user_key="POSTGRES_USER",
@@ -224,14 +214,6 @@ DATABASE_SPECS = {
         port_key="CORE_SERVICE_DB_PORT",
         database_name_key="CORE_SERVICE_DB_NAME",
         metadata_loader=_load_core_service_metadata,
-    ),
-    "telemetry_db": DatabaseSpec(
-        name="telemetry_db",
-        user_key="POSTGRES_USER",
-        password_key="POSTGRES_PASSWORD",
-        host_key="POSTGRES_HOST",
-        port_key="POSTGRES_PORT",
-        database_name_key="TELEMETRY_DB_NAME",
     ),
 }
 

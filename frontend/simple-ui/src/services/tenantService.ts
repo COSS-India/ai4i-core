@@ -25,7 +25,6 @@ import type {
   TenantUserStatusUpdateResponse,
   TenantUserUpdateRequest,
   TenantUserUpdateResponse,
-  TenantUserView,
   TenantView,
   UserRegisterRequest,
   UserRegisterResponse,
@@ -82,19 +81,32 @@ export async function updateTenantStatus(
   return response.data.data;
 }
 
+/**
+ * Re-send verification email to the tenant contact (PENDING tenants).
+ * Wire up in useTenantManagement once auth-service exposes this route.
+ */
+export async function resendTenantVerificationEmail(
+  tenant_id: string
+): Promise<{ message: string }> {
+  const response = await apiService.post(
+    apiEndpoints.tenants.resendVerification(tenant_id),
+    {},
+    {
+      responseSchema: tenantSuccessEnvelopeSchema(
+        z.object({ message: z.string() }).passthrough()
+      ),
+    }
+  );
+  const data = response.data.data as { message?: string };
+  return { message: data?.message ?? "Verification email sent." };
+}
+
 export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
   const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
   });
   const users = response.data.data ?? [];
   return { count: users.length, users };
-}
-
-export async function getViewUser(user_id: string): Promise<TenantUserView> {
-  const response = await apiService.get(apiEndpoints.auth.user(user_id), {
-    responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
-  });
-  return response.data.data;
 }
 
 export async function registerUser(

@@ -28,10 +28,6 @@ All 7 steps have been completed. The monolith inference service now provides a u
 │       ├── audio_language_detection.py
 │       └── pii.py
 │
-├── interfaces/                          # Service interfaces & base classes
-│   ├── __init__.py
-│   └── task_service.py                  # ITaskService interface, BaseTaskService ABC
-│
 ├── orchestrator/                        # Orchestration layer
 │   ├── __init__.py
 │   └── orchestrator.py                  # Orchestrator with polymorphic routing
@@ -98,7 +94,7 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - `GenericInferenceRequest` with `input`, `audio`, or `image` fields
   - `GenericInferenceResponse` with task-specific output
   - `ControlConfig` for optional control parameters
-  
+
 - **`task_types.py`** — Task registry mapping types to implementations:
   - `TaskType` enum (12 services)
   - `TaskRegistry` for registration & lookup
@@ -108,16 +104,27 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - Config models with discriminated unions (e.g., `NMTConfig`)
   - Response models (e.g., `NMTInferenceResponse`)
 
-### 2. **Interfaces Layer** (`interfaces/`)
-- **`ITaskService`** — Abstract interface all services implement:
-  - `validate_request()` — Input validation
-  - `preprocess_input()` — Data preprocessing
-  - `run_inference()` — Main pipeline
-  - `postprocess_output()` — Output formatting
-
-- **`BaseTaskService`** — Abstract base class with common logic:
-  - Default implementations for base operations
-  - Subclasses override for task-specific behavior
+### 2. **Pipeline Base** (`services/base/task_service.py`)
+- **`BaseTaskService`** — pipeline template all services inherit (Template Method):
+  ```
+  process():
+      validate_request(payload)                      # throws on bad input
+      preprocessed = preprocess_input(payload)
+      result: PostProcessFormat = run_inference(preprocessed)
+      return postprocess_output(result)
+  ```
+  - `run_inference()` — generic, the ONLY implementation (no overrides);
+    call topology is data/class-driven (`adapter_config["call_mode"]` or
+    `TRITON_CALL_MODE`: batch vs per-item). TTS expands items into chunks in
+    preprocess_input and merges results in postprocess_output. Output
+    conversion is adapter_config-driven via GenericTritonMapper, incl.
+    transforms like `json_field` (Surya envelope unwrap)
+  - `postprocess_output(result)` — post-inference only (audit/observability/
+    model-specific final shaping); base default pairs sources + echoes config,
+    which is the full contract for e.g. NMT
+  - `payload_key` — modality input key (`input` / `audio` / `image`)
+- Span handling lives in `trace/request_span.py` (`traced_inference`,
+  `finalize_span`) — no tracing code in the service classes.
 
 ### 3. **Orchestration Layer** (`orchestrator/`)
 - **`Orchestrator`** — Polymorphic request router:
@@ -215,14 +222,14 @@ Orchestrator.route_inference(payload)
                 ↓
         TaskFactory.create_service(task_type, dependencies)
                 ↓
-        TaskService.run_inference(request)
-                ├─ Validate request
-                ├─ Preprocess input
-                ├─ Resolve service via InferenceServerResolver
-                ├─ Create InferenceModel converter
-                ├─ Convert payload to Triton format
-                ├─ Call Triton inference server
-                ├─ Convert Triton output to task format
+        TaskService.process(payload, serviceInfo)
+                ├─ validate_request
+                ├─ preprocess_input (payload → preprocessed payload)
+                ├─ run_inference → PostProcessFormat (inside ai-inference span)
+                │   ├─ Convert payload to Triton format (GenericTritonMapper)
+                │   ├─ Call Triton inference server
+                │   └─ Convert Triton output to task format
+                └─ postprocess_output (output shaping + envelope)
                 └─ Postprocess output
                         ↓
         Response (JSON)

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, '.')
 
-from services.models.text_default_model import TextDefaultModel
+from services.nmt_service import NMTTaskService
 
 
 async def test_nmt_validation():
@@ -16,7 +16,7 @@ async def test_nmt_validation():
     print("TEST 1: NMT Request Validation")
     print("="*70)
 
-    service = TextDefaultModel(service_info={
+    service = NMTTaskService(service_info={
         "name": "indictrans-gpu-t4",
         "endpoint": "http://localhost:8000",
         "api_key": None,
@@ -59,7 +59,7 @@ async def test_nmt_preprocessing():
     print("TEST 2: NMT Input Preprocessing")
     print("="*70)
 
-    service = TextDefaultModel(service_info={
+    service = NMTTaskService(service_info={
         "name": "indictrans-gpu-t4",
         "endpoint": "http://localhost:8000",
         "api_key": None,
@@ -77,7 +77,7 @@ async def test_nmt_preprocessing():
         print(f"  [{i}]: '{item['source']}'")
 
     try:
-        cleaned = await service.preprocess_input(raw_input)
+        cleaned = (await service.preprocess_input({"input": raw_input, "config": {}}))["input"]
         print("\n✓ Preprocessing PASSED")
         print("Cleaned input:")
         for i, item in enumerate(cleaned):
@@ -95,7 +95,7 @@ async def test_nmt_error_scenarios():
     print("TEST 4: NMT Error Scenarios")
     print("="*70)
 
-    service = TextDefaultModel(service_info={
+    service = NMTTaskService(service_info={
         "name": "indictrans-gpu-t4",
         "endpoint": "http://localhost:8000",
         "api_key": None,

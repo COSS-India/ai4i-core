@@ -9,7 +9,7 @@ from app.repositories.user_repository import UserRepository
 
 # PATCH /tenants/{id}/status and onboarding (PENDING → ACTIVE on set-password).
 ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] = {
-    TenantStatus.PENDING: frozenset({TenantStatus.ACTIVE}),
+    TenantStatus.PENDING: frozenset({TenantStatus.DEACTIVATED}),
     TenantStatus.ACTIVE: frozenset({TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}),
     TenantStatus.SUSPENDED: frozenset({TenantStatus.ACTIVE, TenantStatus.DEACTIVATED}),
     TenantStatus.DEACTIVATED: frozenset({TenantStatus.ACTIVE}),

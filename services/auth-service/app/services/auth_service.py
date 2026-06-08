@@ -23,6 +23,7 @@ from app.core.exceptions import (
     TokenInvalidError,
     TokenRevokedError,
     UserInactiveError,
+    ValidationError,
 )
 from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
@@ -46,7 +47,14 @@ from app.services.auth_email_templates import (
     render_welcome,
 )
 from app.core.security import password_manager
-from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
+from app.services.email_helpers import (
+    enqueue_email,
+    issue_session,
+    persist_token_verification,
+    reissue_setup_token,
+    resolve_tenant_id,
+    setup_token_expires_at,
+)
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -184,7 +192,7 @@ class AuthService:
         # Normalize email to lowercase for consistent storage and lookup
         email = email.lower().strip()
 
-        if await self._users.get_by_email(email):
+        if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
 
         username = await allocate_unique_username(
@@ -399,7 +407,6 @@ class AuthService:
         tenant = await self._tenants.get_by_id(user.tenant_id)
         if tenant is None:
             raise EntityNotFoundError(f"Tenant {user.tenant_id}")
-        assert_valid_tenant_status_transition(tenant.status, TenantStatus.ACTIVE)
         await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
         await sync_tenant_users_for_status(
             self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
@@ -495,6 +502,7 @@ class AuthService:
         current_password: str,
         new_password: str,
         confirm_password: str,
+        current_refresh_token: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
         password_manager.validate_and_confirm(new_password, confirm_password)
@@ -506,11 +514,26 @@ class AuthService:
         if not await password_manager.verify_password_async(current_password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError("Current password is incorrect.")
 
+        if await password_manager.verify_password_async(new_password, creds.password_hash, creds.password_salt):
+            raise ValidationError(
+                message="New password cannot be the same as the current password.",
+                code="SAME_PASSWORD",
+            )
+
+        # Preserve current session's refresh token (client-provided or fetch from DB)
+        token_to_preserve = current_refresh_token
+        if not token_to_preserve:
+            existing = await self._refresh_tokens.get_by_user_id(user.id)
+            token_to_preserve = existing.refresh_token if existing else None
+
         hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._refresh_tokens.delete_by_user_id(user.id)
+        if token_to_preserve:
+            await self._refresh_tokens.upsert(user.id, token_to_preserve)
         await self._credentials.commit()
-        logger.info("Password changed for user id=%s; refresh tokens revoked", user.id)
+        await self._refresh_tokens.commit()
+        logger.info("Password changed for user id=%s; refresh tokens revoked except current session", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
     # ── Email Activation: Set Password ──
@@ -574,6 +597,9 @@ class AuthService:
 
     # ── Email Activation: Resend ──
 
+    async def check_email_exists(self, email: str) -> bool:
+        return await self._users.email_exists(email.lower().strip())
+
     async def resend_setup_link(
         self,
         email: str,
@@ -584,26 +610,30 @@ class AuthService:
         Anti-enumeration: always returns successfully. Only sends email to users
         who have NOT yet set a password (no credentials). Works for tenant contact
         admins while the tenant is still PENDING.
+
+        Token issuance is delegated to ``reissue_setup_token`` so the SETUP
+        token-type scoping and credentials-already-set guard stay in lockstep
+        with the tenant email-update flow (see ``TenantService.update_tenant``).
         """
         user = await self._users.get_by_email(email)
         if not user:
             return  # anti-enumeration: silent no-op
 
-        existing_creds = await self._credentials.get_by_user_id(user.id)
-        if existing_creds:
-            return  # silent no-op — onboarding complete
-
-        user_id_str = str(user.id)
-        await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.SETUP)
-
-        setup_token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
-        await persist_token_verification(
-            self._verifications,
-            setup_token,
-            user.id,
-            setup_token_expires_at(),
+        setup_token = await reissue_setup_token(
+            user,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
+            background_tasks=background_tasks,
         )
-        await self._users.commit()
+        if setup_token is None:
+            return  # helper guarded — credentials set or no bg tasks
 
+        await self._users.commit()
         logger.info("Setup link resent for user id=%s", user.id)
-        enqueue_email(background_tasks, self._email, lambda: render_setup_link(user, setup_token))
+        # Enqueue AFTER commit so a commit failure can't leak an email whose
+        # token has been rolled back.
+        enqueue_email(
+            background_tasks, self._email,
+            lambda: render_setup_link(user, setup_token),
+        )

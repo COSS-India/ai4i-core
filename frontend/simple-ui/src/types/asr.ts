@@ -87,6 +87,10 @@ export type UseASRReturn = ASRHookState & ASRHookMethods;
 // ASR Component Props
 export interface AudioRecorderProps {
   onAudioReady: (audioBase64: string) => void;
+  /** Show microphone record UI (default true) */
+  showRecording?: boolean;
+  /** Show file upload UI (default true) */
+  showUpload?: boolean;
   /** Called when the user clicks clear/delete for an already uploaded audio file */
   onClear?: () => void;
   /**

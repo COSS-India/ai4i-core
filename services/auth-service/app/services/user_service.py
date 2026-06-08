@@ -100,7 +100,7 @@ class UserService:
 
         effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
-        if RoleName.ADMIN.value in effective_role_set or RoleName.MODERATOR.value in effective_role_set:
+        if RoleName.ADMIN.value in effective_role_set:
             return user
         if RoleName.TENANT_ADMIN.value in effective_role_set:
             self._assert_tenant_context(caller, "view users")

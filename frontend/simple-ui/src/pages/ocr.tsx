@@ -5,12 +5,8 @@ import {
   Button,
   FormControl,
   FormLabel,
-  Grid,
-  GridItem,
-  Heading,
   HStack,
   Input,
-  Progress,
   Select,
   Text,
   Tabs,
@@ -21,22 +17,30 @@ import {
   VStack,
   IconButton,
   Icon,
-  Spinner,
 } from "@chakra-ui/react";
-import Head from "next/head";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
-import ContentLayout from "../components/common/ContentLayout";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
+import {
+  buildResponseMetadata,
+  mapToServiceOptions,
+  RequestContainer,
+  ResponseContainer,
+  ServicePageLayout,
+  useCopyToClipboard,
+} from "../components/service-page";
+import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
+const pageDefaults = getServicePageDefaults("ocr");
+
 const OCRPage: React.FC = () => {
   const toast = useToastWithDeduplication();
+  const { copy } = useCopyToClipboard();
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUri, setImageUri] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -56,8 +60,13 @@ const OCRPage: React.FC = () => {
   const { data: ocrServices, isLoading: servicesLoading } = useQuery({
     queryKey: ["ocr-services"],
     queryFn: listOCRServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 10 * 60 * 1000,
   });
+
+  const serviceOptions = useMemo(
+    () => mapToServiceOptions(ocrServices ?? []),
+    [ocrServices]
+  );
 
   const canExtract =
     !!selectedServiceId?.trim() &&
@@ -126,7 +135,7 @@ const OCRPage: React.FC = () => {
     // Validate file type
     const isJPG = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
     const isPNG = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
-    
+
     if (!isJPG && !isPNG) {
       const err = OCR_ERRORS.INVALID_FORMAT;
       toast({
@@ -138,7 +147,7 @@ const OCRPage: React.FC = () => {
       });
       return;
     }
-    
+
     // Validate file size
     if (file.size > MAX_IMAGE_FILE_SIZE) {
       const err = OCR_ERRORS.FILE_TOO_LARGE;
@@ -151,7 +160,7 @@ const OCRPage: React.FC = () => {
       });
       return;
     }
-    
+
     // Validate file is not empty
     if (file.size === 0) {
       const err = OCR_ERRORS.EMPTY_FILE;
@@ -164,7 +173,7 @@ const OCRPage: React.FC = () => {
       });
       return;
     }
-    
+
     setImageFile(file);
     setImageUri("");
     const url = URL.createObjectURL(file);
@@ -299,8 +308,8 @@ const OCRPage: React.FC = () => {
             throw new Error('EMPTY_FILE');
           }
         } catch (err: any) {
-          const error = err?.message === 'EMPTY_FILE' 
-            ? OCR_ERRORS.EMPTY_FILE 
+          const error = err?.message === 'EMPTY_FILE'
+            ? OCR_ERRORS.EMPTY_FILE
             : OCR_ERRORS.INVALID_FILE;
           toast({
             title: error.title,
@@ -338,7 +347,7 @@ const OCRPage: React.FC = () => {
     } catch (err: any) {
       // Use centralized error handler (ocr context so backend message shown as default when no specific mapping)
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ocr');
-      
+
       setError(errorMessage);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
@@ -365,111 +374,29 @@ const OCRPage: React.FC = () => {
   const characterCount = extractedText.length;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(extractedText);
+    copy(extractedText, "Text copied to clipboard");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({
-      title: "Copied!",
-      description: "Text copied to clipboard",
-      status: "success",
-      duration: 2000,
-      isClosable: true,
-    });
   };
 
   return (
-    <>
-      <Head>
-        <title>OCR - Optical Character Recognition | AI4Inclusion Console</title>
-        <meta
-          name="description"
-          content="Test OCR to extract text from images"
-        />
-      </Head>
-
-      <ContentLayout>
-        <VStack spacing={8} w="full">
-          {/* Page Header */}
-          <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("ocr")}
-            </Heading>
-            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("ocr")}
-            </Text>
-          </Box>
-
-        <Grid
-          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-          gap={8}
-          w="full"
-            maxW="1200px"
-          mx="auto"
-        >
-            {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Service Selection */}
-                <FormControl>
-                  <FormLabel fontSize="sm" fontWeight="semibold">
-                    OCR Service{" "}
-                    <Text as="span" color="red.500">*</Text>
-                  </FormLabel>
-                  {servicesLoading ? (
-                    <HStack spacing={2} p={2}>
-                      <Spinner size="sm" color="orange.500" />
-                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
-                    </HStack>
-                  ) : (
-                    <Select
-                      value={selectedServiceId}
-                      onChange={(e) => setSelectedServiceId(e.target.value)}
-                      placeholder={servicesLoading ? "Loading..." : "Select"}
-                      disabled={fetching}
-                      size="md"
-                      borderColor="gray.300"
-                      _focus={{
-                        borderColor: "orange.400",
-                        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
-                      }}
-                    >
-                      {ocrServices?.map((service) => (
-                        <option key={service.service_id} value={service.service_id}>
-                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                  {selectedServiceId && ocrServices && (
-                    <Box
-                      mt={2}
-                      p={3}
-                      bg="orange.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="orange.200"
-                    >
-                      {(() => {
-                        const selectedService = ocrServices.find(
-                          (s) => s.service_id === selectedServiceId
-                        );
-                        return selectedService ? (
-                          <>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Name:</strong>{" "}
-                              {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Description:</strong>{" "}
-                              {selectedService.serviceDescription || "No description available"}
-                            </Text>
-                          </>
-                        ) : null;
-                      })()}
-                    </Box>
-                  )}
-                </FormControl>
-
+    <ServicePageLayout
+      serviceId="ocr"
+      headTitle="OCR - Optical Character Recognition | AI4Inclusion Console"
+      headDescription="Test OCR to extract text from images"
+      requestPanel={
+        <RequestContainer
+          serviceDropdown={{
+            label: "OCR Service",
+            value: selectedServiceId,
+            onChange: setSelectedServiceId,
+            options: serviceOptions,
+            loading: servicesLoading,
+            disabled: fetching,
+          }}
+          inputType="custom"
+          customInput={
+            <>
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
                   Upload Image for OCR{" "}
@@ -487,7 +414,7 @@ const OCRPage: React.FC = () => {
                       <Text fontSize="xs" color="gray.500" mb={3}>
                         Supported formats: PNG, JPG, JPEG, WebP (Max size: 10MB)
                       </Text>
-                      
+
                       {/* Hidden file input */}
                       <Input
                         ref={fileInputRef}
@@ -617,139 +544,68 @@ const OCRPage: React.FC = () => {
                 </Box>
               )}
 
-              {/* Instruction above Extract button */}
-              <Text fontSize="sm" color="gray.600">
-                Upload an image or provide an image URL above, then click Extract Text to run OCR and view the extracted text.
-              </Text>
-
-              <Button
-                colorScheme="orange"
-                onClick={handleProcess}
-                isLoading={fetching}
-                loadingText="Processing..."
-                size="md"
-                w="full"
-                isDisabled={!canExtract}
-              >
-                Extract Text
-              </Button>
-              </VStack>
-            </GridItem>
-
-            {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Progress Indicator */}
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing image...
+            </>
+          }
+          helperText={pageDefaults.helperText}
+          submitButton={{
+            label: pageDefaults.submitLabel,
+            loadingLabel: pageDefaults.submitLoadingLabel,
+            onClick: handleProcess,
+            isLoading: fetching,
+            isDisabled: !canExtract,
+          }}
+        />
+      }
+      responsePanel={
+        <ResponseContainer
+          fetching={fetching}
+          fetchingLabel="Processing image..."
+          error={error}
+          fetched={fetched}
+          hasResult={!!extractedText}
+          metadata={
+            fetched
+              ? [
+                  ...buildResponseMetadata({ responseTimeMs: responseTime * 1000 }),
+                  { label: "Characters extracted", value: characterCount },
+                ]
+              : []
+          }
+          result={
+            fetched && extractedText ? (
+              <Box>
+                <HStack justify="space-between" mb={2}>
+                  <Text fontSize="sm" fontWeight="semibold">
+                    Extracted Text:
                   </Text>
-                    <Progress size="xs" isIndeterminate colorScheme="orange" />
-                </Box>
-              )}
-
-                {/* Error Display */}
-              {error && (
+                  <IconButton
+                    aria-label="Copy text"
+                    icon={copied ? <CheckIcon /> : <CopyIcon />}
+                    size="sm"
+                    onClick={handleCopy}
+                    colorScheme={copied ? "green" : "gray"}
+                  />
+                </HStack>
                 <Box
                   p={4}
-                  bg="red.50"
+                  bg="white"
                   borderRadius="md"
                   border="1px"
-                  borderColor="red.200"
+                  borderColor="gray.300"
+                  maxH="300px"
+                  overflowY="auto"
                 >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
+                  <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
+                    {extractedText}
                   </Text>
                 </Box>
-              )}
-
-                {/* Metrics Box */}
-                {fetched && (
-                  <Box
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                  >
-                    <HStack spacing={6}>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Characters Extracted
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {characterCount} characters
-                        </Text>
-                      </VStack>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Response Time
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {responseTime.toFixed(2)} seconds
-                        </Text>
-                      </VStack>
-                    </HStack>
-                  </Box>
-                )}
-
-                {/* OCR Results */}
-              {fetched && extractedText && (
-                  <>
-                <Box>
-                  <HStack justify="space-between" mb={2}>
-                    <Text fontSize="sm" fontWeight="semibold">
-                      Extracted Text:
-                    </Text>
-                    <IconButton
-                      aria-label="Copy text"
-                      icon={copied ? <CheckIcon /> : <CopyIcon />}
-                      size="sm"
-                      onClick={handleCopy}
-                      colorScheme={copied ? "green" : "gray"}
-                    />
-                  </HStack>
-                  <Box
-                    p={4}
-                    bg="white"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="gray.300"
-                    maxH="300px"
-                    overflowY="auto"
-                  >
-                    <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
-                      {extractedText}
-                    </Text>
-                  </Box>
-                </Box>
-
-                    {/* Clear Results Button */}
-                    <Box textAlign="center">
-                      <button
-                  onClick={clearResults}
-                        style={{
-                          padding: "8px 16px",
-                          backgroundColor: "#f7fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                          color: "#4a5568",
-                        }}
-                >
-                  Clear Results
-                      </button>
-                    </Box>
-                  </>
-              )}
-            </VStack>
-          </GridItem>
-        </Grid>
-        </VStack>
-      </ContentLayout>
-    </>
+              </Box>
+            ) : undefined
+          }
+          onClear={clearResults}
+        />
+      }
+    />
   );
 };
 

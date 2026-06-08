@@ -7,7 +7,6 @@ from typing import Dict, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
-import os
 
 
 # Load .env file
@@ -19,33 +18,30 @@ class Settings(BaseSettings):
 
     # Service configuration
     SERVICE_NAME: str = Field("inference-service", description="Service name")
+    SERVICE_VERSION: str = Field("1.0.1", description="Service version reported in traces")
     HOST: str = Field("0.0.0.0", description="Host to bind to")
-    PORT: int = Field(8080, description="Port to bind to")
-    WORKERS: int = Field(4, description="Number of worker processes")
+    # Default matches the Dockerfile EXPOSE/HEALTHCHECK port — a container
+    # started without PORT set must still pass its health check.
+    PORT: int = Field(8090, description="Port to bind to")
+    # Scale via k8s replicas rather than in-pod workers; >1 also requires
+    # prometheus_client multiprocess mode for consistent /metrics.
+    WORKERS: int = Field(1, description="Number of worker processes")
     LOG_LEVEL: str = Field("INFO", description="Logging level")
     DEBUG: bool = Field(False, description="Debug mode")
+    ENABLE_DOCS: bool = Field(
+        True, description="Expose /docs and /openapi.json (disable in production)"
+    )
+    CORS_ALLOW_ORIGINS: str = Field(
+        "*", description="Comma-separated list of allowed CORS origins"
+    )
 
     # API configuration
     API_PREFIX: str = Field("/api/v1", description="API prefix for routes")
-    API_TITLE: str = Field("Inference Service", description="API title")
-    API_DESCRIPTION: str = Field(
-        "Unified inference endpoint for all task services", description="API description"
+
+    # Resolver cache
+    CACHE_TTL_SECONDS: int = Field(
+        300, description="In-memory service-resolution cache TTL in seconds"
     )
-
-    # Database configuration
-    POSTGRES_HOST: str = Field("postgres", description="PostgreSQL host")
-    POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
-    POSTGRES_USER: str = Field("postgres", description="PostgreSQL user")
-    POSTGRES_PASSWORD: str = Field("postgres", description="PostgreSQL password")
-    POSTGRES_DB: str = Field("core_db", description="PostgreSQL database name")
-    DATABASE_URL: Optional[str] = Field(None, description="Database connection URL")
-    DATABASE_POOL_SIZE: int = Field(10, description="Database connection pool size")
-    DATABASE_ECHO: bool = Field(False, description="Echo SQL statements")
-
-    # Redis configuration
-    REDIS_URL: Optional[str] = Field(None, description="Redis connection URL")
-    REDIS_PASSWORD: Optional[str] = Field(None, description="Redis password")
-    CACHE_TTL_SECONDS: int = Field(300, description="Cache TTL in seconds")
 
     # Model Management Service
     MODEL_MANAGEMENT_SERVICE_URL: Optional[str] = Field(
@@ -56,7 +52,7 @@ class Settings(BaseSettings):
     )
 
     # Triton configuration
-    DEFAULT_TRITON_TIMEOUT: int = Field(60, description="Default Triton timeout in seconds")
+    DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
 
     # OpenAI-compatible LLM proxy configuration
     # Base URL for the upstream LLM server (e.g. "http://13.206.126.62:8000").
@@ -69,14 +65,22 @@ class Settings(BaseSettings):
     )
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
-    # SmartModelRouter configuration
-    SMR_SERVICE_URL: Optional[str] = Field(None, description="SmartModelRouter service URL")
-    SMR_SERVICE_TIMEOUT: int = Field(30, description="SmartModelRouter timeout in seconds")
-
     # Telemetry/Observability
-    ENABLE_TELEMETRY: bool = Field(True, description="Enable telemetry")
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
         None, description="OpenTelemetry OTLP exporter endpoint"
+    )
+    KAFKA_SERVER: str = Field(
+        "localhost:9092", description="Kafka bootstrap servers for trace export"
+    )
+    KAFKA_TOPIC_OTEL_TRACE: str = Field(
+        "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"
+    )
+
+    # Security — user-supplied audio/image URI downloads (SSRF guard)
+    ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
+        False,
+        description="Allow audio/image URI downloads from private/loopback addresses "
+        "(enable only for local development)",
     )
 
     class Config:
