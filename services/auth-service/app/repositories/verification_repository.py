@@ -12,7 +12,8 @@ from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from jose import jwt, JWTError
+import jwt
+from jwt.exceptions import PyJWTError
 from cryptography.hazmat.primitives import serialization
 
 from app.models.verification import TokenVerification
@@ -94,7 +95,7 @@ class VerificationRepository(BaseRepository):
                     # None, so token-type-scoped deactivation was a silent no-op.
                     if payload.get("type") == token_type:
                         token_obj.is_active = False
-                except (JWTError, ValueError) as e:
+                except (PyJWTError, ValueError) as e:
                     # Unknown kid → ValueError from key_manager; bad signature
                     # → JWTError. Either way, leave the row alone (safest).
                     logger.warning(
