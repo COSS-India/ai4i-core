@@ -15,7 +15,7 @@ from pydantic import StringConstraints
 # check: any string that looks like an email must reach business logic and
 # return 200 silently. We only reject obvious non-email strings (no @ or no dot
 # in the domain) so legitimate users still get helpful format errors.
-_BASIC_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_BASIC_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,253}\.[^@\s]{2,63}$")
 
 def _loose_email_validator(v: str) -> str:
     if not isinstance(v, str):
