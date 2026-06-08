@@ -2,7 +2,6 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
-import { getTenantIdFromToken } from '../utils/helpers';
 import {
   logAggregationResponseSchema,
   logSearchResponseSchema,
@@ -51,29 +50,12 @@ export function telemetryTraceIdForApi(traceId: string): string {
   return encodeURIComponent(traceId.trim());
 }
 
-/** Headers expected by platform-core telemetry routes (gateway also injects these from JWT). */
-async function getTelemetryAuthHeaders(
-  tenantIdOverride?: string
-): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {};
-  try {
-    const { default: authService } = await import('./authService');
-    const user = authService.getStoredUser();
-    if (user?.roles?.length) {
-      headers['X-Roles'] = user.roles.join(',');
-    }
-    const tenantId =
-      tenantIdOverride?.trim() ||
-      user?.tenant_id?.trim() ||
-      getTenantIdFromToken() ||
-      undefined;
-    if (tenantId) {
-      headers['X-Tenant-Id'] = tenantId;
-    }
-  } catch {
-    // optional — Bearer auth still required via api client
-  }
-  return headers;
+/**
+ * Telemetry routes are authenticated via Bearer JWT; the gateway injects
+ * X-Tenant-Id, X-Permission-IDS, etc. Client-supplied identity headers are rejected.
+ */
+async function getTelemetryAuthHeaders(): Promise<Record<string, string>> {
+  return {};
 }
 
 /** Map UI status filter to OpenSearch `attributes.status` values. */
@@ -240,29 +222,23 @@ export const getServicesWithLogs = async (): Promise<string[]> => {
 };
 
 /**
- * Resolve `tenant_id` query param from role:
- * - TENANT ADMIN: always scope to their tenant (from auth).
- * - ADMIN: optional filter when a tenant is selected in the UI.
- * - Other allowed roles: scope to their tenant when present.
+ * Resolve optional `tenant_id` query param for GET /telemetry/traces/search.
+ *
+ * - ADMIN / MODERATOR (`crossTenantViewer`): all tenants by default — only send
+ *   `tenant_id` when the user picks a tenant in the UI filter (never from JWT).
+ * - TENANT ADMIN and other scoped roles: always use JWT tenant.
  */
 export function resolveTelemetryTenantId(params: {
-  isAdmin: boolean;
-  isTenantAdmin: boolean;
+  crossTenantViewer: boolean;
   selectedTenantId?: string;
   authTenantId?: string | null;
 }): string | undefined {
-  const authTenant = params.authTenantId?.trim();
-
-  if (params.isTenantAdmin) {
-    return authTenant || undefined;
-  }
-
-  if (params.isAdmin) {
+  if (params.crossTenantViewer) {
     const selected = params.selectedTenantId?.trim();
     return selected || undefined;
   }
 
-  return authTenant || undefined;
+  return params.authTenantId?.trim() || undefined;
 }
 
 /**
@@ -291,7 +267,7 @@ export const searchTelemetryTraces = async (
     queryParams.append('page', String(params.page ?? 1));
     queryParams.append('page_size', String(params.pageSize ?? 15));
 
-    const telemetryHeaders = await getTelemetryAuthHeaders(params.tenant_id);
+    const telemetryHeaders = await getTelemetryAuthHeaders();
 
     const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
@@ -405,34 +381,12 @@ export const getTelemetryTraceById = async (traceId: string): Promise<TelemetryT
 };
 
 /**
- * Get trace by ID (Jaeger-style; legacy)
+ * Get trace by ID in Jaeger shape (fetches telemetry format and converts for legacy callers).
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
-  try {
-    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.traceById(traceId)), {
-      timeout: 30000,
-      responseSchema: traceSchema,
-    });
-
-    return response.data;
-  } catch (error: any) {
-    console.error('Failed to get trace:', error);
-    // Extract error message from detail object
-    let errorMessage = 'Failed to get trace';
-    const detail = error?.response?.data?.detail;
-    if (detail) {
-      if (typeof detail === 'string') {
-        errorMessage = detail;
-      } else if (typeof detail === 'object' && detail.message) {
-        errorMessage = detail.message;
-      } else if (typeof detail === 'object') {
-        errorMessage = JSON.stringify(detail);
-      }
-    } else if (error?.message) {
-      errorMessage = error.message;
-    }
-    throw new Error(errorMessage);
-  }
+  const { telemetryTraceToJaegerTrace } = await import('../lib/traces/telemetryToJaeger');
+  const detail = await getTelemetryTraceById(traceId);
+  return telemetryTraceToJaegerTrace(detail);
 };
 
 /**

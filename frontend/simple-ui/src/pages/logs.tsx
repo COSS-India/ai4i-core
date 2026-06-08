@@ -40,6 +40,7 @@ import {
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { canViewCrossTenantTelemetry, isTenantAdminUser } from "../utils/rbac";
 import { listTenants } from "../services/tenantService";
 import {
   useAdminTableSurface,
@@ -112,15 +113,12 @@ const LogsPage: React.FC = () => {
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
-  // Check if user is admin (full ADMIN role — sees all tenants)
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-  // Check if user has USER role - hide logs UI for them
+  const crossTenantViewer = canViewCrossTenantTelemetry(user?.roles);
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
   const isUser = user?.roles?.includes('USER') || false;
-  // Check if user has GUEST role - hide logs UI for them
   const isGuest = user?.roles?.includes('GUEST') || false;
-  // Check if user is a TENANT ADMIN — scoped to their own tenant only
-  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
-  const canPickTenant = isAdmin && !isTenantAdmin;
+  /** ADMIN and MODERATOR get the optional tenant filter (same cross-tenant visibility). */
+  const canPickTenant = crossTenantViewer;
   const { cardBg, borderColor } = useAdminTableSurface();
 
   const authTenantId = useMemo(
@@ -131,12 +129,11 @@ const LogsPage: React.FC = () => {
   const apiTenantId = useMemo(
     () =>
       resolveTelemetryTenantId({
-        isAdmin,
-        isTenantAdmin,
+        crossTenantViewer,
         selectedTenantId,
         authTenantId,
       }),
-    [isAdmin, isTenantAdmin, selectedTenantId, authTenantId]
+    [crossTenantViewer, selectedTenantId, authTenantId]
   );
 
   useEffect(() => {
@@ -184,7 +181,7 @@ const LogsPage: React.FC = () => {
         router.push("/");
         return;
       }
-      if (!authTenantId && !isAdmin) {
+      if (!authTenantId && !crossTenantViewer) {
         toast({
           title: "Access Denied",
           description: "You need to be assigned to a tenant to view logs.",
@@ -195,9 +192,9 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, isTenantAdmin, authTenantId, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isGuest, crossTenantViewer, isTenantAdmin, authTenantId, router, toast]);
 
-  // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
+  // Fetch tenants list for ADMIN/MODERATOR tenant filter dropdown
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
     queryKey: ["tenants-list"],
     queryFn: () => listTenants(),
@@ -244,7 +241,7 @@ const LogsPage: React.FC = () => {
       startTime,
       endTime,
       apiTenantId,
-      isAdmin,
+      crossTenantViewer,
       isTenantAdmin,
       page,
       pageSize,

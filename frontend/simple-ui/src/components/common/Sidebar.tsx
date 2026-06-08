@@ -42,7 +42,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { canAccessServicesManagement } from "../../utils/rbac";
+import { canAccessServicesManagement, canViewCrossTenantTelemetry } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -405,6 +405,7 @@ const Sidebar: React.FC = () => {
 
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
+  const crossTenantViewer = canViewCrossTenantTelemetry(user?.roles);
 
   // Check if user is TENANT ADMIN
   const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
@@ -419,7 +420,19 @@ const Sidebar: React.FC = () => {
     () =>
       topNavItems.filter((item) => {
         if (item.id === TABS.home) return true;
-        if (item.id === TABS.traces) return false;
+        if (
+          (item.id === TABS.logs || item.id === TABS.traces) &&
+          (isUser || isGuest)
+        ) {
+          return false;
+        }
+        if (
+          (item.id === TABS.logs || item.id === TABS.traces) &&
+          !tenantId &&
+          !crossTenantViewer
+        ) {
+          return false;
+        }
         if (
           (isGuest || isUser) &&
           (item.id === TABS.modelManagement || item.id === TABS.servicesManagement)
@@ -434,11 +447,10 @@ const Sidebar: React.FC = () => {
         if (item.id === TABS.piiManagement && !(isAdmin || isTenantAdmin)) return false;
         if (item.id === TABS.policyManagement) return false;
         if (item.id === TABS.apiKeyManagement && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === TABS.logs && (isUser || isGuest)) return false;
-        if (item.id === TABS.logs && !tenantId && !isAdmin) return false;
         return true;
       }),
     [
+      crossTenantViewer,
       isAdmin,
       isGuest,
       isUser,

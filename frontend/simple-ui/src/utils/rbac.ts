@@ -17,6 +17,15 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
+export function isPlatformModeratorUser(roles?: string[]): boolean {
+  return userHasRole(roles, "MODERATOR");
+}
+
+/** ADMIN and MODERATOR can view telemetry across tenants (optional tenant filter in UI). */
+export function canViewCrossTenantTelemetry(roles?: string[]): boolean {
+  return isPlatformAdminUser(roles) || isPlatformModeratorUser(roles);
+}
+
 /** Tenant Admin without platform ADMIN — model registry is read-only. */
 export function isRegistryReadOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !isPlatformAdminUser(roles);
