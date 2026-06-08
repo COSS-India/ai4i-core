@@ -8,6 +8,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Python 3.11](https://www.python.org/downloads/)** installed (`python3 --version` should show `3.11.x`)
+- **[Node.js 18+](https://nodejs.org/en/download)** installed — required for the frontend (`node --version` should show `v18.x` or higher)
 - **[Git](https://git-scm.com/install/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
@@ -233,11 +234,7 @@ cd ../..
 
 The Simple UI is a Next.js interface for testing ASR, TTS, and NMT services. See [`frontend/simple-ui/README.md`](../frontend/simple-ui/README.md) for full details.
 
-### Step 9.1: Prerequisites
-
-- **Node.js 18+** — verify with `node --version`
-
-### Step 9.2: Set the API Key
+### Step 9.1: Set the API Key
 
 The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled. The one value that cannot be auto-generated is the API key — create one via the auth service once it is running, then set it:
 
@@ -248,7 +245,7 @@ NEXT_PUBLIC_API_KEY=your_api_key_here
 
 > **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
 
-### Step 9.3: Install Dependencies and Run
+### Step 9.2: Install Dependencies and Run
 
 ```bash
 cd frontend/simple-ui
