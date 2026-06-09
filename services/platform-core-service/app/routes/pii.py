@@ -1,15 +1,14 @@
 """
 PII guard endpoints.
 
-All auth and RBAC is handled by the nginx gateway upstream (see
-api_permissions.json). This file contains zero auth logic — routes trust the
-request is pre-authorized.
+All auth and RBAC is handled by APISIX upstream (see api_permissions.json).
+This file contains zero auth logic — routes trust the request is pre-authorized.
 
 Public  (no permission required):
     GET  /api/v1/pii/domains
     GET  /api/v1/pii/policy/{domain}
 
-Permissioned (nginx gateway enforces via auth-service `/auth/validate`):
+Permissioned (APISIX enforces):
     POST /api/v1/pii/redact                      (perm 90 — pii_guard.inference)
     GET  /api/v1/pii/admin/all-domains            (perm 91 — pii_guard.admin)
     POST /api/v1/pii/admin/domain                (perm 91)
@@ -104,13 +103,13 @@ async def redact_text(
 
     Headers
     -------
-    X-Tenant-Id   : tenant identifier (injected by the nginx gateway from the validated JWT)
+    X-Tenant-Id   : tenant identifier (injected by APISIX from the validated JWT)
     X-Language    : language code — en | hi | mr | ta  (default: en)
     X-Target      : caller context — "user" = lenient scoring, anything else = strict
     """
     redaction_svc = _get_redaction_service(request)
 
-    # Tenant ID comes from the nginx-gateway-injected header; no token cross-check needed.
+    # Tenant ID comes from the APISIX-injected header; no token cross-check needed.
     tenant_id = (x_tenant_id or "").strip() or None
 
     return await redaction_svc.redact(

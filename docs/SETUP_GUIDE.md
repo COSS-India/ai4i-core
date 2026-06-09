@@ -59,6 +59,13 @@ Re-run this script any time you change the root `.env`.
 
 ## Step 4: Start Infrastructure Services
 
+> **About the gateway:** this local setup uses **nginx** as the API gateway
+> (`nginx-gateway` in `docker-compose-local.yml`, config at
+> [`infrastructure/nginx/nginx.conf`](../infrastructure/nginx/nginx.conf)).
+> It implements forward-auth via `auth_request → GET /auth/validate`, so
+> every request is authenticated at the gateway before being proxied to
+> `auth-service`, `platform-core-service`, or `inference-service`.
+
 ### Option A: Minimal (required services only)
 
 Only `postgres`, `redis`, and `nginx-gateway` are strictly required for the three application services and the frontend to work:

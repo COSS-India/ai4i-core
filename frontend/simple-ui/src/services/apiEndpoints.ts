@@ -83,7 +83,7 @@ export const apiEndpoints = {
     services: {
       base: `${API_V1}/services`,
       byId: (serviceId: string) => `${API_V1}/services/${serviceId}`,
-      /** Public gateway route (no JWT) — see infrastructure/nginx/nginx.conf, model-management-try-it-service-list-public-route */
+      /** Public gateway route (no JWT) — see apisix model-management-try-it-service-list-public-route */
       tryItList: `${API_V1}/model-management/services/try-it-service-list`,
     },
     tryIt: {

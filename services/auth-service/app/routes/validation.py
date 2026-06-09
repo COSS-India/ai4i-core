@@ -1,6 +1,6 @@
 """
-Token validation endpoint — called by the nginx gateway as an `auth_request`
-subrequest on every request through the gateway.
+Token validation endpoint — called by APISIX via forward-auth on every
+request through the gateway.
 
 Two-step flow:
   1. Identify the caller (anonymous / hex API key / JWT) and validate the
@@ -176,7 +176,7 @@ async def _validate_jwt(
     )
 
 
-# nginx `auth_request` issues GET; the original client method travels in
+# APISIX forward-auth issues GET; the original client method travels in
 # X-Original-Method. Don't add POST defensively — no caller uses it, and
 # silent 405s on config drift are easier to spot.
 @router.get("/validate")

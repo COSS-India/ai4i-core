@@ -1,7 +1,7 @@
 # Overall Architecture
 
 `ai4i-core` is a multi-tenant AI inference platform. A web **Portal** talks to a set of
-**FastAPI microservices** through an **nginx** gateway; the services persist business data in
+**FastAPI microservices** through an **APISIX** gateway; the services persist business data in
 **PostgreSQL** and use **Redis** for caching and rate-limit/session state. Observability
 data (trace spans, logs, metrics) flows out on a separate lane through **Kafka**,
 **Fluent Bit**, **OpenSearch**, **Prometheus**, and **Grafana**.
@@ -19,7 +19,7 @@ data (trace spans, logs, metrics) flows out on a separate lane through **Kafka**
 
 ```mermaid
 flowchart TB
-    Portal["Portal (Next.js)"] --> GW["nginx Gateway"]
+    Portal["Portal (Next.js)"] --> GW["APISIX Gateway"]
 
     GW --> AUTH["auth-service"]
     GW --> CORE["platform-core-service"]
@@ -37,7 +37,7 @@ flowchart TB
     INF -. "trace spans" .-> OBS["Kafka → Fluent Bit → OpenSearch"]
 ```
 
-> Request path: **Portal → nginx → service → PostgreSQL** (Redis for cache/state). The
+> Request path: **Portal → APISIX → service → PostgreSQL** (Redis for cache/state). The
 > telemetry lane (dotted) is separate: inference-service spans flow **Kafka → Fluent Bit →
 > OpenSearch**. Metrics (Prometheus/Grafana) and alerts (Alertmanager) are listed in the
 > [infrastructure inventory](#infrastructure-inventory) rather than drawn here.
@@ -51,7 +51,7 @@ service trusts.
 ```mermaid
 sequenceDiagram
     participant P as Portal
-    participant GW as nginx Gateway
+    participant GW as APISIX Gateway
     participant A as auth-service
     participant S as platform-core / inference
     participant DB as PostgreSQL
@@ -72,14 +72,11 @@ Permission enforcement is centralized: auth-service loads `api_permissions.json`
 Downstream services do **not** re-check permissions in-process
 (`services/auth-service/app/routes/__init__.py`).
 
-> The gateway is **nginx** — defined in `docker-compose-local.yml` as the
-> `nginx-gateway` service (image `nginx:alpine`, config at
-> `infrastructure/nginx/nginx.conf`). `/auth/validate` is invoked as an
-> nginx `auth_request` subrequest (`GET`), and auth-service returns
-> `X-User-ID` / `X-Tenant-ID` headers that the gateway injects into the
-> upstream request (`services/auth-service/app/routes/validation.py`).
-> Production deployments may swap in a managed gateway, but the in-repo
-> reference is nginx and all routing/auth-request glue is in that config file.
+> The gateway is **APISIX** and is **external to this repository** (not a
+> container in `docker-compose-local.yml`). `/auth/validate` is invoked as
+> a forward-auth subrequest (`GET`), and auth-service returns `X-User-ID` /
+> `X-Tenant-ID` headers that the gateway injects into the upstream request
+> (`services/auth-service/app/routes/validation.py`).
 
 ## Infrastructure inventory
 

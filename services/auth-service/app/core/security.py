@@ -46,7 +46,7 @@ class RS256KeyManager:
 
     - Loads PEM files from disk (production) or auto-generates (development).
     - Supports key rotation: sign with the active key, verify with any loaded key.
-    - Exposes JWKS for external verification (nginx gateway, other services).
+    - Exposes JWKS for external verification (APISIX, other services).
     """
 
     def __init__(self) -> None:

@@ -161,10 +161,8 @@ Source: `services/auth-service/app/models/`.
 
 ## Integration
 
-- **nginx gateway** (`nginx-gateway` in `docker-compose-local.yml`, config at
-  `infrastructure/nginx/nginx.conf`) calls `/auth/validate` as an `auth_request`
-  subrequest (`GET`) on every request (see
-  [overview sequence](./00-overview.md#request-path-sequence)).
+- **APISIX gateway** calls `/auth/validate` (forward-auth, `GET`) on every
+  request (see [overview sequence](./00-overview.md#request-path-sequence)).
 - **platform-core-service** is called over **direct request/response HTTP** (httpx async
   client) for tenant-plan assignment (`PLATFORM_CORE_URL`); the tenant service drives this.
 - **Email** is sent via Starlette `BackgroundTasks` + `ai4icore_core.email` (SMTP / SES /

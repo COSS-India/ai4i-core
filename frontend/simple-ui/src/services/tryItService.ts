@@ -92,7 +92,7 @@ export const performTryItNMTInference = async (
     console.error('Try-It NMT inference error:', error);
 
     if (error?.response?.status === 403 || error?.response?.status === 429) {
-      // Extract message from either FastAPI format (data.detail) or nginx gateway error-page format (data.error_msg)
+      // Extract message from either FastAPI format (data.detail) or APISIX gateway format (data.error_msg)
       const rawMessage: string =
         (typeof error?.response?.data?.detail === 'string' ? error?.response?.data?.detail : '') ||
         error?.response?.data?.detail?.message ||

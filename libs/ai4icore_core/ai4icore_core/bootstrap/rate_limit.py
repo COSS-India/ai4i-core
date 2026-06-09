@@ -1,7 +1,7 @@
 """
 Rate limiting using slowapi.
 
-Used by ALL microservices. Defense-in-depth alongside the nginx gateway.
+Used by ALL microservices. Defense-in-depth alongside APISIX.
 """
 
 from slowapi import Limiter
