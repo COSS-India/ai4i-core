@@ -138,7 +138,7 @@ git clone https://github.com/COSS-India/ai4i-core.git
 cd ai4i-core
 
 # 2. Configure environment (see docs/SETUP_GUIDE.md for the full walkthrough)
-./env-local-setup/setup-env.sh
+./scripts/setup-env.sh
 
 # 3. Start INFRASTRUCTURE in Docker (not the app services)
 #    (add opensearch fluent-bit prometheus grafana for the full observability stack)

@@ -46,7 +46,7 @@ def _tenant(status: TenantStatus, email: str = "old@tenant.com", id: int = 1) ->
 
 
 def _user(email: str, tenant_id, uid=None) -> User:
-    return User(id=uid or uuid4(), email=email, username="u", tenant_id=tenant_id)
+    return User(id=uid or uuid4(), email=email, username="test-user", tenant_id=tenant_id)
 
 
 def _body(email: str) -> MagicMock:
@@ -56,7 +56,7 @@ def _body(email: str) -> MagicMock:
 
 
 def _acting() -> User:
-    return User(id=uuid4(), email="caller@x.com", username="caller")
+    return User(id=uuid4(), email="test-caller@example.invalid", username="test-caller")
 
 
 class TestPendingEmailReissue:

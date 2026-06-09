@@ -17,7 +17,7 @@ def _api_key(*, is_active: bool = True) -> APIKey:
         id=1,
         user_id=uuid4(),
         key_name="test",
-        api_key="a" * 32,
+        api_key=uuid4().hex,
         permissions=[1],
         expires_at=datetime.now(timezone.utc) + timedelta(days=30),
         is_active=is_active,
@@ -40,8 +40,8 @@ class TestAPIKeyCacheLifecycle:
     async def test_refresh_repopulates_redis_after_tenant_reactivation(self) -> None:
         user = User(
             id=uuid4(),
-            email="u@example.com",
-            username="user1",
+            email="test-user@example.invalid",
+            username="test-user",
             tenant_id=1,
             is_active=True,
             is_tenant_active=True,
@@ -50,7 +50,7 @@ class TestAPIKeyCacheLifecycle:
             id=1,
             name="Acme",
             organisation="Acme",
-            email="c@acme.com",
+            email="test-contact@example.invalid",
             status=TenantStatus.ACTIVE,
         )
         key = _api_key(is_active=True)
@@ -72,8 +72,8 @@ class TestAPIKeyCacheLifecycle:
     async def test_refresh_does_not_reactivate_revoked_keys(self) -> None:
         user = User(
             id=uuid4(),
-            email="u@example.com",
-            username="user1",
+            email="test-user@example.invalid",
+            username="test-user",
             tenant_id=1,
             is_active=True,
             is_tenant_active=True,
@@ -82,7 +82,7 @@ class TestAPIKeyCacheLifecycle:
             id=1,
             name="Acme",
             organisation="Acme",
-            email="c@acme.com",
+            email="test-contact@example.invalid",
             status=TenantStatus.ACTIVE,
         )
         key = _api_key(is_active=False)
@@ -100,7 +100,7 @@ class TestAPIKeyCacheLifecycle:
     @pytest.mark.asyncio
     async def test_evict_removes_all_user_keys_from_redis(self) -> None:
         keys = [_api_key(), _api_key()]
-        keys[1].api_key = "b" * 32
+        keys[1].api_key = uuid4().hex
         cache = AsyncMock()
         repo = AsyncMock()
         repo.list_by_user = AsyncMock(return_value=keys)

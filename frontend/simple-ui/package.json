@@ -17,15 +17,19 @@
     "@emotion/styled": "^11.10.5",
     "@tanstack/react-query": "^5.0.0",
     "@tanstack/react-query-devtools": "^5.0.0",
-    "axios": "^1.2.2",
+    "axios": "1.16.0",
     "crypto-js": "^4.2.0",
     "framer-motion": "^8.1.4",
     "next": "14.2.32",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-icons": "^4.7.1",
-    "socket.io-client": "^4.5.4",
+    "socket.io-client": "4.8.3",
     "zod": "^3.23.8"
+  },
+  "overrides": {
+    "socket.io-parser": "4.2.6",
+    "ws": "8.20.1"
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
