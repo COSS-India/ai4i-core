@@ -8,6 +8,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Python 3.11](https://www.python.org/downloads/)** installed (`python3 --version` should show `3.11.x`)
+- **[Node.js 18+](https://nodejs.org/en/download)** installed — required for the frontend (`node --version` should show `v18.x` or higher)
 - **[Git](https://git-scm.com/install/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
@@ -20,25 +21,43 @@ cd ai4i-core
 
 ## Step 2: Create the Root Environment File
 
-Docker Compose reads a root `.env` for variables it substitutes into the infrastructure service definitions (Postgres credentials, Redis password, Kafka listeners). Create it from the template and fill in the required values:
+Create the root `.env` from the template:
 
 ```bash
 cp env.template .env
 ```
 
-Open `.env` and set the required values:
+Open `.env` and fill in the three required values — everything else has a sensible default:
 
 ```bash
 # PostgreSQL — credentials for the Postgres container
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-POSTGRES_DB=ai4i_platform_db
 
 # Redis
 REDIS_PASSWORD=changeme
 ```
 
-## Step 3: Start Infrastructure Services
+> **LLM task type only:** If you plan to use LLM inference, also set `LLM_UPSTREAM_BASE_URL` to the base URL of your upstream LLM server (e.g. vLLM, llama.cpp, Ollama).
+
+## Step 3: Generate All Service Environment Files
+
+Run the setup script to generate a `.env` for every service from its template, substituting values from the root `.env`:
+
+```bash
+./scripts/setup-env.sh
+```
+
+This creates:
+- `infrastructure/databases/migrations/postgres/alembic/.env`
+- `services/auth-service/.env`
+- `services/platform-core-service/.env`
+- `services/inference-service/.env`
+- `frontend/simple-ui/.env`
+
+Re-run this script any time you change the root `.env`.
+
+## Step 4: Start Infrastructure Services
 
 ### Option A: Minimal (required services only)
 
@@ -62,7 +81,6 @@ docker compose -f docker-compose-local.yml up -d \
   nginx-gateway
 ```
 
-
 Wait for the core services to become healthy:
 
 ```bash
@@ -77,46 +95,11 @@ If any service is not running, start it explicitly:
 docker compose -f docker-compose-local.yml up -d <service-name>
 ```
 
-## Step 4: Initialize Databases
+## Step 5: Initialize Databases
 
 The platform uses Alembic for database migrations. Run them from the host using the CLI wrapper (`infrastructure/databases/cli.py`). For full details see [`infrastructure/databases/MIGRATIONS.md`](../infrastructure/databases/MIGRATIONS.md).
 
-### Step 4.1: Create the Alembic Environment File
-
-Copy the template and fill in your values:
-
-```bash
-cp infrastructure/databases/migrations/postgres/alembic/env.template \
-   infrastructure/databases/migrations/postgres/alembic/.env
-```
-
-Open that file and replace every placeholder. Key values when running migrations from the host (Postgres is in Docker, mapped to `localhost:5432`):
-
-```bash
-AUTH_DB_USER=postgres
-AUTH_DB_PASSWORD=postgres
-AUTH_DB_HOST=localhost
-AUTH_DB_PORT=5432
-AUTH_DB_NAME=ai4iplatform_auth
-AUTH_SERVICE_DB_NAME=ai4iplatform_auth
-
-APP_DB_USER=postgres
-APP_DB_PASSWORD=postgres
-APP_DB_HOST=localhost
-APP_DB_PORT=5432
-APP_DB_NAME=ai4iplatform_core
-
-CORE_SERVICE_DB_NAME=ai4iplatform_core
-
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-
-AI4I_PLATFORM_DB_NAME=ai4i_platform_db
-```
-
-### Step 4.2: Install Migration Framework Dependencies
+### Step 5.1: Install Migration Framework Dependencies
 
 **Linux/macOS:**
 ```bash
@@ -132,7 +115,7 @@ pip install -r requirements.txt
 cd ..\..
 ```
 
-### Step 4.3: Run All Migrations
+### Step 5.2: Run All Migrations
 
 ```bash
 ./scripts/migrate.sh all upgrade
@@ -148,32 +131,11 @@ This command will:
 
 **Note:** Re-running `./scripts/migrate.sh all upgrade` is the way to re-apply seed data. There is no separate seed step.
 
-## Step 5: Auth Service
+## Step 6: Auth Service
 
 The auth service handles authentication, authorization, RBAC, API keys, and JWT issuance. See [`services/auth-service/README.md`](../services/auth-service/README.md) and [`docs/architecture/01-auth-service.md`](architecture/01-auth-service.md) for full details.
 
-### Step 5.1: Configure
-
-```bash
-cp services/auth-service/env.template services/auth-service/.env
-```
-
-Open `services/auth-service/.env` and set:
-
-```bash
-# PostgreSQL — point to the Docker-hosted Postgres
-AUTH_DB_USER=postgres
-AUTH_DB_PASSWORD=postgres
-AUTH_DB_HOST=localhost
-AUTH_DB_PORT=5432
-
-# Redis — point to the Docker-hosted Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
-```
-
-### Step 5.2: Install Dependencies and Run
+### Step 6.1: Install Dependencies and Run
 
 **Linux/macOS:**
 ```bash
@@ -202,40 +164,11 @@ deactivate
 cd ../..
 ```
 
-## Step 6: Platform Core Service
+## Step 7: Platform Core Service
 
 The platform core service is the model and service registry, alert management, and telemetry query API. See [`services/platform-core-service/README.md`](../services/platform-core-service/README.md) and [`docs/architecture/02-platform-core-service.md`](architecture/02-platform-core-service.md) for full details.
 
-### Step 6.1: Configure
-
-```bash
-cp services/platform-core-service/env.template services/platform-core-service/.env
-```
-
-Open `services/platform-core-service/.env` and set:
-
-```bash
-# PostgreSQL — point to the Docker-hosted Postgres
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-CORE_DB_NAME=ai4iplatform_core
-
-# Redis — point to the Docker-hosted Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
-
-# Secondary auth DB — read-only access for RBAC/tenant lookups
-AUTH_DB_NAME=ai4iplatform_auth
-AUTH_DB_USER=postgres
-AUTH_DB_PASSWORD=postgres
-AUTH_DB_HOST=localhost
-AUTH_DB_PORT=5432
-```
-
-### Step 6.2: Install Dependencies and Run
+### Step 7.1: Install Dependencies and Run
 
 **Linux/macOS:**
 ```bash
@@ -264,19 +197,11 @@ deactivate
 cd ../..
 ```
 
-## Step 7: Inference Service
+## Step 8: Inference Service
 
 The inference service is the unified multi-task inference orchestration layer. See [`services/inference-service/README.md`](../services/inference-service/README.md) and [`docs/architecture/03-inference-service.md`](architecture/03-inference-service.md) for full details.
 
-### Step 7.1: Configure
-
-```bash
-cp services/inference-service/env.template services/inference-service/.env
-```
-
-> **LLM task type only:** If you plan to use LLM inference, open `services/inference-service/.env` and set `LLM_DEFAULT_ENDPOINT=<YOUR_LLM_UPSTREAM_BASE_URL>`.
-
-### Step 7.2: Install Dependencies and Run
+### Step 8.1: Install Dependencies and Run
 
 **Linux/macOS:**
 ```bash
@@ -305,35 +230,22 @@ deactivate
 cd ../..
 ```
 
-## Step 8: Frontend (Simple UI)
+## Step 9: Frontend (Simple UI)
 
 The Simple UI is a Next.js interface for testing ASR, TTS, and NMT services. See [`frontend/simple-ui/README.md`](../frontend/simple-ui/README.md) for full details.
 
-### Step 8.1: Prerequisites
+### Step 9.1: Set the API Key
 
-- **Node.js 18+** — verify with `node --version`
-
-### Step 8.2: Configure
+The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled. The one value that cannot be auto-generated is the API key — create one via the auth service once it is running, then set it:
 
 ```bash
-cp frontend/simple-ui/env.template frontend/simple-ui/.env
-```
-
-Open `frontend/simple-ui/.env` and set the required values:
-
-```bash
-# Point to the nginx API gateway running in Docker
-NEXT_PUBLIC_API_URL=http://localhost:8080
-
-# API key — generate one via the auth service after it is running
+# frontend/simple-ui/.env
 NEXT_PUBLIC_API_KEY=your_api_key_here
 ```
 
-The remaining variables (WebSocket URLs, telemetry, Jaeger) can be left as defaults for a minimal local setup.
-
 > **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
 
-### Step 8.3: Install Dependencies and Run
+### Step 9.2: Install Dependencies and Run
 
 ```bash
 cd frontend/simple-ui
@@ -347,7 +259,7 @@ The UI is available at **http://localhost:3000**.
 cd ../..
 ```
 
-## Step 9: Access the Platform
+## Step 10: Access the Platform
 
 Once all services are running, use the table below to find URLs and ports.
 
@@ -499,6 +411,6 @@ Stop containers and remove volumes:
 docker compose -f docker-compose-local.yml down -v
 ```
 
-Then run the setup again from [Step 3: Start Infrastructure Services](#step-3-start-infrastructure-services) (or from [Step 1](#step-1-clone-the-repository) if you want a completely clean clone).
+Then run the setup again from [Step 4: Start Infrastructure Services](#step-4-start-infrastructure-services) (or from [Step 1](#step-1-clone-the-repository) if you want a completely clean clone).
 
 **Need Help?** Open an issue on GitHub.
