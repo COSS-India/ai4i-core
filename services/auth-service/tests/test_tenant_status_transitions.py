@@ -151,7 +151,7 @@ class TestUpdateTenantStatusAuthorization:
         tenant_admin = User(
             id=uuid4(),
             email="test-tenant-admin@example.invalid",
-            username="test-tenant-admin",
+            username=uuid4().hex[:12],
             tenant_id=1,
         )
         svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
@@ -178,7 +178,7 @@ class TestUpdateTenantStatusAuthorization:
         system_admin = User(
             id=uuid4(),
             email="test-system-admin@example.invalid",
-            username="test-system-admin",
+            username=uuid4().hex[:12],
             tenant_id=1,
         )
         tenant = Tenant(
@@ -209,7 +209,7 @@ class TestUpdateTenantStatusAuthorization:
         tenant_admin = User(
             id=uuid4(),
             email="test-tenant-admin@example.invalid",
-            username="test-tenant-admin",
+            username=uuid4().hex[:12],
             tenant_id=1,
         )
         svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])

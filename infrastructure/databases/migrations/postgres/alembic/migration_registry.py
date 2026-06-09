@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -301,6 +302,14 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
+    # Constrain the identifier to safe characters before it reaches DDL,
+    # guarding against misconfigured env vars as well as satisfying
+    # static-analysis taint checks on the CREATE DATABASE statement below.
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', target_database):
+        raise ValueError(
+            f"Unsafe database name '{target_database}': "
+            "only letters, digits, and underscores are permitted."
+        )
     ai4i_platform_db = os.getenv("AI4I_PLATFORM_DB_NAME", "")
     maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None

@@ -49,11 +49,11 @@ def _tenant(id: int, email: str = "contact@tenant.com") -> Tenant:
 
 
 def _user(tenant_id=None) -> User:
-    return User(id=uuid4(), email="test-oauth-user@example.invalid", username="test-oauth-user", tenant_id=tenant_id)
+    return User(id=uuid4(), email="test-oauth-user@example.invalid", username=uuid4().hex[:12], tenant_id=tenant_id)
 
 
 def _acting_admin() -> User:
-    return User(id=uuid4(), email="test-acting-admin@example.invalid", username="test-acting-admin")
+    return User(id=uuid4(), email="test-acting-admin@example.invalid", username=uuid4().hex[:12])
 
 
 class TestUpdateTenantEmailUniqueness:
