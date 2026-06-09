@@ -29,7 +29,7 @@ class TemplateRenderer:
             autoescape=select_autoescape(default_for_string=True, default=True),
             **common,
         )
-        self._text_env = Environment(autoescape=True, **common)
+        self._text_env = Environment(autoescape=False, **common)
 
     def render(self, name: str, ctx: dict) -> tuple[str, str]:
         html = self._html_env.get_template(f"{name}.html").render(**ctx)
