@@ -155,7 +155,12 @@ All 7 steps have been completed. The monolith inference service now provides a u
   - `LanguageDiarizationTaskService`
   - `SpeakerDiarizationTaskService`
   - `AudioLanguageDetectionTaskService`
-  - `PIITaskService` — PII Detection & Redaction
+  - `PIITaskService` — **stub only** (raises `NotImplementedError` → 501). The
+    real PII detection / redaction surface lives in **platform-core-service**
+    under `/api/v1/pii/*` (see
+    `services/platform-core-service/app/routes/pii.py`). This stub is kept
+    registered so `task_type=PII` fails loudly here instead of silently
+    falling through the base pipeline.
 
 Each service handles:
   - Task-specific request validation

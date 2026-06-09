@@ -72,11 +72,11 @@ Permission enforcement is centralized: auth-service loads `api_permissions.json`
 Downstream services do **not** re-check permissions in-process
 (`services/auth-service/app/routes/__init__.py`).
 
-> The gateway is **APISIX** in production (the code refers to it as APISIX / nginx
-> forward-auth — `services/auth-service/app/routes/validation.py`). It is **external to
-> this repository**: not a container in `docker-compose-local.yml`. `/auth/validate` is
-> invoked as a forward-auth subrequest (`GET`), and auth-service returns `X-User-ID` /
-> `X-Tenant-ID` headers that the gateway injects into the upstream request.
+> The gateway is **APISIX** and is **external to this repository** (not a
+> container in `docker-compose-local.yml`). `/auth/validate` is invoked as
+> a forward-auth subrequest (`GET`), and auth-service returns `X-User-ID` /
+> `X-Tenant-ID` headers that the gateway injects into the upstream request
+> (`services/auth-service/app/routes/validation.py`).
 
 ## Infrastructure inventory
 

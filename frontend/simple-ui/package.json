@@ -1,6 +1,6 @@
 {
   "name": "simple-ui",
-  "version": "1.0.0",
+  "version": "2.2.0",
   "private": true,
   "description": "Simple UI for testing ASR, TTS, and NMT microservices",
   "scripts": {

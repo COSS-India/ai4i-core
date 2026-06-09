@@ -42,7 +42,13 @@ lane** (dotted) so they never touch the business-data path.
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
-> **Note:** the APISIX gateway is **external to this repo** (not in compose).
+> **Note on gateways:** the production infrastructure uses
+> **APISIX** (external to this repo). The **local development setup**
+> defined by `docker-compose-local.yml` uses an **nginx** stand-in
+> (`nginx-gateway`, image `nginx:alpine`, config at
+> `infrastructure/nginx/nginx.conf`) so the same forward-auth contract can
+> be exercised without standing up APISIX. See
+> [`docs/SETUP_GUIDE.md`](./docs/SETUP_GUIDE.md) for local-setup specifics.
 
 ## 🎯 Core Services
 
@@ -78,11 +84,18 @@ uses an OpenAI-compatible `POST /api/v1/chat/completions`.
 | Audio Language Detection | `AUDIO_LANGUAGE_DETECTION` | `/api/v1/audio-lang-detection/inference` | Spoken-language identification |
 | Speaker Diarization | `SPEAKER_DIARIZATION` | `/api/v1/speaker-diarization/inference` | Who-spoke-when segmentation |
 | Language Diarization | `LANGUAGE_DIARIZATION` | `/api/v1/language-diarization/inference` | Multilingual audio segmentation |
-| PII | `PII` | `/api/v1/inference` (`task_type=PII`) | PII detection / redaction |
 | LLM Chat | — | `/api/v1/chat/completions` | OpenAI-compatible chat completions |
 
 > Source of truth: `services/inference-service/orchestrator/task_service_registry.py`
 > (`GET /api/v1/inference/tasks` lists what the running service has registered).
+
+**PII detection & redaction is NOT served by the inference-service.** It lives in
+**platform-core-service** (control plane) under `/api/v1/pii/*` — domain
+policies, regex patterns, tenant-domain mappings, audit logs, and the
+`redact-text` endpoint. Source:
+`services/platform-core-service/app/routes/pii.py`. The `PIITaskService` stub
+that still appears in `task_service_registry.py` is a 501 placeholder kept so
+PII inference requests fail loudly instead of falling through.
 
 ## 🎨 Frontend
 
@@ -103,7 +116,7 @@ uses an OpenAI-compatible `POST /api/v1/chat/completions`.
 - **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
 ### Gateway & Infrastructure
-- **APISIX** — API gateway (forward-auth via `/auth/validate`; external to this repo)
+- **APISIX** — API gateway in production / staging / dev (forward-auth via `/auth/validate`; external to this repo). For local development, `docker-compose-local.yml` provides an **nginx** stand-in (`nginx-gateway`, config at `infrastructure/nginx/nginx.conf`).
 - **Docker Compose** — local infrastructure (`docker-compose-local.yml`)
 - **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
 - **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting

@@ -161,7 +161,7 @@ Source: `services/auth-service/app/models/`.
 
 ## Integration
 
-- **APISIX gateway** (production) calls `/auth/validate` (forward-auth, `GET`) on every
+- **APISIX gateway** calls `/auth/validate` (forward-auth, `GET`) on every
   request (see [overview sequence](./00-overview.md#request-path-sequence)).
 - **platform-core-service** is called over **direct request/response HTTP** (httpx async
   client) for tenant-plan assignment (`PLATFORM_CORE_URL`); the tenant service drives this.
