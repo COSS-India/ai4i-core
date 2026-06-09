@@ -116,7 +116,7 @@ Docker runs the **infrastructure only**; the application services run **natively
 - **Docker 20.10+ / Docker Compose 2.0+** — for infrastructure (PostgreSQL, Redis, Kafka, OpenSearch, Prometheus, …)
 - **Python 3.11 + pip** — for the application services (auth, platform-core, inference)
 - **Node 18+** — for the Simple UI frontend
-- ~16 GB RAM recommended for the full stack; Linux / macOS (Windows via WSL2)
+- ~16 GB RAM recommended for the full stack; Linux / macOS; **Windows requires WSL2** — run Docker, services, and frontend entirely inside WSL (see [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md#windows-wsl))
 
 ### Quick Start (local)
 ```bash
