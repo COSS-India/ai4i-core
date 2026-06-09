@@ -14,8 +14,8 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 1. **Fork and Clone**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/Ai4V-C.git
-   cd Ai4V-C
+   git clone https://github.com/COSS-India/ai4i-core.git
+   cd ai4i-core
    ```
 
 2. **Set Up Environment**:
@@ -117,7 +117,7 @@ Closes #123
 2. **Peer Review**: At least one maintainer reviews code
 3. **Feedback**: Address review comments
 4. **Approval**: Maintainer approves PR
-5. **Merge**: Squash and merge to main branch
+5. **Merge**: Squash and merge to master branch
 
 ## Testing Guidelines
 
