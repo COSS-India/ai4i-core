@@ -19,23 +19,23 @@ export function maskPhoneForDisplay(phone: string | undefined): string {
  */
 export const getTenantIdFromToken = (): string | null => {
   if (typeof window === 'undefined') return null;
-  
+
   try {
     const token = getStoredAccessToken();
     if (!token || token.trim() === '') {
       return null;
     }
-    
+
     // Decode JWT payload
     const parts = token.split('.');
     if (parts.length !== 3) {
       return null;
     }
-    
+
     const payload = parts[1];
     const decoded = atob(payload);
     const payloadObj = JSON.parse(decoded);
-    
+
     // Extract tenant_id from JWT payload
     return payloadObj.tenant_id || null;
   } catch (error) {
@@ -60,16 +60,16 @@ export const getWordCount = (text: string): number => {
  * @returns Formatted duration string
  */
 export const formatDuration = (seconds: number): string => {
-  if (!seconds || seconds < 0 || isNaN(seconds)) return '00:00';
-  
+  if (!seconds || seconds < 0 || Number.isNaN(seconds)) return '00:00';
+
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
-  
+
   if (hours > 0) {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
-  
+
   return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
@@ -80,11 +80,11 @@ export const formatDuration = (seconds: number): string => {
  */
 export const formatFileSize = (bytes: number): string => {
   if (!bytes || bytes < 0) return '0 B';
-  
+
   const kb = bytes / 1024;
   const mb = kb / 1024;
   const gb = mb / 1024;
-  
+
   if (gb >= 1) {
     return `${gb.toFixed(2)} GB`;
   } else if (mb >= 1) {
@@ -92,7 +92,7 @@ export const formatFileSize = (bytes: number): string => {
   } else if (kb >= 1) {
     return `${kb.toFixed(2)} KB`;
   }
-  
+
   return `${bytes} B`;
 };
 
@@ -132,11 +132,11 @@ export const base64ToBlob = (base64: string, mimeType: string = 'audio/wav'): Bl
   try {
     const byteCharacters = atob(base64);
     const byteNumbers = new Array(byteCharacters.length);
-    
+
     for (let i = 0; i < byteCharacters.length; i++) {
       byteNumbers[i] = byteCharacters.charCodeAt(i);
     }
-    
+
     const byteArray = new Uint8Array(byteNumbers);
     return new Blob([byteArray], { type: mimeType });
   } catch (error) {
@@ -156,12 +156,12 @@ export const downloadFile = (blob: Blob, filename: string): void => {
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
-    
+
     // Trigger download
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     // Cleanup
     URL.revokeObjectURL(url);
   } catch (error) {
@@ -263,11 +263,11 @@ export const convertWebmToWav = async (webmBlob: Blob, targetSampleRate: number 
   try {
     // Create audio context
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
+
     // Decode WebM audio
     const arrayBuffer = await webmBlob.arrayBuffer();
     let audioBuffer: AudioBuffer;
-    
+
     try {
       audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
     } catch (decodeError) {
@@ -275,15 +275,15 @@ export const convertWebmToWav = async (webmBlob: Blob, targetSampleRate: number 
       audioContext.close();
       throw new Error(`Failed to decode WebM audio: ${decodeError}`);
     }
-    
+
     // Get audio data
     let sampleRate = audioBuffer.sampleRate;
     const numChannels = audioBuffer.numberOfChannels;
     const length = audioBuffer.length;
-    
+
     // Convert multi-channel to mono if needed, or use first channel
     let samples = numChannels > 1 ? new Float32Array(length) : audioBuffer.getChannelData(0);
-    
+
     if (numChannels > 1) {
       // Mix down to mono
       const channels: Float32Array[] = [];
@@ -298,13 +298,13 @@ export const convertWebmToWav = async (webmBlob: Blob, targetSampleRate: number 
         samples[i] = sum / numChannels;
       }
     }
-    
+
     // Resample to target sample rate if needed
     if (sampleRate !== targetSampleRate) {
       const resampleRatio = targetSampleRate / sampleRate;
       const newLength = Math.floor(samples.length * resampleRatio);
       const resampledSamples = new Float32Array(newLength);
-      
+
       // Simple linear interpolation resampling
       for (let i = 0; i < newLength; i++) {
         const srcIndex = i / resampleRatio;
@@ -313,29 +313,29 @@ export const convertWebmToWav = async (webmBlob: Blob, targetSampleRate: number 
         const t = srcIndex - srcIndexFloor;
         resampledSamples[i] = samples[srcIndexFloor] * (1 - t) + samples[srcIndexCeil] * t;
       }
-      
+
       samples = resampledSamples;
       sampleRate = targetSampleRate;
     }
-    
+
     // Convert float32 samples to int16 PCM
     const pcmData = new Int16Array(samples.length);
     for (let i = 0; i < samples.length; i++) {
       const s = Math.max(-1, Math.min(1, samples[i]));
       pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
-    
+
     // Create WAV file header
     const wavHeader = new ArrayBuffer(44);
     const view = new DataView(wavHeader);
-    
+
     // RIFF header
     const writeString = (offset: number, string: string) => {
       for (let i = 0; i < string.length; i++) {
         view.setUint8(offset + i, string.charCodeAt(i));
       }
     };
-    
+
     writeString(0, 'RIFF');
     view.setUint32(4, 36 + pcmData.length * 2, true); // File size - 8
     writeString(8, 'WAVE');
@@ -349,21 +349,21 @@ export const convertWebmToWav = async (webmBlob: Blob, targetSampleRate: number 
     view.setUint16(34, 16, true); // Bits per sample
     writeString(36, 'data');
     view.setUint32(40, pcmData.length * 2, true); // Data chunk size
-    
+
     // Combine header and PCM data
     const wavData = new Uint8Array(wavHeader.byteLength + pcmData.length * 2);
     wavData.set(new Uint8Array(wavHeader), 0);
-    
+
     // Convert Int16Array to bytes (little-endian)
     const pcmBytes = new Uint8Array(pcmData.buffer);
     wavData.set(pcmBytes, wavHeader.byteLength);
-    
+
     // Create WAV blob
     const wavBlob = new Blob([wavData], { type: 'audio/wav' });
-    
+
     // Cleanup
     audioContext.close();
-    
+
     return wavBlob;
   } catch (error) {
     console.error('Error converting WebM to WAV:', error);
@@ -382,11 +382,11 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
   try {
     // Create audio context
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
+
     // Decode WebM audio
     const arrayBuffer = await webmBlob.arrayBuffer();
     let audioBuffer: AudioBuffer;
-    
+
     try {
       audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
     } catch (decodeError) {
@@ -396,15 +396,15 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
       audioContext.close();
       return webmBlob;
     }
-    
+
     // Get audio data
     const sampleRate = audioBuffer.sampleRate;
     const numChannels = audioBuffer.numberOfChannels;
     const length = audioBuffer.length;
-    
+
     // Convert multi-channel to mono if needed, or use first channel
     const samples = numChannels > 1 ? new Float32Array(length) : audioBuffer.getChannelData(0);
-    
+
     if (numChannels > 1) {
       // Mix down to mono
       const channels: Float32Array[] = [];
@@ -419,14 +419,14 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
         samples[i] = sum / numChannels;
       }
     }
-    
+
     // Convert float32 samples to int16 PCM
     const pcmData = new Int16Array(samples.length);
     for (let i = 0; i < samples.length; i++) {
       const s = Math.max(-1, Math.min(1, samples[i]));
       pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
-    
+
     // Use lamejs for MP3 encoding (loaded from CDN)
     // Dynamically load lamejs if not available
     if (!(window as any).lamejs) {
@@ -438,14 +438,14 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
         document.head.appendChild(script);
       });
     }
-    
+
     const lamejs = (window as any).lamejs;
     const mp3encoder = new lamejs.Mp3Encoder(1, sampleRate, 128); // Always mono
-    
+
     // Encode PCM to MP3
     const sampleBlockSize = 1152;
     const mp3Data: Uint8Array[] = [];
-    
+
     for (let i = 0; i < pcmData.length; i += sampleBlockSize) {
       const sampleChunk = pcmData.subarray(i, i + sampleBlockSize);
       const mp3buf = mp3encoder.encodeBuffer(sampleChunk);
@@ -455,7 +455,7 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
         mp3Data.push(buf);
       }
     }
-    
+
     // Flush remaining data
     const mp3buf = mp3encoder.flush();
     if (mp3buf && mp3buf.length > 0) {
@@ -463,7 +463,7 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
       const buf = mp3buf instanceof Uint8Array ? mp3buf : new Uint8Array(mp3buf);
       mp3Data.push(buf);
     }
-    
+
     // Combine all MP3 chunks into a single Uint8Array
     const totalLength = mp3Data.reduce((sum, arr) => sum + arr.length, 0);
     const combinedMp3Data = new Uint8Array(totalLength);
@@ -472,13 +472,13 @@ export const convertWebmToMp3 = async (webmBlob: Blob): Promise<Blob> => {
       combinedMp3Data.set(chunk, offset);
       offset += chunk.length;
     }
-    
+
     // Create MP3 blob
     const mp3Blob = new Blob([combinedMp3Data], { type: 'audio/mpeg' });
-    
+
     // Cleanup
     audioContext.close();
-    
+
     return mp3Blob;
   } catch (error) {
     console.error('Error converting WebM to MP3:', error);
