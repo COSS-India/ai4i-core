@@ -1,8 +1,6 @@
 import type { APIKeyResponse } from "../types/auth";
 import { INFERENCE_PERMISSION_LABEL_BY_ID } from "../config/constants";
-
-/** sessionStorage cache: keys created in this browser session (hex shown once at create). */
-export const API_KEY_HEX_CACHE_KEY = "ai4i_api_key_hex_cache";
+import { SESSION_STORAGE_KEYS } from "../config/sessionStorageKeys";
 
 type ApiKeyLike = {
   api_key?: string | null;
@@ -53,7 +51,7 @@ export function formatApiKeyDisplayId(key: ApiKeyLike): string {
 export function readApiKeyHexCache(): Record<string, string> {
   if (typeof window === "undefined") return {};
   try {
-    const raw = sessionStorage.getItem(API_KEY_HEX_CACHE_KEY);
+    const raw = sessionStorage.getItem(SESSION_STORAGE_KEYS.inferenceKeyHexDisplayCache);
     return raw ? (JSON.parse(raw) as Record<string, string>) : {};
   } catch {
     return {};
@@ -69,7 +67,10 @@ export function cacheCreatedApiKeyHex(
   const map = readApiKeyHexCache();
   map[keyName] = hex.toLowerCase();
   if (id != null) map[`id:${id}`] = hex.toLowerCase();
-  sessionStorage.setItem(API_KEY_HEX_CACHE_KEY, JSON.stringify(map));
+  sessionStorage.setItem(
+    SESSION_STORAGE_KEYS.inferenceKeyHexDisplayCache,
+    JSON.stringify(map),
+  );
 }
 
 export function mergeApiKeyHexFromCache<T extends APIKeyResponse>(keys: T[]): T[] {
