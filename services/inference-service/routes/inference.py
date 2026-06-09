@@ -107,7 +107,24 @@ async def _run_inference(
     try:
         result = await orchestrator.route_inference(payload=payload, request=request)
     except Exception as exc:
-        logger.error(f"Inference failed: task_type={task_type}", exc_info=True)
+        # No exc_info=True — the formatted traceback embeds chained
+        # exception messages, which (for httpx-class errors below the
+        # orchestrator) contain the resolved Triton URL. That traceback
+        # then ships to OpenSearch via fluent-bit and ends up in the
+        # Logs Dashboard. The `from exc` on the raise below preserves
+        # the full chain for in-process / debug-shell inspection.
+        # Log the chain's TYPE names so a developer triaging a 502 can
+        # see "RuntimeError → ConnectionError → OSError" without exposing
+        # any underlying str(e) (which is the URL-leak vector).
+        chain_types: list[str] = []
+        c: Optional[BaseException] = exc
+        while c is not None and len(chain_types) < 16:
+            chain_types.append(type(c).__name__)
+            c = c.__cause__
+        logger.error(
+            "Inference failed: task_type=%s exc_chain=%s",
+            task_type, "→".join(chain_types),
+        )
         raise _http_error_for(exc, task_type) from exc
 
     for key in strip:

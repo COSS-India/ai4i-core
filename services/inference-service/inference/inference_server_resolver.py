@@ -77,11 +77,20 @@ class InferenceServerResolver:
             url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
             raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
-            logger.debug(f"Resolved service {service_id}: {service_info}")
+            # Never log the full service_info dict — it contains the resolved
+            # Triton endpoint URL and api_key. Log only the safe identifiers
+            # so we can correlate without exposing internal infra to anyone
+            # who can read inference-service logs (incl. via Logs Dashboard).
+            logger.debug(
+                "Resolved service id=%s name=%s",
+                service_id, service_info.get("name", ""),
+            )
             return service_info
 
         except LookupError as e:
-            logger.error(f"Service {service_id} not found: {str(e)}")
+            # Don't include str(e) — upstream HTTP error reprs frequently
+            # embed the MMS URL or the resolved Triton URL.
+            logger.error("Service %s not found", service_id)
             raise LookupError(f"Service {service_id} not found") from e
         except ConnectionError:
             raise
@@ -89,7 +98,12 @@ class InferenceServerResolver:
             # Transport/availability failure is NOT "service not found" — a
             # hung or unreachable MMS must surface as a 502-class dependency
             # error, not a 404 (and not pollute logs with "not found").
-            logger.error(f"Model management service query failed for {service_id}: {str(e)}")
+            # Log only the exception TYPE — str(e) on httpx/urllib3 errors
+            # typically embeds the full URL.
+            logger.error(
+                "Model management service query failed for %s: %s",
+                service_id, type(e).__name__,
+            )
             raise ConnectionError(
                 f"Model management service unavailable while resolving '{service_id}'"
             ) from e
