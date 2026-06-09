@@ -34,6 +34,10 @@ import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
 import { extractErrorInfo } from "../utils/errorHandler";
+import {
+  getSafeImagePreviewUrl,
+  isSafeImagePreviewUrl,
+} from "../utils/safeMediaUrl";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const pageDefaults = getServicePageDefaults("ocr");
@@ -75,44 +79,10 @@ const OCRPage: React.FC = () => {
 
   const blockMediaInput = fetching || !selectedServiceId?.trim();
 
-  /**
-   * Validates if a URL is safe to use as an image source.
-   * Only allows http:, https:, blob:, and data:image/* protocols.
-   * Rejects dangerous protocols like javascript: to prevent XSS attacks.
-   */
-  const isSafeImageUrl = (url: string): boolean => {
-    if (!url || url.trim() === "") {
-      return false;
-    }
-
-    try {
-      // Check if it's a blob URL (created by URL.createObjectURL)
-      if (url.startsWith("blob:")) {
-        return true;
-      }
-
-      // Parse the URL to check its protocol
-      const parsedUrl = new URL(url);
-
-      // Allow http and https protocols
-      if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
-        return true;
-      }
-
-      // Allow data URLs, but only for images
-      if (parsedUrl.protocol === "data:") {
-        // Check if it's a data URL with image media type
-        const dataUrlMatch = url.match(/^data:image\//);
-        return dataUrlMatch !== null;
-      }
-
-      // Reject all other protocols (including javascript:, etc.)
-      return false;
-    } catch (error) {
-      // If URL parsing fails, it's not a valid URL
-      return false;
-    }
-  };
+  const safePreviewUrl = useMemo(
+    () => getSafeImagePreviewUrl(previewUrl),
+    [previewUrl]
+  );
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -237,9 +207,8 @@ const OCRPage: React.FC = () => {
     setImageFile(null);
     setActiveTab(1);
 
-    // Validate URL before setting preview
     if (value && value.trim() !== "") {
-      if (isSafeImageUrl(value)) {
+      if (isSafeImagePreviewUrl(value)) {
         setPreviewUrl(value);
       } else {
         // Clear preview and show error for unsafe URLs
@@ -522,7 +491,7 @@ const OCRPage: React.FC = () => {
                 </Tabs>
               </FormControl>
 
-              {previewUrl && (
+              {safePreviewUrl && (
                 <Box>
                   <Text fontSize="sm" fontWeight="semibold" mb={2}>
                     Image Preview:
@@ -535,8 +504,9 @@ const OCRPage: React.FC = () => {
                     bg="gray.50"
                     p={2}
                   >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={previewUrl}
+                      src={safePreviewUrl}
                       alt="Preview"
                       style={{ maxWidth: "100%", height: "auto", display: "block" }}
                     />
