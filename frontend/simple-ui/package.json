@@ -28,6 +28,7 @@
     "zod": "^3.23.8"
   },
   "overrides": {
+    "postcss": "8.5.10",
     "socket.io-parser": "4.2.6",
     "ws": "8.20.1"
   },
