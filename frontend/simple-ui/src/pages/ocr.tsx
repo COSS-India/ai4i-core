@@ -323,7 +323,7 @@ const OCRPage: React.FC = () => {
       const calculatedTime = ((endTime - startTime) / 1000).toFixed(2);
 
       setResult(response.data);
-      setResponseTime(parseFloat(calculatedTime));
+      setResponseTime(Number.parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
       // Use centralized error handler (ocr context so backend message shown as default when no specific mapping)
