@@ -132,3 +132,27 @@ Distributed traces are stored in and queried from the **OpenSearch `traces-*` in
 logs + Kafka (`kafka-topic-otel-trace`) → Fluent Bit → OpenSearch `traces-*`. Trace reads
 go through `platform-core` `/telemetry/traces/search` and the frontend
 `observabilityService.ts`, both of which query OpenSearch.
+
+## Dependency license audit
+
+All infrastructure and runtime dependencies are open source. No proprietary dependencies.
+
+| Dependency | Package / Image | License |
+|---|---|---|
+| **Triton Inference Server client** | `tritonclient[http]>=2.40.0` (`libs/ai4icore_core/pyproject.toml`) | BSD-3-Clause |
+| **Ollama** | HTTP backend only — no pip package; called via REST | MIT |
+| **PostgreSQL** | `postgres:15-alpine` + `asyncpg`, `psycopg2-binary` | PostgreSQL License (OSI-approved) |
+| **Redis** | `redis:7-alpine` + `redis>=5.0.0` | BSD-3-Clause |
+| **Kafka** | `confluentinc/cp-kafka:7.4.0` + `kafka-python` | Apache 2.0 (Kafka broker); Confluent Community License for cp-kafka extras — swap to `bitnami/kafka` if full Apache 2.0 is required |
+| **OpenSearch** | `opensearchproject/opensearch:2.11.0` + `opensearch-py` | Apache 2.0 |
+| **OpenTelemetry** | `opentelemetry-*` packages | Apache 2.0 |
+| **FastAPI / Uvicorn** | `fastapi`, `uvicorn[standard]` | MIT |
+| **Prometheus / Grafana** | `prom/prometheus`, `grafana/grafana`, `prom/alertmanager` | Apache 2.0 |
+| **Fluent Bit** | `fluent/fluent-bit` | Apache 2.0 |
+| **Nginx** | `nginx:alpine` | BSD-2-Clause |
+
+> **Note on `confluentinc/cp-kafka`:** The Kafka broker itself is Apache 2.0. Confluent's
+> cp-kafka image bundles additional Confluent Platform components under the Confluent
+> Community License. If a fully Apache 2.0 stack is required, replace the image with
+> `bitnami/kafka` or `apache/kafka` — both are drop-in compatible with the existing
+> `KAFKA_SERVER` configuration.
