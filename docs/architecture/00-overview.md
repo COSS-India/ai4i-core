@@ -124,8 +124,9 @@ Only **inference-service** wires up OpenTelemetry tracing and the Kafka span exp
 platform-core-service are explicitly **logging-only** — see the module docstrings in
 `services/auth-service/app/main.py` and `services/platform-core-service/app/main.py`
 ("No tracing or observability — logging only"). All three still emit structured logs
-(via `ai4icore_core.logging`) that Fluent Bit ships to OpenSearch, and platform-core
-exposes Prometheus metrics.
+(via `ai4icore_core.logging`) that Fluent Bit ships to OpenSearch. Only
+**inference-service** exposes a Prometheus scrape endpoint (`/enterprise/metrics`);
+platform-core and auth-service do not.
 
 Distributed traces are stored in and queried from the **OpenSearch `traces-*` index**:
 `inference-service/trace/setup.py` installs a `LoggerSpanExporter` →
