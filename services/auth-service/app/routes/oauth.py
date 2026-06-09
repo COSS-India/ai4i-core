@@ -55,6 +55,10 @@ def _is_redirect_allowed(uri: str) -> bool:
     if not uri:
         return False
 
+    parsed = urlparse(uri)
+    if parsed.scheme not in ("https", "http"):
+        return False
+
     allowed = settings.oauth_allowed_redirect_uris
     if not allowed:
         logger.warning(LOG_WARN_CONFIG_REDIRECT_ALLOWLIST)
@@ -141,6 +145,12 @@ async def authorize(
         params["prompt"] = "consent"
 
     auth_url = f"{config['authorization_url']}?{urlencode(params)}"
+
+    # Reject non-http(s) schemes to prevent javascript:/data: open redirects
+    # if the provider config is ever misconfigured or tampered with.
+    parsed_auth = urlparse(auth_url)
+    if parsed_auth.scheme not in ("https", "http"):
+        raise AuthenticationRequiredError(OAUTH_REDIRECT_URI_INVALID)
 
     # Browser navigation (Accept: text/html) → 307 to provider consent page.
     # API/SPA call (Accept: application/json) → return URL as JSON.
