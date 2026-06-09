@@ -1,9 +1,11 @@
 # auth-service
 
 Authentication & authorization for the **ai4i-core** platform — users, tenants, RBAC,
-API keys, and OAuth2. Issues and validates JWTs; the APISIX gateway calls
-`/auth/validate` (forward-auth) on every request and trusts the identity headers it
-returns (`X-User-ID`, `X-Tenant-ID`).
+API keys, and OAuth2. Issues and validates JWTs; the nginx gateway
+(`docker-compose-local.yml`'s `nginx-gateway`, config at
+`infrastructure/nginx/nginx.conf`) calls `/auth/validate` as an `auth_request`
+subrequest on every request and trusts the identity headers it returns
+(`X-User-ID`, `X-Tenant-ID`).
 
 | | |
 |---|---|

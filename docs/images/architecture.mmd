@@ -1,7 +1,7 @@
 %%{init: {'theme':'base','themeVariables':{'fontFamily':'Inter, Segoe UI, Helvetica, Arial, sans-serif','fontSize':'15px','lineColor':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#ffffff'}}}%%
 flowchart TB
     Portal(["🖥️ Portal — Next.js · :3000"]):::client
-    GW{{"🚪 APISIX Gateway<br/><i>forward-auth → /auth/validate</i>"}}:::gw
+    GW{{"🚪 nginx Gateway<br/><i>auth_request → /auth/validate</i>"}}:::gw
 
     Portal -- "Bearer JWT / API key" --> GW
 

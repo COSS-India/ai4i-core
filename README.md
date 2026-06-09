@@ -16,11 +16,11 @@ An open-source, **FastAPI**-based reference implementation for deploying multi-t
 
 ## 🏗️ Architecture Overview
 
-The platform is **three application microservices** behind an APISIX gateway, sharing a
+The platform is **three application microservices** behind an nginx gateway, sharing a
 PostgreSQL/Redis data plane. Inference trace spans flow out on a **separate observability
 lane** (dotted) so they never touch the business-data path.
 
-![Architecture overview — Portal → APISIX → auth / platform-core / inference, with the telemetry lane to OpenSearch](./docs/images/architecture.png)
+![Architecture overview — Portal → nginx → auth / platform-core / inference, with the telemetry lane to OpenSearch](./docs/images/architecture.png)
 
 <!-- Source: docs/images/architecture.mmd — regenerate with:
      npx @mermaid-js/mermaid-cli -i docs/images/architecture.mmd -o docs/images/architecture.png -b white -s 2 -->
@@ -42,7 +42,10 @@ lane** (dotted) so they never touch the business-data path.
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
-> **Note:** the APISIX gateway is **external to this repo** (not in compose).
+> **Note:** the nginx gateway is defined in `docker-compose-local.yml` as
+> `nginx-gateway` (image `nginx:alpine`, config at
+> `infrastructure/nginx/nginx.conf`). Production deployments may swap in a
+> managed gateway, but the in-repo reference is nginx.
 
 ## 🎯 Core Services
 
@@ -110,7 +113,7 @@ PII inference requests fail loudly instead of falling through.
 - **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
 ### Gateway & Infrastructure
-- **APISIX** — API gateway (forward-auth via `/auth/validate`; external to this repo)
+- **nginx** — API gateway (forward-auth via `/auth/validate`; defined in `docker-compose-local.yml` as `nginx-gateway`, config at `infrastructure/nginx/nginx.conf`)
 - **Docker Compose** — local infrastructure (`docker-compose-local.yml`)
 - **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
 - **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting

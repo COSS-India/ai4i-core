@@ -105,7 +105,7 @@ async def forgot_password(
 
     Anti-enumeration: returns the same generic 200 message regardless of
     whether the email matches a real, active account. Rate-limiting is handled
-    at the gateway (APISIX) level.
+    at the gateway (nginx) level.
     """
     await svc.request_password_reset(email=body.email, background_tasks=background_tasks)
     return success_response(data={
