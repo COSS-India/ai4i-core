@@ -20,9 +20,12 @@ per-service alias `POST /api/v1/{task}/inference`. LLM uses OpenAI-compatible
 `POST /api/v1/chat/completions`. `GET /api/v1/inference/tasks` lists what is registered.
 
 `NMT` · `ASR` · `TTS` · `NER` · `OCR` · `TRANSLITERATION` · `LANGUAGE_DETECTION` ·
-`AUDIO_LANGUAGE_DETECTION` · `SPEAKER_DIARIZATION` · `LANGUAGE_DIARIZATION` · `PII` · LLM chat
+`AUDIO_LANGUAGE_DETECTION` · `SPEAKER_DIARIZATION` · `LANGUAGE_DIARIZATION` · LLM chat
 
-Registered in `orchestrator/task_service_registry.py`.
+Registered in `orchestrator/task_service_registry.py`. (A `PIITaskService` stub
+is also registered so `task_type=PII` returns a clean 501 — actual PII
+detection and redaction live in **platform-core-service** under
+`/api/v1/pii/*`.)
 
 ## Architecture
 

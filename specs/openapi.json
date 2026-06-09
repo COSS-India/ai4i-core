@@ -3,7 +3,7 @@
     "info": {
       "title": "AI4I-Core",
       "description": "A comprehensive microservices based platform to handle language based AI models inferences at scale.",
-      "version": "1.0.0"
+      "version": "2.2.0"
     },
     "paths": {
       "/asr": {
@@ -16,7 +16,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -42,7 +42,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -68,7 +68,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -94,7 +94,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -120,7 +120,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -146,7 +146,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -172,7 +172,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -198,7 +198,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -224,7 +224,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -250,7 +250,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -276,7 +276,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -302,7 +302,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -329,7 +329,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -356,7 +356,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -386,7 +386,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -423,7 +423,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -465,7 +465,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -507,7 +507,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -559,7 +559,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -591,7 +591,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -623,7 +623,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -663,7 +663,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -715,7 +715,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -767,7 +767,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -809,7 +809,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -841,7 +841,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -881,7 +881,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -944,7 +944,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -997,7 +997,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1030,7 +1030,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1053,7 +1053,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1086,7 +1086,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1129,7 +1129,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1182,7 +1182,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1244,7 +1244,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1277,7 +1277,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1310,7 +1310,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1362,7 +1362,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1395,7 +1395,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1428,7 +1428,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1605,7 +1605,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1640,7 +1640,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1675,7 +1675,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1710,7 +1710,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1745,7 +1745,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1835,7 +1835,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -1980,7 +1980,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2070,7 +2070,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2160,7 +2160,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2305,7 +2305,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2497,7 +2497,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2532,7 +2532,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2622,7 +2622,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2722,7 +2722,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2767,7 +2767,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2802,7 +2802,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2837,7 +2837,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2872,7 +2872,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2917,7 +2917,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2962,7 +2962,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -2997,7 +2997,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -3032,7 +3032,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -3430,7 +3430,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -3713,7 +3713,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4071,7 +4071,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4493,7 +4493,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4520,7 +4520,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4561,7 +4561,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4605,7 +4605,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4649,7 +4649,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4693,7 +4693,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4737,7 +4737,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4781,7 +4781,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }
@@ -4825,7 +4825,7 @@
               "content": {
                 "application/json": {
                   "schema": {
-  
+
                   }
                 }
               }

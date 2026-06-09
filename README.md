@@ -78,11 +78,18 @@ uses an OpenAI-compatible `POST /api/v1/chat/completions`.
 | Audio Language Detection | `AUDIO_LANGUAGE_DETECTION` | `/api/v1/audio-lang-detection/inference` | Spoken-language identification |
 | Speaker Diarization | `SPEAKER_DIARIZATION` | `/api/v1/speaker-diarization/inference` | Who-spoke-when segmentation |
 | Language Diarization | `LANGUAGE_DIARIZATION` | `/api/v1/language-diarization/inference` | Multilingual audio segmentation |
-| PII | `PII` | `/api/v1/inference` (`task_type=PII`) | PII detection / redaction |
 | LLM Chat | — | `/api/v1/chat/completions` | OpenAI-compatible chat completions |
 
 > Source of truth: `services/inference-service/orchestrator/task_service_registry.py`
 > (`GET /api/v1/inference/tasks` lists what the running service has registered).
+
+**PII detection & redaction is NOT served by the inference-service.** It lives in
+**platform-core-service** (control plane) under `/api/v1/pii/*` — domain
+policies, regex patterns, tenant-domain mappings, audit logs, and the
+`redact-text` endpoint. Source:
+`services/platform-core-service/app/routes/pii.py`. The `PIITaskService` stub
+that still appears in `task_service_registry.py` is a 501 placeholder kept so
+PII inference requests fail loudly instead of falling through.
 
 ## 🎨 Frontend
 
