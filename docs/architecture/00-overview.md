@@ -157,3 +157,27 @@ All infrastructure and runtime dependencies are open source. No proprietary depe
 > Community License. If a fully Apache 2.0 stack is required, replace the image with
 > `bitnami/kafka` or `apache/kafka` — both are drop-in compatible with the existing
 > `KAFKA_SERVER` configuration.
+
+## Regulatory Compliance & Privacy
+
+This is a **self-hosted, open-source** platform — the operator (the organisation deploying it) is the data controller and is responsible for regulatory compliance in their jurisdiction. The architecture provides the following built-in controls:
+
+| Control | Implementation |
+|---------|----------------|
+| Password security | Argon2id hashing with per-user salt (auth-service `app/core/security.py`) |
+| Token signing | RS256 JWTs with ≥ 10-key rotation and JWKS endpoint (auth-service) |
+| Data isolation | Per-tenant schema isolation; `TENANT_ADMIN` role scoped to its own tenant |
+| PII handling | Configurable domain-specific redaction policies — `REDACT`, `MASK`, `REDACT_TAG` — for healthcare, financial, logistics, education contexts |
+| Secrets management | All credentials injected via environment variables; no secrets in source |
+| Transport security | TLS at the APISIX gateway; internal services communicate on an isolated bridge network |
+| Audit trail | Structured JSON logs (all services) + OpenTelemetry trace spans (inference-service) shipped to OpenSearch |
+
+### Applicable regulations
+
+Operators deploying this platform in India should assess compliance with:
+
+- **Digital Personal Data Protection Act, 2023 (DPDPA)** — data minimisation, purpose limitation, and grievance redressal. The PII redaction capability and per-tenant isolation support these obligations; a full Data Protection Impact Assessment (DPIA) remains the operator's responsibility.
+- **IT Act, 2000 / SPDI Rules, 2011** — requirements for sensitive personal data (passwords, financial data). Argon2id hashing and TLS-in-transit address storage and transmission safeguards.
+- **GDPR** (if EU data subjects are involved) — data-subject rights (erasure, portability) must be implemented at the application layer by the operator; the per-tenant isolation model provides the necessary data-scope boundary.
+
+For detailed security implementation see [docs/architecture/01-auth-service.md — Data Privacy & Security](./01-auth-service.md#data-privacy--security).
