@@ -49,7 +49,11 @@ def _tenant(id: int, email: str = "contact@tenant.com") -> Tenant:
 
 
 def _user(tenant_id=None) -> User:
-    return User(id=uuid4(), email="oauth@gmail.com", username="oauthuser", tenant_id=tenant_id)
+    return User(id=uuid4(), email="test-oauth-user@example.invalid", username=uuid4().hex[:12], tenant_id=tenant_id)
+
+
+def _acting_admin() -> User:
+    return User(id=uuid4(), email="test-acting-admin@example.invalid", username=uuid4().hex[:12])
 
 
 class TestUpdateTenantEmailUniqueness:
@@ -63,7 +67,7 @@ class TestUpdateTenantEmailUniqueness:
         body.model_dump.return_value = {"email": "taken@other.com"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.update_tenant(User(id=uuid4(), email="a@b.com", username="u"), 1, body)
+            await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"
@@ -80,7 +84,7 @@ class TestUpdateTenantEmailUniqueness:
         body = MagicMock()
         body.model_dump.return_value = {"email": "own@tenant.com", "contact_name": "New Name"}
 
-        await svc.update_tenant(User(id=uuid4(), email="a@b.com", username="u"), 1, body)
+        await svc.update_tenant(_acting_admin(), 1, body)
 
         svc._tenants.update.assert_awaited_once()
 
@@ -94,10 +98,10 @@ class TestUpdateTenantEmailUniqueness:
         svc._users.get_by_email = AsyncMock(return_value=_user(tenant_id=None))
 
         body = MagicMock()
-        body.model_dump.return_value = {"email": "oauth@gmail.com"}
+        body.model_dump.return_value = {"email": "test-oauth-user@example.invalid"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.update_tenant(User(id=uuid4(), email="a@b.com", username="u"), 1, body)
+            await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
@@ -113,7 +117,7 @@ class TestUpdateTenantEmailUniqueness:
         body.model_dump.return_value = {"email": "other@tenant99.com"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.update_tenant(User(id=uuid4(), email="a@b.com", username="u"), 1, body)
+            await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
@@ -130,7 +134,7 @@ class TestUpdateTenantEmailUniqueness:
         body = MagicMock()
         body.model_dump.return_value = {"email": "admin@tenant.com"}
 
-        await svc.update_tenant(User(id=uuid4(), email="a@b.com", username="u"), 1, body)
+        await svc.update_tenant(_acting_admin(), 1, body)
 
         svc._tenants.update.assert_awaited_once()
 
@@ -145,7 +149,7 @@ class TestUpdateTenantEmailUniqueness:
         body.model_dump.return_value = {"email": "USER@TENANT.COM"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.update_tenant(User(id=uuid4(), email="a@b.com", username="u"), 1, body)
+            await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"

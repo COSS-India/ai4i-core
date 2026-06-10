@@ -4,6 +4,8 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 **Run model**: infrastructure (PostgreSQL, Redis, Kafka, observability stack) runs in Docker; the three application services (`auth-service`, `platform-core-service`, `inference-service`) run natively on the host via `python3 -m uvicorn` so you can iterate quickly and attach a debugger.
 
+> **Windows users:** Docker Desktop runs containers inside WSL2. You must run **all** commands in this guide — Docker, migrations, Python services, and the frontend — from a **WSL2 bash terminal**, not from PowerShell or CMD. See [Windows (WSL)](#windows-wsl) below.
+
 ## Prerequisites
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
@@ -11,6 +13,60 @@ This guide provides step-by-step instructions for setting up and running the AI4
 - **[Node.js 18+](https://nodejs.org/en/download)** installed — required for the frontend (`node --version` should show `v18.x` or higher)
 - **[Git](https://git-scm.com/install/)** installed
 - At least **8GB RAM** and **20GB disk space**
+- **Windows only:** **[WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)** with a Linux distribution (Ubuntu recommended) and **[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)** configured to use the WSL 2 backend
+
+## Windows (WSL)
+
+On Windows, Docker Desktop runs containers inside WSL2. The `nginx-gateway` container (and every other Docker service) binds to ports inside the WSL network. If you start the frontend or application services from a native Windows terminal (PowerShell, CMD, or Windows Terminal without entering WSL), they cannot reliably reach `nginx-gateway` at `http://localhost:8080` — API calls from the Simple UI will fail even though the containers appear healthy.
+
+`nginx-gateway` also proxies API traffic to the natively-running services via `host.docker.internal` (ports 8081, 8095, 8090). Those processes must run in the same WSL environment as Docker so nginx can reach them.
+
+**Run the entire local setup inside WSL2.** All commands in this guide use bash syntax and apply unchanged on WSL.
+
+### 1. Install and configure WSL2
+
+```powershell
+# Run once from an elevated PowerShell window on Windows
+wsl --install
+```
+
+Restart if prompted, then open your Linux distro (e.g. Ubuntu) from the Start menu.
+
+### 2. Install Docker Desktop for Windows
+
+1. Install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/).
+2. Open **Settings → General** and enable **Use the WSL 2 based engine**.
+3. Open **Settings → Resources → WSL Integration** and enable integration for your Linux distro.
+
+Verify from a WSL terminal:
+
+```bash
+docker --version
+docker compose version
+```
+
+### 3. Install dev tools inside WSL
+
+Install Python 3.11, Node.js 18+, and Git inside your WSL distro (not on Windows):
+
+```bash
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3-pip git curl
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+### 4. Clone the repo inside WSL
+
+Clone into your WSL home directory for best file-system performance (avoid `/mnt/c/...` paths):
+
+```bash
+cd ~
+git clone git@github.com:COSS-India/ai4i-core.git
+cd ai4i-core
+```
+
+From this point, follow the rest of this guide in the same WSL terminal. Open additional WSL terminals for each service you need to run in parallel (auth, platform-core, inference, frontend).
 
 ## Step 1: Clone the Repository
 
@@ -44,8 +100,14 @@ REDIS_PASSWORD=changeme
 
 Run the setup script to generate a `.env` for every service from its template, substituting values from the root `.env`:
 
+**Linux / macOS / WSL:**
 ```bash
 ./scripts/setup-env.sh
+```
+
+**Windows (PowerShell or CMD):**
+```bash
+bash ./scripts/setup-env.sh
 ```
 
 This creates:
@@ -58,6 +120,13 @@ This creates:
 Re-run this script any time you change the root `.env`.
 
 ## Step 4: Start Infrastructure Services
+
+> **About the gateway:** this local setup uses **nginx** as the API gateway
+> (`nginx-gateway` in `docker-compose-local.yml`, config at
+> [`infrastructure/nginx/nginx.conf`](../infrastructure/nginx/nginx.conf)).
+> It implements forward-auth via `auth_request → GET /auth/validate`, so
+> every request is authenticated at the gateway before being proxied to
+> `auth-service`, `platform-core-service`, or `inference-service`.
 
 ### Option A: Minimal (required services only)
 
@@ -101,7 +170,7 @@ The platform uses Alembic for database migrations. Run them from the host using 
 
 ### Step 5.1: Install Migration Framework Dependencies
 
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd infrastructure/databases
 pip3 install -r requirements.txt
@@ -137,7 +206,7 @@ The auth service handles authentication, authorization, RBAC, API keys, and JWT 
 
 ### Step 6.1: Install Dependencies and Run
 
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd services/auth-service
 python3.11 -m venv .venv
@@ -170,7 +239,7 @@ The platform core service is the model and service registry, alert management, a
 
 ### Step 7.1: Install Dependencies and Run
 
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd services/platform-core-service
 python3.11 -m venv .venv
@@ -203,7 +272,7 @@ The inference service is the unified multi-task inference orchestration layer. S
 
 ### Step 8.1: Install Dependencies and Run
 
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd services/inference-service
 python3.11 -m venv .venv
@@ -244,6 +313,8 @@ NEXT_PUBLIC_API_KEY=your_api_key_here
 ```
 
 > **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
+>
+> **Windows:** Start `npm run dev` from the same WSL terminal where Docker is running. The frontend talks to `nginx-gateway` at `http://localhost:8080`; mixing a Windows-native terminal with WSL Docker breaks that path.
 
 ### Step 9.2: Install Dependencies and Run
 
@@ -284,6 +355,27 @@ Once all services are running, use the table below to find URLs and ports.
 - **Role**: ADMIN (all permissions)
 
 ## Troubleshooting
+
+### Frontend cannot reach nginx-gateway (Windows)
+
+**Symptom:** Simple UI loads at `http://localhost:3000` but API calls fail; `curl http://localhost:8080` from PowerShell times out or is refused, while `docker compose ps` shows `nginx-gateway` as running.
+
+**Cause:** Docker containers run inside WSL2, but the frontend (or application services) were started from a native Windows terminal. WSL2 and Windows maintain separate `localhost` networking in this setup.
+
+**Fix:**
+
+1. Stop any services running in PowerShell/CMD.
+2. Open a WSL terminal (`wsl` or your Ubuntu app).
+3. `cd` to the repo clone inside WSL (not a `/mnt/c/...` path unless you have no alternative).
+4. Start Docker infrastructure, then migrations, Python services, and `npm run dev` — all from WSL.
+5. Verify from the same WSL terminal:
+
+   ```bash
+   # nginx-gateway listening (any HTTP response means the port is reachable)
+   curl -I http://localhost:8080
+   # auth-service health (must be running before nginx can proxy auth routes)
+   curl http://localhost:8081/health
+   ```
 
 ### Database connection errors from migrate.sh
 
@@ -348,7 +440,7 @@ Stop the conflicting process, or change the `--port` argument when starting the 
 
 Check what is using a port:
 ```bash
-# Linux/macOS
+# Linux / macOS / WSL
 lsof -i :<port>
 # Windows
 netstat -ano | findstr <port>
@@ -366,6 +458,9 @@ netstat -ano | findstr <port>
 | `auth-service` | Native — uvicorn | restart the terminal process |
 | `platform-core-service` | Native — uvicorn | restart the terminal process |
 | `inference-service` | Native — python3 main.py / uvicorn | restart the terminal process |
+| Simple UI (frontend) | Native — `npm run dev` | restart the terminal process |
+
+On **Windows**, "native" means inside your **WSL2** Linux environment — the same network namespace where Docker Desktop exposes container ports.
 
 ### Why Services Run Natively
 

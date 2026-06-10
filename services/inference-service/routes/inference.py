@@ -124,7 +124,7 @@ async def _run_inference(
         logger.error(
             "Inference failed: task_type=%s exc_chain=%s",
             task_type, "→".join(chain_types),
-        )        
+        )
         raise _http_error_for(exc, task_type) from exc
 
     for key in strip:

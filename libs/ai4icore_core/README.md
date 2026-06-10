@@ -21,7 +21,7 @@ pip install ai4icore-core
 | `ai4icore_core.model_management` | Model management client, Triton inference, FastAPI middleware |
 | `ai4icore_core.observability` | Prometheus metrics, dashboards, middleware |
 | `ai4icore_core.service_base` | App factory, health, rate limit, service registry, inference headers |
-| `ai4icore_core.telemetry` | OpenTelemetry tracing, Jaeger / OpenSearch query clients |
+| `ai4icore_core.telemetry` | OpenTelemetry tracing, OpenSearch query clients |
 
 ## Usage
 
