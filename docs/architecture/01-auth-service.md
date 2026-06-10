@@ -195,11 +195,11 @@ Access tokens are signed with **RS256** (asymmetric). The service manages a pool
 
 ### Tenant & data isolation
 
-All user and credential data is stored in the `ai4iplatform_auth` PostgreSQL database, schema-isolated from the platform-core database. Tenant plans carry per-tenant quota, rate-limit, and allowed-service configuration in JSONB columns (`tenant_plans`). The `TENANT_ADMIN` role is scoped strictly to its own tenant — cross-tenant reads are only available to `ADMIN`/`MODERATOR`.
+All user and credential data is stored in the `ai4iplatform_auth` PostgreSQL database, schema-isolated from the platform-core database. Tenant plans carry per-tenant quota, rate-limit, and allowed-service configuration in JSONB columns (`tenant_plans`). The `TENANT_ADMIN` role is scoped strictly to its own tenant. Cross-tenant reads of tenant details and tenant users are available to `ADMIN` only.
 
 ### PII redaction
 
-The platform seeds a domain-specific PII redaction policy library (`infrastructure/databases/migrations/postgres/alembic/versions/ai4i_platform_db/c7f2a4b9e3d1_seed_pii_knowledge_base.py`): regex patterns for Aadhaar UID, PAN, passport, voter ID, IFSC, credit card, phone, and email; geo-location suffixes; and pre-built domain policies for healthcare, financial, logistics (English, Hindi, Tamil, Marathi), and education. Redaction actions — `REDACT`, `REDACT_TAG`, `MASK` — are configurable per domain policy and are inactive by default until explicitly activated.
+The platform ships a domain-specific PII redaction policy library covering identifiers (Aadhaar UID, PAN, passport, voter ID, IFSC, credit card, phone, email) and geo-location suffixes. Pre-built policies are available for healthcare, financial, logistics, and education domains across multiple languages (English, Hindi, Tamil, Marathi). Redaction actions — `REDACT`, `REDACT_TAG`, `MASK` — are configurable per policy and are inactive by default until explicitly activated.
 
 ### Secrets handling
 
