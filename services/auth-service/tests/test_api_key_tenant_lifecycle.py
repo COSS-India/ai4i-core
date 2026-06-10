@@ -41,7 +41,7 @@ class TestAPIKeyCacheLifecycle:
         user = User(
             id=uuid4(),
             email="test-user@example.invalid",
-            username="test-user",
+            username=uuid4().hex[:12],
             tenant_id=1,
             is_active=True,
             is_tenant_active=True,
@@ -73,7 +73,7 @@ class TestAPIKeyCacheLifecycle:
         user = User(
             id=uuid4(),
             email="test-user@example.invalid",
-            username="test-user",
+            username=uuid4().hex[:12],
             tenant_id=1,
             is_active=True,
             is_tenant_active=True,

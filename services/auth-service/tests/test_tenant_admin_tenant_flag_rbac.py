@@ -31,11 +31,11 @@ def _make_service() -> TenantService:
 
 
 def _tenant_admin() -> User:
-    return User(id=uuid4(), email="test-tenant-admin@example.invalid", username="test-tenant-admin", tenant_id=1)
+    return User(id=uuid4(), email="test-tenant-admin@example.invalid", username=uuid4().hex[:12], tenant_id=1)
 
 
 def _admin() -> User:
-    return User(id=uuid4(), email="test-admin@example.invalid", username="test-admin")
+    return User(id=uuid4(), email="test-admin@example.invalid", username=uuid4().hex[:12])
 
 
 def _active_tenant() -> Tenant:
@@ -44,7 +44,7 @@ def _active_tenant() -> Tenant:
 
 
 def _target_user() -> User:
-    return User(id=uuid4(), email="test-target-user@example.invalid", username="test-target-user",
+    return User(id=uuid4(), email="test-target-user@example.invalid", username=uuid4().hex[:12],
                 tenant_id=1, is_active=True, is_tenant_active=True)
 
 

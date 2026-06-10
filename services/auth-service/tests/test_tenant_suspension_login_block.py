@@ -48,7 +48,7 @@ def _tenant_user(*, is_tenant_active) -> User:
     return User(
         id=uuid4(),
         email="test-tenant-user@example.invalid",
-        username="test-tenant-user",
+        username=uuid4().hex[:12],
         tenant_id=1,
         is_active=True,
         is_tenant_active=is_tenant_active,
@@ -59,7 +59,7 @@ def _system_user() -> User:
     return User(
         id=uuid4(),
         email="test-system-admin@example.invalid",
-        username="test-system-admin",
+        username=uuid4().hex[:12],
         tenant_id=None,
         is_active=True,
     )
