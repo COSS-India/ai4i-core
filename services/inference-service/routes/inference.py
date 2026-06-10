@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-
+from trace.request_span import traced_span, get_context_attributes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -390,6 +390,24 @@ async def run_ocr_inference(
     """Dedicated endpoint for OCR inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="OCR")
 
+async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
+    """
+    Shared handler for LLM chat routes. Owns only the request span — model and
+    ai_inference spans are managed inside OpenAIProxyService.proxy_traced(),
+    mirroring the Orchestrator + BaseTaskService pattern for Triton services.
+    """
+    with traced_span("request", root=True, classify_status=True) as req_attrs:
+        req_attrs["url"] = request.url.path
+        req_attrs["method"] = request.method
+        req_attrs.update(get_context_attributes())
+ 
+        status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
+ 
+        if status_code >= 400:
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = status_code
+ 
+    return JSONResponse(status_code=status_code, content=body)
 
 @router.post(
     "/chat/completions",
@@ -397,10 +415,10 @@ async def run_ocr_inference(
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
 )
 async def chat_completions(
+    request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> JSONResponse:
-    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat/completions", payload=payload)
-    return JSONResponse(status_code=status_code, content=body)
+    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
 @router.post(
@@ -409,11 +427,10 @@ async def chat_completions(
     description="Forwards the request to the upstream LLM at /v1/chat",
 )
 async def chat(
+    request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> JSONResponse:
-    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
-    return JSONResponse(status_code=status_code, content=body)
-
+    return await _run_llm_chat(request, payload, path="/v1/chat")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OpenAI-compatible audio endpoints — pure multipart passthrough.
