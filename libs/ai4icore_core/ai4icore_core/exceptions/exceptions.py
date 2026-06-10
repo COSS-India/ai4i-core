@@ -268,7 +268,7 @@ class ErrorDetail(BaseModel):
     details: Optional[str] = None
 
     def __init__(self, **data):
-        if not data.get("timestamp"):
+        if data.get("timestamp") is None:
             data["timestamp"] = time.time()
         super().__init__(**data)
 
