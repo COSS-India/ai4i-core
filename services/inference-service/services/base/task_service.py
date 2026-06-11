@@ -98,7 +98,7 @@ class BaseTaskService:
 
         await self.validate_request(payload)
         preprocessed = await self.preprocess_input(payload)
-        result = await self.run_inference(preprocessed)
+        result = await self.run_inference(preprocessed, serviceInfo)
         return await self.postprocess_output(result)
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
@@ -224,7 +224,7 @@ class BaseTaskService:
         mapper = GenericTritonMapper(self._adapter_config)
         return mapper.to_output_items(mapper.map_outputs(triton_output))
 
-    async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
+    async def run_inference(self, payload: Dict[str, Any], serviceInfo: Dict[str, Any]) -> PostProcessFormat:
         """
         Generic Triton inference — single implementation for every modality.
 
@@ -239,38 +239,38 @@ class BaseTaskService:
         from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
 
-        async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-            model_name = self.service_info.get('name', '')
-            triton_endpoint = self.service_info.get('endpoint', '')
-            api_key = self.service_info.get('api_key')
-            self._adapter_config = self.service_info.get('adapter_config')
+        
+        model_name = serviceInfo.get('name', '')
+        triton_endpoint = serviceInfo.get('endpoint', '')
+        api_key = serviceInfo.get('api_key')
+        self._adapter_config = serviceInfo.get('adapter_config')
+        if not model_name or not triton_endpoint:
+            raise RuntimeError(
+                f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                "Ensure the Orchestrator resolved the service before creating this task service."
+            )
 
-            if not model_name or not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
-                )
+        input_items = payload.get(self.payload_key) or []
+        config_data = payload.get('config', {})
+        if not input_items:
+            raise ValueError(f"{self.task_name}: input payload is empty or missing")
 
-            input_items = payload.get(self.payload_key) or []
-            config_data = payload.get('config', {})
-            if not input_items:
-                raise ValueError(f"{self.task_name}: input payload is empty or missing")
+        source_texts = self.extract_field_from_items(input_items, 'source')
 
-            source_texts = self.extract_field_from_items(input_items, 'source')
-            span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
+        call_mode = (
+            (self._adapter_config or {}).get("call_mode")
+            if isinstance(self._adapter_config, dict) else None
+        ) or self.TRITON_CALL_MODE
+        groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
-            call_mode = (
-                (self._adapter_config or {}).get("call_mode")
-                if isinstance(self._adapter_config, dict) else None
-            ) or self.TRITON_CALL_MODE
-            groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
-
-            response_data = []
-            for group in groups:
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    group, config_data
-                )
-                #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
+        response_data = []
+        for group in groups:
+            triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                group, config_data
+            )
+            #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
+            async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
+                span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
@@ -280,15 +280,14 @@ class BaseTaskService:
                 response_data.extend(
                     await self.convert_triton_output_to_task_format(raw_triton_output)
                 )
-
-            span_ctx["output_type"] = get_output_type(response_data)
-            span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
-
-            return PostProcessFormat(
-                payload=payload,
-                response_data=response_data,
-                source_texts=source_texts,
-            )
+                span_ctx["output_type"] = get_output_type(response_data)
+                span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
+    
+        return PostProcessFormat(
+            payload=payload,
+            response_data=response_data,
+            source_texts=source_texts,
+        )
 
     async def _call_triton_inference(
         self,
