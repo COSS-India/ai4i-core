@@ -7,6 +7,7 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ai4v-postgres
+    profiles: ["core"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -33,6 +34,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
+    profiles: ["core"]
     command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -58,6 +60,7 @@ services:
   nginx-gateway:
     image: nginx:alpine
     container_name: ai4v-nginx-gateway
+    profiles: ["core"]
     ports:
       - "8080:8080"
     volumes:
@@ -127,6 +130,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: ai4v-prometheus
+    profiles: ["monitoring"]
     ports:
       - "9090:9090"
     # Allows Prometheus to scrape services running natively on the host
@@ -157,6 +161,7 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
+    profiles: ["monitoring"]
     user: root
     ports:
       - "9095:9093"
@@ -184,6 +189,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: ai4v-grafana
+    profiles: ["monitoring"]
     ports:
       - "3001:3000"
     environment:
@@ -206,6 +212,7 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.7.0
     container_name: ai4v-node-exporter
+    profiles: ["monitoring"]
     ports:
       - "9100:9100"
     volumes:
