@@ -119,17 +119,17 @@ below show the domain-level paths. Source: `services/auth-service/app/routes/`.
 | PATCH | `/auth/api-keys/{api_key}` | Update name / permissions / expiry / active |
 | DELETE | `/auth/api-keys/{api_key}` | Revoke / delete key |
 
-### Tenants — `/tenants`
+### Tenants — `/auth/tenants`
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST / GET | `/tenants` | Create / list tenants |
-| GET / PATCH | `/tenants/{tenant_id}` | Get / update tenant |
-| PATCH | `/tenants/{tenant_id}/status` | Lifecycle transition |
-| GET | `/tenants/{tenant_id}/plan` | Tenant plan |
-| GET / POST | `/tenants/{tenant_id}/users` | List / invite tenant users |
-| PATCH | `/tenants/{tenant_id}/users/{user_id}` | Update tenant user |
-| PATCH | `/tenants/{tenant_id}/users/{user_id}/status` | Change tenant-user status |
-| DELETE | `/tenants/{tenant_id}/users/{user_id}` | Remove tenant user |
+| POST / GET | `/auth/tenants` | Create / list tenants |
+| GET / PATCH | `/auth/tenants/{tenant_id}` | Get / update tenant |
+| PATCH | `/auth/tenants/{tenant_id}/status` | Lifecycle transition |
+| GET | `/auth/tenants/{tenant_id}/plan` | Tenant plan |
+| GET / POST | `/auth/tenants/{tenant_id}/users` | List / invite tenant users |
+| PATCH | `/auth/tenants/{tenant_id}/users/{user_id}` | Update tenant user |
+| PATCH | `/auth/tenants/{tenant_id}/users/{user_id}/status` | Change tenant-user status |
+| DELETE | `/auth/tenants/{tenant_id}/users/{user_id}` | Remove tenant user |
 
 ### OAuth2, validation, internal, health
 | Method | Path | Purpose |

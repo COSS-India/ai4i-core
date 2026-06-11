@@ -1,9 +1,8 @@
 """Unit tests: resend-verification, forgot-password, and resend-setup-link
 email handling (AI4IDS-1769).
 
-forgot-password and resend-setup-link accept any plausible email and always
-return 200 (anti-enumeration). resend-verification rejects unknown emails
-with 404 instead of falsely claiming a link was sent.
+All three endpoints accept any plausible email and always return 200 with a
+generic message (anti-enumeration): unknown emails are a silent no-op.
 
 Regression: all three endpoints returned 422 when the email used a reserved TLD
 (.invalid, RFC 2606) because EmailStr's underlying library hardcodes a
@@ -87,20 +86,17 @@ class TestResendSetupLinkSchema:
 
 class TestResendVerificationSilentNoOp:
     @pytest.mark.asyncio
-    async def test_unknown_email_raises_not_found(self) -> None:
-        """resend_verification must reject an unknown email with 404."""
-        from app.core.exceptions import UserNotFoundError
+    async def test_unknown_email_returns_silently(self) -> None:
+        """resend_verification must return None for an unknown email — anti-enumeration."""
         from app.services.auth_service import AuthService
 
         svc = MagicMock(spec=AuthService)
         svc._users = MagicMock()
         svc._users.get_by_email = AsyncMock(return_value=None)
-        svc._credentials = MagicMock()
-        svc._verifications = MagicMock()
 
         # Call the real method bound to our mock instance
-        with pytest.raises(UserNotFoundError):
-            await AuthService.resend_verification(svc, email="nobody@noreply.invalid")
+        result = await AuthService.resend_verification(svc, email="nobody@noreply.invalid")
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_active_user_returns_silently(self) -> None:

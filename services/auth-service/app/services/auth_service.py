@@ -23,7 +23,6 @@ from app.core.exceptions import (
     TokenInvalidError,
     TokenRevokedError,
     UserInactiveError,
-    UserNotFoundError,
     ValidationError,
 )
 from app.models.credentials import UserCredentials
@@ -273,14 +272,15 @@ class AuthService:
     ) -> None:
         """Invalidate any active verify tokens for this user and issue a new one.
 
-        Unknown emails are rejected with 404 (AI4IDS bug: the endpoint used to
-        claim "link sent" for emails not in the system). Only sends email to
-        users who registered via /auth/register (have credentials, inactive).
-        Tenant contact admins must use /auth/resend-setup-link instead.
+        Anti-enumeration: this method ALWAYS returns successfully (consistent
+        with /auth/forgot-password and /auth/resend-setup-link). Unknown emails
+        are a silent no-op. Only sends email to users who registered via
+        /auth/register (have credentials, inactive). Tenant contact admins must
+        use /auth/resend-setup-link instead.
         """
         user = await self._users.get_by_email(email)
         if not user:
-            raise UserNotFoundError("No account found with this email address.")
+            return  # silent no-op (anti-enumeration)
         if user.is_active:
             return  # already verified: silent no-op
 
