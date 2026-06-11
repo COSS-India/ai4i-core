@@ -232,9 +232,21 @@ python3.11 -m venv .venv
 pip install -r requirements.txt
 ```
 
+**Standard run (terminal only):**
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
 ```
+
+**With logging pipeline (required for OpenSearch Dashboards):**
+
+Fluent-Bit reads service logs from `./logs/` on the host (mounted as `/var/log/ai4i-services` inside the container). To feed logs into that pipeline, pipe `uvicorn` output through `tee` so it writes to the file **and** remains visible in your terminal:
+
+```bash
+mkdir -p ../../logs
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload 2>&1 | tee ../../logs/auth-service.log
+```
+
+> **Why `tee`?** `tee` writes stdout/stderr to the file **and** still prints to your terminal, so you don't lose real-time output while Fluent-Bit tails the file.
 
 The service is ready when you see `Application startup complete` in the logs. Verify at **http://localhost:8081/docs**.
 
@@ -265,8 +277,15 @@ python3.11 -m venv .venv
 pip install -r requirements.txt
 ```
 
+**Standard run (terminal only):**
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
+```
+
+**With logging pipeline:**
+```bash
+mkdir -p ../../logs
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload 2>&1 | tee ../../logs/platform-core-service.log
 ```
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8095/docs**.
@@ -298,9 +317,18 @@ python3.11 -m venv .venv
 pip install -r requirements.txt
 ```
 
+**Standard run (terminal only):**
 ```bash
 python -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 ```
+
+**With logging pipeline:**
+```bash
+mkdir -p ../../logs
+python -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload 2>&1 | tee ../../logs/inference-service.log
+```
+
+> OTel trace spans are also emitted via Kafka → Fluent-Bit independently of this log file. The `tee` command captures structured JSON request/response logs only.
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8090/docs**.
 
