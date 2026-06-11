@@ -20,7 +20,13 @@ class LoggerSpanExporter(SpanExporter):
     def __init__(self):
         self._producer = None
         self._kafka_enabled = False
-        self._init_kafka()
+        if settings.KAFKA_ENABLED:
+            self._init_kafka()
+        else:
+            logger.info(
+                "Kafka span export disabled (KAFKA_ENABLED=false); "
+                "spans logged to stdout only."
+            )
 
     def _init_kafka(self):
         """Initialize Kafka producer for span export."""
