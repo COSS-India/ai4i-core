@@ -119,7 +119,7 @@ This creates:
 
 Re-run this script any time you change the root `.env`.
 
-## Step 4: Start Services
+## Step 4: Start Infrastructure Services
 
 > **About the gateway:** this local setup uses **nginx** as the API gateway
 > (`nginx-gateway` in `docker-compose-local.yml`, config at
@@ -128,132 +128,41 @@ Re-run this script any time you change the root `.env`.
 > every request is authenticated at the gateway before being proxied to
 > `auth-service`, `platform-core-service`, or `inference-service`.
 
-A bare `docker compose -f docker-compose-local.yml up -d` brings up the **core
-stack** — `postgres`, `redis`, and the three FastAPI services in containers.
-Everything else is opt-in via `--profile <name>`; each profile layers on top of
-core (the core services don't have a profile and always start).
+### Option A: Minimal (required services only)
 
-| Profile | What it adds on top of core | When you need it |
-|---|---|---|
-| _(none — default)_ | — | Core only: `postgres`, `redis`, `auth-service`, `platform-core-service`, `inference-service`. Hit the services directly on host ports 8081 / 8095 / 8090. |
-| `frontend` | `nginx-gateway`, `simple-ui-frontend` | The full developer stack — gateway + Next.js dev server (hot-reload via `Dockerfile.dev`). |
-| `observability` | `prometheus`, `alertmanager`, `grafana`, `node-exporter` | Metrics dashboards + Prometheus-driven alert rules (only meaningful when `ALERT_SYNC_ENABLED=true` for `platform-core-service`). |
-| `logging` | `opensearch`, `opensearch-init`, `opensearch-dashboards`, `fluent-bit`, `kafka`, `zookeeper` | Logs Dashboard in the Simple UI, trace search, querying `traces-*`/`logs-*` indices via OpenSearch Dashboards. Kafka comes with it because Fluent Bit consumes trace spans from `kafka-topic-otel-trace`. |
-| `streaming` | `kafka`, `zookeeper` | Kafka + Zookeeper for trace transport **without** the OpenSearch sink (e.g. tailing the topic by hand). `logging` already includes these — only set `streaming` if you're skipping OpenSearch deliberately. |
-
-> **Hot reload is on for every application service.** `auth-service` and
-> `platform-core-service` run `uvicorn ... --reload`, `inference-service` does
-> the same via its entrypoint, and `simple-ui-frontend` uses `Dockerfile.dev`
-> which bind-mounts `./frontend/simple-ui` and runs `npx next dev` — so you
-> edit code on the host and the container picks it up.
-
-### Option A: Core only (default — services in Docker, no UI)
+Only `postgres`, `redis`, and `nginx-gateway` are strictly required for the three application services and the frontend to work:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d
+docker compose -f docker-compose-local.yml up -d postgres redis nginx-gateway
 ```
 
-Builds and runs `postgres`, `redis`, `auth-service`, `platform-core-service`,
-`inference-service`. **You can skip Steps 6–8** (the native uvicorn runs) when
-you start the services this way.
+### Option B: Full observability stack (recommended)
 
-### Option B: Frontend (core + gateway + UI — the everyday dev stack)
+Adds Kafka (trace transport), OpenSearch (trace/log storage), Prometheus, Grafana, and Alertmanager:
 
 ```bash
-docker compose -f docker-compose-local.yml --profile frontend up -d
+docker compose -f docker-compose-local.yml up -d \
+  postgres redis \
+  zookeeper kafka \
+  opensearch opensearch-init \
+  prometheus alertmanager grafana node-exporter \
+  fluent-bit opensearch-dashboards \
+  nginx-gateway
 ```
 
-Same as Option A plus `nginx-gateway` (port 8080) and `simple-ui-frontend`
-(port 3000). Open **http://localhost:3000** — UI calls go through nginx at
-`:8080` and then to the three services.
-
-### Option C: Core + Logs Dashboard
-
-```bash
-docker compose -f docker-compose-local.yml --profile logging up -d
-```
-
-Core services + OpenSearch + Dashboards + Fluent Bit + Kafka + Zookeeper.
-After this, trace spans flow into OpenSearch and the Simple UI's Logs
-Dashboard works end-to-end (combine with `--profile frontend` to also get
-the UI up).
-
-> **Turn on Kafka span export for this profile.** Before running the
-> command above, edit `services/inference-service/.env` and set
-> `KAFKA_ENABLED=true`. With the default (`false`), `inference-service`
-> skips Kafka entirely and ships OTel spans to stdout only — that keeps
-> bare `docker compose up` quiet, but it also means Fluent Bit has nothing
-> to consume from `kafka-topic-otel-trace`, so the Simple UI Logs Dashboard
-> stays empty. Set it back to `false` when you're done so the bare
-> `docker compose up` path stays clean.
-
-### Option D: Core + metrics / alerts
-
-```bash
-docker compose -f docker-compose-local.yml --profile observability up -d
-```
-
-Core services + Prometheus, Alertmanager, Grafana, node-exporter. Useful for
-hitting the dynamic alert-management routes in `platform-core-service` (only
-meaningful with `ALERT_SYNC_ENABLED=true`).
-
-### Option E: Everything (full local stack)
-
-```bash
-docker compose -f docker-compose-local.yml \
-  --profile frontend \
-  --profile logging \
-  --profile observability up -d
-```
-
-≈ 2.5 GB RAM. `streaming` is redundant here — `logging` already brings up
-Kafka + Zookeeper.
-
-### Running the application services natively
-
-If you'd rather run `auth-service`, `platform-core-service` and
-`inference-service` with native uvicorn (the classic workflow — easier
-breakpoints, no rebuild on `requirements.txt` changes), start only the infra
-you need by naming services explicitly:
-
-```bash
-# infra only — postgres + redis (skips the application service containers)
-docker compose -f docker-compose-local.yml up -d postgres redis
-```
-
-Then jump to **Step 6** to install dependencies and start each service with
-uvicorn. Note that the service `.env` files now default internal hostnames to
-docker DNS names (`postgres`, `redis`, `auth-service`, ...), so for native
-runs you'll need to override the host fields on the command line:
-
-```bash
-POSTGRES_HOST=localhost REDIS_HOST=localhost AUTH_DB_HOST=localhost \
-  python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
-```
-
-(or maintain a `.env.native` alongside each service that flips the hosts back
-to `localhost`).
-
-### Verify what's running
+Wait for the core services to become healthy:
 
 ```bash
 docker compose -f docker-compose-local.yml ps
 ```
 
-`postgres` and `redis` must show **healthy** before you proceed to Step 5.
-If you used `--profile logging`, also wait for `kafka` and `opensearch` to
-be healthy.
+`postgres` and `redis` must show **healthy** before you proceed. If running the full stack, wait for `kafka` and `opensearch` too.
 
-If a specific service didn't come up, start it explicitly:
+If any service is not running, start it explicitly:
 
 ```bash
 docker compose -f docker-compose-local.yml up -d <service-name>
 ```
-
-> **Tip:** to see which services a given profile activates without starting them:
-> ```bash
-> docker compose -f docker-compose-local.yml --profile frontend config --services
-> ```
 
 ## Step 5: Initialize Databases
 
@@ -403,7 +312,7 @@ The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults 
 NEXT_PUBLIC_API_KEY=your_api_key_here
 ```
 
-> **Note:** `nginx-gateway` must be running before the frontend can reach the API. It proxies all `/api/v1/…` requests to `auth-service` (port 8081), `platform-core-service` (port 8095), and `inference-service` (port 8090). The simplest way to bring it up is `docker compose -f docker-compose-local.yml --profile frontend up -d`, which also starts the UI container — skip Step 9.2 if you go that route. To start only the gateway by hand: `docker compose -f docker-compose-local.yml up -d nginx-gateway`.
+> **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
 >
 > **Windows:** Start `npm run dev` from the same WSL terminal where Docker is running. The frontend talks to `nginx-gateway` at `http://localhost:8080`; mixing a Windows-native terminal with WSL Docker breaks that path.
 
@@ -417,8 +326,6 @@ npm run dev
 
 The UI is available at **http://localhost:3000**.
 
-> **Or** run it in Docker (same `npm install` + `npm run dev` flow under the hood, via [`Dockerfile.dev`](../frontend/simple-ui/Dockerfile.dev)) by using the `frontend` profile from Step 4 — `docker compose -f docker-compose-local.yml --profile frontend up -d`. The container bind-mounts `./frontend/simple-ui`, so hot reload works the same as native.
-
 ```bash
 cd ../..
 ```
@@ -429,15 +336,15 @@ Once all services are running, use the table below to find URLs and ports.
 
 | Service / Tool | URL | Notes |
 |---|---|---|
-| Auth Service | http://localhost:8081/docs | Native or Docker (`--profile core`) |
-| Platform Core Service | http://localhost:8095/docs | Native or Docker (`--profile core`) |
-| Inference Service | http://localhost:8090/docs | Native or Docker (`--profile core`) |
-| Simple UI | http://localhost:3000 | Native or Docker (`--profile frontend`) |
-| **Nginx Gateway** | **http://localhost:8080** | **Docker — API gateway for the frontend (`--profile frontend`)** |
-| Prometheus | http://localhost:9090 | Docker (`--profile observability`) |
-| Alertmanager | http://localhost:9095 | Docker (`--profile observability`) |
-| Grafana | http://localhost:3001 | Docker (`--profile observability`) |
-| OpenSearch Dashboards | http://localhost:5602 | Docker (`--profile logging`) |
+| Auth Service | http://localhost:8081/docs | Runs natively |
+| Platform Core Service | http://localhost:8095/docs | Runs natively |
+| Inference Service | http://localhost:8090/docs | Runs natively |
+| Simple UI | http://localhost:3000 | Runs natively (Next.js) |
+| **Nginx Gateway** | **http://localhost:8080** | **Docker — API gateway for the frontend** |
+| Prometheus | http://localhost:9090 | Docker |
+| Alertmanager | http://localhost:9095 | Docker |
+| Grafana | http://localhost:3001 | Docker |
+| OpenSearch Dashboards | http://localhost:5602 | Docker |
 
 ### Default Credentials
 
