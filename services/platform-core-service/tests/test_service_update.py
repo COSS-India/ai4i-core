@@ -5,11 +5,39 @@ valid policy combinations, preventing all policy-bearing updates from going
 through. These tests verify the happy path reaches apply_updates + commit.
 """
 
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import importlib
+
+# ── Module-level stubs ───────────────────────────────────────────────────────
+# test_pii_management.py (collected before this file, p < s) inserts an empty
+# stub for the 'sqlalchemy' package into sys.modules.  service_service.py
+# imports SQLAlchemy-backed ORM model/repo classes at module level; stubbing
+# those classes here lets the service module load without hitting the stub.
+
+
+def _stub_svc(name: str, **attrs) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    sys.modules.setdefault(name, mod)
+    return mod
+
+
+_stub_svc("app.models")
+_stub_svc("app.models.model_management")
+_stub_svc("app.models.model_management.service", Service=MagicMock)
+_stub_svc("app.models.model_management.model", Model=MagicMock)
+_stub_svc("app.repositories")
+_stub_svc("app.repositories.model_management")
+_stub_svc("app.repositories.model_management.model_repository", ModelRepository=MagicMock)
+_stub_svc("app.repositories.model_management.service_repository", ServiceRepository=MagicMock)
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 from app.schemas.enums.model_management import (
     PolicyAccuracyEnum,

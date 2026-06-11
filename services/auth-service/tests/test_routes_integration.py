@@ -114,7 +114,7 @@ class TestRouteRegistration:
         # Validation
         assert "/api/v1/auth/validate" in paths
         # Health
-        assert "/health" in paths
+        assert "/api/v1/auth/health" in paths
 
     def test_protected_routes_have_guard(self):
         """User, role, permission, api_key routes should have endpoint guard."""
