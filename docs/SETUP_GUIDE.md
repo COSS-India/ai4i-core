@@ -150,6 +150,16 @@ docker compose -f docker-compose-local.yml up -d \
   nginx-gateway
 ```
 
+### Option C: Logs + Trace Dashboard
+
+Starts only the traceability and log pipeline services (Zookeeper, Kafka, OpenSearch, OpenSearch Dashboards, Fluent Bit) alongside the always-on base services (`postgres`, `redis`, `nginx-gateway`):
+
+```bash
+docker compose -f docker-compose-local.yml --profile logging up -d
+```
+
+> The `--profile logging` flag activates all services tagged with the `logging` profile. Base services (`postgres`, `redis`, `nginx-gateway`) start automatically as they carry no profile.
+
 Wait for the core services to become healthy:
 
 ```bash

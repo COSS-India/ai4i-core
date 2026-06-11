@@ -73,6 +73,7 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: ai4v-zookeeper
+    profiles: ["logging"]
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -92,12 +93,14 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     container_name: ai4v-kafka
+    profiles: ["logging"]
     depends_on:
       zookeeper:
         condition: service_healthy
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9093,PLAINTEXT_INTERNAL://0.0.0.0:9092"
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT}"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -105,7 +108,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     ports:
-      - "9093:9092"
+      - "9093:9093"
     volumes:
       - kafka-data:/var/lib/kafka/data
       - ./infrastructure/kafka:/docker-entrypoint-initdb.d
@@ -228,6 +231,7 @@ services:
   opensearch:
     image: opensearchproject/opensearch:2.11.0
     container_name: ai4v-opensearch
+    profiles: ["logging"]
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx256m"
     volumes:
@@ -256,6 +260,7 @@ services:
   opensearch-init:
     image: curlimages/curl:latest
     container_name: ai4v-opensearch-init
+    profiles: ["logging"]
     depends_on:
       opensearch:
         condition: service_healthy
@@ -273,6 +278,7 @@ services:
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:2.11.0
     container_name: ai4v-opensearch-dashboards
+    profiles: ["logging"]
     ports:
       - "5602:5601"
     environment:
@@ -294,6 +300,7 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
+    profiles: ["logging"]
     env_file:
       - ./.env
     volumes:

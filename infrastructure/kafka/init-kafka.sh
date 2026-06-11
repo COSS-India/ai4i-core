@@ -59,6 +59,18 @@ kafka-topics --create \
     --config cleanup.policy=delete \
     --if-not-exists || echo "Topic traces already exists"
 
+# OTel traces topic (consumed by Fluent-Bit → OpenSearch)
+echo "Creating topic: kafka-topic-otel-trace"
+kafka-topics --create \
+    --bootstrap-server $KAFKA_BOOTSTRAP_SERVERS \
+    --topic kafka-topic-otel-trace \
+    --partitions 3 \
+    --replication-factor $REPLICATION_FACTOR \
+    --config retention.ms=604800000 \
+    --config compression.type=gzip \
+    --config cleanup.policy=delete \
+    --if-not-exists || echo "Topic kafka-topic-otel-trace already exists"
+
 # Metrics topic
 echo "Creating topic: metrics"
 kafka-topics --create \
