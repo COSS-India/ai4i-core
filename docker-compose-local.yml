@@ -7,7 +7,6 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ai4v-postgres
-    profiles: ["core"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -34,7 +33,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
-    profiles: ["core"]
     command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -60,7 +58,6 @@ services:
   nginx-gateway:
     image: nginx:alpine
     container_name: ai4v-nginx-gateway
-    profiles: ["core"]
     ports:
       - "8080:8080"
     volumes:
@@ -316,6 +313,7 @@ services:
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
       - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./logs:/var/log/ai4i-services:ro
     networks:
       - microservices-network
     depends_on:
