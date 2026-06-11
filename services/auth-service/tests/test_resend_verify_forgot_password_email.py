@@ -1,5 +1,8 @@
 """Unit tests: resend-verification, forgot-password, and resend-setup-link
-accept any plausible email and always return 200 (anti-enumeration) (AI4IDS-1769).
+email handling (AI4IDS-1769).
+
+All three endpoints accept any plausible email and always return 200 with a
+generic message (anti-enumeration): unknown emails are a silent no-op.
 
 Regression: all three endpoints returned 422 when the email used a reserved TLD
 (.invalid, RFC 2606) because EmailStr's underlying library hardcodes a
@@ -90,8 +93,6 @@ class TestResendVerificationSilentNoOp:
         svc = MagicMock(spec=AuthService)
         svc._users = MagicMock()
         svc._users.get_by_email = AsyncMock(return_value=None)
-        svc._credentials = MagicMock()
-        svc._verifications = MagicMock()
 
         # Call the real method bound to our mock instance
         result = await AuthService.resend_verification(svc, email="nobody@noreply.invalid")
