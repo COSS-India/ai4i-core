@@ -1,10 +1,9 @@
-version: '3.8'
-
 services:
 
   # ── Database ──────────────────────────────────────────────────────────────────
 
   postgres:
+    # Core baseline — no profile, so it starts on a bare `docker compose up`.
     image: postgres:15-alpine
     container_name: ai4v-postgres
     environment:
@@ -31,6 +30,7 @@ services:
     restart: unless-stopped
 
   redis:
+    # Core baseline — see postgres above.
     image: redis:7-alpine
     container_name: ai4v-redis
     command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
@@ -56,6 +56,9 @@ services:
   # ── Gateway ───────────────────────────────────────────────────────────────────
 
   nginx-gateway:
+    # Frontend-only: the gateway is what the simple-ui browser app calls into,
+    # so it only needs to run when the UI is up.
+    profiles: ["frontend"]
     image: nginx:alpine
     container_name: ai4v-nginx-gateway
     ports:
@@ -71,6 +74,10 @@ services:
   # ── Messaging ─────────────────────────────────────────────────────────────────
 
   zookeeper:
+    # Profiles: kafka is a hard dep of zookeeper; both serve trace transport
+    # (logging profile) and arbitrary streaming (streaming profile). Either
+    # profile brings the pair up.
+    profiles: ["logging", "streaming"]
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: ai4v-zookeeper
     environment:
@@ -90,6 +97,9 @@ services:
     restart: unless-stopped
 
   kafka:
+    # Profiles: shared by logging (fluent-bit consumes trace spans from
+    # kafka-topic-otel-trace) and the standalone streaming profile.
+    profiles: ["logging", "streaming"]
     image: confluentinc/cp-kafka:7.4.0
     container_name: ai4v-kafka
     depends_on:
@@ -122,6 +132,7 @@ services:
   # ── Metrics ───────────────────────────────────────────────────────────────────
 
   prometheus:
+    profiles: ["observability"]
     image: prom/prometheus:latest
     container_name: ai4v-prometheus
     ports:
@@ -152,6 +163,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
+    profiles: ["observability"]
     image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
     user: root
@@ -179,6 +191,7 @@ services:
     restart: unless-stopped
 
   grafana:
+    profiles: ["observability"]
     image: grafana/grafana:latest
     container_name: ai4v-grafana
     ports:
@@ -201,6 +214,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
+    profiles: ["observability"]
     image: prom/node-exporter:v1.7.0
     container_name: ai4v-node-exporter
     ports:
@@ -226,6 +240,7 @@ services:
   # ── Logging ───────────────────────────────────────────────────────────────────
 
   opensearch:
+    profiles: ["logging"]
     image: opensearchproject/opensearch:2.11.0
     container_name: ai4v-opensearch
     environment:
@@ -254,6 +269,7 @@ services:
     restart: unless-stopped
 
   opensearch-init:
+    profiles: ["logging"]
     image: curlimages/curl:latest
     container_name: ai4v-opensearch-init
     depends_on:
@@ -271,6 +287,7 @@ services:
     restart: "no"
 
   opensearch-dashboards:
+    profiles: ["logging"]
     image: opensearchproject/opensearch-dashboards:2.11.0
     container_name: ai4v-opensearch-dashboards
     ports:
@@ -292,6 +309,7 @@ services:
     restart: unless-stopped
 
   fluent-bit:
+    profiles: ["logging"]
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
     env_file:
@@ -315,13 +333,18 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # ── Application Services (reference — run natively on the host in development) ─
-  # Uncomment to run services in Docker instead of natively.
-  # Ensure services/*/.env files exist before starting.
-  # simple-ui-frontend also requires the AI4Voice API keys to be set in the root .env
-  # (ASR_API_KEY, AI4VOICE_API_KEY, TTS_API_KEY, NMT_API_KEY, PIPELINE_API_KEY,
-  #  MODEL_MANAGEMENT_API_KEY) — they were removed from env.template since they are
-  # only needed when running that container.
+  # ── Application Services (run natively on the host — not in docker) ─────────
+  # auth-service, platform-core-service, inference-service, and simple-ui are
+  # run natively (uvicorn / npm run dev) so developers can iterate with
+  # debuggers, breakpoints, and instant hot-reload. The nginx-gateway above is
+  # already configured (via `host.docker.internal:<port>`) to proxy to these
+  # native processes.
+  #
+  # The service blocks below are kept as a reference in case the team ever
+  # wants to switch to running them in docker. Uncomment them, restore
+  # docker-network hostnames in each service's .env (POSTGRES_HOST=postgres,
+  # REDIS_HOST=redis, etc.), and point the nginx upstreams at the service
+  # names instead of host.docker.internal.
 
   # auth-service:
   #   build:
@@ -333,6 +356,8 @@ services:
   #   env_file:
   #     - ./services/auth-service/.env
   #   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
+  #   volumes:
+  #     - ./services/auth-service:/app
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
@@ -350,16 +375,12 @@ services:
   #     dockerfile: ./services/platform-core-service/Dockerfile
   #   container_name: ai4v-platform-core-service
   #   ports:
-  #     - "8102:8095"
+  #     - "8095:8095"
   #   env_file:
   #     - ./services/platform-core-service/.env
-  #   environment:
-  #     - POSTGRES_HOST=postgres
-  #     - REDIS_HOST=redis
-  #     - AUTH_SERVICE_URL=http://auth-service:8081
-  #     - NER_SERVICE_URL=${NER_SERVICE_URL:-http://inference-service:8090/api/v1/ner/inference}
-  #     - PII_LLM_URL=${PII_LLM_URL:-http://inference-service:8090/api/query}
   #   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8095", "--reload"]
+  #   volumes:
+  #     - ./services/platform-core-service:/app
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
@@ -371,30 +392,39 @@ services:
   #         - platform-core-service
   #   restart: unless-stopped
 
+  # inference-service:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/inference-service/Dockerfile
+  #   container_name: ai4v-inference-service
+  #   ports:
+  #     - "8090:8090"
+  #   env_file:
+  #     - ./services/inference-service/.env
+  #   entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090", "--reload"]
+  #   volumes:
+  #     - ./services/inference-service:/app
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - inference-service
+  #   restart: unless-stopped
+
   # simple-ui-frontend:
+  #   profiles: ["frontend"]
   #   build:
   #     context: ./frontend/simple-ui
   #     dockerfile: Dockerfile.dev
-  #     args:
-  #       NEXT_PUBLIC_API_URL: http://localhost:8080
-  #       NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
-  #       NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
-  #       NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
-  #       NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
-  #       NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
-  #       NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
   #   container_name: ai4v-simple-ui
   #   ports:
   #     - "3000:3000"
-  #   environment:
-  #     - HOSTNAME=0.0.0.0
-  #     - NEXT_PUBLIC_API_URL=http://localhost:8080
-  #     - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
-  #     - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
-  #     - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
-  #     - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
-  #     - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
-  #     - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
+  #   env_file:
+  #     - ./frontend/simple-ui/.env
   #   volumes:
   #     - ./frontend/simple-ui:/app
   #     - /app/node_modules
