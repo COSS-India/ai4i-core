@@ -178,6 +178,9 @@ cd frontend/simple-ui && npm install && npm run dev                             
 ### Setup
 - [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) — comprehensive local setup
 
+### Licensing
+- [docs/THIRD_PARTY_LICENSES.md](./docs/THIRD_PARTY_LICENSES.md) — all third-party open source dependencies, versions, and licenses
+
 ### Service READMEs
 - [auth-service](./services/auth-service/README.md) · [platform-core-service](./services/platform-core-service/README.md) · [inference-service](./services/inference-service/README.md)
 
