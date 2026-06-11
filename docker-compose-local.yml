@@ -333,114 +333,107 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # ── Application Services ─────────────────────────────────────────────────────
-  # The service .env files (services/*/.env) target a native-on-host workflow,
-  # so they default internal hostnames to "localhost". The `environment:` blocks
-  # below override only those host fields with docker-network DNS names; every
-  # other setting still comes from env_file.
+  # ── Application Services (run natively on the host — not in docker) ─────────
+  # auth-service, platform-core-service, inference-service, and simple-ui are
+  # run natively (uvicorn / npm run dev) so developers can iterate with
+  # debuggers, breakpoints, and instant hot-reload. The nginx-gateway above is
+  # already configured (via `host.docker.internal:<port>`) to proxy to these
+  # native processes.
   #
-  # simple-ui-frontend also requires the AI4Voice API keys to be set in the root
-  # .env (ASR_API_KEY, AI4VOICE_API_KEY, TTS_API_KEY, NMT_API_KEY,
-  # PIPELINE_API_KEY, MODEL_MANAGEMENT_API_KEY).
+  # The service blocks below are kept as a reference in case the team ever
+  # wants to switch to running them in docker. Uncomment them, restore
+  # docker-network hostnames in each service's .env (POSTGRES_HOST=postgres,
+  # REDIS_HOST=redis, etc.), and point the nginx upstreams at the service
+  # names instead of host.docker.internal.
 
-  auth-service:
-    build:
-      context: .
-      dockerfile: ./services/auth-service/Dockerfile
-    container_name: ai4v-auth-service
-    ports:
-      - "8081:8081"
-    env_file:
-      - ./services/auth-service/.env
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
-    # Bind-mount the source tree so uvicorn --reload picks up host-side edits.
-    volumes:
-      - ./services/auth-service:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - auth-service
-    restart: unless-stopped
+  # auth-service:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/auth-service/Dockerfile
+  #   container_name: ai4v-auth-service
+  #   ports:
+  #     - "8081:8081"
+  #   env_file:
+  #     - ./services/auth-service/.env
+  #   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
+  #   volumes:
+  #     - ./services/auth-service:/app
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - auth-service
+  #   restart: unless-stopped
 
-  platform-core-service:
-    build:
-      context: .
-      dockerfile: ./services/platform-core-service/Dockerfile
-    container_name: ai4v-platform-core-service
-    ports:
-      - "8095:8095"
-    env_file:
-      - ./services/platform-core-service/.env
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8095", "--reload"]
-    # Bind-mount the source tree so uvicorn --reload picks up host-side edits.
-    volumes:
-      - ./services/platform-core-service:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - platform-core-service
-    restart: unless-stopped
+  # platform-core-service:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/platform-core-service/Dockerfile
+  #   container_name: ai4v-platform-core-service
+  #   ports:
+  #     - "8095:8095"
+  #   env_file:
+  #     - ./services/platform-core-service/.env
+  #   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8095", "--reload"]
+  #   volumes:
+  #     - ./services/platform-core-service:/app
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - platform-core-service
+  #   restart: unless-stopped
 
-  inference-service:
-    build:
-      context: .
-      dockerfile: ./services/inference-service/Dockerfile
-    container_name: ai4v-inference-service
-    ports:
-      - "8090:8090"
-    env_file:
-      - ./services/inference-service/.env
-    # Override the Dockerfile's `ENTRYPOINT ["python", "main.py"]` so the dev
-    # container runs uvicorn with --reload, matching auth-service and
-    # platform-core-service.
-    entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090", "--reload"]
-    # Bind-mount the source tree so uvicorn --reload picks up host-side edits.
-    volumes:
-      - ./services/inference-service:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - inference-service
-    restart: unless-stopped
+  # inference-service:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/inference-service/Dockerfile
+  #   container_name: ai4v-inference-service
+  #   ports:
+  #     - "8090:8090"
+  #   env_file:
+  #     - ./services/inference-service/.env
+  #   entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090", "--reload"]
+  #   volumes:
+  #     - ./services/inference-service:/app
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - inference-service
+  #   restart: unless-stopped
 
-  # ── Frontend ────────────────────────────────────────────────────────────────
-  # Dev mode (Dockerfile.dev): runs `npm ci` at image build and `npx next dev`
-  # at container start — same as `npm install` + `npm run dev` on the host.
-
-  simple-ui-frontend:
-    profiles: ["frontend"]
-    build:
-      context: ./frontend/simple-ui
-      dockerfile: Dockerfile.dev
-    container_name: ai4v-simple-ui
-    ports:
-      - "3000:3000"
-    env_file:
-      - ./frontend/simple-ui/.env
-    volumes:
-      - ./frontend/simple-ui:/app
-      - /app/node_modules
-      - /app/.next
-    networks:
-      microservices-network:
-        aliases:
-          - simple-ui
-    restart: unless-stopped
+  # simple-ui-frontend:
+  #   profiles: ["frontend"]
+  #   build:
+  #     context: ./frontend/simple-ui
+  #     dockerfile: Dockerfile.dev
+  #   container_name: ai4v-simple-ui
+  #   ports:
+  #     - "3000:3000"
+  #   env_file:
+  #     - ./frontend/simple-ui/.env
+  #   volumes:
+  #     - ./frontend/simple-ui:/app
+  #     - /app/node_modules
+  #     - /app/.next
+  #   networks:
+  #     microservices-network:
+  #       aliases:
+  #         - simple-ui
+  #   restart: unless-stopped
 
 
 volumes:
