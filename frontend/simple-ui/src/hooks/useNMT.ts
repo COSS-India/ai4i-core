@@ -12,7 +12,8 @@ import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS } 
 import { extractErrorInfo } from '../utils/errorHandler';
 
 // Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
-const VALID_NMT_CHAR_REGEX = /^[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF]*$/;
+const VALID_NMT_CHAR_REGEX =
+  /^(?:[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-8\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFE\u0C01-\u0C7F\u0C80-\u0CFE\u0D01-\u0D7F\u0D80-\u0DFF]|9|\u0BFF|\u0C00|\u0CFF|\u0D00)*$/;
 
 export const useNMT = (): UseNMTReturn => {
   // State

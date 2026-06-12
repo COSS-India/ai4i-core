@@ -90,9 +90,16 @@ async def resend_verification(
     svc: AuthService = Depends(get_auth_service),
 ):
     """Re-issue a verify-email link for a user who registered but hasn't
-    verified yet. Old verify tokens for this user are deactivated first."""
+    verified yet. Old verify tokens for this user are deactivated first.
+
+    Anti-enumeration: returns the same generic 200 message regardless of
+    whether the email matches a real account (consistent with
+    /auth/forgot-password and /auth/resend-setup-link).
+    """
     await svc.resend_verification(email=body.email, background_tasks=background_tasks)
-    return success_response(data={"message": "New verification link sent."})
+    return success_response(data={
+        "message": "If this email is registered, you will receive an email.",
+    })
 
 
 @router.post("/forgot-password")

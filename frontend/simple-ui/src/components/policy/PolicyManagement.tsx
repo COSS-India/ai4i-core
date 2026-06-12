@@ -1148,11 +1148,7 @@ function PolicyFormModal({
                     </Text>
                   )}
                   <Textarea
-                    placeholder={
-                      policyId
-                        ? "Tenant IDs separated by comma or newline"
-                        : "Tenant IDs separated by comma or newline"
-                    }
+                    placeholder="Tenant IDs separated by comma or newline"
                     value={tenantInput}
                     onChange={(e) => setTenantInput(e.target.value)}
                     fontFamily="mono"

@@ -22,7 +22,7 @@ from app.schemas.tenant import (
 )
 from app.services.tenant_service import TenantService
 
-router = APIRouter(prefix="/tenants", tags=["Tenants"])
+router = APIRouter(prefix="/auth/tenants", tags=["Tenants"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

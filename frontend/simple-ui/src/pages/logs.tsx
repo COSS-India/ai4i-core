@@ -81,7 +81,7 @@ const convertToISOFormat = (datetimeLocal: string): string => {
 
     // Parse as local time and convert to ISO (UTC)
     const date = new Date(normalized);
-    if (isNaN(date.getTime())) {
+    if (Number.isNaN(date.getTime())) {
       console.warn(`Invalid datetime format: ${datetimeLocal}`);
       return "";
     }

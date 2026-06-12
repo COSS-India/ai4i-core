@@ -29,7 +29,7 @@ import {
 function permissionIdFromRaw(raw: string | number): number | null {
   if (typeof raw === "number" && Number.isInteger(raw)) return raw;
   const s = String(raw);
-  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  if (/^\d+$/.test(s)) return Number.parseInt(s, 10);
   return null;
 }
 
@@ -51,7 +51,7 @@ function resolvePermissionIds(
       continue;
     }
     if (/^\d+$/.test(s)) {
-      const n = parseInt(s, 10);
+      const n = Number.parseInt(s, 10);
       if (catalog.length === 0 || catalog.some((p) => p.id === n)) {
         ids.add(n);
       }
