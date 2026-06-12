@@ -42,14 +42,14 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
 
     # ── Core DB & Redis ───────────────────────────────────────────────────
-    await init_database(
+    init_database(
         db_url=settings.get_database_url(),
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         echo=settings.debug,
     )
     # Secondary auth_db engine — no-op if AUTH_DB_NAME is not configured.
-    await init_auth_database()
+    init_auth_database()
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
         async with _get_pii_session_factory()() as session:
             yield session
 
-    await policy_sync.start_listener(
+    policy_sync.start_listener(
         redis_client=app.state.redis_client,
         db_factory=_pii_db_factory,
     )

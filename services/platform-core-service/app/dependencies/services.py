@@ -55,7 +55,7 @@ def get_sync_service() -> "SyncService":
     return _sync_service_singleton
 
 
-async def get_cache_service(
+def get_cache_service(
     redis_client: aioredis.Redis = Depends(get_redis),
 ) -> CacheService:
     return CacheService(
@@ -65,7 +65,7 @@ async def get_cache_service(
     )
 
 
-async def get_model_service(
+def get_model_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> ModelService:
@@ -76,7 +76,7 @@ async def get_model_service(
     )
 
 
-async def get_service_service(
+def get_service_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> ServiceService:
@@ -90,13 +90,13 @@ async def get_service_service(
 # ── Alert-management service factories ──
 
 
-async def get_definition_service(
+def get_definition_service(
     db: AsyncSession = Depends(get_db),
 ) -> "AlertDefinitionService":
     return AlertDefinitionService(repo=AlertDefinitionRepository(db))
 
 
-async def get_receiver_service(
+def get_receiver_service(
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ) -> "NotificationReceiverService":
@@ -107,13 +107,13 @@ async def get_receiver_service(
     )
 
 
-async def get_routing_rule_service(
+def get_routing_rule_service(
     db: AsyncSession = Depends(get_db),
 ) -> "RoutingRuleService":
     return RoutingRuleService(repo=RoutingRuleRepository(db))
 
 
-async def get_history_service(
+def get_history_service(
     db: AsyncSession = Depends(get_db),
 ) -> "AlertHistoryService":
     return AlertHistoryService(repo=AlertHistoryRepository(db))

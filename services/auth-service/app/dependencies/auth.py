@@ -40,7 +40,7 @@ def get_jwt_verifier():
     return _jwt_verifier
 
 
-async def init_jwt_verifier() -> None:
+def init_jwt_verifier() -> None:
     """
     Initialize the shared JWTVerifier using the auth-service's own key manager.
     Called during app lifespan startup.
@@ -94,7 +94,7 @@ async def _check_api_key_revocation(
     return await cache_service.get_api_key_cache(token_id) is None
 
 
-async def get_current_user_id(request: Request) -> UUID:
+def get_current_user_id(request: Request) -> UUID:
     """Read X-User-ID header only. No DB call. Gateway controls token issuance."""
     user_id_str = request.headers.get("X-User-ID")
     if not user_id_str:
@@ -112,7 +112,7 @@ class UserContext(NamedTuple):
 
 async def get_user_context(request: Request) -> UserContext:
     """Read X-User-ID + X-Tenant-ID headers only. No DB call."""
-    user_id = await get_current_user_id(request)
+    user_id = get_current_user_id(request)
     tenant_id = request.headers.get("X-Tenant-ID")
     return UserContext(user_id=user_id, tenant_id=tenant_id)
 
@@ -125,7 +125,7 @@ async def get_current_user(
     Resolve the authenticated user from the X-User-ID gateway header.
     The gateway has already validated the token; this just fetches the User ORM object.
     """
-    user_id = await get_current_user_id(request)
+    user_id = get_current_user_id(request)
 
     repo = UserRepository(db)
     user = await repo.get_by_id(user_id)

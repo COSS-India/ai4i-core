@@ -37,7 +37,7 @@ _auth_engine: Optional[AsyncEngine] = None
 _auth_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
 
-async def init_auth_database() -> None:
+def init_auth_database() -> None:
     """Initialise the secondary auth_db engine. No-op if not configured.
 
     Called from the FastAPI lifespan after `init_database`. Idempotent —
