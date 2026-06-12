@@ -61,7 +61,7 @@ interface ProcessedSpan {
 const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number): ProcessedSpan => {
   const opName = span.operationName.toLowerCase();
   const tags = span.tags || [];
-  
+
   // Extract relevant tags
   const getTag = (key: string) => {
     const tag = tags.find(t => t.key.toLowerCase() === key.toLowerCase());
@@ -301,48 +301,48 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   // Check for errors in span
   const checkForErrors = () => {
     // Debug: Log all tags for error spans (helpful for troubleshooting)
-    const hasErrorTag = tags.some(t => 
+    const hasErrorTag = tags.some(t =>
       (t.key === "error" && t.value === true) ||
       (t.key === "otel.status_code" && String(t.value) === "ERROR") ||
       t.key.toLowerCase().includes("status_description")
     );
-    
+
     if (hasErrorTag) {
       console.log(`[DEBUG ERROR SPAN] "${span.operationName}" from ${serviceName}:`, {
         allTags: tags.map(t => ({ key: t.key, value: typeof t.value === 'string' && t.value.length > 100 ? t.value.substring(0, 100) + '...' : t.value })),
         statusDescription: tags.find(t => t.key.toLowerCase().includes("status_description"))
       });
     }
-    
+
     // Priority 0: Check for OpenTelemetry status description (MOST DETAILED - includes stack traces, SQL errors, etc)
-    const otelStatusDescription = tags.find(t => 
+    const otelStatusDescription = tags.find(t =>
       t.key.toLowerCase() === "otel.status_description" ||
       t.key.toLowerCase().includes("status_description") ||
       t.key.toLowerCase().includes("status.description")
     );
-    
+
     // Priority 1: Check for reject.reason (most specific for rejections)
-    const rejectReasonTag = tags.find(t => 
-      t.key === "reject.reason" || 
-      t.key === "REJECT.REASON" || 
+    const rejectReasonTag = tags.find(t =>
+      t.key === "reject.reason" ||
+      t.key === "REJECT.REASON" ||
       t.key.toLowerCase() === "reject.reason"
     );
-    
+
     // Priority 2: Check for specific error message fields (most descriptive)
-    const errorMessageTag = tags.find(t => 
-      t.key === "error.message" || 
-      t.key === "ERROR.MESSAGE" || 
+    const errorMessageTag = tags.find(t =>
+      t.key === "error.message" ||
+      t.key === "ERROR.MESSAGE" ||
       t.key.toLowerCase() === "error.message"
     );
-    const errorReasonTag = tags.find(t => 
-      t.key === "error.reason" || 
-      t.key === "ERROR.REASON" || 
+    const errorReasonTag = tags.find(t =>
+      t.key === "error.reason" ||
+      t.key === "ERROR.REASON" ||
       t.key.toLowerCase() === "error.reason"
     );
-    
+
     // Priority 3: Check for database error descriptions
     const dbStatementTag = tags.find(t => t.key === "db.statement");
-    
+
     // Priority 4: Check for generic error indicator tags.
     //
     // IMPORTANT: do NOT treat arbitrary keys containing "error" as actual errors.
@@ -359,25 +359,25 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const statusCode = tags.find(t => t.key === "otel.status_code" || t.key === "http.status_code");
     const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject") && t.key.toLowerCase() !== "reject.reason");
     const httpStatus = tags.find(t => t.key === "http.status_code");
-    
+
     // Priority 0: Use OpenTelemetry status description if available (HIGHEST PRIORITY - most detailed)
     if (otelStatusDescription && String(otelStatusDescription.value) !== "OK") {
       hasError = true;
       const fullDescription = String(otelStatusDescription.value);
-      
+
       // Extract the key parts of the error message
       // Format is usually: "<class 'ExceptionType'>: error message\nDETAIL: additional details"
       let cleanedMessage = fullDescription;
-      
+
       // Remove the Python class prefix if present
       cleanedMessage = cleanedMessage.replace(/^<class ['"]([^'"]+)['"]>:\s*/, '$1: ');
-      
+
       // For database errors, extract the main error and detail
       if (cleanedMessage.includes('DETAIL:')) {
         const parts = cleanedMessage.split('DETAIL:');
         const mainError = parts[0].trim();
         const detail = parts[1]?.trim() || '';
-        
+
         // Shorten long details (like JWT tokens) for display
         if (detail.length > 200) {
           const detailPreview = detail.substring(0, 200) + '...';
@@ -388,7 +388,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else {
         errorMessage = cleanedMessage;
       }
-      
+
       // Add SQL statement context if this is a database error
       if (dbStatementTag && (cleanedMessage.includes('duplicate key') || cleanedMessage.includes('constraint'))) {
         const sqlStatement = String(dbStatementTag.value);
@@ -426,8 +426,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
         errorMessage = String(errorValue);
       } else {
         // If error is just "true", check if there's an otel.status_description we missed
-        const statusDesc = tags.find(t => 
-          t.key.toLowerCase().includes("status") && 
+        const statusDesc = tags.find(t =>
+          t.key.toLowerCase().includes("status") &&
           t.key.toLowerCase().includes("description")
         );
         if (statusDesc && String(statusDesc.value) !== "OK") {
@@ -439,7 +439,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           errorMessage = "An error occurred during processing";
         }
       }
-    } 
+    }
     // Priority 4: Check for non-OK status codes
     else if (statusCode && String(statusCode.value) !== "OK" && String(statusCode.value) !== "200") {
       hasError = true;
@@ -447,7 +447,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     }
     // Priority 5: Check for HTTP error status codes (4xx, 5xx)
     else if (httpStatus) {
-      const status = parseInt(String(httpStatus.value));
+      const status = Number.parseInt(String(httpStatus.value), 10);
       if (status >= 400) {
         hasError = true;
         if (status >= 500) {
@@ -471,7 +471,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     else if (span.logs && span.logs.length > 0) {
       const errorLog = span.logs.find((log: any) => {
         if (log.fields) {
-          return log.fields.some((f: any) => 
+          return log.fields.some((f: any) =>
             f.key === "error" ||
             f.key === "exception" ||
             (f.key === "level" && String(f.value).toLowerCase() === "error") ||
@@ -489,7 +489,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       }
     }
   };
-  
+
   checkForErrors();
 
   // IMPORTANT: If this span is one of the standardized phase spans, keep its categorization.
@@ -505,7 +505,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       const org = getTag("organization");
       const authResult = getTag("auth.decision.result");
       const authValid = getTag("auth.valid");
-      
+
       // Check if authorization failed
       if (authResult && (authResult.toLowerCase().includes("reject") || authResult.toLowerCase().includes("deny") || authResult.toLowerCase().includes("fail"))) {
         hasError = true;
@@ -527,16 +527,16 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const org = getTag("organization");
     const authValid = getTag("auth.valid");
     const authResponseStatus = getTag("auth.response_status");
-    
+
     // Check if validation failed
     if (authValid && String(authValid).toLowerCase() === "false") {
       hasError = true;
       errorMessage = "Authentication validation failed";
-    } else if (authResponseStatus && parseInt(authResponseStatus) >= 400) {
+    } else if (authResponseStatus && Number.parseInt(authResponseStatus, 10) >= 400) {
       hasError = true;
       errorMessage = `Authentication service returned error (${authResponseStatus})`;
     }
-    
+
     displayName = "Authentication Validation";
     description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
   }
@@ -631,7 +631,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = "Image Processing";
     let descParts = ["Processes image"];
     if (imageSource) descParts.push(`from ${imageSource}`);
-    if (imageSize) descParts.push(`(${(parseInt(imageSize) / 1024).toFixed(1)} KB)`);
+    if (imageSize) descParts.push(`(${(Number.parseInt(imageSize, 10) / 1024).toFixed(1)} KB)`);
     if (downloadStatus) descParts.push(`- ${downloadStatus}`);
     description = descParts.join(" ");
   }
@@ -646,8 +646,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const outputCount = getTag("audio-lang-detection.output_count") || getTag("output_count");
     const processingTime = getTag("audio-lang-detection.processing_time_seconds") || getTag("processing_time_seconds");
     let descParts = [`Processes ${servicePart} batch`];
-    if (outputCount) descParts.push(`(${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""})`);
-    if (processingTime) descParts.push(`in ${parseFloat(processingTime).toFixed(2)}s`);
+    if (outputCount) descParts.push(`(${outputCount} output${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""})`);
+    if (processingTime) descParts.push(`in ${Number.parseFloat(processingTime).toFixed(2)}s`);
     description = descParts.join(" ");
   }
   // Skip resolve_images (plural) and build_response - they're redundant
@@ -667,19 +667,19 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     description = "Determines which model/service to use for processing";
   }
   // Database operations - IMPORTANT for auth-service or if there are errors
-  else if (opName.includes("db") || opName.includes("database") || opName.includes("query") || 
-           opName.includes("SELECT") || opName.includes("INSERT") || opName.includes("UPDATE") || 
+  else if (opName.includes("db") || opName.includes("database") || opName.includes("query") ||
+           opName.includes("SELECT") || opName.includes("INSERT") || opName.includes("UPDATE") ||
            opName.includes("connect") || opName.includes("commit")) {
     category = "database";
     // ALWAYS mark as important for auth-service AND check for error tags
-    const hasDbError = tags.some(t => 
+    const hasDbError = tags.some(t =>
       t.key === "error" && t.value === true ||
       t.key === "otel.status_code" && String(t.value) === "ERROR" ||
       t.key === "otel.status_description" && String(t.value) !== "OK"
     );
     isImportant = serviceName.includes("auth") || hasDbError;
     icon = FiDatabase;
-    
+
     // Debug logging for database spans
     if (serviceName.includes("auth")) {
       console.log(`[DEBUG] Auth-service database span: "${span.operationName}"`, {
@@ -689,7 +689,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
         errorTags: tags.filter(t => t.key.includes("error") || t.key.includes("status"))
       });
     }
-    
+
     // Better display names for different database operations
     if (opName.includes("connect")) {
       displayName = "Database Connection";
@@ -715,7 +715,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     }
   }
   // HTTP requests - only show main API endpoint, not internal HTTP spans
-  else if ((opName.includes("http") && opName.includes("receive")) || 
+  else if ((opName.includes("http") && opName.includes("receive")) ||
            (opName.includes("http") && opName.includes("send"))) {
     category = "network";
     isImportant = false; // Don't show low-level HTTP spans
@@ -754,10 +754,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     let descParts = ["Runs AI model"];
     if (modelName) descParts.push(`(${modelName})`);
     if (batchSize) descParts.push(`on batch of ${batchSize}`);
-    if (outputCount) descParts.push(`→ ${outputCount} result${parseInt(outputCount) !== 1 ? "s" : ""}`);
+    if (outputCount) descParts.push(`→ ${outputCount} result${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""}`);
     if (status) descParts.push(`- ${status}`);
     description = descParts.join(" ");
-    
+
     // Override error detection for triton spans: check triton.status explicitly
     // Priority 1: If triton.status is "success", clear any error flags (definitive success)
     if (status && String(status).trim().toLowerCase() === "success") {
@@ -772,7 +772,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       }
     }
     // Priority 3: If parse_errors exists and is > 0, mark as error
-    else if (parseErrors && parseInt(parseErrors) > 0) {
+    else if (parseErrors && Number.parseInt(parseErrors, 10) > 0) {
       hasError = true;
       if (!errorMessage) {
         errorMessage = `Triton parsing errors: ${parseErrors}`;
@@ -790,12 +790,12 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     // - output_status is "parsed" or "success"
     // - No explicit error tags from checkForErrors
     // Then clear error flags (assume success)
-    else if ((!status || String(status).trim() === "") && 
-             (!parseErrors || parseInt(parseErrors) === 0) && 
-             outputStatus && 
+    else if ((!status || String(status).trim() === "") &&
+             (!parseErrors || Number.parseInt(parseErrors, 10) === 0) &&
+             outputStatus &&
              (String(outputStatus).toLowerCase() === "parsed" || String(outputStatus).toLowerCase() === "success")) {
       // Only clear error if there's no explicit error tag from OpenTelemetry
-      const hasExplicitError = tags.some(t => 
+      const hasExplicitError = tags.some(t =>
         (t.key === "error" && t.value === true) ||
         (t.key === "otel.status_code" && String(t.value) === "ERROR")
       );
@@ -816,8 +816,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const successCount = getTag("ocr.success_count");
     displayName = "Batch Processing";
     let descParts = ["Processes multiple items in a batch"];
-    if (totalImages) descParts.push(`(${totalImages} image${parseInt(totalImages) !== 1 ? "s" : ""})`);
-    if (resultsCount) descParts.push(`→ ${resultsCount} result${parseInt(resultsCount) !== 1 ? "s" : ""}`);
+    if (totalImages) descParts.push(`(${totalImages} image${Number.parseInt(totalImages, 10) !== 1 ? "s" : ""})`);
+    if (resultsCount) descParts.push(`→ ${resultsCount} result${Number.parseInt(resultsCount, 10) !== 1 ? "s" : ""}`);
     if (successCount) descParts.push(`(${successCount} successful)`);
     description = descParts.join(" ");
   }
@@ -830,12 +830,12 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const outputCount = getTag("ocr.output_count") || getTag("ocr.successful_outputs");
     displayName = "Response Construction";
     let descParts = ["Formats the final response"];
-    if (outputCount) descParts.push(`(${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""})`);
-    if (responseSize) descParts.push(`- ${(parseInt(responseSize) / 1024).toFixed(1)} KB`);
+    if (outputCount) descParts.push(`(${outputCount} output${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""})`);
+    if (responseSize) descParts.push(`- ${(Number.parseInt(responseSize, 10) / 1024).toFixed(1)} KB`);
     description = descParts.join(" ");
   }
   // Default: mark as important if it has any meaningful duration (>1ms) and is not middleware/HTTP
-  else if (span.duration > 1000 && !opName.includes("middleware") && !opName.includes("correlation") && 
+  else if (span.duration > 1000 && !opName.includes("middleware") && !opName.includes("correlation") &&
            !opName.includes("http receive") && !opName.includes("http send") &&
            !opName.includes("asgi.event")) {
     category = "processing";
@@ -862,7 +862,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     icon = FiShield; // Use shield icon for security-related rejections
     displayName = "Request Rejection";
     description = "Request was rejected";
-    
+
     // Try to get more specific error message from tags
     const rejectReason = getTag("reject.reason") || getTag("error.message") || getTag("error");
     if (rejectReason) {
@@ -871,11 +871,11 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       errorMessage = "Request was rejected during processing";
     }
   }
-  
+
   // SPECIAL OVERRIDE: For auth-service, mark all auth-related operations as important
   // This ensures we see the full authentication flow including database operations
   if (serviceName.includes("auth")) {
-    if (opName.includes("login") || opName.includes("auth") || opName.includes("user") || 
+    if (opName.includes("login") || opName.includes("auth") || opName.includes("user") ||
         opName.includes("session") || opName.includes("token") || category === "database") {
       isImportant = true;
       if (opName.includes("login") || opName.includes("POST") && opName.includes("auth")) {
@@ -883,7 +883,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       }
     }
   }
-  
+
   // SPECIAL OVERRIDE: Any span with errors should be marked as important
   if (hasError) {
     isImportant = true;
@@ -910,19 +910,19 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     console.warn("extractImportantSpans: No spans in trace");
     return [];
   }
-  
+
   if (!trace.processes || Object.keys(trace.processes).length === 0) {
     console.warn("extractImportantSpans: No processes in trace");
     return [];
   }
-  
+
   // Use startTime if available, otherwise calculate from spans
   let traceStartTime = trace.startTime;
   if (!traceStartTime || traceStartTime === 0) {
     traceStartTime = Math.min(...trace.spans.map(s => s.startTime));
     console.log("Calculated traceStartTime from spans:", traceStartTime);
   }
-  
+
   if (!traceStartTime || traceStartTime === 0) {
     console.warn("extractImportantSpans: Cannot determine trace start time");
     return [];
@@ -935,7 +935,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
 
   trace.spans.forEach(span => {
     spanMap.set(span.spanID, span);
-    
+
     // Check for parent references
     if (span.references && span.references.length > 0) {
       const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
@@ -965,9 +965,9 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       const opName = p.span.operationName.toLowerCase();
       const tags = p.span.tags || [];
       const modelName = tags.find(t => t.key.toLowerCase() === "triton.model_name");
-      return opName.includes("triton") && 
-             p.hasError && 
-             modelName && 
+      return opName.includes("triton") &&
+             p.hasError &&
+             modelName &&
              String(modelName.value).toLowerCase() === "vad";
     });
 
@@ -989,7 +989,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
                                   parentSpan.serviceName.toLowerCase().includes("asr");
 
           // If parent is ASR preprocessing that succeeded with single chunk, VAD error was handled
-          if (isAsrPreprocess && !parentSpan.hasError && chunksCount && parseInt(String(chunksCount.value)) === 1) {
+          if (isAsrPreprocess && !parentSpan.hasError && chunksCount && Number.parseInt(String(chunksCount.value), 10) === 1) {
             // Mark VAD span as not important - it's a handled error, don't show it prominently
             vadSpan.isImportant = false;
             // Add note to parent preprocessing span about fallback
@@ -1013,17 +1013,17 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   const topLevelSpans = processed.filter(p => p.isTopLevel && p.isImportant);
   const serviceDuration = new Map<string, number>();
   const serviceTopLevelCount = new Map<string, number>();
-  
+
   processed.forEach(p => {
     const current = serviceDuration.get(p.serviceName) || 0;
     serviceDuration.set(p.serviceName, current + p.span.duration);
-    
+
     if (p.isTopLevel && p.isImportant) {
       const count = serviceTopLevelCount.get(p.serviceName) || 0;
       serviceTopLevelCount.set(p.serviceName, count + 1);
     }
   });
-  
+
   // Find primary service: prefer service with most top-level spans, then longest duration
   let primaryService = "unknown";
   let maxTopLevelCount = 0;
@@ -1033,7 +1033,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       primaryService = service;
     }
   }
-  
+
   // If no clear winner by top-level count, use duration
   if (maxTopLevelCount === 0 || (maxTopLevelCount === 1 && serviceTopLevelCount.size > 1)) {
     let maxDuration = 0;
@@ -1044,18 +1044,18 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       }
     }
   }
-  
+
   const isAuthServiceTrace = primaryService.includes("auth-service");
   console.log(`[DEBUG] Primary service detected: ${primaryService}, isAuthServiceTrace: ${isAuthServiceTrace}`);
 
   // Filter out child spans when we have a parent span of the same category
   const filtered: ProcessedSpan[] = [];
   const seenOperations = new Map<string, ProcessedSpan>(); // operationKey -> best span
-  
+
   // Then, collect other important spans that aren't children of top-level spans
   for (const processedSpan of processed) {
     if (!processedSpan.isImportant) continue;
-    
+
     // SPECIAL FILTERING: For non-auth-service traces, filter out child auth-service spans
     // Only show top-level auth spans from auth-service when it's not the primary service
     if (!isAuthServiceTrace && processedSpan.serviceName.includes("auth-service")) {
@@ -1070,7 +1070,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
         }
       }
     }
-    
+
     // Check if this span is a child of a top-level span with same category
     const parentId = spanToParent.get(processedSpan.span.spanID);
     if (parentId) {
@@ -1080,7 +1080,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
         continue;
       }
     }
-    
+
     // SPECIAL: Error spans should NEVER be deduplicated - always show them
     // They contain critical debugging information
     if (processedSpan.hasError) {
@@ -1088,7 +1088,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       console.log(`[DEBUG] Including error span (never deduplicated): ${processedSpan.displayName}`);
       continue; // Skip deduplication logic
     }
-    
+
     // SPECIAL: Database operations should NEVER be deduplicated - show all of them
     // BUT: Only show all database operations for auth-service traces
     // For other traces, database operations from auth-service are already filtered above
@@ -1105,11 +1105,11 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
         continue;
       }
     }
-    
+
     // Create a unique key for this operation (service + category + displayName)
     const operationKey = `${processedSpan.serviceName}:${processedSpan.category}:${processedSpan.displayName}`;
     const existing = seenOperations.get(operationKey);
-    
+
     if (!existing) {
       // First time seeing this operation
       seenOperations.set(operationKey, processedSpan);
@@ -1117,13 +1117,13 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     } else {
       // We've seen this operation before - keep the better one
       // Prefer: ERROR SPANS > top-level > longer duration
-      const shouldReplace = 
+      const shouldReplace =
         (processedSpan.hasError && !existing.hasError) || // ALWAYS prefer error spans!
         (!existing.hasError && processedSpan.isTopLevel && !existing.isTopLevel) ||
         (!existing.hasError && !existing.isTopLevel && processedSpan.span.duration > existing.span.duration) ||
-        (processedSpan.isTopLevel === existing.isTopLevel && 
+        (processedSpan.isTopLevel === existing.isTopLevel &&
          processedSpan.span.duration > existing.span.duration * 1.5); // Significantly longer
-      
+
       if (shouldReplace) {
         // Replace the existing one
         const index = filtered.indexOf(existing);
@@ -1207,7 +1207,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       })
       .sort((a, b) => a.relativeStart - b.relativeStart)
       .slice(0, 5 - sorted.length);
-    
+
     const combined = [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
     computeEffectiveDurations(combined);
     return combined;
@@ -1217,7 +1217,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   if (sorted.length === 0) {
     console.log("No spans matched criteria, using fallback. Total processed spans:", processed.length);
     console.log("Important spans count:", processed.filter(p => p.isImportant).length);
-    
+
     // First try: spans with significant duration (>1ms to be more inclusive)
     let fallbackSpans = processed
       .filter(p => {
@@ -1234,9 +1234,9 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       })
       .sort((a, b) => b.span.duration - a.span.duration) // Sort by duration descending
       .slice(0, 10);
-    
+
     console.log("Fallback spans with duration >1ms:", fallbackSpans.length);
-    
+
     // If still empty, include root spans (no parent) or any spans with duration >100μs
     if (fallbackSpans.length === 0) {
       fallbackSpans = processed
@@ -1260,20 +1260,20 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
           return b.span.duration - a.span.duration;
         })
         .slice(0, 10);
-      
+
       console.log("Fallback spans (root or any duration):", fallbackSpans.length);
     }
-    
+
     // Re-categorize fallback spans to make them important and improve descriptions
     const finalSpans = fallbackSpans.map(p => {
       const opName = p.span.operationName.toLowerCase();
       let displayName = p.displayName || p.span.operationName;
       let description = p.description;
-      
+
       // Improve display names for common operations
       if (opName.includes("post") && opName.includes("inference")) {
-        displayName = p.serviceName.includes("ocr") ? "OCR Processing" : 
-                     p.serviceName.includes("nmt") ? "Translation Processing" : 
+        displayName = p.serviceName.includes("ocr") ? "OCR Processing" :
+                     p.serviceName.includes("nmt") ? "Translation Processing" :
                      "Request Processing";
         description = "Processes the request";
       } else if (opName.includes("authorize") || opName.includes("auth")) {
@@ -1283,7 +1283,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
         displayName = "AI Model Inference";
         description = "Runs AI model";
       }
-      
+
       return {
         ...p,
         isImportant: true,
@@ -1294,7 +1294,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
         icon: p.icon || FiSettings,
       };
     }).sort((a, b) => a.relativeStart - b.relativeStart);
-    
+
     console.log("Final fallback spans:", finalSpans.length, finalSpans.map(s => s.displayName));
     computeEffectiveDurations(finalSpans);
     return finalSpans;
@@ -1305,18 +1305,18 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
 };
 
 const formatDuration = (microseconds: number | undefined) => {
-  if (!microseconds || isNaN(microseconds)) return "N/A";
+  if (!microseconds || Number.isNaN(microseconds)) return "N/A";
   if (microseconds < 1000) return `${microseconds}μs`;
   if (microseconds < 1000000) return `${(microseconds / 1000).toFixed(2)}ms`;
   return `${(microseconds / 1000000).toFixed(2)}s`;
 };
 
 const formatTimestamp = (microseconds: number | undefined) => {
-  if (!microseconds || isNaN(microseconds)) return "N/A";
+  if (!microseconds || Number.isNaN(microseconds)) return "N/A";
   try {
     const milliseconds = microseconds / 1000;
     const date = new Date(milliseconds);
-    if (isNaN(date.getTime())) return "Invalid Date";
+    if (Number.isNaN(date.getTime())) return "Invalid Date";
     return date.toLocaleString();
   } catch {
     return "Invalid Date";
@@ -1331,12 +1331,12 @@ const formatRelativeTime = (milliseconds: number) => {
 // Format tag values with units based on key name
 const formatTagValue = (key: string, value: any): string => {
   const keyLower = key.toLowerCase();
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value));
-  
+  const numValue = typeof value === 'number' ? value : Number.parseFloat(String(value));
+
   // Special handling for database statements - make them more readable
   if (keyLower === 'db.statement') {
     const sqlStatement = String(value);
-    
+
     // Truncate very long SQL statements
     if (sqlStatement.length > 500) {
       // Show first 500 chars with proper SQL formatting
@@ -1347,59 +1347,59 @@ const formatTagValue = (key: string, value: any): string => {
         .trim();
       return `${formattedSql}\n\n... (truncated, ${sqlStatement.length} total chars)`;
     }
-    
+
     // Format SQL for readability
     return sqlStatement
       .replace(/\s+/g, ' ') // Collapse multiple spaces
       .replace(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
       .trim();
   }
-  
+
   // Special handling for status descriptions - format for readability
   if (keyLower === 'otel.status_description') {
     let description = String(value);
-    
+
     // Clean up the Python class prefix
     description = description.replace(/^<class ['"]([^'"]+)['"]>:\s*/, '$1:\n');
-    
+
     // Format DETAIL sections on new lines
     description = description.replace(/ +DETAIL: +/g, '\n\nDETAIL:\n  ');
-    
+
     // Format constraint violations nicely
-    description = description.replace(/duplicate key value violates unique constraint/gi, 
+    description = description.replace(/duplicate key value violates unique constraint/gi,
       'Duplicate key value violates unique constraint');
-    
+
     return description.trim();
   }
-  
+
   // Special handling for error messages - preserve formatting
   if (keyLower.includes('error') && (keyLower.includes('message') || keyLower.includes('description'))) {
     return String(value);
   }
-  
+
   // Check for milliseconds - look for _ms, .ms, or keys ending with ms
-  if (keyLower.includes('_ms') || keyLower.includes('.ms') || 
+  if (keyLower.includes('_ms') || keyLower.includes('.ms') ||
       keyLower.endsWith('ms') || keyLower.includes('audio_length_ms') ||
       keyLower.includes('length_ms') || keyLower.includes('duration_ms')) {
-    if (!isNaN(numValue)) {
+    if (!Number.isNaN(numValue)) {
       return `${numValue} ms`;
     }
   }
-  
+
   // Check for seconds - look for _seconds, .seconds, or keys ending with seconds
-  if (keyLower.includes('_seconds') || keyLower.includes('.seconds') || 
+  if (keyLower.includes('_seconds') || keyLower.includes('.seconds') ||
       keyLower.endsWith('seconds') || keyLower.includes('audio_length_seconds') ||
       keyLower.includes('length_seconds') || keyLower.includes('duration_seconds') ||
       keyLower.includes('total_duration') || keyLower.includes('processing_time_seconds')) {
-    if (!isNaN(numValue)) {
+    if (!Number.isNaN(numValue)) {
       return `${numValue} s`;
     }
   }
-  
+
   // Check for bytes - look for _bytes, .bytes, or keys ending with bytes
-  if (keyLower.includes('_bytes') || keyLower.includes('.bytes') || 
+  if (keyLower.includes('_bytes') || keyLower.includes('.bytes') ||
       keyLower.endsWith('bytes') || keyLower.includes('size_bytes')) {
-    if (!isNaN(numValue)) {
+    if (!Number.isNaN(numValue)) {
       // Format bytes with appropriate unit (B, KB, MB, GB)
       if (numValue < 1024) {
         return `${numValue} B`;
@@ -1412,7 +1412,7 @@ const formatTagValue = (key: string, value: any): string => {
       }
     }
   }
-  
+
   // Default: return value as string
   return String(value);
 };
@@ -1618,9 +1618,9 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         const outputCount = getTag("ocr.output_count");
         const serviceId = getTag("ocr.service_id");
         let desc = "This step processes the image(s) to extract text using Optical Character Recognition (OCR). ";
-        if (imageCount) desc += `It analyzes ${imageCount} image${parseInt(imageCount) !== 1 ? "s" : ""}. `;
+        if (imageCount) desc += `It analyzes ${imageCount} image${Number.parseInt(imageCount, 10) !== 1 ? "s" : ""}. `;
         if (serviceId) desc += `The processing is done using the ${serviceId} service. `;
-        if (outputCount) desc += `Successfully extracted text from ${outputCount} image${parseInt(outputCount) !== 1 ? "s" : ""}.`;
+        if (outputCount) desc += `Successfully extracted text from ${outputCount} image${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""}.`;
         return desc.trim();
       } else if (processed.displayName.includes("Translation Processing")) {
         const sourceLang = getTag("nmt.source_language");
@@ -1633,7 +1633,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         const batchSize = getTag("triton.batch_size");
         let desc = "This is the core AI processing step where the machine learning model analyzes the input data. ";
         if (modelName) desc += `It uses the ${modelName} model. `;
-        if (batchSize) desc += `Processing ${batchSize} item${parseInt(batchSize) !== 1 ? "s" : ""} in a batch. `;
+        if (batchSize) desc += `Processing ${batchSize} item${Number.parseInt(batchSize, 10) !== 1 ? "s" : ""} in a batch. `;
         desc += "This typically takes the longest time as it involves complex AI computations.";
         return desc.trim();
       } else if (processed.displayName.includes("Image Processing")) {
@@ -1641,7 +1641,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         const imageSource = getTag("ocr.image_source");
         let desc = "This step prepares the image for processing. ";
         if (imageSource === "uri") desc += "It downloads the image from the provided URL. ";
-        if (imageSize) desc += `The image size is ${(parseInt(imageSize) / 1024).toFixed(1)} KB. `;
+        if (imageSize) desc += `The image size is ${(Number.parseInt(imageSize, 10) / 1024).toFixed(1)} KB. `;
         desc += "The image is then validated and prepared for text extraction.";
         return desc.trim();
       } else if (processed.displayName.includes("Request Processing")) {
@@ -1674,7 +1674,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     case "response":
       const outputCount = getTag("ocr.output_count") || getTag("ocr.successful_outputs");
       let desc = "This step formats the results into the final response that will be sent back to the user. ";
-      if (outputCount) desc += `It packages ${outputCount} result${parseInt(outputCount) !== 1 ? "s" : ""} into the response.`;
+      if (outputCount) desc += `It packages ${outputCount} result${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""} into the response.`;
       return desc.trim();
 
     default:
@@ -1684,7 +1684,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
 
 const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"; message: string } => {
   if (!trace.spans) return { status: "success", message: "Completed" };
-  
+
   // Build parent-child relationships to find root spans
   const spanToParent = new Map<string, string>();
   trace.spans.forEach(span => {
@@ -1702,21 +1702,21 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   // Helper function to find HTTP status code in span tags (check all possible variations)
   const findHttpStatus = (tags: Array<{ key: string; value: any }>): number | null => {
     if (!tags || tags.length === 0) return null;
-    
+
     // Check all possible variations of HTTP status code tag
     const httpStatusTag = tags.find(t => {
       const key = String(t.key).toLowerCase();
-      return key === "http.status_code" || 
+      return key === "http.status_code" ||
              key === "http_status_code" ||
              key === "http.statuscode" ||
              key === "status_code" ||
              key === "statuscode" ||
              (key.includes("http") && key.includes("status"));
     });
-    
+
     if (httpStatusTag) {
-      const statusCode = parseInt(String(httpStatusTag.value));
-      if (!isNaN(statusCode) && statusCode > 0) {
+      const statusCode = Number.parseInt(String(httpStatusTag.value), 10);
+      if (!Number.isNaN(statusCode) && statusCode > 0) {
         return statusCode;
       }
     }
@@ -1728,7 +1728,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   for (const span of rootSpans) {
     const tags = span.tags || [];
     const statusCode = findHttpStatus(tags);
-    
+
     if (statusCode !== null) {
       // HTTP status code found on root span - this matches the log status
       if (statusCode >= 200 && statusCode < 300) {
@@ -1746,14 +1746,14 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   const apiGatewaySpans = trace.spans.filter(span => {
     const process = trace.processes?.[span.processID];
     const serviceName = process?.serviceName || "";
-    return serviceName.toLowerCase().includes("api-gateway") || 
+    return serviceName.toLowerCase().includes("api-gateway") ||
            serviceName.toLowerCase().includes("gateway");
   });
 
   for (const span of apiGatewaySpans) {
     const tags = span.tags || [];
     const statusCode = findHttpStatus(tags);
-    
+
     if (statusCode !== null) {
       // HTTP status code from API Gateway - this is authoritative
       if (statusCode >= 200 && statusCode < 300) {
@@ -1771,7 +1771,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   const requestHandlerSpans = trace.spans.filter(span => {
     const opName = span.operationName.toLowerCase();
     return (opName.includes("inference") || opName.includes("login") || opName.includes("auth")) &&
-           !opName.includes("triton") && 
+           !opName.includes("triton") &&
            !opName.includes("database") &&
            !opName.includes("middleware");
   });
@@ -1779,7 +1779,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   for (const span of requestHandlerSpans) {
     const tags = span.tags || [];
     const statusCode = findHttpStatus(tags);
-    
+
     if (statusCode !== null) {
       // HTTP status code found on request handler - use it
       if (statusCode >= 200 && statusCode < 300) {
@@ -1799,11 +1799,11 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
     const isRoot = rootSpans.includes(span);
     const isApiGateway = apiGatewaySpans.includes(span);
     const isRequestHandler = requestHandlerSpans.includes(span);
-    
+
     if (!isRoot && !isApiGateway && !isRequestHandler) {
       const tags = span.tags || [];
       const statusCode = findHttpStatus(tags);
-      
+
       if (statusCode !== null) {
         // HTTP status code found - use it
         if (statusCode >= 200 && statusCode < 300) {
@@ -1820,8 +1820,8 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   // Priority 4: Check root spans for errors (if no HTTP status found)
   const rootSpanHasError = rootSpans.some(span => {
     const tags = span.tags || [];
-    return tags.some(t => 
-      (t.key === "error" && t.value === true) || 
+    return tags.some(t =>
+      (t.key === "error" && t.value === true) ||
       (t.key === "otel.status_code" && String(t.value) === "ERROR")
     );
   });
@@ -1833,8 +1833,8 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   // Priority 5: Check request handler spans for errors (if no HTTP status found)
   const requestHandlerHasError = requestHandlerSpans.some(span => {
     const tags = span.tags || [];
-    return tags.some(t => 
-      (t.key === "error" && t.value === true) || 
+    return tags.some(t =>
+      (t.key === "error" && t.value === true) ||
       (t.key === "otel.status_code" && String(t.value) === "ERROR")
     );
   });
@@ -1923,7 +1923,7 @@ const TracesPage: React.FC = () => {
       console.log("No trace details available");
       return [];
     }
-    
+
     try {
       console.log("Processing trace:", {
         traceID: traceDetails.traceID,
@@ -1934,17 +1934,17 @@ const TracesPage: React.FC = () => {
         hasSpans: !!traceDetails.spans,
         hasProcesses: !!traceDetails.processes,
       });
-      
+
       if (!traceDetails.spans || traceDetails.spans.length === 0) {
         console.warn("Trace has no spans!");
         return [];
       }
-      
+
       if (!traceDetails.processes || Object.keys(traceDetails.processes).length === 0) {
         console.warn("Trace has no processes!");
         return [];
       }
-      
+
       if (!traceDetails.startTime) {
         console.warn("Trace has no startTime!");
         // Try to calculate from spans
@@ -1956,10 +1956,10 @@ const TracesPage: React.FC = () => {
           return [];
         }
       }
-      
+
       const spans = extractImportantSpans(traceDetails);
       console.log("Extracted", spans.length, "important spans");
-      
+
       // Debug logging
       if (spans.length === 0 && traceDetails.spans && traceDetails.spans.length > 0) {
         console.warn("No spans extracted from trace. Total spans:", traceDetails.spans.length);
@@ -1988,20 +1988,20 @@ const TracesPage: React.FC = () => {
   // Build span map and parent-child relationships for tag merging
   const spanRelationships = useMemo(() => {
     if (!traceDetails || !traceDetails.spans) {
-      return { 
-        spanMap: new Map<string, Span>(), 
+      return {
+        spanMap: new Map<string, Span>(),
         spanToParent: new Map<string, string>(),
         childSpans: new Map<string, string[]>()
       };
     }
-    
+
     const spanMap = new Map<string, Span>();
     const spanToParent = new Map<string, string>();
     const childSpans = new Map<string, string[]>(); // parentSpanID -> [childSpanIDs]
-    
+
     traceDetails.spans.forEach((span: Span) => {
       spanMap.set(span.spanID, span);
-      
+
       if (span.references && span.references.length > 0) {
         const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
         if (parentRef) {
@@ -2014,27 +2014,27 @@ const TracesPage: React.FC = () => {
         }
       }
     });
-    
+
     return { spanMap, spanToParent, childSpans };
   }, [traceDetails]);
 
   // Extract primary error message from the most descriptive failed span
   const primaryErrorMessage = useMemo(() => {
     if (!processedSpans || processedSpans.length === 0) return null;
-    
+
     // Helper function to check if an error message is trivial/not useful
     const isTrivialError = (msg: string | undefined): boolean => {
       if (!msg) return true;
       const msgLower = msg.toLowerCase().trim();
       // Filter out boolean values, single characters, very short messages, or generic status codes
-      return msgLower === "true" || 
-             msgLower === "false" || 
+      return msgLower === "true" ||
+             msgLower === "false" ||
              msgLower.length <= 3 ||
              msgLower === "error" ||
              /^status:\s*\d+$/.test(msgLower) ||
              /^\d+$/.test(msgLower);
     };
-    
+
     // Collect all error messages with their spans
     const errorSpans = processedSpans
       .filter((p: ProcessedSpan) => p.hasError && p.errorMessage && !isTrivialError(p.errorMessage))
@@ -2043,7 +2043,7 @@ const TracesPage: React.FC = () => {
         errorMessage: p.errorMessage!,
         priority: 0, // Higher priority = better
       }));
-    
+
     // If we have non-trivial errors, prioritize them
     if (errorSpans.length > 0) {
       // Prioritize error messages:
@@ -2064,21 +2064,21 @@ const TracesPage: React.FC = () => {
           item.priority += 1; // Slight boost for medium-length messages
         }
       });
-      
+
       // Sort by priority (descending) and return the best one
       errorSpans.sort((a: { span: ProcessedSpan; errorMessage: string; priority: number }, b: { span: ProcessedSpan; errorMessage: string; priority: number }) => b.priority - a.priority);
       return errorSpans[0]?.errorMessage || null;
     }
-    
+
     // Fallback: if all errors are trivial, try to find any error message
     // But still prefer rejection operations
-    const anyError = processedSpans.find((p: ProcessedSpan) => 
+    const anyError = processedSpans.find((p: ProcessedSpan) =>
       p.hasError && p.errorMessage && (p.category === "error" || p.displayName.includes("Rejection"))
     );
     if (anyError && anyError.errorMessage) {
       return anyError.errorMessage;
     }
-    
+
     // Last resort: return first error message even if trivial
     const firstError = processedSpans.find((p: ProcessedSpan) => p.hasError && p.errorMessage);
     return firstError?.errorMessage || null;
@@ -2089,22 +2089,22 @@ const TracesPage: React.FC = () => {
     if (!traceDetails || !traceDetails.spans || traceDetails.spans.length === 0) {
       return traceDetails?.startTime;
     }
-    
+
     // If startTime is already provided and valid, use it
     if (traceDetails.startTime && traceDetails.startTime > 0) {
       return traceDetails.startTime;
     }
-    
+
     // Otherwise, calculate from spans: find the earliest start
     const spans = traceDetails.spans;
     const startTimes = spans.map((s: Span) => s.startTime).filter((t: number) => t > 0);
-    
+
     if (startTimes.length > 0) {
       const earliestStart = Math.min(...startTimes);
       console.log("Calculated trace startTime from spans:", earliestStart);
       return earliestStart;
     }
-    
+
     return traceDetails.startTime;
   }, [traceDetails]);
 
@@ -2113,31 +2113,31 @@ const TracesPage: React.FC = () => {
     if (!traceDetails || !traceDetails.spans || traceDetails.spans.length === 0) {
       return traceDetails?.duration;
     }
-    
+
     // If duration is already provided and valid, use it
     if (traceDetails.duration && traceDetails.duration > 0) {
       return traceDetails.duration;
     }
-    
+
     // Otherwise, calculate from spans: find the earliest start and latest end
     const spans = traceDetails.spans;
     const startTimes = spans.map((s: Span) => s.startTime).filter((t: number) => t > 0);
     const endTimes = spans.map((s: Span) => s.startTime + s.duration).filter((t: number) => t > 0);
-    
+
     if (startTimes.length === 0 || endTimes.length === 0) {
       return traceDetails.duration;
     }
-    
+
     const earliestStart = Math.min(...startTimes);
     const latestEnd = Math.max(...endTimes);
-    
+
     const calculatedDuration = latestEnd - earliestStart;
-    
+
     if (calculatedDuration > 0) {
       console.log("Calculated trace duration from spans:", calculatedDuration, "microseconds (", (calculatedDuration / 1000000).toFixed(2), "s)");
       return calculatedDuration;
     }
-    
+
     return traceDetails.duration;
   }, [traceDetails]);
 
@@ -2158,13 +2158,13 @@ const TracesPage: React.FC = () => {
   // Extract client IP address from trace spans
   const getClientIP = (trace: Trace): string | null => {
     if (!trace.spans || trace.spans.length === 0) return null;
-    
+
     // Look for IP in any span (usually in the root HTTP request span)
     for (const span of trace.spans) {
       const tags = span.tags || [];
       // Check for client.ip or http.client_ip attributes
-      const ipTag = tags.find(t => 
-        t.key === "client.ip" || 
+      const ipTag = tags.find(t =>
+        t.key === "client.ip" ||
         t.key === "http.client_ip" ||
         t.key.toLowerCase() === "client.ip" ||
         t.key.toLowerCase() === "http.client_ip"
@@ -2339,9 +2339,9 @@ const TracesPage: React.FC = () => {
                             {traceStatus.message}
                           </Badge>
                           {traceStatus.status === "error" && primaryErrorMessage && (
-                            <Text 
-                              fontSize="xs" 
-                              color="red.600" 
+                            <Text
+                              fontSize="xs"
+                              color="red.600"
                               fontWeight="bold"
                               bg="red.50"
                               px={2}
@@ -2462,9 +2462,9 @@ const TracesPage: React.FC = () => {
                                                   FAILED
                                                 </Badge>
                                                 {processed.errorMessage && (
-                                                  <Text 
-                                                    fontSize="xs" 
-                                                    color="red.600" 
+                                                  <Text
+                                                    fontSize="xs"
+                                                    color="red.600"
                                                     fontWeight="bold"
                                                     bg="red.50"
                                                     px={2}
@@ -2541,19 +2541,19 @@ const TracesPage: React.FC = () => {
                           {processedSpans && processedSpans.length > 0 ? (
                             processedSpans.map((processed: ProcessedSpan, idx: number) => {
                             const duration = formatDuration(processed.effectiveDuration ?? processed.span.duration);
-                            
+
                             // Merge tags from current span and all ancestor spans
                             // Parent tags are useful for input-related info (e.g., nmt.input.* on parent nmt.inference)
                             // But filter out redundant tags to avoid repetition
                             let allTags = [...(processed.span.tags || [])];
                             const childTagKeys = new Set(allTags.map(t => t.key.toLowerCase()));
-                            
+
                             // Tags to exclude from parent spans (redundant HTTP metadata)
                             const redundantHttpTags = new Set([
-                              'http.host', 'http.method', 'http.route', 'http.server_name', 
+                              'http.host', 'http.method', 'http.route', 'http.server_name',
                               'http.target', 'http.url', 'http.user_agent', 'correlation.header'
                             ]);
-                            
+
                             const isServiceDomainTag = (tagKey: string): boolean =>
                               tagKey.startsWith('nmt.') ||
                               tagKey.startsWith('ocr.') ||
@@ -2702,37 +2702,37 @@ const TracesPage: React.FC = () => {
                                      tagKey === 'client.ip' ||
                                      tagKey === 'http.client_ip';
                             };
-                            
+
                             // Traverse up the parent chain to collect tags from all ancestors
                             let currentParentId = spanRelationships.spanToParent.get(processed.span.spanID);
                             const visitedParents = new Set<string>(); // Prevent infinite loops
-                            
+
                             while (currentParentId && !visitedParents.has(currentParentId)) {
                               visitedParents.add(currentParentId);
                               const parentSpan = spanRelationships.spanMap.get(currentParentId);
-                              
+
                               if (parentSpan && parentSpan.tags) {
                                 // Add parent tags that don't exist in child and are relevant
                                 parentSpan.tags.forEach((parentTag: { key: string; value: any }) => {
                                   const tagKey = parentTag.key.toLowerCase();
-                                  if (!childTagKeys.has(tagKey) && 
+                                  if (!childTagKeys.has(tagKey) &&
                                       shouldIncludeParentTag(tagKey, processed.category)) {
                                     allTags.push(parentTag);
                                     childTagKeys.add(tagKey); // Track added tags to avoid duplicates
                                   }
                                 });
                               }
-                              
+
                               // Move to next parent level
                               currentParentId = spanRelationships.spanToParent.get(currentParentId);
                             }
-                            
+
                             // Traverse down to child spans to collect triton.* and internal.* tags
                             // This is important because triton tags might be on child spans (e.g., triton.inference under ocr.triton_batch)
                             const collectTagsFromChildren = (spanId: string, visited: Set<string>) => {
                               if (visited.has(spanId)) return; // Prevent infinite loops
                               visited.add(spanId);
-                              
+
                               const childSpanIds = spanRelationships.childSpans.get(spanId) || [];
                               childSpanIds.forEach((childSpanId: string) => {
                                 const childSpan = spanRelationships.spanMap.get(childSpanId);
@@ -2740,7 +2740,7 @@ const TracesPage: React.FC = () => {
                                   childSpan.tags.forEach((childTag: { key: string; value: any }) => {
                                     const tagKey = childTag.key.toLowerCase();
                                     // Always include triton.* and internal.* tags from children
-                                    if ((tagKey.startsWith("triton.") || tagKey.startsWith("internal.")) && 
+                                    if ((tagKey.startsWith("triton.") || tagKey.startsWith("internal.")) &&
                                         !childTagKeys.has(tagKey)) {
                                       allTags.push(childTag);
                                       childTagKeys.add(tagKey);
@@ -2751,7 +2751,7 @@ const TracesPage: React.FC = () => {
                                 collectTagsFromChildren(childSpanId, visited);
                               });
                             };
-                            
+
                             // Collect triton and internal tags from all child spans.
                             // Exception: for the standard Triton phase span (e.g., nmt.triton_inference),
                             // keep child tags separated so the UI can show triton.inference as an indented child
@@ -2760,21 +2760,21 @@ const TracesPage: React.FC = () => {
                               const visitedChildren = new Set<string>();
                               collectTagsFromChildren(processed.span.spanID, visitedChildren);
                             }
-                            
+
                             const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
-                              
+
                               // PRIORITY: Always include triton.* tags FIRST (important for AI Model Inference spans)
                               // This ensures they're never filtered out by other rules
                               if (key.startsWith("triton.")) {
                                 return true;
                               }
-                              
+
                               // PRIORITY: Always include internal.* tags (span metadata)
                               if (key.startsWith("internal.")) {
                                 return true;
                               }
-                              
+
                               // Filter out truly irrelevant tags
                               if (key.includes("telemetry.") ||
                                   key.includes("http.flavor") ||
@@ -2784,29 +2784,29 @@ const TracesPage: React.FC = () => {
                                   key === "span.kind") {
                                 return false;
                               }
-                              
+
                               // For non-top-level spans, filter out redundant HTTP metadata
                               // Keep essential HTTP tags: status_code, request/response size_bytes
                               // Remove verbose HTTP metadata: host, method, route, server_name, target, url, user_agent
                               // But only if this is not a top-level processing span (which should show full HTTP context)
-                              if (!processed.isTopLevel && key.startsWith("http.") && 
+                              if (!processed.isTopLevel && key.startsWith("http.") &&
                                   key !== "http.status_code" &&
                                   key !== "http.request.size_bytes" &&
                                   key !== "http.response.size_bytes") {
                                 return false;
                               }
-                              
+
                               // Keep otel.status_code, otel.status_description (for errors), and otel.scope.name, filter out other otel.*
-                              if (key.includes("otel.") && 
-                                  key !== "otel.status_code" && 
+                              if (key.includes("otel.") &&
+                                  key !== "otel.status_code" &&
                                   key !== "otel.status_description" &&
                                   key !== "otel.scope.name") {
                                 return false;
                               }
-                              
+
                               // Always include error-related tags for error spans
                               if (processed.hasError && (
-                                key.includes("error") || 
+                                key.includes("error") ||
                                 key.includes("exception") ||
                                 key === "db.statement" ||
                                 key === "db.system" ||
@@ -2814,15 +2814,15 @@ const TracesPage: React.FC = () => {
                               )) {
                                 return true;
                               }
-                              
+
                               return true;
                             });
-                            
+
                             // Sort tags to prioritize important ones first
                             relevantTags.sort((a: { key: string; value: any }, b: { key: string; value: any }) => {
                               const aKey = a.key.toLowerCase();
                               const bKey = b.key.toLowerCase();
-                              
+
                               // Priority order: error tags (for errors) > input tags > service-specific tags > http status > organization > correlation.id > user.id > otel scope > others
                               const getPriority = (key: string): number => {
                                 // Highest priority for errors: error-related tags
@@ -2866,7 +2866,7 @@ const TracesPage: React.FC = () => {
                                   return 0.25;
                                 }
                                 // Highest priority: input-related tags (most important for understanding the request)
-                                if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") || 
+                                if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") ||
                                     key.includes("request.size") || key.startsWith("http.request")) return 1;
                                 // High priority: client IP (important for request tracking)
                                 if (key === "client.ip" || key === "http.client_ip") return 1.5;
@@ -2880,10 +2880,10 @@ const TracesPage: React.FC = () => {
                                 if (key === "otel.scope.name") return 8;
                                 return 9;
                               };
-                              
+
                               return getPriority(aKey) - getPriority(bKey);
                             });
-                            
+
                             // Calculate depth for indentation - only count displayed parent spans
                             // This ensures indentation reflects the visible hierarchy
                             const calculateDisplayedDepth = (spanId: string): number => {
@@ -2891,11 +2891,11 @@ const TracesPage: React.FC = () => {
                               let currentId: string | undefined = spanId;
                               const visited = new Set<string>();
                               const displayedSpanIds = new Set(processedSpans?.map((p: ProcessedSpan) => p.span.spanID) || []);
-                              
+
                               while (currentId) {
                                 if (visited.has(currentId)) break; // Prevent infinite loops
                                 visited.add(currentId);
-                                
+
                                 const parentId: string | undefined = spanRelationships.spanToParent.get(currentId);
                                 if (parentId) {
                                   // Only increment depth if the parent is actually displayed
@@ -2908,23 +2908,23 @@ const TracesPage: React.FC = () => {
                                   break;
                                 }
                               }
-                              
+
                               return depth;
                             };
-                            
+
                             const depth = calculateDisplayedDepth(processed.span.spanID);
                             const indentPx = depth * 24; // 24px per level of nesting
-                            
+
                             // Calculate sum of visible child spans to explain duration discrepancy
                             const childSpans = processedSpans?.filter((p: ProcessedSpan) => {
                               const parentId = spanRelationships.spanToParent.get(p.span.spanID);
                               return parentId === processed.span.spanID;
                             }) || [];
-                            
+
                             const childSpansDuration = childSpans.reduce((sum: number, child: ProcessedSpan) => {
                               return sum + (child.span.duration || 0);
                             }, 0);
-                            
+
                             const parentDuration = processed.span.duration || 0;
                             const overheadTime = parentDuration - childSpansDuration;
                             const hasSignificantOverhead = overheadTime > 1000 && childSpans.length > 0; // > 1ms overhead with visible children
@@ -2998,9 +2998,9 @@ const TracesPage: React.FC = () => {
                                                 FAILED
                                               </Badge>
                                               {processed.errorMessage && (
-                                                <Text 
-                                                  fontSize="xs" 
-                                                  color="red.600" 
+                                                <Text
+                                                  fontSize="xs"
+                                                  color="red.600"
                                                   fontWeight="bold"
                                                   bg="red.50"
                                                   px={2}
@@ -3036,21 +3036,21 @@ const TracesPage: React.FC = () => {
                                         </Badge>
                                       </VStack>
                                     </HStack>
-                                    
+
                                     {/* User-friendly description */}
                                     {(() => {
                                       const errorDetails = processed.hasError ? parseErrorDetails(processed) : null;
-                                      
+
                                       if (errorDetails) {
                                         // Display structured error details
                                         return (
                                           <Box>
                                             {/* Error Summary */}
-                                            <Box 
-                                              p={3} 
-                                              bg="red.50" 
-                                              borderRadius="md" 
-                                              borderLeft="4px solid" 
+                                            <Box
+                                              p={3}
+                                              bg="red.50"
+                                              borderRadius="md"
+                                              borderLeft="4px solid"
                                               borderLeftColor="red.500"
                                               boxShadow="sm"
                                               mb={3}
@@ -3063,23 +3063,23 @@ const TracesPage: React.FC = () => {
                                                   {errorDetails.errorType}
                                                 </Text>
                                               </HStack>
-                                              <Text 
-                                                fontSize="xs" 
-                                                color="red.800" 
-                                                lineHeight="1.6" 
+                                              <Text
+                                                fontSize="xs"
+                                                color="red.800"
+                                                lineHeight="1.6"
                                                 pl={6}
                                                 fontWeight="medium"
                                               >
                                                 {errorDetails.summary}
                                               </Text>
                                             </Box>
-                                            
+
                                             {/* Error Details Table */}
                                             {errorDetails.fields.length > 0 && (
-                                              <Box 
-                                                p={3} 
-                                                bg="red.100" 
-                                                borderRadius="md" 
+                                              <Box
+                                                p={3}
+                                                bg="red.100"
+                                                borderRadius="md"
                                                 border="1px solid"
                                                 borderColor="red.300"
                                                 boxShadow="sm"
@@ -3094,21 +3094,21 @@ const TracesPage: React.FC = () => {
                                                 </HStack>
                                                 <VStack spacing={2} align="stretch">
                                                   {errorDetails.fields.map((field, idx) => (
-                                                    <Box 
-                                                      key={idx} 
-                                                      p={2} 
-                                                      bg="white" 
-                                                      borderRadius="sm" 
+                                                    <Box
+                                                      key={idx}
+                                                      p={2}
+                                                      bg="white"
+                                                      borderRadius="sm"
                                                       border="1px solid"
                                                       borderColor="red.200"
                                                       overflow="hidden"
                                                       w="full"
                                                     >
                                                       <HStack spacing={3} align="start">
-                                                        <Text 
-                                                          fontSize="xs" 
-                                                          fontWeight="bold" 
-                                                          color="red.700" 
+                                                        <Text
+                                                          fontSize="xs"
+                                                          fontWeight="bold"
+                                                          color="red.700"
                                                           minW="120px"
                                                           maxW="120px"
                                                         >
@@ -3135,11 +3135,11 @@ const TracesPage: React.FC = () => {
                                       } else {
                                         // Display normal description for non-error spans
                                         return (
-                                          <Box 
-                                            p={3} 
-                                            bg="blue.50" 
-                                            borderRadius="md" 
-                                            borderLeft="3px solid" 
+                                          <Box
+                                            p={3}
+                                            bg="blue.50"
+                                            borderRadius="md"
+                                            borderLeft="3px solid"
                                             borderLeftColor="blue.400"
                                             boxShadow="sm"
                                           >
@@ -3149,10 +3149,10 @@ const TracesPage: React.FC = () => {
                                                 What this step does:
                                               </Text>
                                             </HStack>
-                                            <Text 
-                                              fontSize="xs" 
-                                              color="gray.700" 
-                                              lineHeight="1.6" 
+                                            <Text
+                                              fontSize="xs"
+                                              color="gray.700"
+                                              lineHeight="1.6"
                                               pl={5}
                                             >
                                               {getUserFriendlyDescription(processed)}
@@ -3161,14 +3161,14 @@ const TracesPage: React.FC = () => {
                                         );
                                       }
                                     })()}
-                                    
+
                                     {/* Duration overhead explanation - show when parent has significant overhead vs children */}
                                     {hasSignificantOverhead && (
-                                      <Box 
-                                        p={2} 
-                                        bg="yellow.50" 
-                                        borderRadius="md" 
-                                        borderLeft="3px solid" 
+                                      <Box
+                                        p={2}
+                                        bg="yellow.50"
+                                        borderRadius="md"
+                                        borderLeft="3px solid"
                                         borderLeftColor="yellow.400"
                                         boxShadow="sm"
                                       >
@@ -3217,17 +3217,17 @@ const TracesPage: React.FC = () => {
                                             setExpandedTags(newExpanded);
                                           }}
                                         >
-                                          {expandedTags.has(processed.span.spanID) 
-                                            ? "Hide Technical Details" 
+                                          {expandedTags.has(processed.span.spanID)
+                                            ? "Hide Technical Details"
                                             : `Show Technical Details (${relevantTags.length} tags)`}
                                         </Button>
                                         <Collapse in={expandedTags.has(processed.span.spanID)} animateOpacity>
-                                          <Box 
-                                            mt={3} 
-                                            p={3} 
-                                            bg="gray.50" 
-                                            borderRadius="md" 
-                                            border="1px" 
+                                          <Box
+                                            mt={3}
+                                            p={3}
+                                            bg="gray.50"
+                                            borderRadius="md"
+                                            border="1px"
                                             borderColor="gray.200"
                                             boxShadow="sm"
                                           >
@@ -3249,19 +3249,19 @@ const TracesPage: React.FC = () => {
                                                   borderColor="gray.200"
                                                 >
                                                   <HStack spacing={2} align="start">
-                                                    <Text 
-                                                      fontSize="xs" 
-                                                      color="gray.600" 
-                                                      fontWeight="medium" 
+                                                    <Text
+                                                      fontSize="xs"
+                                                      color="gray.600"
+                                                      fontWeight="medium"
                                                       minW="140px"
                                                       textTransform="uppercase"
                                                       letterSpacing="0.5px"
                                                     >
                                                       {tag.key}:
                                           </Text>
-                                                    <Text 
-                                                      color="gray.800" 
-                                                      fontFamily="mono" 
+                                                    <Text
+                                                      color="gray.800"
+                                                      fontFamily="mono"
                                                       fontSize="xs"
                                                       wordBreak="break-word"
                                                       whiteSpace="pre-wrap"

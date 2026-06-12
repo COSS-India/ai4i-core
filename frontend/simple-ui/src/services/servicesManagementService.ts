@@ -88,7 +88,7 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
       responseSchema: servicesListSchema,
     });
 
-    const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const total = Number.parseInt(response.headers['x-total-count'] ?? '0', 10);
     const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
 

@@ -95,7 +95,7 @@ export const performAudioLanguageDetectionInference = async (
       { responseSchema: audioLanguageDetectionInferenceResponseSchema }
     );
 
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
 
     return {
       data: response.data,

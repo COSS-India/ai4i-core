@@ -89,7 +89,7 @@ export const performNERInference = async (
       responseSchema: nerInferenceResponseSchema,
     });
 
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
 
     return {
       data: response.data,

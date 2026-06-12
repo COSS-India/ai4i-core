@@ -77,7 +77,7 @@ export const performLLMChat = async (
       { responseSchema: chatCompletionResponseSchema }
     );
 
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
     const translated =
       response.data.choices?.[0]?.message?.content?.trim() ?? '';
 

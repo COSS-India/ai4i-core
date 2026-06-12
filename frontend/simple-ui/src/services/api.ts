@@ -245,7 +245,7 @@ apiClient.interceptors.response.use(
     // Calculate request duration
     const startTime = response.config.headers['request-startTime'];
     if (startTime) {
-      const duration = new Date().getTime() - parseInt(startTime);
+      const duration = new Date().getTime() - Number.parseInt(startTime, 10);
       response.headers['request-duration'] = duration.toString();
     }
 

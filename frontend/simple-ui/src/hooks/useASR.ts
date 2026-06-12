@@ -703,7 +703,7 @@ export const useASR = (): UseASRReturn => {
             resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
           } else if (duration > MAX_RECORDING_DURATION) {
             resolve({ isValid: false, duration, error: 'AUDIO_TOO_LONG' });
-          } else if (isNaN(duration) || duration === 0) {
+          } else if (Number.isNaN(duration) || duration === 0) {
             resolve({ isValid: false, duration, error: 'EMPTY_AUDIO_FILE' });
           } else {
             resolve({ isValid: true, duration });
