@@ -28,9 +28,9 @@ _V2_NMT_SERVICE_INFO = {
         "inputs": [
             {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
             {"tensor": "INPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1],
-             "value_path": "request.config.language.source_language"},
+             "value_path": "request.config.language.sourceLanguage"},
             {"tensor": "OUTPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1],
-             "value_path": "request.config.language.target_language"},
+             "value_path": "request.config.language.targetLanguage"},
         ],
         "outputs": [{"tensor": "OUTPUT_TEXT"}],
         "output_transform": _V2_NMT_TRANSFORM,

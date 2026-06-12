@@ -3,12 +3,12 @@
 Unit tests for NMTTaskService — no live Triton required.
 
 Tests each pipeline stage in isolation:
-  1. validate_request      — valid + four error paths
+  1. validate_request      — valid + error paths
   2. preprocess_input      — sanitisation
   3. payload_key           — modality input key
-  4. postprocess_output    — pairing + unwrap, returns plain dict with output list
-  5. process               — full pipeline with mocked GenericTritonMapper + Triton
+  4. process               — guard when service_info lacks an endpoint
 
+Full-pipeline coverage (real mapper, mocked HTTP) lives in test_nmt_e2e.py.
 Triton HTTP is mocked via unittest.mock so no running server is needed.
 """
 
@@ -16,7 +16,7 @@ import asyncio
 import logging
 import sys
 from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,41 +29,11 @@ MOCK_SERVICE_INFO = {
     "name": "indictrans-gpu-t4",
     "endpoint": "http://localhost:8000/v2/models/indictrans-gpu-t4/infer",
     "api_key": None,
-    # Non-empty so the run_inference adapter_config guard (AI4IDS-1767) passes.
-    # Content is irrelevant here: tests that reach run_inference patch
-    # GenericTritonMapper, so the config is never actually parsed.
-    "adapter_config": {"version": "1.0"},
+    # Non-empty so the run_inference adapter_config guard passes. Never parsed:
+    # the unit tests below validate/preprocess only or stop before mapper build.
+    # Full-pipeline coverage (real mapper, mocked HTTP) lives in test_nmt_e2e.py.
+    "adapter_config": {"schema_version": "2.0"},
 }
-
-# ---------------------------------------------------------------------------
-# Mock Triton output (KServe v2 format)
-# ---------------------------------------------------------------------------
-MOCK_TRITON_OUTPUT = {
-    "outputs": [
-        {
-            "name": "OUTPUT_TEXT",
-            "datatype": "BYTES",
-            "shape": [1, 1],
-            "data": ["नमस्ते, आप कैसे हैं?"],
-        }
-    ]
-}
-
-
-def _make_mock_inference_model(translated: str = "नमस्ते, आप कैसे हैं?", num_outputs: int = 1) -> MagicMock:
-    """Return a mock GenericTritonMapper that produces `num_outputs` translated items."""
-    model = MagicMock()
-    model.compose_triton_kserve_v2_payload = MagicMock(
-        return_value=(
-            [{"name": "INPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["hello"]}],
-            ["OUTPUT_TEXT"],
-        )
-    )
-    model.map_outputs = MagicMock(return_value={"target": [translated] * num_outputs})
-    model.to_output_items = MagicMock(
-        return_value=[{"target": translated}] * num_outputs
-    )
-    return model
 
 
 async def test_validate_request_valid():
@@ -151,72 +121,6 @@ async def test_payload_key():
     logger.info("   [PASS] payload_key is 'input'")
 
 
-async def test_postprocess_output():
-    from services.nmt_service import NMTTaskService
-
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
-    payload = {
-        "input": [{"source": "Hello"}, {"source": "What is your name?"}],
-        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
-    }
-    response_items = [{"target": ["नमस्ते"]}, {"target": b"\xe0\xa4\x86\xe0\xa4\xaa\xe0\xa4\x95\xe0\xa4\xbe \xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\xae \xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\xaf\xe0\xa4\xbe \xe0\xa4\xb9\xe0\xa5\x88?"}]
-    source_texts = ["Hello", "What is your name?"]
-
-    from services.base.task_service import InferenceContext
-    ctx = await service.produce_result(
-        InferenceContext(payload=payload, response_data=response_items, source_texts=source_texts)
-    )
-    response = service.build_envelope(ctx)
-    assert "output" in response
-    assert len(response["output"]) == 2
-    assert isinstance(response["output"][0], dict)
-    # single-element list and bytes targets are unwrapped/decoded
-    assert response["output"][0]["source"] == "Hello"
-    assert response["output"][0]["target"] == "नमस्ते"
-    assert response["output"][1]["source"] == "What is your name?"
-    assert response["output"][1]["target"] == "आपका नाम क्या है?"
-    logger.info("   [PASS] postprocess paired sources, unwrapped values, returned plain dicts")
-
-
-async def test_process_full():
-    """Full process() pipeline with mocked InferenceModel and mocked Triton."""
-    from services.nmt_service import NMTTaskService
-
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
-
-    payload = {
-        "input": [
-            {"source": "Hello, how are you?"},
-            {"source": "What is your name?"},
-        ],
-        "config": {
-            "service_id": "indictrans-v2-all",
-            "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
-        },
-    }
-
-    mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
-
-    # _get_mapper builds the mapper via build_mapper — patch it to return the
-    # mock mapper for this v1 config.
-    with patch(
-        "services.base.task_service.build_mapper",
-        MagicMock(return_value=mock_inference_model),
-    ):
-        with patch.object(
-            service,
-            "_call_triton_inference",
-            new=AsyncMock(return_value=MOCK_TRITON_OUTPUT),
-        ):
-            response = await service.process(payload, MOCK_SERVICE_INFO)
-
-    assert isinstance(response, dict)
-    assert len(response["output"]) == 2  # one per input item
-    assert response["output"][0]["source"] == "Hello, how are you?"
-    assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
-    logger.info("   [PASS] process returned dict with correct sources")
-
-
 async def test_process_missing_endpoint():
     """process raises RuntimeError when service_info lacks endpoint."""
     from services.nmt_service import NMTTaskService
@@ -287,8 +191,6 @@ async def run_all():
         ("validate_request — error paths", test_validate_request_errors),
         ("preprocess_input — sanitise", test_preprocess_input),
         ("payload_key", test_payload_key),
-        ("postprocess_output — pairing + unwrap", test_postprocess_output),
-        ("process — full pipeline (mocked)", test_process_full),
         ("process — missing endpoint", test_process_missing_endpoint),
         ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),
     ]

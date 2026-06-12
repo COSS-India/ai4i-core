@@ -2,8 +2,9 @@
 """
 End-to-end integration tests for NMTTaskService.
 
-Uses a real GenericTritonMapper with a representative adapter_config,
-but mocks only the HTTP call to Triton.
+Uses a real mapper with a representative v2 adapter_config (output_transform
+pairs each translation with its input source), but mocks only the HTTP call to
+Triton.
 
 This mirrors how the service runs in production:
   process(payload) → validate → preprocess
@@ -22,39 +23,27 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Representative adapter config for indictrans (source, src-lang, tgt-lang → translation)
-# value_path keys use snake_case to match model_dump(by_alias=False) output
+# Representative v2 adapter config for indictrans
+# (source, src-lang, tgt-lang → translation; output_transform pairs source/target)
 # ---------------------------------------------------------------------------
+_NMT_OUTPUT_TRANSFORM = (
+    "( $inp := inputs; "
+    "{ \"output\": [ $map(tensors.OUTPUT_TEXT, function($t, $i) "
+    "{ {\"source\": $inp[$i].source, \"target\": $t} }) ] } )"
+)
+
 MOCK_ADAPTER_CONFIG = {
-    "version": "1.0",
+    "schema_version": "2.0",
     "model_version": "1",
     "inputs": [
-        {
-            "tensor": "INPUT_TEXT",
-            "dtype": "BYTES",
-            "shape": [1, 1],
-            "value_path": "input.source",
-        },
-        {
-            "tensor": "SRC_LANG",
-            "dtype": "BYTES",
-            "shape": [1, 1],
-            "value_path": "request.config.language.source_language",
-        },
-        {
-            "tensor": "TGT_LANG",
-            "dtype": "BYTES",
-            "shape": [1, 1],
-            "value_path": "request.config.language.target_language",
-        },
+        {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
+        {"tensor": "SRC_LANG", "dtype": "BYTES", "shape": [-1, 1],
+         "value_path": "request.config.language.sourceLanguage"},
+        {"tensor": "TGT_LANG", "dtype": "BYTES", "shape": [-1, 1],
+         "value_path": "request.config.language.targetLanguage"},
     ],
-    "outputs": [
-        {
-            "tensor": "OUTPUT_TEXT",
-            "dtype": "BYTES",
-            "maps_to": "target",
-        }
-    ],
+    "outputs": [{"tensor": "OUTPUT_TEXT"}],
+    "output_transform": _NMT_OUTPUT_TRANSFORM,
 }
 
 MOCK_SERVICE_INFO = {
@@ -76,12 +65,6 @@ MOCK_TRITON_RESPONSE_SINGLE = {
             "shape": [1, 1],
             "data": ["नमस्ते, आप कैसे हैं?"],
         }
-    ]
-}
-
-MOCK_TRITON_RESPONSE_HINDI = {
-    "outputs": [
-        {"name": "OUTPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["आपका नाम क्या है?"]}
     ]
 }
 
@@ -113,33 +96,8 @@ async def test_full_pipeline_camel_payload():
     logger.info("   [PASS] camelCase portal payload → correct plain dict response")
 
 
-async def test_full_pipeline_snake_payload():
-    """process() with snake_case payload (both naming conventions work)."""
-    from services.nmt_service import NMTTaskService
-
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
-
-    snake_payload = {
-        "input": [{"source": "What is your name?"}],
-        "config": {
-            "service_id": "indictrans-v2-all",
-            "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
-        },
-    }
-
-    with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
-        new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_HINDI),
-    ):
-        response = await service.process(snake_payload)
-
-    assert isinstance(response, dict)
-    assert response["output"][0]["target"] == "आपका नाम क्या है?"
-    logger.info("   [PASS] snake_case payload → correct plain dict response")
-
-
 async def test_multi_input_pipeline():
-    """Two input items → two separate Triton calls → two output items."""
+    """Two input items → one batch Triton call → two output items."""
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -154,29 +112,29 @@ async def test_multi_input_pipeline():
         },
     }
 
-    triton_responses = [
-        {"outputs": [{"name": "OUTPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["नमस्ते"]}]},
-        {"outputs": [{"name": "OUTPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["अलविदा"]}]},
-    ]
+    # NMT runs in batch mode: one call, the response carries both translations.
+    batch_response = {
+        "outputs": [{"name": "OUTPUT_TEXT", "datatype": "BYTES",
+                     "shape": [2, 1], "data": ["नमस्ते", "अलविदा"]}]
+    }
     call_count = 0
 
-    async def mock_post_json(url, body, headers=None):
+    async def mock_post_json(self_, url, body, headers=None):
         nonlocal call_count
-        result = triton_responses[call_count]
         call_count += 1
-        return result
+        return batch_response
 
     with patch("utils.http_client.HTTPServiceClient.post_json", new=mock_post_json):
         response = await service.process(payload)
 
     assert isinstance(response, dict)
     assert len(response["output"]) == 2
-    assert call_count == 2  # one Triton call per input item
+    assert call_count == 1  # one batch Triton call for the whole input list
     assert response["output"][0]["source"] == "Hello"
     assert response["output"][0]["target"] == "नमस्ते"
     assert response["output"][1]["source"] == "Goodbye"
     assert response["output"][1]["target"] == "अलविदा"
-    logger.info("   [PASS] two inputs → two Triton calls → two output items")
+    logger.info("   [PASS] two inputs → one batch call → two output items")
 
 
 async def test_response_serialization():
@@ -252,8 +210,7 @@ async def test_validate_whitespace_source_accepted():
 async def run_all():
     tests = [
         ("full pipeline — camelCase portal payload", test_full_pipeline_camel_payload),
-        ("full pipeline — snake_case payload", test_full_pipeline_snake_payload),
-        ("multi-input — two Triton calls", test_multi_input_pipeline),
+        ("multi-input — one batch call", test_multi_input_pipeline),
         ("response serialization — plain dict", test_response_serialization),
         ("validation — same language rejected", test_validate_same_language_rejected),
         ("validation — whitespace source sanitised", test_validate_whitespace_source_accepted),

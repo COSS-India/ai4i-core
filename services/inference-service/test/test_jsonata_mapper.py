@@ -1,9 +1,8 @@
-"""Unit tests for the v2 JSONata output mapper (AI4IDS-1981, slice 1).
+"""Unit tests for the JSONata output mapper (AI4IDS-1981).
 
 Proves a single output_transform reproduces the task-type output for a trivial
 case (NMT, input pairing) and the hardest case (Speaker Diarization, JSON-blob
-parse + sort + distinct + count + arithmetic), byte-for-byte. Isolated: does not
-touch the v1 GenericTritonMapper path.
+parse + sort + distinct + count + arithmetic), byte-for-byte.
 """
 
 import sys
@@ -12,7 +11,12 @@ import pytest
 
 sys.path.insert(0, ".")
 
-from services.base.jsonata_mapper import AdapterMappingConfigV2, JsonataOutputMapper
+from services.base.jsonata_mapper import (
+    AdapterMappingConfig,
+    JsonataOutputMapper,
+    TritonMapper,
+    decode_triton_outputs,
+)
 
 
 # ── NMT: input pairing, no JSON parse ──────────────────────────────────────────
@@ -27,7 +31,7 @@ def test_nmt_output_transform():
     mapper = JsonataOutputMapper(_NMT_TRANSFORM)
     triton_output = {"outputs": [{"name": "OUTPUT_TEXT", "datatype": "BYTES",
                                   "shape": [2, 1], "data": ["नमस्ते", "अलविदा"]}]}
-    tensors = mapper.decode_triton_outputs(triton_output)
+    tensors = decode_triton_outputs(triton_output, set())
     result = mapper.transform_output(
         tensors,
         inputs=[{"source": "Hello"}, {"source": "Goodbye"}],
@@ -77,7 +81,7 @@ def test_speaker_diarization_output_transform():
     )
     triton_output = {"outputs": [{"name": "DIARIZATION_RESULT", "datatype": "BYTES",
                                   "shape": [1, 1], "data": [diarization_json]}]}
-    tensors = mapper.decode_triton_outputs(triton_output)
+    tensors = decode_triton_outputs(triton_output, {"DIARIZATION_RESULT"})
     result = mapper.transform_output(
         tensors, inputs=[], request_config={"serviceId": "sd-1"}
     )
@@ -104,7 +108,7 @@ def test_invalid_expression_raises_at_construction():
 
 
 def test_v2_schema_parses():
-    cfg = AdapterMappingConfigV2.model_validate({
+    cfg = AdapterMappingConfig.model_validate({
         "schema_version": "2.0",
         "inputs": [{"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1],
                     "value_path": "input.source"}],
@@ -116,17 +120,15 @@ def test_v2_schema_parses():
     assert cfg.outputs[1].is_json is True
 
 
-# ── V2Mapper: v1 input render + JSONata output, one object ─────────────────────
+# ── TritonMapper: typed input render + JSONata output, one object ──────────────
 
-def test_v2mapper_input_render_and_output_transform():
-    from services.base.jsonata_mapper import V2Mapper
-
-    mapper = V2Mapper({
+def test_mapper_input_render_and_output_transform():
+    mapper = TritonMapper({
         "schema_version": "2.0",
         "inputs": [
             {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
             {"tensor": "SRC", "dtype": "BYTES", "shape": [-1, 1],
-             "value_path": "request.config.language.source_language"},
+             "value_path": "request.config.language.sourceLanguage"},
         ],
         "outputs": [{"tensor": "OUTPUT_TEXT"}],
         "output_transform": _NMT_TRANSFORM,
@@ -141,3 +143,39 @@ def test_v2mapper_input_render_and_output_transform():
     raw = {"outputs": [{"name": "OUTPUT_TEXT", "data": ["नमस्ते"]}]}
     out = mapper.transform([raw], inputs=[{"source": "Hello"}], request_config={})
     assert out == {"output": [{"source": "Hello", "target": "नमस्ते"}]}
+
+
+# ── Required-input enforcement (replaces per-service validate_request) ──────────
+
+def test_missing_required_input_raises_value_error():
+    """A value_path with no `value` default that the request omits is a client
+    error (ValueError -> 400), not a server fault."""
+    mapper = TritonMapper({
+        "schema_version": "2.0",
+        "inputs": [
+            {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
+            {"tensor": "LANG", "dtype": "BYTES", "shape": [-1, 1],
+             "value_path": "request.config.language.sourceLanguage"},
+        ],
+        "outputs": [{"tensor": "OUTPUT_TEXT"}],
+        "output_transform": _NMT_TRANSFORM,
+    })
+    with pytest.raises(ValueError, match="sourceLanguage"):
+        mapper.compose_triton_kserve_v2_payload([{"source": "Hi"}], {"language": {}})
+
+
+def test_optional_input_uses_value_default():
+    """A declaration carrying both value_path and `value` falls back to the
+    default when the request omits the key (e.g. numSpeakers)."""
+    mapper = TritonMapper({
+        "schema_version": "2.0",
+        "inputs": [
+            {"tensor": "AUDIO", "dtype": "BYTES", "shape": [1, 1], "value_path": "input.audioContent"},
+            {"tensor": "NUM_SPEAKERS", "dtype": "BYTES", "shape": [1, 1],
+             "value_path": "request.config.numSpeakers", "value": ""},
+        ],
+        "outputs": [{"tensor": "OUT"}],
+    })
+    inputs_list, _ = mapper.compose_triton_kserve_v2_payload([{"audioContent": "b64"}], {})
+    num_speakers = next(i for i in inputs_list if i["name"] == "NUM_SPEAKERS")
+    assert num_speakers["data"] == [""]

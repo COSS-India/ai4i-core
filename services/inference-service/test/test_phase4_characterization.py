@@ -115,9 +115,9 @@ _ASR_ADAPTER_CONFIG = {
     "schema_version": "2.0",
     "model_version": "1",
     "inputs": [
-        {"tensor": "AUDIO_SIGNAL", "dtype": "FP32", "shape": [-1, -1], "value_path": "audio.samples"},
-        {"tensor": "NUM_SAMPLES", "dtype": "INT32", "shape": [-1, 1], "value_path": "audio.num_samples"},
-        {"tensor": "LANG_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.source_language"},
+        {"tensor": "AUDIO_SIGNAL", "dtype": "FP32", "shape": [-1, -1], "value_path": "input.samples"},
+        {"tensor": "NUM_SAMPLES", "dtype": "INT32", "shape": [-1, 1], "value_path": "input.num_samples"},
+        {"tensor": "LANG_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.sourceLanguage"},
     ],
     "outputs": [{"tensor": "TRANSCRIPTS"}],
     "output_transform": _ASR_T,
@@ -183,8 +183,8 @@ _SD_ADAPTER_CONFIG = {
     "schema_version": "2.0",
     "model_version": "1",
     "inputs": [
-        {"tensor": "AUDIO_DATA", "dtype": "BYTES", "shape": [1, 1], "value_path": "audio.audio_content"},
-        {"tensor": "NUM_SPEAKERS", "dtype": "BYTES", "shape": [1, 1], "value_path": "request.config.num_speakers"},
+        {"tensor": "AUDIO_DATA", "dtype": "BYTES", "shape": [1, 1], "value_path": "input.audioContent"},
+        {"tensor": "NUM_SPEAKERS", "dtype": "BYTES", "shape": [1, 1], "value_path": "request.config.numSpeakers", "value": ""},
     ],
     "outputs": [{"tensor": "DIARIZATION_RESULT", "is_json": True}],
     "output_transform": _SD_T,
