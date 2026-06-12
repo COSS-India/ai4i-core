@@ -1372,7 +1372,7 @@ const formatTagValue = (key: string, value: any): string => {
     description = description.replace(/^<class ['"]([^'"]+)['"]>:\s*/, '$1:\n');
 
     // Format DETAIL sections on new lines
-    description = description.replace(/ +DETAIL: +/g, '\n\nDETAIL:\n  ');
+    description = description.replace(/ {1,100}DETAIL: {1,100}/g, '\n\nDETAIL:\n  ');
 
     // Format constraint violations nicely
     description = description.replace(/duplicate key value violates unique constraint/gi,
