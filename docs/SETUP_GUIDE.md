@@ -160,6 +160,8 @@ docker compose -f docker-compose-local.yml --profile logging up -d
 
 > The `--profile logging` flag activates all services tagged with the `logging` profile. Base services (`postgres`, `redis`, `nginx-gateway`) start automatically as they carry no profile.
 
+> **Next:** once the stack is running, complete [Step 11: Create OpenSearch Index Patterns](#step-11-create-opensearch-index-patterns-required-for-traces-and-logs) to make traces and logs visible in OpenSearch Dashboards.
+
 Wait for the core services to become healthy:
 
 ```bash
@@ -391,6 +393,25 @@ Once all services are running, use the table below to find URLs and ports.
 - **Email**: `admin@ai4inclusion.org`
 - **Password**: the literal string `ADMIN_PASSWORD` (override by setting `ADMIN_DEFAULT_PASSWORD` before running the migration)
 - **Role**: ADMIN (all permissions)
+
+## Step 11: Create OpenSearch Index Patterns (required for traces and logs)
+
+This is a **one-time manual step** after starting the tracing stack (Option B or C in Step 4). OpenSearch does not create index patterns automatically.
+
+1. Open **http://localhost:5602/app/management** in your browser.
+2. Under *OpenSearch Dashboards*, click **Index Patterns**.
+3. Click **Create index pattern** and create both patterns below — repeat for each:
+
+   | Index pattern name | What it contains |
+   |---|---|
+   | `trace*` | OTel trace spans from the inference service via Kafka → Fluent-Bit |
+   | `logs*` | Application logs forwarded by Fluent-Bit from `./logs/` |
+
+4. When prompted, select `@timestamp` as the time field, then click **Create index pattern**.
+
+Once both patterns are created, go to **Discover** (`http://localhost:5602/app/discover`), select an index pattern, and confirm data appears after sending at least one request to the inference service.
+
+> **No data?** Check that the logging stack is running (`docker compose ps`), services are writing to `./logs/`, and at least one inference request has been made.
 
 ## Troubleshooting
 
