@@ -20,6 +20,11 @@ _TRANSLIT_T = ('( $inp := inputs; { "output": [ $map(tensors.OUTPUT_TEXT, functi
                '{"source": ($exists($inp[$i].source) ? $inp[$i].source : ""), "target": $t} }) ] } )')
 _LANGDET_T = ('( $inp := inputs; { "output": [ $map(tensors.OUTPUT_TEXT, function($p,$i){ '
               '{"source": $inp[$i].source, "langPrediction": [$p]} }) ] } )')
+_ALD_T = ('{ "taskType": "audio-lang-detection", "output": [ $map(tensors.LANGUAGE_CODE, function($lc,$i){ '
+          '{"language_code": $lc, "confidence": tensors.CONFIDENCE[$i], "all_scores": tensors.ALL_SCORES[$i]} }) ], '
+          '"config": { "serviceId": request.config.serviceId } }')
+_LD_T = ('{ "taskType": "language-diarization", "output": [ tensors.DIARIZATION_RESULT ], '
+         '"config": { "serviceId": request.config.serviceId } }')
 
 
 async def _run(mod, cls, cfg, payload, triton):
@@ -81,3 +86,43 @@ async def test_language_detection_v2_matches_golden():
     )
     assert out == {"output": [{"source": "hello world",
                                "langPrediction": [{"langCode": "en", "score": 0.99}]}]}
+
+
+async def test_audio_lang_detection_v2_matches_golden():
+    out = await _run(
+        "services.audio_lang_detection_service", "AudioLanguageDetectionTaskService",
+        {"schema_version": "2.0", "model_version": "1",
+         "inputs": [{"tensor": "AUDIO_DATA", "dtype": "BYTES", "shape": [1, 1],
+                     "value_path": "audio.audio_content"}],
+         "outputs": [{"tensor": "LANGUAGE_CODE"}, {"tensor": "CONFIDENCE"},
+                     {"tensor": "ALL_SCORES", "is_json": True}],
+         "output_transform": _ALD_T},
+        {"audio": [{"audioContent": _B64}], "config": {"serviceId": "ald-1"}},
+        {"outputs": [{"name": "LANGUAGE_CODE", "data": ["en"]},
+                     {"name": "CONFIDENCE", "data": [0.98]},
+                     {"name": "ALL_SCORES", "data": ['{"en":0.98,"hi":0.02}']}]},
+    )
+    assert out == {"taskType": "audio-lang-detection",
+                   "output": [{"language_code": "en", "confidence": 0.98,
+                               "all_scores": {"en": 0.98, "hi": 0.02}}],
+                   "config": {"serviceId": "ald-1"}}
+
+
+async def test_language_diarization_v2_matches_golden():
+    out = await _run(
+        "services.language_diarization_service", "LanguageDiarizationTaskService",
+        {"schema_version": "2.0", "model_version": "1",
+         "inputs": [{"tensor": "AUDIO_DATA", "dtype": "BYTES", "shape": [1, 1],
+                     "value_path": "audio.audio_content"},
+                    {"tensor": "LANGUAGE", "dtype": "BYTES", "shape": [1, 1],
+                     "value_path": "request.config.target_language"}],
+         "outputs": [{"tensor": "DIARIZATION_RESULT", "is_json": True}],
+         "output_transform": _LD_T},
+        {"audio": [{"audioContent": _B64}], "config": {"serviceId": "ld-1"}},
+        {"outputs": [{"name": "DIARIZATION_RESULT",
+                      "data": ['{"total_segments":1,"segments":[{"start":0.0,"end":1.0,"language":"en"}]}']}]},
+    )
+    assert out == {"taskType": "language-diarization",
+                   "output": [{"total_segments": 1,
+                               "segments": [{"start": 0.0, "end": 1.0, "language": "en"}]}],
+                   "config": {"serviceId": "ld-1"}}
