@@ -29,17 +29,18 @@ def _post_json_returning(triton_response: dict) -> AsyncMock:
 # TTS — custom postprocess (waveform merge + encode + audio envelope)
 # ════════════════════════════════════════════════════════════════════════════
 
+# TTS migrated to v2 (AI4IDS-1981): code-output (no output_transform); its
+# produce_result extracts the waveform from the raw Triton responses and does
+# the DSP. Same task-type output as v1.
 _TTS_ADAPTER_CONFIG = {
-    "version": "1.0",
+    "schema_version": "2.0",
     "model_version": "1",
     "inputs": [
         {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [1], "value_path": "input.source"},
         {"tensor": "INPUT_SPEAKER_ID", "dtype": "BYTES", "shape": [1], "value_path": "input.gender"},
         {"tensor": "INPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [1], "value_path": "input.language_id"},
     ],
-    "outputs": [
-        {"tensor": "OUTPUT_GENERATED_AUDIO", "dtype": "FP32", "maps_to": "audio_data"},
-    ],
+    "outputs": [{"tensor": "OUTPUT_GENERATED_AUDIO"}],
 }
 
 _TTS_SERVICE_INFO = {

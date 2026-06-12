@@ -72,16 +72,10 @@ class TTSTaskService(TextBase):
     # Output conversion — waveform tensors need raw extraction
     # ------------------------------------------------------------------
 
-    async def convert_triton_output_to_task_format(
-        self, triton_output: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract OUTPUT_GENERATED_AUDIO directly from the Triton response.
-
-        The generic mapper path is unsuitable here: to_output_items treats a
-        list value as a batch dimension and would explode a waveform of N
-        samples into N one-float items. FP32 [-1, 1] → int16.
-        """
+    def _extract_waveform(self, triton_output: Dict[str, Any]) -> np.ndarray:
+        """Extract OUTPUT_GENERATED_AUDIO (FP32 [-1, 1]) from a Triton response
+        as int16 samples. The generic mapper path is unsuitable: it would
+        explode an N-sample waveform into N one-float items."""
         audio_data = None
         for output in triton_output.get("outputs", []):
             if output.get("name") == "OUTPUT_GENERATED_AUDIO":
@@ -91,10 +85,14 @@ class TTSTaskService(TextBase):
             raise RuntimeError(
                 f"{self.task_name}: OUTPUT_GENERATED_AUDIO not found in Triton response"
             )
-
         audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
-        audio_int16 = audio_utils.to_int16(audio_fp32 * 32767)
-        return [{"samples": audio_int16}]
+        return audio_utils.to_int16(audio_fp32 * 32767)
+
+    async def convert_triton_output_to_task_format(
+        self, triton_output: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """v1 path: one int16 waveform per chunk call."""
+        return [{"samples": self._extract_waveform(triton_output)}]
 
     # ------------------------------------------------------------------
     # produce_result — merge chunks per item, resample/encode the waveforms
@@ -107,14 +105,20 @@ class TTSTaskService(TextBase):
         target_rate  = self._validated_sample_rate(config)
         audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
 
-        # Chunk items (in payload) and chunk results (response_data) are
-        # parallel — regroup samples by the originating input item.
+        # Per-chunk int16 waveforms, parallel to chunk_items. v2 extracts them
+        # from the raw Triton responses captured in run_inference (which does not
+        # call convert_triton_output on v2); v1 reads the converted response_data.
         chunk_items = payload.get(self.payload_key) or []
+        if self._is_v2():
+            chunk_samples = [self._extract_waveform(raw) for raw in result.raw_triton_outputs]
+        else:
+            chunk_samples = [item["samples"] for item in result.response_data]
+
         merged: Dict[int, List[np.ndarray]] = {}
         durations_req: Dict[int, Any] = {}
-        for chunk, item in zip(chunk_items, result.response_data):
+        for chunk, samples in zip(chunk_items, chunk_samples):
             idx = chunk.get("_item_index", 0)
-            merged.setdefault(idx, []).append(item["samples"])
+            merged.setdefault(idx, []).append(samples)
             durations_req[idx] = chunk.get("audioDuration")
 
         audio_outputs: List[Dict[str, Any]] = []
