@@ -30,6 +30,9 @@ soundfile==0.13.1
 python-multipart>=0.0.6
 kafka-python==2.3.2
 pydub==0.25.1
+# Pure-Python JSONata for config-driven output transforms (AI4IDS-1981).
+# NOT the PyPI package `jsonata`, which is a JS wrapper needing a JS runtime.
+jsonata-python==0.6.2
 
 # Security: pin transitive dependencies to patched versions
 idna>=3.15

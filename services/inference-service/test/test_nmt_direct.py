@@ -197,10 +197,10 @@ async def test_process_full():
 
     mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
 
-    # _get_mapper builds GenericTritonMapper once via task_service's top-level
-    # import — patch the class there so the mock mapper is used.
+    # _get_mapper builds the mapper via build_mapper — patch it to return the
+    # mock mapper for this v1 config.
     with patch(
-        "services.base.task_service.GenericTritonMapper",
+        "services.base.task_service.build_mapper",
         MagicMock(return_value=mock_inference_model),
     ):
         with patch.object(

@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from services.base.config_mapper import GenericTritonMapper
+from services.base.jsonata_mapper import build_mapper, is_v2_config
 
 
 @dataclass
@@ -25,11 +25,15 @@ class InferenceContext:
     response_data: List[Dict[str, Any]] = field(default_factory=list)
     source_texts: List[str] = field(default_factory=list)
     service_info: Dict[str, Any] = field(default_factory=dict)
-    mapper: Optional[GenericTritonMapper] = None
+    mapper: Optional[Any] = None
     # Normalized, chainable output items produced by produce_result. A pipeline
     # stage reads the previous stage's result_items; build_envelope (terminal)
     # turns them into the HTTP response.
     result_items: List[Dict[str, Any]] = field(default_factory=list)
+    # v2 (JSONata) only: the raw Triton responses captured in run_inference,
+    # and the final task-type output the output_transform produces.
+    raw_triton_outputs: List[Dict[str, Any]] = field(default_factory=list)
+    transformed: Optional[Any] = None
 
 
 class BaseTaskService:
@@ -81,18 +85,28 @@ class BaseTaskService:
         # service_info adopt). Declared here so postprocess_output's config
         # guard reads a real attribute even when called without run_inference.
         self._adapter_config: Optional[Dict[str, Any]] = None
-        self._mapper: Optional[GenericTritonMapper] = None
+        self._mapper: Optional[Any] = None
 
-    def _get_mapper(self) -> GenericTritonMapper:
+    def _get_mapper(self):
         """Build the adapter-config mapper once per request and reuse it.
 
+        Dispatches on adapter_config: a v2 (JSONata) config yields a V2Mapper,
+        anything else the v1 GenericTritonMapper. Built per request, so a v2
+        mapper's compiled JSONata expression is never shared across threads.
         Shared by the convert hooks and the config-driven postprocess path so
-        adapter_config is parsed and validated a single time per request, not
-        once per stage call.
+        adapter_config is parsed a single time per request, not once per call.
         """
         if self._mapper is None:
-            self._mapper = GenericTritonMapper(self._adapter_config)
+            self._mapper = build_mapper(self._adapter_config)
         return self._mapper
+
+    def _is_v2(self) -> bool:
+        """True when the adapter_config declares the v2 (JSONata) schema.
+
+        A pure config check, so it never builds a mapper (and never trips on a
+        None adapter_config, e.g. produce_result called without run_inference).
+        """
+        return is_v2_config(self._adapter_config)
 
     async def process(
         self,
@@ -181,6 +195,16 @@ class BaseTaskService:
         input pairings, and static fields replace the implicit "source"
         pairing above.
         """
+        if self._is_v2():
+            # One JSONata transform over all captured Triton responses produces
+            # the final task-type output. build_envelope returns it as-is.
+            result.transformed = self._get_mapper().transform(
+                result.raw_triton_outputs,
+                result.payload.get(self.payload_key) or [],
+                result.payload.get("config"),
+            )
+            return result
+
         if self._has_response_shaping():
             result.result_items = self._get_mapper().shape_output_items(
                 result.response_data,
@@ -207,7 +231,11 @@ class BaseTaskService:
         Config-driven when the adapter_config declares a response block or
         per-output shaping (taskType, config-key subset / omission); otherwise
         the default {"output": items, "config": <request config>}.
+        v2 (JSONata) returns the transform output produced in produce_result.
         """
+        if self._is_v2():
+            return result.transformed
+
         if self._has_response_shaping():
             return self._get_mapper().build_response_envelope(
                 result.result_items, result.payload.get("config")
@@ -324,7 +352,11 @@ class BaseTaskService:
             ) or self.TRITON_CALL_MODE
             groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
-            response_data = []
+            # v2 (JSONata) keeps the raw Triton responses for a single output
+            # transform in produce_result; v1 shapes each call into items here.
+            is_v2 = self._is_v2()
+            response_data: List[Dict[str, Any]] = []
+            raw_outputs: List[Dict[str, Any]] = []
             for group in groups:
                 triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
                     group, config_data
@@ -339,9 +371,12 @@ class BaseTaskService:
                         triton_outputs=triton_outputs,
                         api_key=api_key,
                     )
-                response_data.extend(
-                    await self.convert_triton_output_to_task_format(raw_triton_output)
-                )
+                if is_v2:
+                    raw_outputs.append(raw_triton_output)
+                else:
+                    response_data.extend(
+                        await self.convert_triton_output_to_task_format(raw_triton_output)
+                    )
 
             span_ctx["output_type"] = get_output_type(response_data)
             span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
@@ -352,6 +387,7 @@ class BaseTaskService:
                 source_texts=source_texts,
                 service_info=self.service_info,
                 mapper=self._mapper,
+                raw_triton_outputs=raw_outputs,
             )
 
     async def _call_triton_inference(
