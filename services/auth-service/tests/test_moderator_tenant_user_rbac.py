@@ -31,19 +31,19 @@ def _make_service() -> TenantService:
 
 
 def _moderator() -> User:
-    return User(id=uuid4(), email="mod@example.com", username="moderator")
+    return User(id=uuid4(), email="test-moderator@example.invalid", username=uuid4().hex[:12])
 
 
 def _admin() -> User:
-    return User(id=uuid4(), email="admin@example.com", username="admin")
+    return User(id=uuid4(), email="test-admin@example.invalid", username=uuid4().hex[:12])
 
 
 def _tenant_user() -> User:
-    return User(id=uuid4(), email="user@tenant.com", username="tuser", tenant_id=1)
+    return User(id=uuid4(), email="test-tenant-user@example.invalid", username=uuid4().hex[:12], tenant_id=1)
 
 
 def _active_tenant() -> Tenant:
-    return Tenant(id=1, name="Acme", organisation="Acme", email="c@acme.com",
+    return Tenant(id=1, name="Acme", organisation="Acme", email="test-contact@example.invalid",
                   status=TenantStatus.ACTIVE)
 
 
@@ -97,7 +97,7 @@ class TestModeratorCreateTenantUser:
         svc.provision_user = AsyncMock(return_value=("user-id-123", "setup-token-abc"))
 
         body = MagicMock()
-        body.email = "newuser@tenant.com"
+        body.email = "test-new-user@example.invalid"
         body.full_name = "New User"
         body.phone_number = None
         body.role.value = "TENANT USER"

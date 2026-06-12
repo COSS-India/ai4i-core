@@ -4,12 +4,69 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 **Run model**: infrastructure (PostgreSQL, Redis, Kafka, observability stack) runs in Docker; the three application services (`auth-service`, `platform-core-service`, `inference-service`) run natively on the host via `python3 -m uvicorn` so you can iterate quickly and attach a debugger.
 
+> **Windows users:** Docker Desktop runs containers inside WSL2. You must run **all** commands in this guide — Docker, migrations, Python services, and the frontend — from a **WSL2 bash terminal**, not from PowerShell or CMD. See [Windows (WSL)](#windows-wsl) below.
+
 ## Prerequisites
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Python 3.11](https://www.python.org/downloads/)** installed (`python3 --version` should show `3.11.x`)
+- **[Node.js 18+](https://nodejs.org/en/download)** installed — required for the frontend (`node --version` should show `v18.x` or higher)
 - **[Git](https://git-scm.com/install/)** installed
 - At least **8GB RAM** and **20GB disk space**
+- **Windows only:** **[WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)** with a Linux distribution (Ubuntu recommended) and **[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)** configured to use the WSL 2 backend
+
+## Windows (WSL)
+
+On Windows, Docker Desktop runs containers inside WSL2. The `nginx-gateway` container (and every other Docker service) binds to ports inside the WSL network. If you start the frontend or application services from a native Windows terminal (PowerShell, CMD, or Windows Terminal without entering WSL), they cannot reliably reach `nginx-gateway` at `http://localhost:8080` — API calls from the Simple UI will fail even though the containers appear healthy.
+
+`nginx-gateway` also proxies API traffic to the natively-running services via `host.docker.internal` (ports 8081, 8095, 8090). Those processes must run in the same WSL environment as Docker so nginx can reach them.
+
+**Run the entire local setup inside WSL2.** All commands in this guide use bash syntax and apply unchanged on WSL.
+
+### 1. Install and configure WSL2
+
+```powershell
+# Run once from an elevated PowerShell window on Windows
+wsl --install
+```
+
+Restart if prompted, then open your Linux distro (e.g. Ubuntu) from the Start menu.
+
+### 2. Install Docker Desktop for Windows
+
+1. Install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/).
+2. Open **Settings → General** and enable **Use the WSL 2 based engine**.
+3. Open **Settings → Resources → WSL Integration** and enable integration for your Linux distro.
+
+Verify from a WSL terminal:
+
+```bash
+docker --version
+docker compose version
+```
+
+### 3. Install dev tools inside WSL
+
+Install Python 3.11, Node.js 18+, and Git inside your WSL distro (not on Windows):
+
+```bash
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3-pip git curl
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+### 4. Clone the repo inside WSL
+
+Clone into your WSL home directory for best file-system performance (avoid `/mnt/c/...` paths):
+
+```bash
+cd ~
+git clone git@github.com:COSS-India/ai4i-core.git
+cd ai4i-core
+```
+
+From this point, follow the rest of this guide in the same WSL terminal. Open additional WSL terminals for each service you need to run in parallel (auth, platform-core, inference, frontend).
 
 ## Step 1: Clone the Repository
 
@@ -20,25 +77,56 @@ cd ai4i-core
 
 ## Step 2: Create the Root Environment File
 
-Docker Compose reads a root `.env` for variables it substitutes into the infrastructure service definitions (Postgres credentials, Redis password, Kafka listeners). Create it from the template and fill in the required values:
+Create the root `.env` from the template:
 
 ```bash
 cp env.template .env
 ```
 
-Open `.env` and set the required values:
+Open `.env` and fill in the three required values — everything else has a sensible default:
 
 ```bash
 # PostgreSQL — credentials for the Postgres container
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-POSTGRES_DB=ai4i_platform_db
 
 # Redis
 REDIS_PASSWORD=changeme
 ```
 
-## Step 3: Start Infrastructure Services
+> **LLM task type only:** If you plan to use LLM inference, also set `LLM_UPSTREAM_BASE_URL` to the base URL of your upstream LLM server (e.g. vLLM, llama.cpp, Ollama).
+
+## Step 3: Generate All Service Environment Files
+
+Run the setup script to generate a `.env` for every service from its template, substituting values from the root `.env`:
+
+**Linux / macOS / WSL:**
+```bash
+./scripts/setup-env.sh
+```
+
+**Windows (PowerShell or CMD):**
+```bash
+bash ./scripts/setup-env.sh
+```
+
+This creates:
+- `infrastructure/databases/migrations/postgres/alembic/.env`
+- `services/auth-service/.env`
+- `services/platform-core-service/.env`
+- `services/inference-service/.env`
+- `frontend/simple-ui/.env`
+
+Re-run this script any time you change the root `.env`.
+
+## Step 4: Start Infrastructure Services
+
+> **About the gateway:** this local setup uses **nginx** as the API gateway
+> (`nginx-gateway` in `docker-compose-local.yml`, config at
+> [`infrastructure/nginx/nginx.conf`](../infrastructure/nginx/nginx.conf)).
+> It implements forward-auth via `auth_request → GET /auth/validate`, so
+> every request is authenticated at the gateway before being proxied to
+> `auth-service`, `platform-core-service`, or `inference-service`.
 
 ### Option A: Minimal (required services only)
 
@@ -62,7 +150,6 @@ docker compose -f docker-compose-local.yml up -d \
   nginx-gateway
 ```
 
-
 Wait for the core services to become healthy:
 
 ```bash
@@ -77,48 +164,13 @@ If any service is not running, start it explicitly:
 docker compose -f docker-compose-local.yml up -d <service-name>
 ```
 
-## Step 4: Initialize Databases
+## Step 5: Initialize Databases
 
 The platform uses Alembic for database migrations. Run them from the host using the CLI wrapper (`infrastructure/databases/cli.py`). For full details see [`infrastructure/databases/MIGRATIONS.md`](../infrastructure/databases/MIGRATIONS.md).
 
-### Step 4.1: Create the Alembic Environment File
+### Step 5.1: Install Migration Framework Dependencies
 
-Copy the template and fill in your values:
-
-```bash
-cp infrastructure/databases/migrations/postgres/alembic/env.template \
-   infrastructure/databases/migrations/postgres/alembic/.env
-```
-
-Open that file and replace every placeholder. Key values when running migrations from the host (Postgres is in Docker, mapped to `localhost:5432`):
-
-```bash
-AUTH_DB_USER=postgres
-AUTH_DB_PASSWORD=postgres
-AUTH_DB_HOST=localhost
-AUTH_DB_PORT=5432
-AUTH_DB_NAME=ai4iplatform_auth
-AUTH_SERVICE_DB_NAME=ai4iplatform_auth
-
-APP_DB_USER=postgres
-APP_DB_PASSWORD=postgres
-APP_DB_HOST=localhost
-APP_DB_PORT=5432
-APP_DB_NAME=ai4iplatform_core
-
-CORE_SERVICE_DB_NAME=ai4iplatform_core
-
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-
-AI4I_PLATFORM_DB_NAME=ai4i_platform_db
-```
-
-### Step 4.2: Install Migration Framework Dependencies
-
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd infrastructure/databases
 pip3 install -r requirements.txt
@@ -132,7 +184,7 @@ pip install -r requirements.txt
 cd ..\..
 ```
 
-### Step 4.3: Run All Migrations
+### Step 5.2: Run All Migrations
 
 ```bash
 ./scripts/migrate.sh all upgrade
@@ -148,34 +200,13 @@ This command will:
 
 **Note:** Re-running `./scripts/migrate.sh all upgrade` is the way to re-apply seed data. There is no separate seed step.
 
-## Step 5: Auth Service
+## Step 6: Auth Service
 
 The auth service handles authentication, authorization, RBAC, API keys, and JWT issuance. See [`services/auth-service/README.md`](../services/auth-service/README.md) and [`docs/architecture/01-auth-service.md`](architecture/01-auth-service.md) for full details.
 
-### Step 5.1: Configure
+### Step 6.1: Install Dependencies and Run
 
-```bash
-cp services/auth-service/env.template services/auth-service/.env
-```
-
-Open `services/auth-service/.env` and set:
-
-```bash
-# PostgreSQL — point to the Docker-hosted Postgres
-AUTH_DB_USER=postgres
-AUTH_DB_PASSWORD=postgres
-AUTH_DB_HOST=localhost
-AUTH_DB_PORT=5432
-
-# Redis — point to the Docker-hosted Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
-```
-
-### Step 5.2: Install Dependencies and Run
-
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd services/auth-service
 python3.11 -m venv .venv
@@ -202,42 +233,13 @@ deactivate
 cd ../..
 ```
 
-## Step 6: Platform Core Service
+## Step 7: Platform Core Service
 
 The platform core service is the model and service registry, alert management, and telemetry query API. See [`services/platform-core-service/README.md`](../services/platform-core-service/README.md) and [`docs/architecture/02-platform-core-service.md`](architecture/02-platform-core-service.md) for full details.
 
-### Step 6.1: Configure
+### Step 7.1: Install Dependencies and Run
 
-```bash
-cp services/platform-core-service/env.template services/platform-core-service/.env
-```
-
-Open `services/platform-core-service/.env` and set:
-
-```bash
-# PostgreSQL — point to the Docker-hosted Postgres
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-CORE_DB_NAME=ai4iplatform_core
-
-# Redis — point to the Docker-hosted Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=changeme   # must match REDIS_PASSWORD in root .env
-
-# Secondary auth DB — read-only access for RBAC/tenant lookups
-AUTH_DB_NAME=ai4iplatform_auth
-AUTH_DB_USER=postgres
-AUTH_DB_PASSWORD=postgres
-AUTH_DB_HOST=localhost
-AUTH_DB_PORT=5432
-```
-
-### Step 6.2: Install Dependencies and Run
-
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd services/platform-core-service
 python3.11 -m venv .venv
@@ -264,21 +266,13 @@ deactivate
 cd ../..
 ```
 
-## Step 7: Inference Service
+## Step 8: Inference Service
 
 The inference service is the unified multi-task inference orchestration layer. See [`services/inference-service/README.md`](../services/inference-service/README.md) and [`docs/architecture/03-inference-service.md`](architecture/03-inference-service.md) for full details.
 
-### Step 7.1: Configure
+### Step 8.1: Install Dependencies and Run
 
-```bash
-cp services/inference-service/env.template services/inference-service/.env
-```
-
-> **LLM task type only:** If you plan to use LLM inference, open `services/inference-service/.env` and set `LLM_DEFAULT_ENDPOINT=<YOUR_LLM_UPSTREAM_BASE_URL>`.
-
-### Step 7.2: Install Dependencies and Run
-
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 cd services/inference-service
 python3.11 -m venv .venv
@@ -305,35 +299,24 @@ deactivate
 cd ../..
 ```
 
-## Step 8: Frontend (Simple UI)
+## Step 9: Frontend (Simple UI)
 
 The Simple UI is a Next.js interface for testing ASR, TTS, and NMT services. See [`frontend/simple-ui/README.md`](../frontend/simple-ui/README.md) for full details.
 
-### Step 8.1: Prerequisites
+### Step 9.1: Set the API Key
 
-- **Node.js 18+** — verify with `node --version`
-
-### Step 8.2: Configure
+The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled. The one value that cannot be auto-generated is the API key — create one via the auth service once it is running, then set it:
 
 ```bash
-cp frontend/simple-ui/env.template frontend/simple-ui/.env
-```
-
-Open `frontend/simple-ui/.env` and set the required values:
-
-```bash
-# Point to the nginx API gateway running in Docker
-NEXT_PUBLIC_API_URL=http://localhost:8080
-
-# API key — generate one via the auth service after it is running
+# frontend/simple-ui/.env
 NEXT_PUBLIC_API_KEY=your_api_key_here
 ```
 
-The remaining variables (WebSocket URLs, telemetry, Jaeger) can be left as defaults for a minimal local setup.
-
 > **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
+>
+> **Windows:** Start `npm run dev` from the same WSL terminal where Docker is running. The frontend talks to `nginx-gateway` at `http://localhost:8080`; mixing a Windows-native terminal with WSL Docker breaks that path.
 
-### Step 8.3: Install Dependencies and Run
+### Step 9.2: Install Dependencies and Run
 
 ```bash
 cd frontend/simple-ui
@@ -347,7 +330,7 @@ The UI is available at **http://localhost:3000**.
 cd ../..
 ```
 
-## Step 9: Access the Platform
+## Step 10: Access the Platform
 
 Once all services are running, use the table below to find URLs and ports.
 
@@ -372,6 +355,27 @@ Once all services are running, use the table below to find URLs and ports.
 - **Role**: ADMIN (all permissions)
 
 ## Troubleshooting
+
+### Frontend cannot reach nginx-gateway (Windows)
+
+**Symptom:** Simple UI loads at `http://localhost:3000` but API calls fail; `curl http://localhost:8080` from PowerShell times out or is refused, while `docker compose ps` shows `nginx-gateway` as running.
+
+**Cause:** Docker containers run inside WSL2, but the frontend (or application services) were started from a native Windows terminal. WSL2 and Windows maintain separate `localhost` networking in this setup.
+
+**Fix:**
+
+1. Stop any services running in PowerShell/CMD.
+2. Open a WSL terminal (`wsl` or your Ubuntu app).
+3. `cd` to the repo clone inside WSL (not a `/mnt/c/...` path unless you have no alternative).
+4. Start Docker infrastructure, then migrations, Python services, and `npm run dev` — all from WSL.
+5. Verify from the same WSL terminal:
+
+   ```bash
+   # nginx-gateway listening (any HTTP response means the port is reachable)
+   curl -I http://localhost:8080
+   # auth-service health (must be running before nginx can proxy auth routes)
+   curl http://localhost:8081/health
+   ```
 
 ### Database connection errors from migrate.sh
 
@@ -436,7 +440,7 @@ Stop the conflicting process, or change the `--port` argument when starting the 
 
 Check what is using a port:
 ```bash
-# Linux/macOS
+# Linux / macOS / WSL
 lsof -i :<port>
 # Windows
 netstat -ano | findstr <port>
@@ -454,6 +458,9 @@ netstat -ano | findstr <port>
 | `auth-service` | Native — uvicorn | restart the terminal process |
 | `platform-core-service` | Native — uvicorn | restart the terminal process |
 | `inference-service` | Native — python3 main.py / uvicorn | restart the terminal process |
+| Simple UI (frontend) | Native — `npm run dev` | restart the terminal process |
+
+On **Windows**, "native" means inside your **WSL2** Linux environment — the same network namespace where Docker Desktop exposes container ports.
 
 ### Why Services Run Natively
 
@@ -499,6 +506,6 @@ Stop containers and remove volumes:
 docker compose -f docker-compose-local.yml down -v
 ```
 
-Then run the setup again from [Step 3: Start Infrastructure Services](#step-3-start-infrastructure-services) (or from [Step 1](#step-1-clone-the-repository) if you want a completely clean clone).
+Then run the setup again from [Step 4: Start Infrastructure Services](#step-4-start-infrastructure-services) (or from [Step 1](#step-1-clone-the-repository) if you want a completely clean clone).
 
 **Need Help?** Open an issue on GitHub.

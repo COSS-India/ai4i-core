@@ -7,7 +7,7 @@ Subpackages:
     exceptions         — Shared exception hierarchy, response envelope, FastAPI handlers
     logging            — Structured JSON logging with trace correlation
     observability      — Prometheus metrics, middleware
-    telemetry          — OpenTelemetry tracing, Jaeger / OpenSearch query clients
+    telemetry          — OpenTelemetry tracing, OpenSearch query clients
 """
 
 __version__ = "1.1.5"

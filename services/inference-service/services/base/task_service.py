@@ -325,11 +325,29 @@ class BaseTaskService:
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
-            self.logger.debug(f"Calling Triton: POST {triton_endpoint}")
+            # Endpoint URL deliberately omitted from log message — it
+            # identifies internal infra (Triton host/port + model name)
+            # and would leak via the Logs Dashboard pipeline. The traced
+            # span carries the model_name attribute when correlation is
+            # needed server-side.
+            self.logger.debug("Calling Triton (model=%s)", self.service_info.get("name", ""))
             return await HTTPServiceClient(
                 timeout=settings.DEFAULT_TRITON_TIMEOUT
             ).post_json(triton_endpoint, payload, headers)
 
         except Exception as e:
-            self.logger.error(f"Failed to connect to Triton: {str(e)}")
-            raise RuntimeError(f"Triton inference call failed at {triton_endpoint}: {str(e)}") from e
+            # Log only the exception TYPE — httpx/urllib3 error reprs embed
+            # the request URL, which would leak the Triton endpoint into
+            # any log sink (Logs Dashboard, etc.). Full traceback is still
+            # captured by the upstream `exc_info=True` log in routes/inference.py.
+            self.logger.error(
+                "Triton inference call failed for task=%s: %s",
+                self.task_name, type(e).__name__,
+            )
+            # Don't embed triton_endpoint or str(e) in the RuntimeError
+            # message — the exception message can surface in logs ingested
+            # to client-visible sinks. The chained `from e` preserves the
+            # original exception for server-side debugging only.
+            raise RuntimeError(
+                f"{self.task_name}: Triton inference call failed"
+            ) from e

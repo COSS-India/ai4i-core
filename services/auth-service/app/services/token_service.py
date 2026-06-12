@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from jose import jwt, JWTError, ExpiredSignatureError
+import jwt
+from jwt.exceptions import PyJWTError, ExpiredSignatureError
 from cryptography.hazmat.primitives import serialization
 
 from app.core.config import settings
@@ -213,7 +214,7 @@ class TokenService:
 
         except ExpiredSignatureError as exc:
             raise TokenExpiredError() from exc
-        except JWTError as exc:
+        except PyJWTError as exc:
             raise TokenInvalidError("Token validation failed.") from exc
         except TokenExpiredError:
             raise
@@ -235,5 +236,5 @@ class TokenService:
             payload,
             private_pem,
             algorithm="RS256",
-            headers={"kid": payload["kid"], "alg": "RS256"},
+            headers={"kid": payload["kid"]},
         )

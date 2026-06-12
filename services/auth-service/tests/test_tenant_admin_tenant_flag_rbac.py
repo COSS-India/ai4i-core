@@ -31,20 +31,20 @@ def _make_service() -> TenantService:
 
 
 def _tenant_admin() -> User:
-    return User(id=uuid4(), email="tadmin@tenant.com", username="tadmin", tenant_id=1)
+    return User(id=uuid4(), email="test-tenant-admin@example.invalid", username=uuid4().hex[:12], tenant_id=1)
 
 
 def _admin() -> User:
-    return User(id=uuid4(), email="admin@example.com", username="admin")
+    return User(id=uuid4(), email="test-admin@example.invalid", username=uuid4().hex[:12])
 
 
 def _active_tenant() -> Tenant:
-    return Tenant(id=1, name="Acme", organisation="Acme", email="c@acme.com",
+    return Tenant(id=1, name="Acme", organisation="Acme", email="test-contact@example.invalid",
                   status=TenantStatus.ACTIVE)
 
 
 def _target_user() -> User:
-    return User(id=uuid4(), email="user@tenant.com", username="tuser",
+    return User(id=uuid4(), email="test-target-user@example.invalid", username=uuid4().hex[:12],
                 tenant_id=1, is_active=True, is_tenant_active=True)
 
 

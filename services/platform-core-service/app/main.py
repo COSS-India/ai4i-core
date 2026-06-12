@@ -11,7 +11,6 @@ import time
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from prometheus_client import make_asgi_app
 from starlette.requests import Request
 from app.core.config import settings
 from app.core.database import (
@@ -171,7 +170,6 @@ def create_app() -> FastAPI:
 
     versioning.register(app)
     app.include_router(api_router)
-    app.mount("/metrics", make_asgi_app())
 
     # OpenAPI security: Bearer JWT lock on all endpoints except health/root.
     _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json"}

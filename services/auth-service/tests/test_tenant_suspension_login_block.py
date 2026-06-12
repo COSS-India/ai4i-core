@@ -11,6 +11,9 @@ from uuid import uuid4
 
 import pytest
 
+# Placeholder credential for mocked-auth unit tests — not a real password.
+_TEST_PASS = f"test-{uuid4().hex[:12]}!"
+
 from app.core.constants import TokenType
 from app.core.exceptions import AuthorizationError, UserInactiveError
 from app.models.tenant import Tenant, TenantStatus
@@ -36,7 +39,7 @@ def _active_tenant() -> Tenant:
         id=1,
         name="Acme",
         organisation="Acme",
-        email="contact@acme.com",
+        email="test-contact@example.invalid",
         status=TenantStatus.ACTIVE,
     )
 
@@ -44,8 +47,8 @@ def _active_tenant() -> Tenant:
 def _tenant_user(*, is_tenant_active) -> User:
     return User(
         id=uuid4(),
-        email="user@tenant.com",
-        username="tuser",
+        email="test-tenant-user@example.invalid",
+        username=uuid4().hex[:12],
         tenant_id=1,
         is_active=True,
         is_tenant_active=is_tenant_active,
@@ -55,8 +58,8 @@ def _tenant_user(*, is_tenant_active) -> User:
 def _system_user() -> User:
     return User(
         id=uuid4(),
-        email="admin@sys.com",
-        username="sysadmin",
+        email="test-system-admin@example.invalid",
+        username=uuid4().hex[:12],
         tenant_id=None,
         is_active=True,
     )
@@ -103,7 +106,7 @@ class TestLoginBlockedByTenantSuspension:
         svc._users.get_by_email = AsyncMock(return_value=_tenant_user(is_tenant_active=False))
 
         with pytest.raises(AuthorizationError) as exc_info:
-            await svc.login("user@tenant.com", "password")
+            await svc.login("test-tenant-user@example.invalid", _TEST_PASS)
 
         assert exc_info.value.code == "TENANT_SUSPENDED"
         svc._credentials.get_by_user_id.assert_not_called()
@@ -117,7 +120,7 @@ class TestLoginBlockedByTenantSuspension:
         svc._users.get_by_email = AsyncMock(return_value=user)
 
         with pytest.raises(UserInactiveError):
-            await svc.login("user@tenant.com", "password")
+            await svc.login("test-tenant-user@example.invalid", _TEST_PASS)
 
         svc._credentials.get_by_user_id.assert_not_called()
 

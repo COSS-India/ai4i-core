@@ -1,5 +1,5 @@
 """
-Token validation endpoint — called by APISIX / nginx forward-auth on every
+Token validation endpoint — called by APISIX via forward-auth on every
 request through the gateway.
 
 Two-step flow:
@@ -176,9 +176,9 @@ async def _validate_jwt(
     )
 
 
-# nginx auth_request and APISIX forward-auth both issue GET; the original
-# client method travels in X-Original-Method. Don't add POST defensively —
-# no caller uses it, and silent 405s on config drift are easier to spot.
+# APISIX forward-auth issues GET; the original client method travels in
+# X-Original-Method. Don't add POST defensively — no caller uses it, and
+# silent 405s on config drift are easier to spot.
 @router.get("/validate")
 async def validate_token(
     request: Request,

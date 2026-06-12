@@ -5,8 +5,10 @@
 
 The platform-core-service is the platform's control plane. It owns the **model/service
 registry** and **alert management**, and exposes a **telemetry query** surface over
-OpenSearch. It is logging-only and exposes Prometheus metrics
-(`services/platform-core-service/app/main.py`).
+OpenSearch. It is **logging-only** and does **not** expose a Prometheus `/metrics`
+endpoint (`services/platform-core-service/app/main.py`). Its Prometheus-related code
+manages alert rule files and triggers Prometheus config reloads — it is a Prometheus
+manager, not a scrape target.
 
 ## Capabilities by domain
 
