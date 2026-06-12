@@ -126,3 +126,35 @@ async def test_language_diarization_v2_matches_golden():
                    "output": [{"total_segments": 1,
                                "segments": [{"start": 0.0, "end": 1.0, "language": "en"}]}],
                    "config": {"serviceId": "ld-1"}}
+
+
+async def test_ner_v2_matches_golden():
+    # NER is a code-output v2 service: no output_transform; produce_result reads
+    # the decoded OUTPUT_TEXT tensor and runs the alignment algorithm.
+    pred = ('{"source":"John lives in Delhi","nerPrediction":'
+            '[{"token":"John","class":"PER"},{"token":"Delhi","class":"LOC"}]}')
+    out = await _run(
+        "services.ner_service", "NERTaskService",
+        {"schema_version": "2.0", "model_version": "1",
+         "inputs": [{"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1],
+                     "value_path": "input.source"},
+                    {"tensor": "LANG_ID", "dtype": "BYTES", "shape": [-1, 1],
+                     "value_path": "request.config.language.sourceLanguage"}],
+         "outputs": [{"tensor": "OUTPUT_TEXT", "is_json": True}]},
+        {"input": [{"source": "John lives in Delhi"}],
+         "config": {"language": {"sourceLanguage": "en"}}},
+        {"outputs": [{"name": "OUTPUT_TEXT", "data": [pred]}]},
+    )
+    assert out == {
+        "taskType": "ner",
+        "output": [{
+            "source": "John lives in Delhi",
+            "nerPrediction": [
+                {"token": "John", "tag": "PER", "tokenIndex": 0, "tokenStartIndex": 0, "tokenEndIndex": 4},
+                {"token": "lives", "tag": "O", "tokenIndex": 1, "tokenStartIndex": 5, "tokenEndIndex": 10},
+                {"token": "in", "tag": "O", "tokenIndex": 2, "tokenStartIndex": 11, "tokenEndIndex": 13},
+                {"token": "Delhi", "tag": "LOC", "tokenIndex": 3, "tokenStartIndex": 14, "tokenEndIndex": 19},
+            ],
+        }],
+        "config": None,
+    }

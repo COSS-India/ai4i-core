@@ -16,14 +16,18 @@ class NERTaskService(TextBase):
         object; only the alignment algorithm lives here.
         """
         sources = result.source_texts
-        # One parsed JSON document per batch row; a model may wrap multiple
-        # results in {"output": [...]}.
+        # Parsed prediction objects, from either schema: v2 decodes the
+        # OUTPUT_TEXT tensor (is_json) via the mapper; v1 reads the mapped
+        # response_data. A model may wrap multiple results in {"output": [...]}.
+        if self._is_v2():
+            raw_values = self._get_mapper().decode(result.raw_triton_outputs).get("OUTPUT_TEXT", [])
+        else:
+            raw_values = [ri.get("target") for ri in result.response_data]
         items = []
-        for raw_item in result.response_data:
-            value = raw_item.get("target")
+        for value in raw_values:
             if isinstance(value, str):
-                # json_parse passes non-JSON through unchanged — same client
-                # error the old in-code parser rejected.
+                # non-JSON passes through unchanged — same client error the old
+                # in-code parser rejected.
                 raise ValueError(f"NER: model returned non-JSON output: {value[:80]!r}")
             if isinstance(value, dict):
                 items.extend(value["output"] if "output" in value else [value])
