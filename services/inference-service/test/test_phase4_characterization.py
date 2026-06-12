@@ -164,16 +164,28 @@ async def test_asr_response_characterization():
 # Speaker Diarization — custom postprocess (JSON parse + envelope)
 # ════════════════════════════════════════════════════════════════════════════
 
+# Speaker Diarization migrated to v2 (AI4IDS-1981): aggregation is now the
+# output_transform; the service class is empty. Same task-type output as v1.
+_SD_T = (
+    '{ "taskType": "speaker-diarization", "output": [ $map(tensors.DIARIZATION_RESULT, '
+    'function($dr){ ( $segs := $sort($dr.segments, function($a,$b){$a.start_time > $b.start_time})'
+    '.{"start": start_time, "end": end_time, '
+    '"duration": ($exists(duration) ? duration : end_time - start_time), "speaker": speaker}; '
+    '{"total_segments": $count($segs), "num_speakers": $count($distinct($segs.speaker)), '
+    '"speakers": $sort($distinct($segs.speaker)), "segments": $segs} ) }) ], '
+    '"config": { "serviceId": request.config.serviceId, '
+    '"language": ($exists(request.config.language) ? request.config.language : null) } }'
+)
+
 _SD_ADAPTER_CONFIG = {
-    "version": "1.0",
+    "schema_version": "2.0",
     "model_version": "1",
     "inputs": [
         {"tensor": "AUDIO_DATA", "dtype": "BYTES", "shape": [1, 1], "value_path": "audio.audio_content"},
         {"tensor": "NUM_SPEAKERS", "dtype": "BYTES", "shape": [1, 1], "value_path": "request.config.num_speakers"},
     ],
-    "outputs": [
-        {"tensor": "DIARIZATION_RESULT", "dtype": "BYTES", "maps_to": "diarization_json"},
-    ],
+    "outputs": [{"tensor": "DIARIZATION_RESULT", "is_json": True}],
+    "output_transform": _SD_T,
 }
 
 _SD_SERVICE_INFO = {
