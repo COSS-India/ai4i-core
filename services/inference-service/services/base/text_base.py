@@ -7,6 +7,10 @@ rules live in validate_config:
   - config block present
   - sourceLanguage when a language block is given
   - targetLanguage + not-equal (REQUIRES_TARGET_LANGUAGE=True)
+
+The module-level NER BPE-to-word alignment functions at the bottom are pure
+helpers imported and used by ner_service (kept here by request so the service
+file holds only its produce_result orchestration).
 """
 
 from typing import Any, Dict, Optional
@@ -76,3 +80,88 @@ class TextBase(BaseTaskService):
 
         payload[self.payload_key] = items
         return payload
+
+
+# ----------------------------------------------------------------------------
+# NER BPE-to-word alignment (pure helpers; imported by ner_service)
+#
+# These map a model's BPE entity predictions onto the original words with
+# character offsets. They are NER-specific and live here only so the service
+# file stays thin; nothing else in this module uses them.
+# ----------------------------------------------------------------------------
+
+def ner_entity(pred: Dict[str, Any]) -> str:
+    return str(pred.get("entity") or pred.get("token") or "")
+
+
+def ner_tag(pred: Dict[str, Any]) -> str:
+    for k in ("class", "tag", "label", "entity_type"):
+        v = pred.get(k)
+        if v is not None and str(v).strip():
+            return str(v)
+    return "O"
+
+
+def build_word_positions(source: str) -> list:
+    positions, pos = [], 0
+    for word in source.split():
+        start = source.find(word, pos)
+        positions.append({"word": word, "start": start, "end": start + len(word)})
+        pos = start + len(word)
+    return positions
+
+
+def _merge_bpe(preds: list, start: int, end: int) -> str:
+    parts = []
+    for i in range(start, end):
+        p = ner_entity(preds[i])
+        parts.append(p[2:] if p.startswith("##") else p)
+    return (parts[0] + "".join(parts[1:])).strip() if parts else ""
+
+
+def group_bpe_tokens(preds: list) -> list:
+    groups, i = [], 0
+    while i < len(preds):
+        entity = ner_entity(preds[i])
+        if not entity:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(preds) and ner_entity(preds[j]).startswith("##"):
+            j += 1
+        full = _merge_bpe(preds, i, j)
+        groups.append({"tag": ner_tag(preds[i]), "entity": full,
+                       "first_char": full[0].lower() if full else ""})
+        i = j
+    return groups
+
+
+def align_tags_to_words(word_positions: list, groups: list, source: str) -> dict:
+    word_to_pred, src_lower = {}, source.lower()
+    for grp in groups:
+        entity = (grp.get("entity") or "").strip()
+        if not entity:
+            continue
+        ent_lower, search_pos, matched = entity.lower(), 0, False
+        while True:
+            s = src_lower.find(ent_lower, search_pos)
+            if s < 0:
+                break
+            e = s + len(ent_lower)
+            for wi, winfo in enumerate(word_positions):
+                if winfo["start"] < e and winfo["end"] > s:
+                    word_to_pred[wi] = grp
+            matched = True
+            search_pos = e
+        if matched:
+            continue
+        for wi, winfo in enumerate(word_positions):
+            if winfo["word"].lower() == ent_lower:
+                word_to_pred[wi] = grp
+    return word_to_pred
+
+
+def build_ner_token_predictions(word_positions: list, aligned: dict) -> list:
+    return [{"token": wi["word"], "tag": aligned[idx]["tag"] if idx in aligned else "O",
+             "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
+            for idx, wi in enumerate(word_positions)]
