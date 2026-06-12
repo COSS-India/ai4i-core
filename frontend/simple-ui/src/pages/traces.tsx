@@ -447,7 +447,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     }
     // Priority 5: Check for HTTP error status codes (4xx, 5xx)
     else if (httpStatus) {
-      const status = parseInt(String(httpStatus.value));
+      const status = Number.parseInt(String(httpStatus.value), 10);
       if (status >= 400) {
         hasError = true;
         if (status >= 500) {
@@ -532,7 +532,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     if (authValid && String(authValid).toLowerCase() === "false") {
       hasError = true;
       errorMessage = "Authentication validation failed";
-    } else if (authResponseStatus && parseInt(authResponseStatus) >= 400) {
+    } else if (authResponseStatus && Number.parseInt(authResponseStatus, 10) >= 400) {
       hasError = true;
       errorMessage = `Authentication service returned error (${authResponseStatus})`;
     }
@@ -631,7 +631,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = "Image Processing";
     let descParts = ["Processes image"];
     if (imageSource) descParts.push(`from ${imageSource}`);
-    if (imageSize) descParts.push(`(${(parseInt(imageSize) / 1024).toFixed(1)} KB)`);
+    if (imageSize) descParts.push(`(${(Number.parseInt(imageSize, 10) / 1024).toFixed(1)} KB)`);
     if (downloadStatus) descParts.push(`- ${downloadStatus}`);
     description = descParts.join(" ");
   }
@@ -646,8 +646,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const outputCount = getTag("audio-lang-detection.output_count") || getTag("output_count");
     const processingTime = getTag("audio-lang-detection.processing_time_seconds") || getTag("processing_time_seconds");
     let descParts = [`Processes ${servicePart} batch`];
-    if (outputCount) descParts.push(`(${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""})`);
-    if (processingTime) descParts.push(`in ${parseFloat(processingTime).toFixed(2)}s`);
+    if (outputCount) descParts.push(`(${outputCount} output${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""})`);
+    if (processingTime) descParts.push(`in ${Number.parseFloat(processingTime).toFixed(2)}s`);
     description = descParts.join(" ");
   }
   // Skip resolve_images (plural) and build_response - they're redundant
@@ -754,7 +754,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     let descParts = ["Runs AI model"];
     if (modelName) descParts.push(`(${modelName})`);
     if (batchSize) descParts.push(`on batch of ${batchSize}`);
-    if (outputCount) descParts.push(`→ ${outputCount} result${parseInt(outputCount) !== 1 ? "s" : ""}`);
+    if (outputCount) descParts.push(`→ ${outputCount} result${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""}`);
     if (status) descParts.push(`- ${status}`);
     description = descParts.join(" ");
 
@@ -772,7 +772,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       }
     }
     // Priority 3: If parse_errors exists and is > 0, mark as error
-    else if (parseErrors && parseInt(parseErrors) > 0) {
+    else if (parseErrors && Number.parseInt(parseErrors, 10) > 0) {
       hasError = true;
       if (!errorMessage) {
         errorMessage = `Triton parsing errors: ${parseErrors}`;
@@ -791,7 +791,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     // - No explicit error tags from checkForErrors
     // Then clear error flags (assume success)
     else if ((!status || String(status).trim() === "") &&
-             (!parseErrors || parseInt(parseErrors) === 0) &&
+             (!parseErrors || Number.parseInt(parseErrors, 10) === 0) &&
              outputStatus &&
              (String(outputStatus).toLowerCase() === "parsed" || String(outputStatus).toLowerCase() === "success")) {
       // Only clear error if there's no explicit error tag from OpenTelemetry
@@ -816,8 +816,17 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const successCount = getTag("ocr.success_count");
     displayName = "Batch Processing";
     let descParts = ["Processes multiple items in a batch"];
-    if (totalImages) descParts.push(`(${totalImages} image${parseInt(totalImages) !== 1 ? "s" : ""})`);
-    if (resultsCount) descParts.push(`→ ${resultsCount} result${parseInt(resultsCount) !== 1 ? "s" : ""}`);
+    if (totalImages) descParts.push(`(${totalImages} image${Number.
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    (totalImages, 10) !== 1 ? "s" : ""})`);
+    if (resultsCount) descParts.push(`→ ${resultsCount} result${Number.parseInt(resultsCount, 10) !== 1 ? "s" : ""}`);
     if (successCount) descParts.push(`(${successCount} successful)`);
     description = descParts.join(" ");
   }
@@ -830,8 +839,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const outputCount = getTag("ocr.output_count") || getTag("ocr.successful_outputs");
     displayName = "Response Construction";
     let descParts = ["Formats the final response"];
-    if (outputCount) descParts.push(`(${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""})`);
-    if (responseSize) descParts.push(`- ${(parseInt(responseSize) / 1024).toFixed(1)} KB`);
+    if (outputCount) descParts.push(`(${outputCount} output${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""})`);
+    if (responseSize) descParts.push(`- ${(Number.parseInt(responseSize, 10) / 1024).toFixed(1)} KB`);
     description = descParts.join(" ");
   }
   // Default: mark as important if it has any meaningful duration (>1ms) and is not middleware/HTTP
@@ -989,7 +998,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
                                   parentSpan.serviceName.toLowerCase().includes("asr");
 
           // If parent is ASR preprocessing that succeeded with single chunk, VAD error was handled
-          if (isAsrPreprocess && !parentSpan.hasError && chunksCount && parseInt(String(chunksCount.value)) === 1) {
+          if (isAsrPreprocess && !parentSpan.hasError && chunksCount && Number.parseInt(String(chunksCount.value), 10) === 1) {
             // Mark VAD span as not important - it's a handled error, don't show it prominently
             vadSpan.isImportant = false;
             // Add note to parent preprocessing span about fallback
@@ -1331,7 +1340,7 @@ const formatRelativeTime = (milliseconds: number) => {
 // Format tag values with units based on key name
 const formatTagValue = (key: string, value: any): string => {
   const keyLower = key.toLowerCase();
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value));
+  const numValue = typeof value === 'number' ? value : Number.parseFloat(String(value));
 
   // Special handling for database statements - make them more readable
   if (keyLower === 'db.statement') {
@@ -1618,9 +1627,9 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         const outputCount = getTag("ocr.output_count");
         const serviceId = getTag("ocr.service_id");
         let desc = "This step processes the image(s) to extract text using Optical Character Recognition (OCR). ";
-        if (imageCount) desc += `It analyzes ${imageCount} image${parseInt(imageCount) !== 1 ? "s" : ""}. `;
+        if (imageCount) desc += `It analyzes ${imageCount} image${Number.parseInt(imageCount, 10) !== 1 ? "s" : ""}. `;
         if (serviceId) desc += `The processing is done using the ${serviceId} service. `;
-        if (outputCount) desc += `Successfully extracted text from ${outputCount} image${parseInt(outputCount) !== 1 ? "s" : ""}.`;
+        if (outputCount) desc += `Successfully extracted text from ${outputCount} image${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""}.`;
         return desc.trim();
       } else if (processed.displayName.includes("Translation Processing")) {
         const sourceLang = getTag("nmt.source_language");
@@ -1633,7 +1642,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         const batchSize = getTag("triton.batch_size");
         let desc = "This is the core AI processing step where the machine learning model analyzes the input data. ";
         if (modelName) desc += `It uses the ${modelName} model. `;
-        if (batchSize) desc += `Processing ${batchSize} item${parseInt(batchSize) !== 1 ? "s" : ""} in a batch. `;
+        if (batchSize) desc += `Processing ${batchSize} item${Number.parseInt(batchSize, 10) !== 1 ? "s" : ""} in a batch. `;
         desc += "This typically takes the longest time as it involves complex AI computations.";
         return desc.trim();
       } else if (processed.displayName.includes("Image Processing")) {
@@ -1641,7 +1650,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         const imageSource = getTag("ocr.image_source");
         let desc = "This step prepares the image for processing. ";
         if (imageSource === "uri") desc += "It downloads the image from the provided URL. ";
-        if (imageSize) desc += `The image size is ${(parseInt(imageSize) / 1024).toFixed(1)} KB. `;
+        if (imageSize) desc += `The image size is ${(Number.parseInt(imageSize, 10) / 1024).toFixed(1)} KB. `;
         desc += "The image is then validated and prepared for text extraction.";
         return desc.trim();
       } else if (processed.displayName.includes("Request Processing")) {
@@ -1674,7 +1683,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     case "response":
       const outputCount = getTag("ocr.output_count") || getTag("ocr.successful_outputs");
       let desc = "This step formats the results into the final response that will be sent back to the user. ";
-      if (outputCount) desc += `It packages ${outputCount} result${parseInt(outputCount) !== 1 ? "s" : ""} into the response.`;
+      if (outputCount) desc += `It packages ${outputCount} result${Number.parseInt(outputCount, 10) !== 1 ? "s" : ""} into the response.`;
       return desc.trim();
 
     default:
@@ -1715,7 +1724,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
     });
 
     if (httpStatusTag) {
-      const statusCode = parseInt(String(httpStatusTag.value));
+      const statusCode = Number.parseInt(String(httpStatusTag.value), 10);
       if (!Number.isNaN(statusCode) && statusCode > 0) {
         return statusCode;
       }

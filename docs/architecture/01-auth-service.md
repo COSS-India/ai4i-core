@@ -119,17 +119,17 @@ below show the domain-level paths. Source: `services/auth-service/app/routes/`.
 | PATCH | `/auth/api-keys/{api_key}` | Update name / permissions / expiry / active |
 | DELETE | `/auth/api-keys/{api_key}` | Revoke / delete key |
 
-### Tenants — `/tenants`
+### Tenants — `/auth/tenants`
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST / GET | `/tenants` | Create / list tenants |
-| GET / PATCH | `/tenants/{tenant_id}` | Get / update tenant |
-| PATCH | `/tenants/{tenant_id}/status` | Lifecycle transition |
-| GET | `/tenants/{tenant_id}/plan` | Tenant plan |
-| GET / POST | `/tenants/{tenant_id}/users` | List / invite tenant users |
-| PATCH | `/tenants/{tenant_id}/users/{user_id}` | Update tenant user |
-| PATCH | `/tenants/{tenant_id}/users/{user_id}/status` | Change tenant-user status |
-| DELETE | `/tenants/{tenant_id}/users/{user_id}` | Remove tenant user |
+| POST / GET | `/auth/tenants` | Create / list tenants |
+| GET / PATCH | `/auth/tenants/{tenant_id}` | Get / update tenant |
+| PATCH | `/auth/tenants/{tenant_id}/status` | Lifecycle transition |
+| GET | `/auth/tenants/{tenant_id}/plan` | Tenant plan |
+| GET / POST | `/auth/tenants/{tenant_id}/users` | List / invite tenant users |
+| PATCH | `/auth/tenants/{tenant_id}/users/{user_id}` | Update tenant user |
+| PATCH | `/auth/tenants/{tenant_id}/users/{user_id}/status` | Change tenant-user status |
+| DELETE | `/auth/tenants/{tenant_id}/users/{user_id}` | Remove tenant user |
 
 ### OAuth2, validation, internal, health
 | Method | Path | Purpose |
@@ -182,3 +182,29 @@ Source: `services/auth-service/app/models/`.
 | Guest / platform | `GUEST_EMAIL`, `GUEST_PASSWORD`, `PLATFORM_CORE_URL` |
 
 > Config source of truth: `services/auth-service/app/core/config.py`.
+
+## Data Privacy & Security
+
+### Password security
+
+Passwords are hashed with **Argon2id** and a per-user salt (`app/core/security.py:PasswordManager`). Argon2id is the memory-hard winner of the Password Hashing Competition; the cost parameters (`ARGON2_TIME_COST`, `ARGON2_MEMORY_COST`, `ARGON2_PARALLELISM`) are configurable via environment variables. Raw passwords are never stored or logged.
+
+### JWT & key management
+
+Access tokens are signed with **RS256** (asymmetric). The service manages a pool of ≥ 10 RS256 key pairs (`RS256_MIN_KEY_COUNT`); the active signing key is selected by index (`RS256_ACTIVE_KEY_INDEX`). Retired keys are retained for verification to support rolling rotation without invalidating in-flight tokens. A **JWKS** endpoint exposes the public key set for downstream consumers. In production, the RS256 key directory must be pre-populated; auto-generation is disabled outside development.
+
+### Tenant & data isolation
+
+All user and credential data is stored in the `ai4iplatform_auth` PostgreSQL database, schema-isolated from the platform-core database. Tenant plans carry per-tenant quota, rate-limit, and allowed-service configuration in JSONB columns (`tenant_plans`). The `TENANT_ADMIN` role is scoped strictly to its own tenant. Cross-tenant reads of tenant details and tenant users are available to `ADMIN` only.
+
+### PII redaction
+
+The platform ships a domain-specific PII redaction policy library covering identifiers (Aadhaar UID, PAN, passport, voter ID, IFSC, credit card, phone, email) and geo-location suffixes. Pre-built policies are available for healthcare, financial, logistics, and education domains across multiple languages (English, Hindi, Tamil, Marathi). Redaction actions — `REDACT`, `REDACT_TAG`, `MASK` — are configurable per policy and are inactive by default until explicitly activated.
+
+### Secrets handling
+
+All credentials (database passwords, SMTP, OAuth client secrets, RS256 key paths) are injected via environment variables and never committed to source.
+
+### Transport security
+
+TLS termination is handled at the **APISIX gateway** layer. Services communicate internally over the `microservices-network` bridge network (`172.30.0.0/16`) without additional TLS between application services and infrastructure.

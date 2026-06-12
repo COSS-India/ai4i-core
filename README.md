@@ -188,6 +188,17 @@ cd frontend/simple-ui && npm install && npm run dev                             
    (validated by `scripts/validate-migrations.py`, run as a pre-commit hook)
 3. Open a Pull Request against `dev`
 
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for full contribution guidelines.
+
+## 🚀 Releases
+
+New versions are published as a PyPI package (`ai4icore-core`). Release notes are on the
+[GitHub Releases](https://github.com/COSS-India/ai4i-core/releases) page.
+
+- **[RELEASE.md](./RELEASE.md)** — branching model, versioning scheme, and step-by-step
+  instructions for cutting a release
+- **[CHANGELOG.md](./CHANGELOG.md)** — per-version history of notable changes
+
 ## 📊 Monitoring & Observability
 
 - **Metrics** — services expose Prometheus metrics (scraped by **Prometheus**,

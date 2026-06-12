@@ -82,7 +82,7 @@ export const performTryItNMTInference = async (
     );
 
     // Extract response time from headers
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
 
     return {
       data: response.data,
@@ -130,8 +130,8 @@ export const shouldWarnAboutRateLimit = (): boolean => {
   if (typeof window === 'undefined') return false;
 
   try {
-    const count = parseInt(sessionStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
+    const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
+    const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
 
@@ -159,8 +159,8 @@ export const trackTryItRequest = (): void => {
   if (typeof window === 'undefined') return;
 
   try {
-    const count = parseInt(sessionStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
+    const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
+    const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
 
@@ -188,8 +188,8 @@ export const getRemainingTryItRequests = (): number => {
   if (typeof window === 'undefined') return limit;
 
   try {
-    const count = parseInt(sessionStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
+    const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
+    const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
 

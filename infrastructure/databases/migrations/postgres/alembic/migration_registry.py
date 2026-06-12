@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -298,9 +299,20 @@ def supports_autogenerate(name: str) -> bool:
     return get_database_spec(name).metadata_loader is not None
 
 
-def ensure_database_exists(name: str) -> None:
-    parts = get_connection_parts(name)
-    target_database = parts["database"]
+def _ensure_database(target_database: str, logical_name: str) -> None:
+    """Create *target_database* if it does not already exist.
+
+    Both arguments must come from server-controlled sources (env vars or
+    string literals) — never from CLI input.  The dispatch table in
+    ensure_database_exists() guarantees this so that the taint chain from
+    a CLI argument never reaches the CREATE DATABASE statement.
+    """
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', target_database):
+        raise ValueError(
+            f"Unsafe database name '{target_database}': "
+            "only letters, digits, and underscores are permitted."
+        )
+    parts = get_connection_parts(logical_name)
     ai4i_platform_db = os.getenv("AI4I_PLATFORM_DB_NAME", "")
     maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None
@@ -341,6 +353,42 @@ def ensure_database_exists(name: str) -> None:
             "POSTGRES_HOST and POSTGRES_PORT for your setup (e.g. localhost and 5434 for host access)."
         )
     raise RuntimeError(f"Unable to ensure database '{target_database}' exists: {last_error}{hint}")
+
+
+def _ensure_ai4iplatform_auth() -> None:
+    _ensure_database(
+        os.getenv("AUTH_SERVICE_DB_NAME") or os.getenv("AUTH_DB_NAME") or "ai4iplatform_auth",
+        "ai4iplatform_auth",
+    )
+
+
+def _ensure_ai4i_platform_db() -> None:
+    _ensure_database(_require_env("AI4I_PLATFORM_DB_NAME"), "ai4i_platform_db")
+
+
+def _ensure_ai4iplatform_core() -> None:
+    _ensure_database(
+        os.getenv("CORE_SERVICE_DB_NAME") or "ai4iplatform_core",
+        "ai4iplatform_core",
+    )
+
+
+# Dispatch table keyed by logical database name.  ensure_database_exists()
+# looks up the callable here so the CLI argument is only ever used as a
+# dict key for lookup — it is never passed as a value to the SQL path.
+_ENSURE_DISPATCH: dict[str, object] = {
+    "ai4iplatform_auth": _ensure_ai4iplatform_auth,
+    "ai4i_platform_db": _ensure_ai4i_platform_db,
+    "ai4iplatform_core": _ensure_ai4iplatform_core,
+}
+
+
+def ensure_database_exists(name: str) -> None:
+    fn = _ENSURE_DISPATCH.get(name)
+    if fn is None:
+        supported = ", ".join(DATABASE_ORDER)
+        raise ValueError(f"Unsupported database '{name}'. Supported values: {supported}")
+    fn()  # type: ignore[operator]
 
 if __name__ == "__main__":
     import argparse

@@ -120,7 +120,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
       responseSchema: modelsListSchema,
     });
 
-    const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const total = Number.parseInt(response.headers['x-total-count'] ?? '0', 10);
     const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
 

@@ -251,6 +251,13 @@ class BaseTaskService:
                     "Ensure the Orchestrator resolved the service before creating this task service."
                 )
 
+            if not self._adapter_config:
+                raise RuntimeError(
+                    f"{self.task_name}: service '{model_name}' has no adapter_config. "
+                    "Add adapterConfig to the model's inferenceEndPoint via the Model Management API "
+                    "or the platform model registration form."
+                )
+
             input_items = payload.get(self.payload_key) or []
             config_data = payload.get('config', {})
             if not input_items:

@@ -19,7 +19,7 @@ from app.models.tenant import TenantStatus
 # soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
 # line/paragraph separators, zero-width no-break space (BOM).
 _INVISIBLE_CHARS = re.compile(
-    "[­​‌‍‎‏  ﻿]+"
+    "[­​‌‍‎‏﻿]+"
 )
 
 # E.164 phone: + followed by 2–15 digits
@@ -227,24 +227,9 @@ class TenantUserCreateResponse(BaseSchema):
 
 
 class TenantUserStatusUpdate(BaseSchema):
+    # is_tenant_active is intentionally NOT accepted here: it is managed by the
+    # tenant status API (PATCH /tenants/{id}/status → SUSPENDED/DEACTIVATED/ACTIVE).
     is_active: Optional[StrictBool] = None
-    is_tenant_active: Optional[StrictBool] = None
-
-    @model_validator(mode='before')
-    @classmethod
-    def reject_explicit_null(cls, data: dict) -> dict:
-        if isinstance(data, dict):
-            if 'is_active' in data and data['is_active'] is None:
-                raise ValueError("is_active cannot be null; provide true or false.")
-            if 'is_tenant_active' in data and data['is_tenant_active'] is None:
-                raise ValueError("is_tenant_active cannot be null; provide true or false.")
-        return data
-
-    @model_validator(mode='after')
-    def at_least_one_field(self) -> 'TenantUserStatusUpdate':
-        if self.is_active is None and self.is_tenant_active is None:
-            raise ValueError("Provide at least one of is_active or is_tenant_active.")
-        return self
 
 
 class TenantUserUpdate(BaseSchema):

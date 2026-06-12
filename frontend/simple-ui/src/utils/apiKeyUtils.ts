@@ -94,7 +94,7 @@ export function permissionLabelWithFallback(
     typeof raw === "number" && Number.isInteger(raw)
       ? raw
       : /^\d+$/.test(String(raw))
-        ? parseInt(String(raw), 10)
+        ? Number.parseInt(String(raw), 10)
         : null;
   if (id != null) {
     const fromCatalog = catalog.find((p) => p.id === id);

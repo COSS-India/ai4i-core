@@ -172,7 +172,7 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
                     raw === ""
                       ? ""
                       : (() => {
-                          const n = parseInt(raw, 10);
+                          const n = Number.parseInt(raw, 10);
                           return Number.isNaN(n) ? "" : n;
                         })();
                   create.setApiKeyForm({ ...create.apiKeyForm, expires_days: next });

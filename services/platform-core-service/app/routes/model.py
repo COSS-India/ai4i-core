@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
 from app.dependencies.services import ModelService, get_model_service
-from app.schemas.enums.model_management import TaskTypeEnum
+from app.schemas.enums.model_management import TaskTypeEnum, VersionStatusEnum
 from app.schemas.model_management.model import (
     ModelCreateRequest,
     ModelUpdateRequest,
@@ -76,6 +76,9 @@ async def list_models(
     svc: ModelService = Depends(get_model_service),
 ):
     """List models with optional filters and offset/limit pagination."""
+    valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
+    if version_status is not None and version_status not in valid_version_statuses:
+        raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
     items, total = await svc.list_models(
         task_type=_resolve_task_type(task_type),
         include_deprecated=include_deprecated,

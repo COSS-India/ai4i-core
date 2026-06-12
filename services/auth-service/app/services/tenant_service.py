@@ -110,11 +110,6 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
 _TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
 
 
-def _payload_touches_user_access(payload: dict) -> bool:
-    """True when the caller explicitly sent ``is_active`` and/or ``is_tenant_active``."""
-    return "is_active" in payload or "is_tenant_active" in payload
-
-
 def _assert_tenant_active_for_user_deactivation(
     tenant: Tenant, payload: dict
 ) -> None:
@@ -193,20 +188,6 @@ class TenantService:
                 detail={
                     "code": "INSUFFICIENT_PERMISSIONS",
                     "message": "Moderators cannot perform this action.",
-                },
-            )
-
-    async def _deny_tenant_admin_tenant_flag(self, user: User, body: TenantUserStatusUpdate) -> None:
-        """Raise 403 if a Tenant Admin tries to set is_tenant_active. Only Admin may suspend tenant access."""
-        if "is_tenant_active" not in body.model_fields_set:
-            return
-        roles = await self._roles.get_user_roles(user.id)
-        if RoleName.TENANT_ADMIN.value in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "INSUFFICIENT_PERMISSIONS",
-                    "message": "Tenant Admins cannot modify the is_tenant_active flag.",
                 },
             )
 
@@ -752,16 +733,14 @@ class TenantService:
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
-        await self._deny_tenant_admin_tenant_flag(current_user, body)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
-        payload = body.model_dump(exclude_unset=True)
-        payload["updated_by"] = current_user.id
+        payload = {"is_active": body.is_active, "updated_by": current_user.id}
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
-        if self._api_keys is not None and _payload_touches_user_access(payload):
+        if self._api_keys is not None:
             await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target
 
