@@ -11,6 +11,7 @@ Child classes only add service-specific logic on top of super().validate_request
 
 from typing import Any, Dict, List, Optional
 from services.base.task_service import BaseTaskService
+from utils import text_utils
 
 
 class TextBase(BaseTaskService):
@@ -69,7 +70,7 @@ class TextBase(BaseTaskService):
     async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         input_data = payload.get(self.payload_key) or []
         source_texts = self.extract_field_from_items(input_data, "source")
-        sanitized = [self._sanitize_source(t) for t in source_texts]
+        sanitized = [text_utils.sanitize_source(t) for t in source_texts]
 
         items = [
             {**item, "source": sanitized[idx] if idx < len(sanitized) else ""}
@@ -82,15 +83,6 @@ class TextBase(BaseTaskService):
     # ------------------------------------------------------------------
     # Text helpers
     # ------------------------------------------------------------------
-
-    def _sanitize_source(self, text: Any) -> str:
-        if not text:
-            return " "
-        text = str(text).replace("\n", " ").replace("\r", " ")
-        return self._normalize_text(text) or " "
-
-    def _normalize_text(self, text: str) -> str:
-        return " ".join(text.split()).strip()
 
     def _pair_with_sources(
         self,

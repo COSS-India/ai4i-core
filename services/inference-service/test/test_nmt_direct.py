@@ -29,7 +29,10 @@ MOCK_SERVICE_INFO = {
     "name": "indictrans-gpu-t4",
     "endpoint": "http://localhost:8000/v2/models/indictrans-gpu-t4/infer",
     "api_key": None,
-    "adapter_config": None,
+    # Non-empty so the run_inference adapter_config guard (AI4IDS-1767) passes.
+    # Content is irrelevant here: tests that reach run_inference patch
+    # GenericTritonMapper, so the config is never actually parsed.
+    "adapter_config": {"version": "1.0"},
 }
 
 # ---------------------------------------------------------------------------
@@ -159,10 +162,11 @@ async def test_postprocess_output():
     response_items = [{"target": ["नमस्ते"]}, {"target": b"\xe0\xa4\x86\xe0\xa4\xaa\xe0\xa4\x95\xe0\xa4\xbe \xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\xae \xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\xaf\xe0\xa4\xbe \xe0\xa4\xb9\xe0\xa5\x88?"}]
     source_texts = ["Hello", "What is your name?"]
 
-    from services.base.task_service import PostProcessFormat
-    response = await service.postprocess_output(
-        PostProcessFormat(payload=payload, response_data=response_items, source_texts=source_texts)
+    from services.base.task_service import InferenceContext
+    ctx = await service.produce_result(
+        InferenceContext(payload=payload, response_data=response_items, source_texts=source_texts)
     )
+    response = service.build_envelope(ctx)
     assert "output" in response
     assert len(response["output"]) == 2
     assert isinstance(response["output"][0], dict)
@@ -193,10 +197,10 @@ async def test_process_full():
 
     mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
 
-    # run_inference instantiates GenericTritonMapper from its module —
-    # patch the class there so the mock mapper is used.
+    # _get_mapper builds GenericTritonMapper once via task_service's top-level
+    # import — patch the class there so the mock mapper is used.
     with patch(
-        "services.base.config_mapper.GenericTritonMapper",
+        "services.base.task_service.GenericTritonMapper",
         MagicMock(return_value=mock_inference_model),
     ):
         with patch.object(

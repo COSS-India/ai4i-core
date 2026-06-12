@@ -46,19 +46,6 @@ class InferenceServerResolver:
         self._memory_cache[service_id] = (service_info, time.time())
         return service_info
 
-    async def resolve_smr_service(self, payload: Dict[str, Any]) -> str:
-        """
-        Resolve service_id via SmartModelRouter when not explicitly provided.
-
-        SMR is not implemented — requests must carry config.serviceId (or a
-        top-level serviceId). Raising here surfaces a clear 400 instead of
-        silently routing every serviceId-less request to a default model.
-        """
-        raise ValueError(
-            "serviceId is required (config.serviceId or top-level serviceId); "
-            "SmartModelRouter routing is not implemented"
-        )
-
     async def _query_model_management_service(self, service_id: str) -> Dict[str, Any]:
         """
         Fetch service details from the model management service.

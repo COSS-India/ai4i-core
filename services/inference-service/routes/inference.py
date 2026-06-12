@@ -5,7 +5,7 @@ Integrates orchestration, factory, and telemetry.
 """
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
@@ -13,7 +13,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from orchestrator import Orchestrator
-from models.common import GenericInferenceResponse
+from models.common import GenericInferenceResponse, SUPPORTED_TASK_TYPES
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
@@ -89,13 +89,14 @@ async def _run_inference(
     payload: Dict[str, Any],
     orchestrator: Orchestrator,
     default_task_type: Optional[str] = None,
-    strip: Tuple[str, ...] = (),
 ) -> Dict[str, Any]:
     """
     Shared handler body for every inference route:
-    default the task_type, route via the Orchestrator, strip response keys
-    the endpoint contract excludes, and map failures to client-safe HTTP
-    errors (full details logged server-side only).
+    default the task_type, route via the Orchestrator, and map failures to
+    client-safe HTTP errors (full details logged server-side only).
+
+    Each task service's build_envelope emits exactly the keys its contract
+    declares, so no response-key stripping is needed here.
     """
     # No manual timing here: the logging middleware records duration_ms for
     # every request, and the request span carries total_time_ms.
@@ -127,8 +128,6 @@ async def _run_inference(
         )
         raise _http_error_for(exc, task_type) from exc
 
-    for key in strip:
-        result.pop(key, None)
     return result
 
 
@@ -203,15 +202,14 @@ async def run_ner_inference(
 ) -> Dict[str, Any]:
     """Dedicated endpoint for NER inference requests."""
     return await _run_inference(
-        request, payload, orchestrator,
-        default_task_type="NER", strip=("smr_response", "elapsed_time_ms"),
+        request, payload, orchestrator, default_task_type="NER",
     )
 
 
 @router.post(
     "/transliteration/inference",
     response_model=GenericInferenceResponse,
-    response_model_exclude={"config", "smr_response"},
+    response_model_exclude={"config"},
     summary="TRANSLITERATION Inference Endpoint",
     description="Route inference requests to TRANSLITERATION TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -234,7 +232,6 @@ async def run_transliteration_inference(
 @router.post(
     "/language-detection/inference",
     response_model=GenericInferenceResponse,
-    response_model_exclude={"smr_response"},
     summary="LANGUAGE_DETECTION Inference Endpoint",
     description="Route inference requests to LANGUAGE_DETECTION TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -319,7 +316,6 @@ async def run_audio_lang_detection_inference(
     return await _run_inference(
         request, payload, orchestrator,
         default_task_type="AUDIO_LANGUAGE_DETECTION",
-        strip=("smr_response", "elapsed_time_ms"),
     )
 
 
@@ -343,7 +339,6 @@ async def run_speaker_diarization_inference(
     return await _run_inference(
         request, payload, orchestrator,
         default_task_type="SPEAKER_DIARIZATION",
-        strip=("smr_response", "elapsed_time_ms"),
     )
 
 
@@ -367,7 +362,6 @@ async def run_language_diarization_inference(
     return await _run_inference(
         request, payload, orchestrator,
         default_task_type="LANGUAGE_DIARIZATION",
-        strip=("smr_response", "elapsed_time_ms"),
     )
 
 
@@ -650,4 +644,4 @@ async def health_check() -> Dict[str, str]:
 )
 async def list_available_tasks() -> Dict[str, list]:
     """List all available inference task types."""
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": list(SUPPORTED_TASK_TYPES)}

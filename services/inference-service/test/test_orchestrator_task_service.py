@@ -1,18 +1,12 @@
-"""Unit tests: Orchestrator._get_task_service class_instance lookup (AI4IDS-1767)."""
+"""Unit tests: TaskServiceRegistry class_instance lookup (AI4IDS-1767)."""
 
 import sys
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, ".")
 
-from orchestrator.orchestrator import Orchestrator
-
-
-def _make_orchestrator() -> Orchestrator:
-    """Return an Orchestrator with InferenceServerResolver mocked out."""
-    with patch("orchestrator.orchestrator.InferenceServerResolver"):
-        return Orchestrator()
+from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY, TaskServiceRegistry
 
 
 def _make_service_info(class_instance: str | None) -> dict:
@@ -28,29 +22,35 @@ def _make_service_info(class_instance: str | None) -> dict:
 # ── Happy path ────────────────────────────────────────────────────────────────
 
 def test_known_class_instance_instantiates_correct_service():
-    orch = _make_orchestrator()
     mock_class = MagicMock(return_value=MagicMock())
-    orch.task_service_registry = {"ImageDefaultModel": mock_class}
+    registry = TaskServiceRegistry({"ImageDefaultModel": mock_class})
 
     service_info = _make_service_info("ImageDefaultModel")
-    result = orch._get_task_service(service_info)
+    result = registry.create(service_info)
 
     mock_class.assert_called_once_with(service_info=service_info)
     assert result is mock_class.return_value
 
 
+def test_is_registered_reflects_membership():
+    registry = TaskServiceRegistry({"ImageDefaultModel": MagicMock()})
+    assert registry.is_registered("ImageDefaultModel") is True
+    assert registry.is_registered("NonExistentTaskService") is False
+    assert registry.is_registered(None) is False
+
+
 # ── Missing class_instance ────────────────────────────────────────────────────
 
 def test_missing_class_instance_raises():
-    orch = _make_orchestrator()
+    registry = TaskServiceRegistry()
     service_info = _make_service_info(None)
 
     with pytest.raises(RuntimeError, match="No class_instance set"):
-        orch._get_task_service(service_info)
+        registry.create(service_info)
 
 
 def test_absent_class_instance_key_raises():
-    orch = _make_orchestrator()
+    registry = TaskServiceRegistry()
     service_info = {
         "name": "test-ocr-model-1-service-1",
         "endpoint": "http://triton:8000",
@@ -60,33 +60,28 @@ def test_absent_class_instance_key_raises():
     }
 
     with pytest.raises(RuntimeError, match="No class_instance set"):
-        orch._get_task_service(service_info)
+        registry.create(service_info)
 
 
 # ── Unknown class_instance ────────────────────────────────────────────────────
 
 def test_unregistered_class_instance_raises():
-    orch = _make_orchestrator()
-    orch.task_service_registry = {"ImageDefaultModel": MagicMock()}
+    registry = TaskServiceRegistry({"ImageDefaultModel": MagicMock()})
     service_info = _make_service_info("NonExistentTaskService")
 
     with pytest.raises(RuntimeError, match="Unknown class_instance"):
-        orch._get_task_service(service_info)
+        registry.create(service_info)
 
 
 # ── Registry coverage ─────────────────────────────────────────────────────────
 
 def test_all_registry_classes_are_importable():
     """Every entry in TASK_SERVICE_REGISTRY must be a callable class."""
-    from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
-
     for name, cls in TASK_SERVICE_REGISTRY.items():
         assert callable(cls), f"{name} is not callable"
 
 
 def test_legacy_seeded_class_instances_resolve():
     """class_instance values seeded by migration c3d5e7f9a2b4 must resolve."""
-    from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
-
     for seeded in ("TextDefaultModel", "AudioDefaultModel", "ImageDefaultModel"):
         assert seeded in TASK_SERVICE_REGISTRY, f"seeded value '{seeded}' missing"

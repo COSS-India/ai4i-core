@@ -14,7 +14,7 @@ Triton tensor contract (adapter_config from MMS):
 from typing import Any, Dict, List, Tuple
 
 from services.base.audio_base import AudioBase
-from services.base.task_service import PostProcessFormat
+from services.base.task_service import InferenceContext
 
 
 class SpeakerDiarizationTaskService(AudioBase):
@@ -37,7 +37,7 @@ class SpeakerDiarizationTaskService(AudioBase):
         config["num_speakers"] = "" if not raw else str(raw)
         return await super().convert_payload_to_triton_format(input_data, config)
 
-    async def postprocess_output(self, result: PostProcessFormat) -> Dict[str, Any]:
+    async def produce_result(self, result: InferenceContext) -> InferenceContext:
         output_list = []
 
         for item in result.response_data:
@@ -72,10 +72,15 @@ class SpeakerDiarizationTaskService(AudioBase):
                 "segments": segments,
             })
 
+        result.result_items = output_list
+        return result
+
+    def build_envelope(self, result: InferenceContext) -> Dict[str, Any]:
+        """Speaker-diarization envelope: taskType + segments + config subset."""
         cfg = result.payload.get("config") or {}
         return {
             "taskType": "speaker-diarization",
-            "output": output_list,
+            "output": result.result_items,
             "config": {
                 "serviceId": cfg.get("serviceId"),
                 "language": cfg.get("language"),

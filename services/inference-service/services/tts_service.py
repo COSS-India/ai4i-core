@@ -1,15 +1,13 @@
 """TTS (Text-to-Speech) TaskService implementation."""
 
 import base64
-from io import BytesIO
 from typing import Any, Dict, List
 
 import numpy as np
-import scipy.io.wavfile as wav_io
-import scipy.signal as sps
 
 from services.base.text_base import TextBase
-from pydub import AudioSegment
+from services.base.task_service import InferenceContext
+from utils import audio_utils, text_utils
 
 # Triton model always outputs at this rate
 _TRITON_SAMPLE_RATE = 22050
@@ -59,7 +57,7 @@ class TTSTaskService(TextBase):
             duration = self._validated_duration(
                 item.get("audioDuration") or item.get("audio_duration")
             )
-            for piece in self._chunk_text(item.get("source", ""), _MAX_CHUNK_LENGTH):
+            for piece in text_utils.chunk_text(item.get("source", ""), _MAX_CHUNK_LENGTH):
                 chunked.append({
                     "source": piece,
                     "gender": gender,
@@ -95,17 +93,17 @@ class TTSTaskService(TextBase):
             )
 
         audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
-        audio_int16 = np.clip(audio_fp32 * 32767, -32768, 32767).astype(np.int16)
+        audio_int16 = audio_utils.to_int16(audio_fp32 * 32767)
         return [{"samples": audio_int16}]
 
     # ------------------------------------------------------------------
-    # postprocess_output — merge chunks per item, resample/encode + envelope
+    # produce_result — merge chunks per item, resample/encode the waveforms
+    # build_envelope — wrap the audio items + config echo
     # ------------------------------------------------------------------
 
-    async def postprocess_output(self, result) -> Dict[str, Any]:
+    async def produce_result(self, result: InferenceContext) -> InferenceContext:
         payload = result.payload
         config: Dict[str, Any] = payload.get("config") or {}
-        source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
         target_rate  = self._validated_sample_rate(config)
         audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
 
@@ -120,33 +118,46 @@ class TTSTaskService(TextBase):
             durations_req[idx] = chunk.get("audioDuration")
 
         audio_outputs: List[Dict[str, Any]] = []
-        durations: List[float] = []
         for idx in sorted(merged):
             arrays = merged[idx]
             combined = np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
 
             if target_rate != _TRITON_SAMPLE_RATE:
-                combined = self._resample_audio(combined, _TRITON_SAMPLE_RATE, target_rate)
+                combined = audio_utils.to_int16(
+                    audio_utils.resample(combined, _TRITON_SAMPLE_RATE, target_rate)
+                )
 
             audio_duration = durations_req.get(idx)
             if audio_duration is not None:
                 actual = len(combined) / target_rate
                 if actual > audio_duration:
-                    combined = self._stretch_audio(combined, target_rate, audio_duration)
+                    target_samples = max(1, int(audio_duration * target_rate))
+                    combined = audio_utils.to_int16(
+                        audio_utils.resample_to_count(combined, target_samples)
+                    )
                 elif actual < audio_duration:
-                    combined = self._append_silence(combined, target_rate, audio_duration)
+                    combined = audio_utils.append_silence(combined, target_rate, audio_duration)
 
             duration = len(combined) / target_rate
-            durations.append(duration)
-            audio_bytes = self._to_audio_bytes(combined, target_rate, audio_format)
+            audio_bytes = audio_utils.encode_audio(combined, target_rate, audio_format)
             audio_outputs.append({
                 "audioContent": base64.b64encode(audio_bytes).decode("utf-8"),
                 "audioUri": None,
                 "audioDuration": duration,
             })
 
+        result.result_items = audio_outputs
+        return result
+
+    def build_envelope(self, result: InferenceContext) -> Dict[str, Any]:
+        payload = result.payload
+        config: Dict[str, Any] = payload.get("config") or {}
+        source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
+        target_rate  = self._validated_sample_rate(config)
+        audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
+        items = result.result_items
         return {
-            "audio": audio_outputs,
+            "audio": items,
             "config": {
                 "language": {
                     "sourceLanguage":   source_lang,
@@ -157,9 +168,8 @@ class TTSTaskService(TextBase):
                 "samplingRate":  target_rate,
                 # Scalar field — accurate for single-item requests (the common
                 # case); multi-item callers should read audio[i].audioDuration.
-                "audioDuration": durations[0] if durations else 0,
+                "audioDuration": items[0]["audioDuration"] if items else 0,
             },
-            "smr_response": None,
         }
 
     # ------------------------------------------------------------------
@@ -195,68 +205,3 @@ class TTSTaskService(TextBase):
                 f"{_MAX_AUDIO_DURATION_S} seconds, got {duration}"
             )
         return duration
-
-    # ------------------------------------------------------------------
-    # Text chunking
-    # ------------------------------------------------------------------
-
-    def _chunk_text(self, text: str, max_length: int = 400) -> List[str]:
-        """Split text into chunks ≤ max_length chars at sentence/clause boundaries."""
-        text = self._normalize_text(text)
-        if not text:
-            return [""]
-        if len(text) <= max_length:
-            return [text]
-
-        chunks: List[str] = []
-        while len(text) > max_length:
-            split_pos = max_length
-            for sep in ('.', '?', '!', '।', ',', ' '):
-                pos = text.rfind(sep, 0, max_length)
-                if pos > 0:
-                    split_pos = pos + 1
-                    break
-            chunks.append(text[:split_pos].strip())
-            text = text[split_pos:].strip()
-
-        if text:
-            chunks.append(text)
-        return [c for c in chunks if c]
-
-    # ------------------------------------------------------------------
-    # Audio processing helpers
-    # ------------------------------------------------------------------
-
-    def _resample_audio(self, audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
-        if from_rate == to_rate:
-            return audio
-        num_samples = round(len(audio) * float(to_rate) / from_rate)
-        resampled = sps.resample(audio.astype(np.float32), num_samples)
-        return np.clip(resampled, -32768, 32767).astype(np.int16)
-
-    def _stretch_audio(self, audio: np.ndarray, sample_rate: int, target_duration: float) -> np.ndarray:
-        """Speed-stretch audio to fit target_duration by resampling to target sample count."""
-        target_samples = max(1, int(target_duration * sample_rate))
-        resampled = sps.resample(audio.astype(np.float32), target_samples)
-        return np.clip(resampled, -32768, 32767).astype(np.int16)
-
-    def _append_silence(self, audio: np.ndarray, sample_rate: int, target_duration: float) -> np.ndarray:
-        """Pad audio with trailing silence to reach target_duration."""
-        target_samples = int(target_duration * sample_rate)
-        if target_samples <= len(audio):
-            return audio
-        padding = np.zeros(target_samples - len(audio), dtype=np.int16)
-        return np.concatenate([audio, padding])
-
-    def _to_audio_bytes(self, audio: np.ndarray, sample_rate: int, audio_format: str) -> bytes:
-        """Convert int16 numpy array to bytes in the requested format."""
-        wav_buffer = BytesIO()
-        wav_io.write(wav_buffer, sample_rate, audio)
-        wav_bytes = wav_buffer.getvalue()
-
-        if audio_format == "wav":
-            return wav_bytes
-        segment = AudioSegment.from_wav(BytesIO(wav_bytes))
-        out_buffer = BytesIO()
-        segment.export(out_buffer, format=audio_format)
-        return out_buffer.getvalue()

@@ -1,13 +1,10 @@
 """ASR TaskService — Automatic Speech Recognition inference."""
 
 import base64
-from io import BytesIO
 from typing import Any, Dict, List, Tuple
 
-import numpy as np
-import scipy.signal as sps
-
 from services.base.audio_base import AudioBase
+from utils import audio_utils
 
 
 class ASRTaskService(AudioBase):
@@ -81,10 +78,13 @@ class ASRTaskService(AudioBase):
             d = item
 
             audio_bytes             = await self._get_audio_bytes(item)
-            audio_data, sample_rate = await self._decode_audio_bytes(audio_bytes)
-            audio_data              = self._stereo_to_mono(audio_data)
-            audio_data              = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
-            audio_data              = self._equalize_amplitude(audio_data)
+            try:
+                audio_data, sample_rate = audio_utils.decode_audio_bytes(audio_bytes)
+            except ValueError as decode_err:
+                raise ValueError(f"{self.task_name}: {decode_err}") from decode_err
+            audio_data              = audio_utils.stereo_to_mono(audio_data)
+            audio_data              = audio_utils.resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
+            audio_data              = audio_utils.equalize_amplitude(audio_data)
 
             # samples must be a plain Python list — the config mapper's _cast_dtype
             # operates on Python lists, not numpy arrays.
@@ -161,55 +161,6 @@ class ASRTaskService(AudioBase):
         raise ValueError(
             f"{self.task_name}: audio item must have audio_content or audio_uri"
         )
-
-    async def _decode_audio_bytes(self, audio_bytes: bytes) -> Tuple[Any, int]:
-        """
-        Decode raw audio bytes → (float32 numpy array, sample_rate).
-        """
-        # No fallback on decode failure: silently reinterpreting undecodable
-        # bytes as raw PCM produced "valid" noise that transcribed to garbage.
-        # Undecodable audio is a client error -> ValueError -> 400.
-        try:
-            import soundfile as sf
-            audio_data, sample_rate = sf.read(
-                BytesIO(audio_bytes), dtype="float32", always_2d=False
-            )
-            return audio_data, sample_rate
-        except Exception as sf_err:
-            raise ValueError(
-                f"{self.task_name}: unable to decode audio "
-                f"(expected a valid wav/flac/ogg stream): {sf_err}"
-            ) from sf_err
-
-    def _stereo_to_mono(self, audio: Any) -> Any:
-        """
-        Convert stereo audio to mono by averaging channels.
-        No-op if audio is already mono.
-        """
-        if isinstance(audio, np.ndarray) and audio.ndim > 1:
-            return audio.mean(axis=1).astype(np.float32)
-        return audio
-
-    def _resample(self, data: Any, from_rate: int, to_rate: int) -> Any:
-        """
-        Resample a float32 numpy array from from_rate to to_rate.
-        No-op if rates are equal.
-        """
-        if from_rate == to_rate:
-            return data
-        num_samples = round(len(data) * float(to_rate) / from_rate)
-        resampled = sps.resample(data, num_samples)
-        return resampled.astype(np.float32)
-
-    def _equalize_amplitude(self, audio: Any) -> Any:
-        """
-        Normalize audio amplitude to the [-1, 1] range.
-        Returns normalized float32 numpy array.
-        """
-        max_val = np.max(np.abs(audio))
-        if max_val > 0:
-            audio = audio / max_val
-        return audio.astype(np.float32)
 
     # postprocess_output: adapter_config-driven — the mapper decodes the
     # transcript from the Triton JSON (always a plain str; the old numpy/bytes

@@ -4,21 +4,32 @@ Base class defining the contract and shared pipeline for all inference task serv
 
 import logging
 from dataclasses import dataclass, field
-from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
+
+from services.base.config_mapper import GenericTritonMapper
 
 
 @dataclass
-class PostProcessFormat:
+class InferenceContext:
     """
-    Result of run_inference, consumed by postprocess_output.
+    Carrier threaded through the task pipeline (validate -> preprocess ->
+    run_inference -> postprocess_output) and, later, across pipeline stages.
 
     payload carries the (preprocessed) request so postprocess_output can echo
-    config / build the task envelope without a second parameter.
+    config / build the task envelope without a second parameter. response_data
+    and source_texts hold the inference result and the paired input sources.
+    service_info and mapper expose the resolved service and the single
+    per-request Triton mapper to stages that need them (the inter-stage seam).
     """
     payload: Dict[str, Any]
-    response_data: List[Dict[str, Any]]
+    response_data: List[Dict[str, Any]] = field(default_factory=list)
     source_texts: List[str] = field(default_factory=list)
+    service_info: Dict[str, Any] = field(default_factory=dict)
+    mapper: Optional[GenericTritonMapper] = None
+    # Normalized, chainable output items produced by produce_result. A pipeline
+    # stage reads the previous stage's result_items; build_envelope (terminal)
+    # turns them into the HTTP response.
+    result_items: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class BaseTaskService:
@@ -29,7 +40,7 @@ class BaseTaskService:
         process():
             validate_request(payload)                       # throws on bad input
             preprocessed = preprocess_input(payload)
-            result: PostProcessFormat = run_inference(preprocessed)
+            result: InferenceContext = run_inference(preprocessed)
             return postprocess_output(result)
 
     Subclasses set `payload_key` for their modality and implement
@@ -66,6 +77,22 @@ class BaseTaskService:
         # Logger named after the concrete service's module (e.g. services.nmt_service)
         # so subclasses don't need an __init__ just to set their logger.
         self.logger = logging.getLogger(self.__class__.__module__)
+        # Adapter config and its mapper are resolved in run_inference (after any
+        # service_info adopt). Declared here so postprocess_output's config
+        # guard reads a real attribute even when called without run_inference.
+        self._adapter_config: Optional[Dict[str, Any]] = None
+        self._mapper: Optional[GenericTritonMapper] = None
+
+    def _get_mapper(self) -> GenericTritonMapper:
+        """Build the adapter-config mapper once per request and reuse it.
+
+        Shared by the convert hooks and the config-driven postprocess path so
+        adapter_config is parsed and validated a single time per request, not
+        once per stage call.
+        """
+        if self._mapper is None:
+            self._mapper = GenericTritonMapper(self._adapter_config)
+        return self._mapper
 
     async def process(
         self,
@@ -74,7 +101,7 @@ class BaseTaskService:
     ) -> Any:
         """
         Execute the complete inference pipeline (Template Method).
-        validate → preprocess → run_inference → postprocess_output.
+        validate → preprocess → run_inference → produce_result → build_envelope.
 
         This is the main entry point - Orchestrator calls this method with raw payload.
 
@@ -99,7 +126,11 @@ class BaseTaskService:
         await self.validate_request(payload)
         preprocessed = await self.preprocess_input(payload)
         result = await self.run_inference(preprocessed)
-        return await self.postprocess_output(result)
+        # Split: produce_result yields chainable, normalized output items;
+        # build_envelope (terminal) assembles the HTTP response. A future
+        # pipeline runs produce_result on every stage and build_envelope once.
+        result = await self.produce_result(result)
+        return self.build_envelope(result)
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
@@ -120,39 +151,42 @@ class BaseTaskService:
         """
         return payload
 
-    async def postprocess_output(self, result: PostProcessFormat) -> Any:
-        """
-        Final step after inference. Scope: audit logging, observability, and
-        truly model-specific final shaping — NOT Triton output conversion,
-        which happens inside run_inference via the mapper.
+    def _has_response_shaping(self) -> bool:
+        """True when adapter_config declares response shaping: a response
+        envelope block, or response_key / pair_with_input on any output."""
+        cfg = self._adapter_config
+        return isinstance(cfg, dict) and bool(
+            cfg.get("response")
+            or any(
+                o.get("response_key") or o.get("pair_with_input")
+                for o in cfg.get("outputs", [])
+            )
+        )
 
-        Default: unwrap scalar nesting, pair each output item with its input
-        source, and echo the request config. Sufficient for services whose
-        adapter_config already maps tensors to the response field names
-        (e.g. NMT); override only when the task contract needs more.
+    async def produce_result(self, result: InferenceContext) -> InferenceContext:
+        """
+        Produce normalized, chainable output items into result.result_items.
+        This is the stage output — no HTTP envelope. Scope: model-specific
+        final shaping, NOT Triton output conversion (that happens in
+        run_inference via the mapper).
+
+        Default: unwrap scalar nesting and pair each output item with its
+        input source. Sufficient for services whose adapter_config already
+        maps tensors to the response field names (e.g. NMT); override only
+        when the task contract needs more.
 
         When the adapter_config declares response shaping (response_key /
         pair_with_input on any output tensor, or a response envelope block),
         the shaping is config-driven instead — declared renames, splats,
-        input pairings, static fields, and envelope replace the implicit
-        "source" pairing above.
+        input pairings, and static fields replace the implicit "source"
+        pairing above.
         """
-        if isinstance(self._adapter_config, dict) and (
-            self._adapter_config.get("response")
-            or any(
-                o.get("response_key") or o.get("pair_with_input")
-                for o in self._adapter_config.get("outputs", [])
-            )
-        ):
-            from services.base.config_mapper import GenericTritonMapper
-            mapper = GenericTritonMapper(self._adapter_config)
-            shaped = mapper.shape_output_items(
+        if self._has_response_shaping():
+            result.result_items = self._get_mapper().shape_output_items(
                 result.response_data,
                 result.payload.get(self.payload_key) or [],
             )
-            return mapper.build_response_envelope(
-                shaped, result.payload.get("config")
-            )
+            return result
 
         output = []
         for idx, item in enumerate(result.response_data):
@@ -162,7 +196,23 @@ class BaseTaskService:
                     result.source_texts[idx] if idx < len(result.source_texts) else ""
                 )
             output.append(clean)
-        return {"output": output, "config": result.payload.get("config")}
+        result.result_items = output
+        return result
+
+    def build_envelope(self, result: InferenceContext) -> Any:
+        """
+        Terminal step: assemble the HTTP response from result.result_items.
+        Only the final stage of a request (or pipeline) builds the envelope.
+
+        Config-driven when the adapter_config declares a response block or
+        per-output shaping (taskType, config-key subset / omission); otherwise
+        the default {"output": items, "config": <request config>}.
+        """
+        if self._has_response_shaping():
+            return self._get_mapper().build_response_envelope(
+                result.result_items, result.payload.get("config")
+            )
+        return {"output": result.result_items, "config": result.payload.get("config")}
 
     @staticmethod
     def unwrap_output_value(value: Any) -> Any:
@@ -209,8 +259,7 @@ class BaseTaskService:
         """Convert input items + config into KServe v2 Triton inputs.
         Default: adapter_config-driven via GenericTritonMapper. Override to
         normalise config first (call super) — see ASR / diarization."""
-        from services.base.config_mapper import GenericTritonMapper
-        mapper = GenericTritonMapper(self._adapter_config)
+        mapper = self._get_mapper()
         return mapper.compose_triton_kserve_v2_payload(
             input_data=input_data,
             config=config,
@@ -220,11 +269,10 @@ class BaseTaskService:
     async def convert_triton_output_to_task_format(self, triton_output):
         """Map raw Triton output to task result dicts via adapter_config
         (including config-driven transforms like json_field)."""
-        from services.base.config_mapper import GenericTritonMapper
-        mapper = GenericTritonMapper(self._adapter_config)
+        mapper = self._get_mapper()
         return mapper.to_output_items(mapper.map_outputs(triton_output))
 
-    async def run_inference(self, payload: Dict[str, Any]) -> PostProcessFormat:
+    async def run_inference(self, payload: Dict[str, Any]) -> InferenceContext:
         """
         Generic Triton inference — single implementation for every modality.
 
@@ -233,17 +281,21 @@ class BaseTaskService:
         call vs one call per item. Payload/tensor mapping goes through the
         convert_* hooks (mapper-backed by default). Item expansion (e.g.
         TTS chunking) happens in preprocess_input; merging expanded results
-        back happens in postprocess_output — this method stays generic.
+        back happens in produce_result — this method stays generic.
         """
         # Lazy import — trace setup happens at app init, after this module loads.
-        from trace.request_span import traced_inference
+        from trace.request_span import traced_inference, traced_span
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
 
         async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
             model_name = self.service_info.get('name', '')
             triton_endpoint = self.service_info.get('endpoint', '')
             api_key = self.service_info.get('api_key')
+            # Resolve adapter_config from the (possibly adopted) service_info and
+            # drop any mapper from a prior call so _get_mapper rebuilds once for
+            # this request's config.
             self._adapter_config = self.service_info.get('adapter_config')
+            self._mapper = None
 
             if not model_name or not triton_endpoint:
                 raise RuntimeError(
@@ -277,13 +329,16 @@ class BaseTaskService:
                 triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
                     group, config_data
                 )
-                #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
-                raw_triton_output = await self._call_triton_inference(
-                    triton_endpoint=triton_endpoint,
-                    triton_inputs=triton_inputs,
-                    triton_outputs=triton_outputs,
-                    api_key=api_key,
-                )
+                # Child span around the Triton call only, so the trace shows
+                # pure model-server time, isolated from the tensor mapping that
+                # surrounds it inside the parent ai-inference span.
+                with traced_span("triton-inference"):
+                    raw_triton_output = await self._call_triton_inference(
+                        triton_endpoint=triton_endpoint,
+                        triton_inputs=triton_inputs,
+                        triton_outputs=triton_outputs,
+                        api_key=api_key,
+                    )
                 response_data.extend(
                     await self.convert_triton_output_to_task_format(raw_triton_output)
                 )
@@ -291,10 +346,12 @@ class BaseTaskService:
             span_ctx["output_type"] = get_output_type(response_data)
             span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
 
-            return PostProcessFormat(
+            return InferenceContext(
                 payload=payload,
                 response_data=response_data,
                 source_texts=source_texts,
+                service_info=self.service_info,
+                mapper=self._mapper,
             )
 
     async def _call_triton_inference(

@@ -1,12 +1,12 @@
 """NER (Named Entity Recognition) TaskService."""
 from services.base.text_base import TextBase
-from services.base.task_service import PostProcessFormat
+from services.base.task_service import InferenceContext
 
 
 class NERTaskService(TextBase):
     # source_language check handled by base; no target language needed
 
-    async def postprocess_output(self, result: PostProcessFormat):
+    async def produce_result(self, result: InferenceContext) -> InferenceContext:
         """
         Align the model's entity-level predictions onto the original text as
         per-token tags with character offsets (the ULCA NER contract).
@@ -49,7 +49,12 @@ class NERTaskService(TextBase):
             ]
             output_list.append({"source": source, "nerPrediction": ner_predictions})
         self.logger.debug(f"NER post-processed {len(output_list)} predictions")
-        return {"taskType": "ner", "output": output_list, "config": None}
+        result.result_items = output_list
+        return result
+
+    def build_envelope(self, result: InferenceContext) -> dict:
+        """NER envelope: taskType 'ner', the aligned predictions, no config echo."""
+        return {"taskType": "ner", "output": result.result_items, "config": None}
 
     # ------------------------------------------------------------------
     # BPE-to-word alignment helpers

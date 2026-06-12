@@ -13,20 +13,12 @@ from trace.request_span import (
     traced_span,
 )
 
-from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
-from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
+from orchestrator.task_service_registry import TaskServiceRegistry
+from models.common import SUPPORTED_TASK_TYPES
 
 
 logger = logging.getLogger(__name__)
-
-# Allowed task types — kept here (not derived from the registry) because SMR
-# routes without a registry entry of its own.
-ALLOWED_TASK_TYPES = [
-    "NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION",
-    "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION",
-    "AUDIO_LANGUAGE_DETECTION", "SMR",
-]
 
 
 class Orchestrator:
@@ -43,7 +35,7 @@ class Orchestrator:
         """Initialize orchestrator."""
         self.logger = logger
         self.inference_server_resolver = InferenceServerResolver()
-        self.task_service_registry: dict = TASK_SERVICE_REGISTRY
+        self.registry = TaskServiceRegistry()
 
     async def route_inference(
         self,
@@ -78,48 +70,17 @@ class Orchestrator:
             service_info = await self._resolve_service_and_model(payload)
 
             # Instantiate and run the task service with the raw payload
-            task_service = self._get_task_service(service_info)
+            task_service = self.registry.create(service_info)
             task_response = await task_service.process(payload, service_info)
 
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
 
     def _validate_task_type(self, task_type: str) -> None:
         """Raise ValueError if task_type is not a known task."""
-        if task_type not in ALLOWED_TASK_TYPES:
+        if task_type not in SUPPORTED_TASK_TYPES:
             raise ValueError(
-                f"Unknown task_type: {task_type}. Allowed: {', '.join(ALLOWED_TASK_TYPES)}"
+                f"Unknown task_type: {task_type}. Allowed: {', '.join(SUPPORTED_TASK_TYPES)}"
             )
-
-    def _get_task_service(self, service_info: Dict[str, Any]) -> BaseTaskService:
-        """
-        Instantiate the task service for the resolved service_info.
-        Looks up TASK_SERVICE_REGISTRY by mm_models.class_instance.
-
-        Raises:
-            RuntimeError: If class_instance is unset or unknown (platform/config
-                          gap, not a client error)
-        """
-        # class_instance comes from mm_models.class_instance via the resolver —
-        # adding a model in the platform needs no code change here.
-        class_instance = service_info.get("class_instance")
-        if not class_instance:
-            raise RuntimeError(
-                f"No class_instance set on model for serviceId='"
-                f"{service_info.get('name', '')}'. "
-                f"Set the classInstance field on the model in the platform."
-            )
-
-        service_class = self.task_service_registry.get(class_instance)
-        if not service_class:
-            raise RuntimeError(
-                f"Unknown class_instance '{class_instance}'. "
-                f"Register it in task_service_registry.py."
-            )
-
-        self.logger.debug(
-            f"Instantiating {class_instance} for serviceId='{service_info.get('name', '')}'"
-        )
-        return service_class(service_info=service_info)  # type: ignore
 
     async def _resolve_service_and_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -149,10 +110,10 @@ class Orchestrator:
             ) or payload.get("serviceId")
 
             if not serviceId:
-                # Fall back to SMR or a safe default
-                serviceId = await self.inference_server_resolver.resolve_smr_service(payload)
-                self.logger.warning(
-                    f"No serviceId in payload, SMR resolved to: {serviceId}"
+                # serviceId is mandatory: a request must name the model service
+                # to route to (config.serviceId or a top-level serviceId).
+                raise ValueError(
+                    "serviceId is required (config.serviceId or top-level serviceId)"
                 )
 
             self.logger.debug(f"Resolving service: {serviceId}")
