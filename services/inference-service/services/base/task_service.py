@@ -30,9 +30,11 @@ class InferenceContext:
     mapper: Optional[Any] = None
     # Code-output services (NER, TTS) populate this; build_envelope reads it.
     result_items: List[Dict[str, Any]] = field(default_factory=list)
-    # Raw Triton responses captured in run_inference, and the final task-type
-    # output the output_transform produces.
+    # Raw Triton responses captured in run_inference, the decoded+merged tensors
+    # (keyed by tensor name, decoded once for both the trace metric and
+    # produce_result), and the final task-type output the transform produces.
     raw_triton_outputs: List[Dict[str, Any]] = field(default_factory=list)
+    decoded_tensors: Dict[str, Any] = field(default_factory=dict)
     transformed: Optional[Any] = None
 
 
@@ -159,12 +161,12 @@ class BaseTaskService:
         running the adapter_config's output_transform (JSONata) over the decoded
         tensors. build_envelope returns it as-is.
 
-        Code-output services (NER, TTS) override this: they read
-        self._get_mapper().decode(result.raw_triton_outputs) and run their
-        algorithm/DSP, setting result.result_items.
+        Code-output services (NER, TTS) override this: they read the tensors
+        decoded once in run_inference (result.decoded_tensors, or the raw
+        responses for TTS's waveform DSP) and run their algorithm/DSP.
         """
-        result.transformed = self._get_mapper().transform(
-            result.raw_triton_outputs,
+        result.transformed = self._get_mapper().transform_decoded(
+            result.decoded_tensors,
             result.payload.get(self.payload_key) or [],
             result.payload.get("config"),
         )
@@ -259,9 +261,10 @@ class BaseTaskService:
                     )
                 raw_outputs.append(raw_triton_output)
 
-            output_type, output_tokens = self._estimate_output(
-                self._get_mapper().decode(raw_outputs)
-            )
+            # Decode the Triton tensors once here; both the trace metric and
+            # produce_result (config transform or code-output) read this.
+            decoded = self._get_mapper().decode(raw_outputs)
+            output_type, output_tokens = self._estimate_output(decoded)
             span_ctx["output_type"] = output_type
             span_ctx["output_tokens"] = output_tokens
 
@@ -271,6 +274,7 @@ class BaseTaskService:
                 service_info=self.service_info,
                 mapper=self._mapper,
                 raw_triton_outputs=raw_outputs,
+                decoded_tensors=decoded,
             )
 
     @staticmethod

@@ -164,19 +164,29 @@ class TritonMapper:
         transform and by code-output services (NER, TTS)."""
         return decode_and_merge(raw_outputs, self._json_tensors)
 
+    def transform_decoded(
+        self,
+        decoded: Dict[str, Any],
+        inputs: List[Dict[str, Any]],
+        request_config: Optional[Dict[str, Any]],
+    ) -> Any:
+        """Run the output_transform over already-decoded tensors (decoded once
+        in run_inference, so the JSONata path never decodes a second time)."""
+        if self._jsonata is None:
+            raise RuntimeError(
+                "TritonMapper.transform called but adapter_config has no output_transform"
+            )
+        return self._jsonata.transform_output(decoded, inputs, request_config)
+
     def transform(
         self,
         raw_outputs: List[Dict[str, Any]],
         inputs: List[Dict[str, Any]],
         request_config: Optional[Dict[str, Any]],
     ) -> Any:
-        if self._jsonata is None:
-            raise RuntimeError(
-                "TritonMapper.transform called but adapter_config has no output_transform"
-            )
-        return self._jsonata.transform_output(
-            self.decode(raw_outputs), inputs, request_config
-        )
+        """Decode the raw responses and run the output_transform. Convenience
+        for direct callers; the pipeline uses transform_decoded."""
+        return self.transform_decoded(self.decode(raw_outputs), inputs, request_config)
 
 
 def build_mapper(adapter_config: Dict[str, Any]) -> TritonMapper:

@@ -165,3 +165,43 @@ def build_ner_token_predictions(word_positions: list, aligned: dict) -> list:
     return [{"token": wi["word"], "tag": aligned[idx]["tag"] if idx in aligned else "O",
              "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
             for idx, wi in enumerate(word_positions)]
+
+
+def flatten_ner_predictions(raw_values: list) -> list:
+    """Flatten the decoded OUTPUT_TEXT values into a flat list of prediction
+    items. A value may be a parsed object, a {"output": [...]} envelope, or a
+    list of either; a raw string means the model returned non-JSON, which is a
+    client error."""
+    items = []
+    for value in raw_values:
+        if isinstance(value, str):
+            raise ValueError(f"NER: model returned non-JSON output: {value[:80]!r}")
+        if isinstance(value, dict):
+            items.extend(value["output"] if "output" in value else [value])
+        elif isinstance(value, list):
+            items.extend(value)
+    return items
+
+
+def align_ner_output(items: list, sources: list) -> list:
+    """Align each item's BPE entity predictions onto its source words, producing
+    the ULCA NER output list ({source, nerPrediction:[...]} per item)."""
+    output_list = []
+    for idx, item in enumerate(items):
+        source = item.get("source") or (sources[idx] if idx < len(sources) else "")
+        word_positions = build_word_positions(source)
+        groups = group_bpe_tokens(item.get("nerPrediction", []))
+        aligned = align_tags_to_words(word_positions, groups, source)
+        tokens_raw = build_ner_token_predictions(word_positions, aligned)
+        ner_predictions = [
+            {
+                "token":           t["token"],
+                "tag":             t["tag"],
+                "tokenIndex":      t_idx,
+                "tokenStartIndex": t["tokenStartIndex"],
+                "tokenEndIndex":   t["tokenEndIndex"],
+            }
+            for t_idx, t in enumerate(tokens_raw)
+        ]
+        output_list.append({"source": source, "nerPrediction": ner_predictions})
+    return output_list
