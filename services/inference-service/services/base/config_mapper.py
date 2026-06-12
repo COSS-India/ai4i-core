@@ -202,6 +202,14 @@ class GenericTritonMapper:
         ]
         return inputs_list, output_names
 
+    # ------------------------------------------------------------------
+    # v1 output path (DEPRECATED, AI4IDS-1981): map_outputs, to_output_items,
+    # shape_output_items, build_response_envelope. All models are migrated to the
+    # v2 (JSONata) schema, so these run only when a v1 adapter_config is restored
+    # for rollback. Do not extend; v2 output mapping lives in jsonata_mapper.py.
+    # Removal is gated on dropping v1 rollback support (a later, deliberate step).
+    # ------------------------------------------------------------------
+
     def map_outputs(self, triton_output: Dict[str, Any]) -> Dict[str, Any]:
         """
         Map Triton outputs to semantic keys based on adapter declarations.
