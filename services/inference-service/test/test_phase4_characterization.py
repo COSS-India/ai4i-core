@@ -102,20 +102,24 @@ async def test_tts_response_characterization():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# ASR — audio preprocess + per_item + default postprocess (real DB config shape)
+# ASR — audio preprocess + per_item; v2 output_transform (ULCA contract)
 # ════════════════════════════════════════════════════════════════════════════
 
+_ASR_T = (
+    '{ "output": [ $map(tensors.TRANSCRIPTS, function($t){ '
+    '{"source": $t, "nBestTokens": null} }) ] }'
+)
+
 _ASR_ADAPTER_CONFIG = {
-    "version": "1.0",
+    "schema_version": "2.0",
     "model_version": "1",
     "inputs": [
         {"tensor": "AUDIO_SIGNAL", "dtype": "FP32", "shape": [-1, -1], "value_path": "audio.samples"},
         {"tensor": "NUM_SAMPLES", "dtype": "INT32", "shape": [-1, 1], "value_path": "audio.num_samples"},
         {"tensor": "LANG_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.source_language"},
     ],
-    "outputs": [
-        {"tensor": "TRANSCRIPTS", "dtype": "BYTES", "maps_to": "transcript"},
-    ],
+    "outputs": [{"tensor": "TRANSCRIPTS"}],
+    "output_transform": _ASR_T,
 }
 
 _ASR_SERVICE_INFO = {
@@ -152,12 +156,9 @@ async def test_asr_response_characterization():
     ):
         response = await service.process(payload)
 
-    # Default postprocess path: transcript item paired with an (empty) source,
-    # plus the echoed config. This is the current behavior under the DB config
-    # shape (no response_key declared).
-    assert set(response.keys()) == {"output", "config"}
-    assert response["output"] == [{"transcript": "hello world", "source": ""}]
-    assert response["config"] == {"language": {"sourceLanguage": "en"}}
+    # ULCA ASR contract (config-driven): transcript renamed to source, constant
+    # nBestTokens, no config echo. Byte-identical to the v1 DB config output.
+    assert response == {"output": [{"source": "hello world", "nBestTokens": None}]}
 
 
 # ════════════════════════════════════════════════════════════════════════════

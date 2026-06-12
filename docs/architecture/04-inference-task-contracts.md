@@ -132,16 +132,15 @@ with the input source. `config` excluded (`include_config: false`).
 ```
 `audioUri` may replace `audioContent`. `sourceLanguage` is required.
 
-**Standard output (ULCA)**
+**Output (ULCA)**
 ```json
-{ "output": [{ "source": "<transcript>", "nBestTokens": null }], "config": { "language": { "sourceLanguage": "en" } } }
+{ "output": [{ "source": "<transcript>", "nBestTokens": null }] }
 ```
-Notes: the standard ULCA ASR contract is `output[].source = transcript` plus a constant
-`nBestTokens: null`. The current DB `adapter_config` has no response shaping, so it
-currently emits `{ "output": [{ "transcript": "...", "source": "" }], "config": {...} }`.
-Aligning the config to the standard above is part of the AI4IDS-1981 migration. Audio
-preprocessing (decode, mono, resample to 16 kHz, equalize) is service-side DSP and stays
-in code.
+Notes: `output[].source = transcript` plus a constant `nBestTokens: null`, no config echo
+(`include_config: false`). The adapter_config already shapes this (v1 via `response_key` +
+static field; v2 via `output_transform`), so it is byte-identical across the migration.
+Audio preprocessing (decode, mono, resample to 16 kHz, equalize) is service-side DSP and
+stays in code.
 
 ---
 
