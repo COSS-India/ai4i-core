@@ -6,8 +6,8 @@ Works on raw payload dicts (same contract as TextBase / BaseTaskService):
   preprocess_input   → normalizes each item to base64 under 'image_content'
   payload_key        → 'image'; the base run_inference does the rest
 
-All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
-via the adapter_config sourced from MMS — concrete task services don't reimplement it.
+All Triton I/O (input rendering, output transform) is handled by the mapper via
+the adapter_config sourced from MMS — concrete task services don't reimplement it.
 
 Concrete task services (e.g. OCRTaskService) provide:
   postprocess → output shaping + response envelope
@@ -26,22 +26,12 @@ class ImageBase(BaseTaskService):
 
     payload_key = "image"  # image input list lives under payload['image']
 
+    # Each image item must carry inline content or a URI to download.
+    REQUIRED_ITEM_FIELDS = (("imageContent", "imageUri"),)
+
     # ------------------------------------------------------------------
     # Pipeline hooks called by BaseTaskService.process
     # ------------------------------------------------------------------
-
-    async def validate_request(self, payload: Dict[str, Any]) -> None:
-        """Common image validation: non-empty image list, each item has content or uri."""
-        await super().validate_request(payload)
-
-        items = payload.get("image")
-        if not items:
-            raise ValueError(f"{self.task_name}: image array cannot be empty")
-        for idx, item in enumerate(items):
-            if not self._item_content(item) and not self._item_uri(item):
-                raise ValueError(
-                    f"{self.task_name}: image[{idx}] requires imageContent or imageUri"
-                )
 
     async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize each image to base64 under 'image_content' (downloads URI if needed)."""
@@ -58,10 +48,10 @@ class ImageBase(BaseTaskService):
     # ------------------------------------------------------------------
 
     def _item_content(self, item: Dict[str, Any]) -> Optional[str]:
-        return item.get("imageContent") or item.get("image_content")
+        return item.get("imageContent")
 
     def _item_uri(self, item: Dict[str, Any]) -> Optional[str]:
-        return item.get("imageUri") or item.get("image_uri")
+        return item.get("imageUri")
 
     async def _resolve_image_base64(self, image_input: Any) -> str:
         """Return image as a base64 string from inline content or downloaded from a URI."""

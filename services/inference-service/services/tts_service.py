@@ -30,13 +30,13 @@ class TTSTaskService(TextBase):
                             language_id (the adapter reads them per item);
                             per-item call mode = one Triton call per chunk
       run_inference       → generic (BaseTaskService) — no override
-      convert_triton_output_to_task_format
-                          → waveform extraction: FP32 tensor → int16 samples
-                            (the mapper's to_output_items treats lists as
-                            batch dims, which mangles waveform tensors)
-      postprocess_output  → merge chunk samples back per input item, then
+      produce_result      → extract each chunk's waveform (FP32 → int16) from
+                            the raw Triton responses, merge per input item, then
                             resample / duration-adjust / encode / base64
-                            + response envelope
+      build_envelope      → wrap the audio items + config echo
+
+    TTS is a code-output service (no output_transform): the waveform DSP cannot
+    be expressed as a JSON transform, so produce_result reads the raw tensors.
     """
 
     # One Triton call per (chunk) item — the TTS model takes one text per call.
@@ -54,9 +54,7 @@ class TTSTaskService(TextBase):
 
         chunked: List[Dict[str, Any]] = []
         for idx, item in enumerate(payload[self.payload_key]):
-            duration = self._validated_duration(
-                item.get("audioDuration") or item.get("audio_duration")
-            )
+            duration = self._validated_duration(item.get("audioDuration"))
             for piece in text_utils.chunk_text(item.get("source", ""), _MAX_CHUNK_LENGTH):
                 chunked.append({
                     "source": piece,
@@ -88,12 +86,6 @@ class TTSTaskService(TextBase):
         audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
         return audio_utils.to_int16(audio_fp32 * 32767)
 
-    async def convert_triton_output_to_task_format(
-        self, triton_output: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """v1 path: one int16 waveform per chunk call."""
-        return [{"samples": self._extract_waveform(triton_output)}]
-
     # ------------------------------------------------------------------
     # produce_result — merge chunks per item, resample/encode the waveforms
     # build_envelope — wrap the audio items + config echo
@@ -103,16 +95,12 @@ class TTSTaskService(TextBase):
         payload = result.payload
         config: Dict[str, Any] = payload.get("config") or {}
         target_rate  = self._validated_sample_rate(config)
-        audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
+        audio_format = (config.get("audioFormat") or "wav").lower()
 
-        # Per-chunk int16 waveforms, parallel to chunk_items. v2 extracts them
-        # from the raw Triton responses captured in run_inference (which does not
-        # call convert_triton_output on v2); v1 reads the converted response_data.
+        # Per-chunk int16 waveforms, parallel to chunk_items, extracted from the
+        # raw Triton responses captured in run_inference.
         chunk_items = payload.get(self.payload_key) or []
-        if self._is_v2():
-            chunk_samples = [self._extract_waveform(raw) for raw in result.raw_triton_outputs]
-        else:
-            chunk_samples = [item["samples"] for item in result.response_data]
+        chunk_samples = [self._extract_waveform(raw) for raw in result.raw_triton_outputs]
 
         merged: Dict[int, List[np.ndarray]] = {}
         durations_req: Dict[int, Any] = {}
@@ -158,7 +146,7 @@ class TTSTaskService(TextBase):
         config: Dict[str, Any] = payload.get("config") or {}
         source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
         target_rate  = self._validated_sample_rate(config)
-        audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
+        audio_format = (config.get("audioFormat") or "wav").lower()
         items = result.result_items
         return {
             "audio": items,
@@ -182,7 +170,7 @@ class TTSTaskService(TextBase):
 
     def _validated_sample_rate(self, config: Dict[str, Any]) -> int:
         """Parse samplingRate, rejecting junk and out-of-range values with a 400."""
-        raw = config.get("samplingRate") or config.get("sampling_rate") or _TRITON_SAMPLE_RATE
+        raw = config.get("samplingRate") or _TRITON_SAMPLE_RATE
         try:
             rate = int(raw)
         except (TypeError, ValueError) as exc:

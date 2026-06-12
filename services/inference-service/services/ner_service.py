@@ -16,13 +16,10 @@ class NERTaskService(TextBase):
         object; only the alignment algorithm lives here.
         """
         sources = result.source_texts
-        # Parsed prediction objects, from either schema: v2 decodes the
-        # OUTPUT_TEXT tensor (is_json) via the mapper; v1 reads the mapped
-        # response_data. A model may wrap multiple results in {"output": [...]}.
-        if self._is_v2():
-            raw_values = self._get_mapper().decode(result.raw_triton_outputs).get("OUTPUT_TEXT", [])
-        else:
-            raw_values = [ri.get("target") for ri in result.response_data]
+        # Parsed prediction objects: the mapper decodes the OUTPUT_TEXT tensor
+        # (is_json) to objects. A model may wrap multiple results in
+        # {"output": [...]}.
+        raw_values = self._get_mapper().decode(result.raw_triton_outputs).get("OUTPUT_TEXT", [])
         items = []
         for value in raw_values:
             if isinstance(value, str):

@@ -1,21 +1,24 @@
 """
 TextBase — base class for all text-backed inference services.
 
-Centralised validation:
-  - input existence and non-empty
-  - source_language (all services with language config)
-  - target_language + not-equal (REQUIRES_TARGET_LANGUAGE=True)
-
-Child classes only add service-specific logic on top of super().validate_request().
+Item presence (each item needs a 'source') is declared via REQUIRED_ITEM_FIELDS
+and checked by the generic BaseTaskService.validate_request. Config/language
+rules live in validate_config:
+  - config block present
+  - sourceLanguage when a language block is given
+  - targetLanguage + not-equal (REQUIRES_TARGET_LANGUAGE=True)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from services.base.task_service import BaseTaskService
 from utils import text_utils
 
 
 class TextBase(BaseTaskService):
     payload_key = "input"  # text input list lives under payload['input']
+
+    # Each text item must carry a non-empty 'source'.
+    REQUIRED_ITEM_FIELDS = (("source",),)
 
     # Set True in subclasses that require both source and target language (NMT, Transliteration)
     REQUIRES_TARGET_LANGUAGE: bool = False
@@ -28,40 +31,34 @@ class TextBase(BaseTaskService):
         return payload.get("config", {}).get("language", {})
 
     def _extract_source_lang(self, language: Dict[str, Any]) -> Optional[str]:
-        return language.get("source_language") or language.get("sourceLanguage")
+        return language.get("sourceLanguage")
 
     def _extract_target_lang(self, language: Dict[str, Any]) -> Optional[str]:
-        return language.get("target_language") or language.get("targetLanguage")
+        return language.get("targetLanguage")
 
     # ------------------------------------------------------------------
-    # Common validate_request
+    # Config / language validation (cross-field; item presence is generic)
     # ------------------------------------------------------------------
 
-    async def validate_request(self, payload: Any) -> None:
-        await super().validate_request(payload)
-
-        if not payload.get("input"):
-            raise ValueError(f"{self.task_name}: payload must contain a non-empty 'input' field")
+    async def validate_config(self, payload: Dict[str, Any]) -> None:
         if not payload.get("config"):
             raise ValueError(f"{self.task_name}: payload must contain a 'config' field")
 
-        for idx, item in enumerate(payload.get("input", [])):
-            source = item.get("source")
-            if not source or not isinstance(source, str):
-                raise ValueError(f"{self.task_name}: input[{idx}]['source'] must be a non-empty string")
-
         language = self._get_language(payload)
-        if language:
+        # Services that require a target language (NMT, Transliteration) need the
+        # language block. Other text services (e.g. language detection) leave it
+        # optional, validating sourceLanguage only when a block is supplied.
+        if self.REQUIRES_TARGET_LANGUAGE:
             source_lang = self._extract_source_lang(language)
+            target_lang = self._extract_target_lang(language)
             if not source_lang:
-                raise ValueError(f"{self.task_name}: config.language.source_language is required")
-
-            if self.REQUIRES_TARGET_LANGUAGE:
-                target_lang = self._extract_target_lang(language)
-                if not target_lang:
-                    raise ValueError(f"{self.task_name}: config.language.target_language is required")
-                if source_lang == target_lang:
-                    raise ValueError(f"{self.task_name}: source_language and target_language cannot be the same")
+                raise ValueError(f"{self.task_name}: config.language.sourceLanguage is required")
+            if not target_lang:
+                raise ValueError(f"{self.task_name}: config.language.targetLanguage is required")
+            if source_lang == target_lang:
+                raise ValueError(f"{self.task_name}: sourceLanguage and targetLanguage cannot be the same")
+        elif language and not self._extract_source_lang(language):
+            raise ValueError(f"{self.task_name}: config.language.sourceLanguage is required")
 
     # ------------------------------------------------------------------
     # preprocess_input
@@ -79,18 +76,3 @@ class TextBase(BaseTaskService):
 
         payload[self.payload_key] = items
         return payload
-
-    # ------------------------------------------------------------------
-    # Text helpers
-    # ------------------------------------------------------------------
-
-    def _pair_with_sources(
-        self,
-        response_items: List[Dict[str, Any]],
-        source_texts: List[str],
-    ) -> List[Dict[str, Any]]:
-        paired = []
-        for idx, item in enumerate(response_items):
-            source = source_texts[idx] if idx < len(source_texts) else ""
-            paired.append({**item, "source": source})
-        return paired

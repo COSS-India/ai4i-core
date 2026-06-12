@@ -1,18 +1,25 @@
-"""Generic adapter config declarations and path-based mapper utilities."""
+"""Typed Triton input rendering for adapter configs.
 
-import base64
-import json
+The adapter config declares each Triton input tensor (name, dtype, shape, and a
+value_path into the request). TritonInputRenderer walks those declarations and
+builds a KServe v2 input payload. This is the ONLY input transform: tensors are
+typed and shaped, which a JSON-to-JSON engine cannot express, so the input path
+stays declarative here and the output path is JSONata (see jsonata_mapper.py).
+
+value_path namespaces:
+  request.*  — the request envelope, wire casing (camelCase, e.g.
+               request.config.language.sourceLanguage).
+  input.*    — the current input item, including any fields preprocessing wrote
+               onto it (input.source, input.audioContent, ASR's input.samples,
+               TTS's input.gender).
+  index      — the item's position in the batch.
+"""
+
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-
-SUPPORTED_OUTPUT_TRANSFORMS = {"json_parse", "base64_encode", "unwrap_scalar", "wrap_list"}
-
-# 'output[].<key>' renames the item key; bare 'output[]' splats a dict value
-# into the item (diarization envelopes).
-_RESPONSE_KEY_RE = re.compile(r"output\[\](?:\.(\w+))?$")
 
 SUPPORTED_TRITON_DTYPES = {
     "BOOL",
@@ -39,7 +46,8 @@ class InputTensorDeclaration(BaseModel):
     shape: List[int] = Field(..., description="Tensor shape, -1 for dynamic dimension")
     value_path: Optional[str] = Field(
         default=None,
-        description="Dot path from context (example: input.source or request.config.language.sourceLanguage)",
+        description="Dot path from context (example: input.source or "
+        "request.config.language.sourceLanguage)",
     )
     value: Optional[Any] = Field(
         default=None,
@@ -56,237 +64,21 @@ class InputTensorDeclaration(BaseModel):
         return self
 
 
-class OutputTensorDeclaration(BaseModel):
-    """Output tensor declaration for adapter config."""
+class TritonInputRenderer:
+    """Renders typed input-tensor declarations into a KServe v2 Triton payload.
 
-    tensor: str = Field(..., description="Tensor name returned by Triton")
-    dtype: str = Field(..., description="Expected Triton dtype")
-    maps_to: str = Field(..., description="Platform semantic output key")
-    json_field: Optional[str] = Field(
-        default=None,
-        description="If set, each output value is parsed as a JSON object and "
-        "this field is extracted (e.g. Surya's envelope -> 'full_text'). "
-        "Values that fail to parse pass through unchanged.",
-    )
-    transform: Optional[Union[str, List[str]]] = Field(
-        default=None,
-        description="Per-item transform (or chain): 'json_parse' (parse JSON "
-        "string -> object), 'base64_encode' (value -> base64 string), "
-        "'unwrap_scalar' (peel single-element list nesting), 'wrap_list' "
-        "(non-list -> [value] if truthy else []). Applied to each output "
-        "item's value after single-element unwrapping.",
-    )
-    response_key: Optional[str] = Field(
-        default=None,
-        description="Final response placement: 'output[].<key>' renames this "
-        "output's maps_to key per item; bare 'output[]' splats a dict value "
-        "into the item (the parsed object becomes the item).",
-    )
-    pair_with_input: Optional[str] = Field(
-        default=None,
-        description="Input field dot-path (e.g. 'input.source', "
-        "'audio.audio_uri'); the field is paired into each output item at "
-        "the same index under its last path segment.",
-    )
+    Constructed directly from the adapter config's input declarations — no
+    output schema, so it is shared by the mapper without faking a config.
+    """
 
+    def __init__(self, inputs: Sequence[InputTensorDeclaration]):
+        self._inputs = list(inputs)
+        self._validate()
 
-class ResponseEnvelopeDeclaration(BaseModel):
-    """Config-driven response envelope for the base postprocess_output."""
-
-    task_type: Optional[str] = Field(
-        default=None, description="If set, emit it as the response 'taskType'."
-    )
-    include_config: bool = Field(
-        default=True,
-        description="Echo the request config as 'config' (default). False "
-        "omits the key (routes serialize it as null where declared).",
-    )
-    config_keys: Optional[List[str]] = Field(
-        default=None,
-        description="Echo only these request-config keys (e.g. ['serviceId']). "
-        "Takes precedence over include_config.",
-    )
-    static_item_fields: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Constant fields added to every output item when absent "
-        "(e.g. {'target': ''} for OCR, {'nBestTokens': null} for ASR).",
-    )
-
-
-class AdapterMappingConfig(BaseModel):
-    """Top-level adapter mapping contract."""
-
-    version: str = Field(..., description="Schema version")
-    model_version: str = Field(default="1", description="Triton model version")
-    inputs: List[InputTensorDeclaration] = Field(..., min_items=1)
-    outputs: List[OutputTensorDeclaration] = Field(..., min_items=1)
-    response: Optional[ResponseEnvelopeDeclaration] = None
-
-
-ContextBuilder = Callable[[Dict[str, Any], int, Dict[str, Any]], Dict[str, Any]]
-
-
-class GenericTritonMapper:
-    """Generic mapper that resolves Triton inputs and maps Triton outputs."""
-
-    def __init__(self, adapter_config: Union[AdapterMappingConfig, Dict[str, Any]]):
-        self.adapter_config = (
-            adapter_config
-            if isinstance(adapter_config, AdapterMappingConfig)
-            else AdapterMappingConfig.parse_obj(adapter_config)
-        )
-        self._validate_config(self.adapter_config)
-
-    def render_inputs(
-        self,
-        input_data: List[Dict[str, Any]],
-        config: Dict[str, Any],
-        context_builder: Optional[ContextBuilder] = None,
-    ) -> Tuple[Dict[str, Any], List[str]]:
-        """
-        Render adapter input declarations into Triton input payload.
-
-        This keeps runtime deterministic:
-        - no model-specific branching
-        - only declared paths/static values are used
-        """
-        if not input_data:
-            raise RuntimeError("input_data cannot be empty")
-
-        triton_inputs: Dict[str, Any] = {}
-        for tensor_cfg in self.adapter_config.inputs:
-            rendered_values: List[Any] = []
-            for index, item in enumerate(input_data):
-                # Canonical context available for every tensor declaration.
-                context: Dict[str, Any] = {
-                    "request": {"config": config},
-                    "input": item,
-                    "index": index,
-                }
-                if context_builder:
-                    # Task-specific enrichments (for example audio.samples)
-                    # are merged without changing generic mapper logic.
-                    context.update(context_builder(item, index, config) or {})
-
-                resolved = self._resolve_value(tensor_cfg=tensor_cfg, context=context)
-                rendered_values.append(self._cast_dtype(resolved, tensor_cfg.dtype))
-
-            # Keep Triton payload shape explicit per declaration.
-            shape, data = self._materialize_tensor(rendered_values, tensor_cfg.shape, tensor_cfg.dtype)
-            triton_inputs[tensor_cfg.tensor] = {
-                "dtype": tensor_cfg.dtype,
-                "shape": shape,
-                "data": data,
-            }
-
-        output_names = [output.tensor for output in self.adapter_config.outputs]
-        return triton_inputs, output_names
-
-    def compose_triton_kserve_v2_payload(
-        self,
-        input_data: List[Dict[str, Any]],
-        config: Dict[str, Any],
-        context_builder: Optional[ContextBuilder] = None,
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """
-        Render inputs and return a KServe v2 ready inputs list paired with output names.
-
-        Returns:
-            Tuple of (inputs_list, output_names) where inputs_list entries use
-            'datatype' (KServe v2 wire field) instead of the internal 'dtype'.
-        """
-        triton_inputs, output_names = self.render_inputs(input_data, config, context_builder)
-        inputs_list = [
-            {"name": name, "datatype": t["dtype"], "shape": t["shape"], "data": t["data"]}
-            for name, t in triton_inputs.items()
-        ]
-        return inputs_list, output_names
-
-    # ------------------------------------------------------------------
-    # v1 output path (DEPRECATED, AI4IDS-1981): map_outputs, to_output_items,
-    # shape_output_items, build_response_envelope. All models are migrated to the
-    # v2 (JSONata) schema, so these run only when a v1 adapter_config is restored
-    # for rollback. Do not extend; v2 output mapping lives in jsonata_mapper.py.
-    # Removal is gated on dropping v1 rollback support (a later, deliberate step).
-    # ------------------------------------------------------------------
-
-    def map_outputs(self, triton_output: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Map Triton outputs to semantic keys based on adapter declarations.
-
-        Example: OUTPUT_TEXT -> translated_text
-        """
-        mapped: Dict[str, Any] = {}
-        for output_cfg in self.adapter_config.outputs:
-            value = self._extract_output_tensor(triton_output, output_cfg.tensor)
-            if value is None:
-                raise RuntimeError(f"Missing output tensor '{output_cfg.tensor}'")
-            decoded = self._decode_output_value(value)
-            if output_cfg.json_field:
-                decoded = self._extract_json_field(decoded, output_cfg.json_field)
-            mapped[output_cfg.maps_to] = decoded
-        return mapped
-
-    def to_output_items(self, mapped_outputs: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Convert mapped outputs into task-service friendly list-of-dict items."""
-        batch_size = 1
-        for value in mapped_outputs.values():
-            if isinstance(value, list) and value:
-                batch_size = max(batch_size, len(value))
-
-        transforms = {
-            cfg.maps_to: self._transform_chain(cfg)
-            for cfg in self.adapter_config.outputs
-            if cfg.transform
-        }
-
-        items: List[Dict[str, Any]] = []
-        for idx in range(batch_size):
-            item: Dict[str, Any] = {}
-            for key, value in mapped_outputs.items():
-                if isinstance(value, list):
-                    value = value[idx] if idx < len(value) else (value[-1] if value else None)
-                if key in transforms:
-                    # Transforms see the scalar value (single-element nesting
-                    # peeled first); their result is final — shaping must not
-                    # re-unwrap it (wrap_list would be undone).
-                    value = self.unwrap_scalar(value)
-                    for t in transforms[key]:
-                        value = self._apply_transform(value, t)
-                item[key] = value
-            items.append(item)
-        return items
-
-    @staticmethod
-    def _transform_chain(cfg: OutputTensorDeclaration) -> List[str]:
-        if not cfg.transform:
-            return []
-        return [cfg.transform] if isinstance(cfg.transform, str) else list(cfg.transform)
-
-    # ------------------------------------------------------------------
-    # BaseTaskService interface — run_inference calls these
-    # ------------------------------------------------------------------
-
-    async def convert_payload_to_triton_format(
-        self,
-        input_data: List[Dict[str, Any]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Convert task input + config into KServe v2 Triton payload."""
-        return self.compose_triton_kserve_v2_payload(input_data, config)
-
-    async def convert_triton_output_to_task_format(
-        self,
-        triton_output: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Map Triton tensor output to a list-of-dict task response items."""
-        return self.to_output_items(self.map_outputs(triton_output))
-
-    def _validate_config(self, config: AdapterMappingConfig) -> None:
-        if not config.version.strip():
-            raise RuntimeError("adapter config version cannot be empty")
-
-        for tensor in config.inputs:
+    def _validate(self) -> None:
+        if not self._inputs:
+            raise RuntimeError("adapter config must declare at least one input tensor")
+        for tensor in self._inputs:
             if tensor.dtype not in SUPPORTED_TRITON_DTYPES:
                 raise RuntimeError(f"Unsupported input dtype '{tensor.dtype}'")
             if not tensor.shape:
@@ -296,49 +88,78 @@ class GenericTritonMapper:
                     f"Input tensor '{tensor.tensor}' requires value_path or value"
                 )
 
-        for tensor in config.outputs:
-            if tensor.dtype not in SUPPORTED_TRITON_DTYPES:
-                raise RuntimeError(f"Unsupported output dtype '{tensor.dtype}'")
-            if not tensor.maps_to.strip():
-                raise RuntimeError(f"Output tensor '{tensor.tensor}' maps_to cannot be empty")
-            for t in self._transform_chain(tensor):
-                if t not in SUPPORTED_OUTPUT_TRANSFORMS:
-                    raise RuntimeError(
-                        f"Output tensor '{tensor.tensor}': unsupported transform "
-                        f"'{t}' (supported: {sorted(SUPPORTED_OUTPUT_TRANSFORMS)})"
-                    )
-            if tensor.response_key and not _RESPONSE_KEY_RE.fullmatch(tensor.response_key):
-                raise RuntimeError(
-                    f"Output tensor '{tensor.tensor}': response_key must be "
-                    f"'output[].<key>', got '{tensor.response_key}'"
-                )
-
-    def _resolve_value(
+    def compose_triton_kserve_v2_payload(
         self,
-        tensor_cfg: InputTensorDeclaration,
-        context: Dict[str, Any],
-    ) -> Any:
+        input_data: List[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Render the declared inputs into a KServe v2 inputs list.
+
+        Returns inputs_list entries using 'datatype' (the KServe v2 wire field).
+        Output tensor names are owned by the caller (the mapper), not here.
+        Each value_path resolves against {request, input, index}; service
+        preprocessing writes any derived fields (e.g. ASR samples) onto the
+        input item, so they are reachable as input.<field> with no extra hook.
+        """
+        if not input_data:
+            raise RuntimeError("input_data cannot be empty")
+
+        inputs_list: List[Dict[str, Any]] = []
+        for tensor_cfg in self._inputs:
+            rendered_values: List[Any] = []
+            for index, item in enumerate(input_data):
+                context: Dict[str, Any] = {
+                    "request": {"config": config},
+                    "input": item,
+                    "index": index,
+                }
+                resolved = self._resolve_value(tensor_cfg, context)
+                rendered_values.append(self._cast_dtype(resolved, tensor_cfg.dtype))
+
+            shape, data = self._materialize_tensor(
+                rendered_values, tensor_cfg.shape, tensor_cfg.dtype
+            )
+            inputs_list.append(
+                {"name": tensor_cfg.tensor, "datatype": tensor_cfg.dtype, "shape": shape, "data": data}
+            )
+        return inputs_list
+
+    # ------------------------------------------------------------------
+    # Value resolution + tensor materialization
+    # ------------------------------------------------------------------
+
+    def _resolve_value(self, tensor_cfg: InputTensorDeclaration, context: Dict[str, Any]) -> Any:
         if tensor_cfg.value_path:
-            return self._resolve_path(context, tensor_cfg.value_path)
+            try:
+                return self._resolve_path(context, tensor_cfg.value_path)
+            except RuntimeError:
+                # A declaration may carry both value_path and a `value` default:
+                # the path wins when present, the default applies when the key is
+                # absent (e.g. optional config like numSpeakers/targetLanguage).
+                if tensor_cfg.value is not None:
+                    return tensor_cfg.value
+                # No default: the request omitted a required input. That is a
+                # client error (400), not a server fault — the typed declaration
+                # IS the required-field check, so services need no validate hook.
+                raise ValueError(
+                    f"required input '{tensor_cfg.tensor}': "
+                    f"'{tensor_cfg.value_path}' is missing from the request"
+                ) from None
         return tensor_cfg.value
 
     def _resolve_path(self, source: Any, path: str) -> Any:
-        # Dot-path walker for config-driven lookup.
-        # Supports dict keys and object attributes.
-        # Falls back to camelCase variant so adapter_config paths declared as
-        # snake_case (e.g. source_language) resolve even when the frontend
-        # sends camelCase (e.g. sourceLanguage).
+        """Dot-path walker over dicts and object attributes.
+
+        Keys are matched exactly: the request envelope uses wire casing
+        (camelCase) and internal namespaces (input./audio.) use their own keys,
+        so no case-coercion is needed.
+        """
         current = source
         for part in path.split("."):
             if isinstance(current, dict):
-                if part in current:
-                    current = current[part]
-                else:
-                    camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), part)
-                    if camel in current:
-                        current = current[camel]
-                    else:
-                        raise RuntimeError(f"Path '{path}' not found (missing key '{part}')")
+                if part not in current:
+                    raise RuntimeError(f"Path '{path}' not found (missing key '{part}')")
+                current = current[part]
             elif hasattr(current, part):
                 current = getattr(current, part)
             else:
@@ -366,10 +187,9 @@ class GenericTritonMapper:
         declared_shape: Sequence[int],
         dtype: str,
     ) -> Tuple[List[int], List[Any]]:
-        # Normalize per-item values into a single declared tensor payload.
         normalized: Any = rendered_values
         if len(declared_shape) > 1:
-            normalized = [value if isinstance(value, list) else [value] for value in rendered_values]
+            normalized = [v if isinstance(v, list) else [v] for v in rendered_values]
         inferred_shape = self._infer_shape(normalized)
         final_shape = self._apply_declared_shape(inferred_shape, list(declared_shape))
         flattened = self._flatten(normalized)
@@ -393,9 +213,7 @@ class GenericTritonMapper:
 
         resolved: List[int] = []
         for expected, actual in zip(declared, inferred):
-            if expected == -1:
-                resolved.append(actual)
-            elif expected == actual:
+            if expected == -1 or expected == actual:
                 resolved.append(actual)
             else:
                 raise RuntimeError(
@@ -410,155 +228,3 @@ class GenericTritonMapper:
         for item in value:
             flattened.extend(self._flatten(item))
         return flattened
-
-    def _extract_output_tensor(self, triton_output: Dict[str, Any], tensor_name: str) -> Any:
-        outputs = triton_output.get("outputs")
-        if isinstance(outputs, list):
-            for output in outputs:
-                if output.get("name") == tensor_name:
-                    return output.get("data")
-        return triton_output.get(tensor_name)
-
-    def _apply_transform(self, value: Any, transform: str) -> Any:
-        """
-        Config-driven post-extraction transform (validated at config load):
-          json_parse    — parse JSON string values into the full object
-                          (diarization/ALD envelopes); non-JSON passes through
-          base64_encode — value -> base64 of its UTF-8/bytes form
-          unwrap_scalar — peel single-element list nesting
-        """
-        if transform == "unwrap_scalar":
-            return self.unwrap_scalar(value)
-        if transform == "wrap_list":
-            if isinstance(value, list):
-                return value
-            return [value] if value else []
-        if isinstance(value, list):
-            return [self._apply_transform(item, transform) for item in value]
-        if transform == "json_parse":
-            if isinstance(value, str):
-                stripped = value.lstrip()
-                if stripped.startswith("{") or stripped.startswith("["):
-                    try:
-                        return json.loads(value)
-                    except json.JSONDecodeError:
-                        return value
-            return value
-        if transform == "base64_encode":
-            raw = value if isinstance(value, bytes) else str(value).encode("utf-8")
-            return base64.b64encode(raw).decode("utf-8")
-        return value
-
-    def shape_output_items(
-        self,
-        output_items: List[Dict[str, Any]],
-        input_items: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Config-driven response shaping, applied per item:
-          1. pair_with_input '<scope>.<field>' — the input field at the same
-             index leads the item under '<field>' (camelCase variants of the
-             field resolve too); an output field of the same name wins.
-          2. response_key 'output[].<key>' renames the maps_to key; bare
-             'output[]' splats a dict value into the item.
-          3. response.static_item_fields are appended where absent.
-
-        Values without a declared transform get single-element unwrapping
-        here; transformed values arrive final from to_output_items.
-        """
-        renames, splat_keys = {}, set()
-        for cfg in self.adapter_config.outputs:
-            if cfg.response_key:
-                target = _RESPONSE_KEY_RE.fullmatch(cfg.response_key).group(1)
-                if target is None:
-                    splat_keys.add(cfg.maps_to)
-                else:
-                    renames[cfg.maps_to] = target
-        transformed = {
-            cfg.maps_to for cfg in self.adapter_config.outputs if cfg.transform
-        }
-        pair_fields = [
-            cfg.pair_with_input.split(".")[-1]
-            for cfg in self.adapter_config.outputs
-            if cfg.pair_with_input
-        ]
-        statics = (
-            self.adapter_config.response.static_item_fields
-            if self.adapter_config.response else None
-        ) or {}
-
-        shaped = []
-        for idx, item in enumerate(output_items):
-            new_item: Dict[str, Any] = {}
-            src_item = input_items[idx] if idx < len(input_items) else {}
-            for field in dict.fromkeys(pair_fields):
-                camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), field)
-                new_item[field] = src_item.get(field, src_item.get(camel, ""))
-            for k, v in item.items():
-                if k not in transformed:
-                    v = self.unwrap_scalar(v)
-                if k in splat_keys and isinstance(v, dict):
-                    new_item.update(v)
-                else:
-                    new_item[renames.get(k, k)] = v
-            for k, v in statics.items():
-                new_item.setdefault(k, v)
-            shaped.append(new_item)
-        return shaped
-
-    def has_response_shaping(self) -> bool:
-        """True when the config declares any response shaping: response_key /
-        pair_with_input on an output, or a response envelope block."""
-        return self.adapter_config.response is not None or any(
-            cfg.response_key or cfg.pair_with_input
-            for cfg in self.adapter_config.outputs
-        )
-
-    def build_response_envelope(
-        self, shaped_items: List[Dict[str, Any]], request_config: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Assemble the final response dict per the response declaration:
-        optional taskType, the output list, and the config echo (full /
-        subset keys / omitted)."""
-        resp = self.adapter_config.response or ResponseEnvelopeDeclaration()
-        out: Dict[str, Any] = {}
-        if resp.task_type:
-            out["taskType"] = resp.task_type
-        out["output"] = shaped_items
-        if resp.config_keys is not None:
-            out["config"] = {k: (request_config or {}).get(k) for k in resp.config_keys}
-        elif resp.include_config:
-            out["config"] = request_config
-        return out
-
-    def _extract_json_field(self, value: Any, field: str) -> Any:
-        """
-        Config-driven envelope unwrapping: parse JSON string values and pull
-        out one field (declared via the output's json_field). Lists are
-        processed element-wise; non-JSON values pass through unchanged so a
-        model that sometimes returns plain text keeps working.
-        """
-        if isinstance(value, list):
-            return [self._extract_json_field(item, field) for item in value]
-        if isinstance(value, str) and value.lstrip().startswith("{"):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return value
-            if isinstance(parsed, dict) and field in parsed:
-                return parsed[field]
-        return value
-
-    def _decode_output_value(self, value: Any) -> Any:
-        if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
-        if isinstance(value, list):
-            return [self._decode_output_value(item) for item in value]
-        return value
-
-    @staticmethod
-    def unwrap_scalar(value: Any) -> Any:
-        """Unwrap single-element list nesting (shape [1], [1,1] tensors) to a plain value."""
-        while isinstance(value, list) and len(value) == 1:
-            value = value[0]
-        return value

@@ -10,13 +10,15 @@ class TransliterationTaskService(TextBase):
 
         # --- Transliteration-specific: numSuggestions/isSentence + derived field injection ---
         config = payload.get("config", {})
-        num_suggestions = config.get("num_suggestions") or config.get("numSuggestions") or 0
-        is_sentence = config.get("is_sentence") or config.get("isSentence") or False
+        num_suggestions = config.get("numSuggestions") or 0
+        is_sentence = config.get("isSentence") or False
 
         if num_suggestions > 0 and is_sentence:
             raise ValueError("Transliteration: numSuggestions is not valid for sentence-level transliteration")
 
-        # Inject derived fields so mapper can resolve value_path: request.config.is_word_level/top_k
+        # Inject derived fields the renderer reads via value_path
+        # (request.config.is_word_level / top_k): a boolean inversion + rename
+        # the model needs but the typed input path cannot express.
         config["is_word_level"] = not is_sentence
         config["top_k"] = num_suggestions
 

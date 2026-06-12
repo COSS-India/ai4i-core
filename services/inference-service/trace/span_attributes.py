@@ -32,42 +32,6 @@ def get_input_type(payload: Dict[str, Any]) -> str:
         return "unknown"
 
 
-def get_output_type(response_data: List[Dict[str, Any]]) -> str:
-    """
-    Detect output modality type from Triton response data.
-
-    Inspects response structure to determine modality.
-    Returns: "text", "audio", "image", or "unknown"
-    """
-    try:
-        if not response_data or not isinstance(response_data, list):
-            return "unknown"
-
-        first_item = response_data[0] if response_data else {}
-        if not isinstance(first_item, dict):
-            return "unknown"
-
-        # Check for common output field names by modality
-        keys = set(first_item.keys())
-
-        # Text: target, output, transcription, translation, result, text
-        if keys & {"target", "output", "transcription", "translation", "result", "text"}:
-            return "text"
-
-        # Audio: audio_content, audio, samples, waveform
-        if keys & {"audio_content", "audio", "samples", "waveform"}:
-            return "audio"
-
-        # Image: image, image_content, image_base64, encoding
-        if keys & {"image", "image_content", "image_base64", "encoding"}:
-            return "image"
-
-        return "unknown"
-    except Exception as e:
-        logger.warning(f"Error detecting output type: {e}")
-        return "unknown"
-
-
 def count_input_tokens(input_items: List[Any], input_type: str) -> int:
     """
     Estimate token count for input based on modality.
@@ -92,33 +56,6 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> int:
         return 0
     except Exception as e:
         logger.warning(f"Error counting input tokens: {e}")
-        return 0
-
-
-def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -> int:
-    """
-    Estimate token count for output based on modality.
-
-    Text: word count of output text
-    Audio: estimate from output samples
-    Image: heuristic from encoded size
-
-    Returns: estimated token count, or 0 on error
-    """
-    try:
-        if not response_data or not isinstance(response_data, list):
-            return 0
-
-        if output_type == "text":
-            return _count_output_text_tokens(response_data)
-        elif output_type == "audio":
-            return _count_output_audio_tokens(response_data)
-        elif output_type == "image":
-            return _count_output_image_tokens(response_data)
-
-        return 0
-    except Exception as e:
-        logger.warning(f"Error counting output tokens: {e}")
         return 0
 
 
@@ -186,51 +123,5 @@ def _count_image_tokens(input_items: List[Any]) -> int:
             # Base64 string length / 1000 as heuristic
             tokens = max(len(str(image_content)) // 1000, 1)
             total += tokens
-
-    return total
-
-
-def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """Count tokens from text output by word splitting."""
-    total = 0
-    for item in response_data:
-        if isinstance(item, dict):
-            # Try common output field names
-            text = item.get("target") or item.get("output") or item.get("text") or ""
-            if isinstance(text, bytes):
-                text = text.decode("utf-8", errors="replace")
-            total += len(str(text).split())
-
-    return total
-
-
-def _count_output_audio_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """
-    Estimate tokens from audio output by content size.
-
-    Similar to input: bytes / 1000 as proxy.
-    """
-    total = 0
-    for item in response_data:
-        if isinstance(item, dict):
-            audio_content = item.get("audio_content") or item.get("audio") or ""
-            if audio_content:
-                tokens = max(len(str(audio_content)) // 100, 1)
-                total += tokens
-
-    return total
-
-
-def _count_output_image_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """
-    Estimate tokens from image output by content size.
-    """
-    total = 0
-    for item in response_data:
-        if isinstance(item, dict):
-            image_content = item.get("image_content") or item.get("image") or ""
-            if image_content:
-                tokens = max(len(str(image_content)) // 1000, 1)
-                total += tokens
 
     return total

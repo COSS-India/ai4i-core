@@ -1,19 +1,16 @@
-"""v2 adapter-config mapping via JSONata (AI4IDS-1981).
+"""Adapter-config mapping: typed Triton inputs + JSONata output transform.
 
-The v2 schema replaces the v1 declarative output pipeline (map_outputs,
-to_output_items, shape_output_items, build_response_envelope) with one JSONata
-expression that maps decoded Triton tensors to the final task-type output.
+One mapper per request, built from the model's adapter_config:
+  inputs           — typed declarations rendered by TritonInputRenderer.
+  outputs          — Triton output tensors to request (and optionally JSON-parse).
+  output_transform — a JSONata expression mapping decoded tensors to the final
+                     task-type output. Omitted for code-output services (NER,
+                     TTS), which override produce_result and read decode()
+                     directly to run their algorithm/DSP.
 
-Two kinds of v2 service:
-- config-only: declare `output_transform`; the base pipeline runs it.
-- code-output (NER, TTS): omit `output_transform` and override produce_result,
-  reading decoded tensors via V2Mapper.decode() and running their algorithm/DSP.
-
-Input rendering stays the v1 typed path (dtype / shape / KServe v2 with
-value_path), so a v2 config reuses GenericTritonMapper for inputs. JSON-blob
-tensors are parsed by the mapper (per-output `is_json`) before evaluation.
-
-`build_mapper` dispatches on `schema_version`: v2 -> V2Mapper, else v1.
+Input rendering is typed (a JSON engine cannot type or shape tensors); the
+output path is JSONata. There is a single schema and a single mapper — the
+earlier v1 declarative output pipeline has been removed.
 """
 
 from __future__ import annotations
@@ -25,15 +22,10 @@ from pydantic import BaseModel, Field
 
 from jsonata.jsonata import Jsonata
 
-from services.base.config_mapper import (
-    AdapterMappingConfig,
-    GenericTritonMapper,
-    InputTensorDeclaration,
-    OutputTensorDeclaration,
-)
+from services.base.config_mapper import InputTensorDeclaration, TritonInputRenderer
 
 
-class OutputTensorV2(BaseModel):
+class OutputTensorDeclaration(BaseModel):
     """A Triton output tensor to request and optionally JSON-parse (decode-level
     only; shaping lives in output_transform or in service code)."""
 
@@ -44,18 +36,18 @@ class OutputTensorV2(BaseModel):
     )
 
 
-class AdapterMappingConfigV2(BaseModel):
-    """v2 adapter mapping contract: typed inputs + optional output expression."""
+class AdapterMappingConfig(BaseModel):
+    """Adapter mapping contract: typed inputs + optional output expression."""
 
     schema_version: str = Field(..., description="Adapter schema version, e.g. '2.0'")
     model_version: str = Field(default="1", description="Triton model version")
     inputs: List[InputTensorDeclaration] = Field(..., min_length=1)
-    outputs: List[OutputTensorV2] = Field(..., min_length=1)
+    outputs: List[OutputTensorDeclaration] = Field(..., min_length=1)
     output_transform: Optional[str] = Field(
         default=None,
         description="JSONata expression mapping decoded tensors to the final "
         "task-type output. Omitted for code-output services (NER, TTS) that "
-        "override produce_result and consume V2Mapper.decode() directly.",
+        "override produce_result and consume decode() directly.",
     )
 
 
@@ -109,7 +101,7 @@ def decode_and_merge(raw_outputs: List[Dict[str, Any]], json_tensors) -> Dict[st
 
 
 class JsonataOutputMapper:
-    """Compiles a v2 output_transform once and evaluates it per request.
+    """Compiles an output_transform once and evaluates it per request.
 
     Construction compiles (and thereby syntax-validates) the expression, so an
     invalid expression fails at config load, not at inference time.
@@ -124,9 +116,6 @@ class JsonataOutputMapper:
                 f"Invalid output_transform JSONata expression: {exc}"
             ) from exc
 
-    def decode_triton_outputs(self, triton_output: Dict[str, Any]) -> Dict[str, Any]:
-        return decode_triton_outputs(triton_output, self._json_tensors)
-
     def transform_output(
         self,
         tensors: Dict[str, Any],
@@ -140,43 +129,35 @@ class JsonataOutputMapper:
         })
 
 
-class V2Mapper:
-    """A v2 mapper: v1 typed input rendering + JSONata output transform (or, for
-    code-output services, decode() for the service to consume).
+class TritonMapper:
+    """Per-request mapper: typed input rendering + JSONata output transform (or,
+    for code-output services, decode() for the service to consume).
 
-    Presents `compose_triton_kserve_v2_payload` (same as the v1 mapper) so the
-    input hook is unchanged. Built per request, so any compiled JSONata
-    expression is never shared across threads.
+    Presents `compose_triton_kserve_v2_payload` so the input hook is uniform.
+    Built per request, so any compiled JSONata expression is never shared
+    across threads.
     """
 
-    def __init__(self, adapter_config: Union[AdapterMappingConfigV2, Dict[str, Any]]):
+    def __init__(self, adapter_config: Union[AdapterMappingConfig, Dict[str, Any]]):
         cfg = (
             adapter_config
-            if isinstance(adapter_config, AdapterMappingConfigV2)
-            else AdapterMappingConfigV2.model_validate(adapter_config)
+            if isinstance(adapter_config, AdapterMappingConfig)
+            else AdapterMappingConfig.model_validate(adapter_config)
         )
         self.adapter_config = cfg
+        self._output_names = [o.tensor for o in cfg.outputs]
         self._json_tensors = {o.tensor for o in cfg.outputs if o.is_json}
+        self._renderer = TritonInputRenderer(cfg.inputs)
         self._jsonata = (
             JsonataOutputMapper(cfg.output_transform, list(self._json_tensors))
             if cfg.output_transform else None
         )
 
-        input_cfg = AdapterMappingConfig(
-            version=cfg.schema_version,
-            model_version=cfg.model_version,
-            inputs=cfg.inputs,
-            outputs=[
-                OutputTensorDeclaration(tensor=o.tensor, dtype="BYTES", maps_to=o.tensor)
-                for o in cfg.outputs
-            ],
+    def compose_triton_kserve_v2_payload(self, input_data, config):
+        inputs_list = self._renderer.compose_triton_kserve_v2_payload(
+            input_data=input_data, config=config
         )
-        self._input_mapper = GenericTritonMapper(input_cfg)
-
-    def compose_triton_kserve_v2_payload(self, input_data, config, context_builder=None):
-        return self._input_mapper.compose_triton_kserve_v2_payload(
-            input_data=input_data, config=config, context_builder=context_builder
-        )
+        return inputs_list, list(self._output_names)
 
     def decode(self, raw_outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Decoded + merged tensors keyed by tensor name. Used by the JSONata
@@ -191,23 +172,13 @@ class V2Mapper:
     ) -> Any:
         if self._jsonata is None:
             raise RuntimeError(
-                "V2Mapper.transform called but adapter_config has no output_transform"
+                "TritonMapper.transform called but adapter_config has no output_transform"
             )
         return self._jsonata.transform_output(
             self.decode(raw_outputs), inputs, request_config
         )
 
 
-def is_v2_config(adapter_config: Any) -> bool:
-    """True if the adapter_config declares the v2 (JSONata) schema."""
-    return (
-        isinstance(adapter_config, dict)
-        and str(adapter_config.get("schema_version", "")).startswith("2")
-    )
-
-
-def build_mapper(adapter_config: Dict[str, Any]) -> Union[GenericTritonMapper, V2Mapper]:
-    """Return the mapper for an adapter_config: v2 -> V2Mapper, else v1."""
-    if is_v2_config(adapter_config):
-        return V2Mapper(adapter_config)
-    return GenericTritonMapper(adapter_config)
+def build_mapper(adapter_config: Dict[str, Any]) -> TritonMapper:
+    """Build the per-request mapper for a model's adapter_config."""
+    return TritonMapper(adapter_config)
