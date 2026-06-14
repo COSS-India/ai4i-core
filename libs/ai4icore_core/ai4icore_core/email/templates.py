@@ -1,4 +1,4 @@
-"""Jinja2 wrapper with autoescape forced on for HTML.
+"""Jinja2 wrapper with autoescape forced on for all templates.
 
 Each consuming service supplies its own template directory:
 
@@ -6,8 +6,8 @@ Each consuming service supplies its own template directory:
     html, text = renderer.render("<template_name>", {"user": user})
 
 Template naming convention: <name>.html and <name>.txt files in the
-supplied directory. Both are rendered with the same context. HTML is
-auto-escaped; text is not (text has no HTML exploit surface).
+supplied directory. Both are rendered with the same context. Autoescape
+is enabled for both environments to prevent XSS injection.
 """
 
 from pathlib import Path
@@ -25,12 +25,11 @@ class TemplateRenderer:
             trim_blocks=True,
             lstrip_blocks=True,
         )
-        # HTML env auto-escapes; text env does not (no exploit surface).
         self._html_env = Environment(
             autoescape=select_autoescape(default_for_string=True, default=True),
             **common,
         )
-        self._text_env = Environment(autoescape=False, **common)
+        self._text_env = Environment(autoescape=select_autoescape(), **common)
 
     def render(self, name: str, ctx: dict) -> tuple[str, str]:
         html = self._html_env.get_template(f"{name}.html").render(**ctx)

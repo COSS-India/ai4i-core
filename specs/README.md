@@ -1,19 +1,13 @@
 # Public API Specs (OpenAPI)
 
-Public API specs and the docs registry are maintained in the **Docs Manager** service:
+## Documentation
 
-- **`services/docs-manager/specs/`**
-  - **`service-docs-registry.yaml`** – Registry of services and their spec file names. `api_gateway_url` is used for "Try it out" in Swagger.
-  - **`<service-name>.yaml`** – One OpenAPI 3.0 YAML per service (e.g. `asr-service.yaml`, `auth-service.yaml`). See the registry for the full list.
+- **Setup & local development**: [docs/SETUP_GUIDE.md](../docs/SETUP_GUIDE.md)
+- **Architecture**: [docs/architecture/](../docs/architecture/)
+- **Contributing**: [CONTRIBUTING.md](../CONTRIBUTING.md)
 
-The **Docs Manager** merges these into a single OpenAPI spec and serves one Swagger UI:
+## Service READMEs
 
-- **Swagger UI**: http://localhost:8103/docs  
-- **Merged OpenAPI JSON**: http://localhost:8103/openapi.json  
-
-Run the aggregator:
-
-- Docker: `docker compose -f docker-compose-local.yml up docs-manager`
-- Local: from repo root, `uvicorn main:app --port 8103 --app-dir services/docs-manager`
-
-To add or update a service: edit or add `services/docs-manager/specs/<service-name>.yaml` and ensure it is listed in `service-docs-registry.yaml` in the same folder.
+- [auth-service](../services/auth-service/README.md)
+- [platform-core-service](../services/platform-core-service/README.md)
+- [inference-service](../services/inference-service/README.md)

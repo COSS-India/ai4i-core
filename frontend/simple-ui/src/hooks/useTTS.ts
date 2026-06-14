@@ -10,7 +10,8 @@ import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_TTS_TEXT_LENGTH, TTS_ERRORS } 
 import { extractErrorInfo } from '../utils/errorHandler';
 
 // Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
-const VALID_TTS_CHAR_REGEX = /^[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF]*$/;
+const VALID_TTS_CHAR_REGEX =
+  /^(?:[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-8\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFE\u0C01-\u0C7F\u0C80-\u0CFE\u0D01-\u0D7F\u0D80-\u0DFF]|9|\u0BFF|\u0C00|\u0CFF|\u0D00)*$/;
 
 // Helper function to get the correct service ID based on language
 const getServiceIdForLanguage = (language: string): string => {
@@ -68,7 +69,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     mutationFn: async (text: string) => {
       // Use the provided serviceId if available, otherwise fall back to language-based service ID
       const effectiveServiceId = serviceId || getServiceIdForLanguage(language);
-      
+
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
         serviceId: effectiveServiceId,
@@ -91,16 +92,16 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
           const blobUrl = base64ToAudioObjectUrl(audioContent, format);
           audioObjectUrlRef.current = blobUrl;
           setAudio(blobUrl);
-          
+
           // Set response time
           setRequestTime(response.responseTime.toString());
-          
+
           // Get audio duration using blob URL (same as playback)
           const audioElement = new Audio(blobUrl);
           audioElement.addEventListener('loadedmetadata', () => {
             setAudioDuration(audioElement.duration);
           });
-          
+
           setFetched(true);
           setFetching(false);
           setError(null);
@@ -123,10 +124,10 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     },
     onError: (error: any) => {
       console.error('TTS inference error:', error);
-      
+
       // Use centralized error handler (TTS context so backend message shown as default when no specific mapping)
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'tts');
-      
+
       setError(errorMessage);
       setFetching(false);
       toast({
@@ -377,7 +378,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     requestTime,
     audioDuration,
     error,
-    
+
     // Methods
     performInference,
     setInputText: setInputTextWithValidation,

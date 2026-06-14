@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 import httpx
 
 from config import settings
+from trace.request_span import traced_span, traced_inference, get_context_attributes
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,29 @@ class OpenAIProxyService:
             body = {"raw": response.text}
 
         return response.status_code, body
+
+    async def proxy_traced(self, path: str, payload: Any) -> Tuple[int, Any]:
+        """
+        proxy() wrapped with model + ai_inference spans, mirroring the
+        Orchestrator + BaseTaskService pattern used by Triton-backed services.
+        The caller (route) owns the outer request span.
+        """
+        with traced_span("model") as model_attrs:
+            model_attrs["task_type"] = "LLM"
+            model_attrs["model_name"] = payload.get("model", "unknown") if isinstance(payload, dict) else "unknown"
+            model_attrs["model_version"] = "unknown"
+            model_attrs.update(get_context_attributes())
+
+            async with traced_inference(payload, "LLM", logger) as infer_attrs:
+                status_code, body = await self.proxy(path=path, payload=payload)
+
+                if isinstance(body, dict):
+                    usage = body.get("usage") or {}
+                    infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
+                    infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
+                    infer_attrs["output_type"] = "text"
+
+        return status_code, body
 
     async def proxy(self, path: str, payload: Any) -> Tuple[int, Any]:
         """

@@ -97,7 +97,7 @@ class InferenceEndPoint(BaseModel):
 
     endpoint_schema: Optional[InferenceSchemaSpec] = Field(None, alias="schema")
     call_back_url: Optional[str] = None
-    adapter_config: Optional[Dict[str, Any]] = None
+    adapter_config: Optional[Dict[str, Any]] = Field(None, alias="adapterConfig")
 
 
 # ── Submitter / team ──

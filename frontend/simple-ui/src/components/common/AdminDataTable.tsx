@@ -298,11 +298,7 @@ export default function AdminDataTable<T>({
   );
 
   const displayItems =
-    paginate === "client"
-      ? clientTable.paginatedItems
-      : paginate === "server"
-        ? items
-        : items;
+    paginate === "client" ? clientTable.paginatedItems : items;
 
   const pagination =
     paginate === "client"
@@ -457,7 +453,7 @@ export default function AdminDataTable<T>({
                       key={getRowKey(row)}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}
                       cursor={onRowClick ? "pointer" : undefined}
-                      _hover={onRowClick ? { bg: tableRowHoverBg } : { bg: tableRowHoverBg }}
+                      _hover={{ bg: tableRowHoverBg }}
                       transition="background 0.15s"
                     >
                       {columns.map((col) => (

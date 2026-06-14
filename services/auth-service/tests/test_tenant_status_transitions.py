@@ -16,7 +16,6 @@ from app.services.tenant_lifecycle import (
 from app.services.tenant_service import (
     TenantService,
     _assert_tenant_active_for_user_deactivation,
-    _payload_touches_user_access,
 )
 
 
@@ -93,26 +92,15 @@ class TestSyncTenantUsersForStatus:
 
 
 class TestTenantUserStatusPayload:
-    def test_payload_touches_user_access(self) -> None:
-        assert _payload_touches_user_access({"is_active": False}) is True
-        assert _payload_touches_user_access({"is_tenant_active": True}) is True
-        assert _payload_touches_user_access({"updated_by": uuid4()}) is False
-
     def test_deactivate_user_requires_active_tenant(self) -> None:
         tenant = Tenant(id=1, status=TenantStatus.SUSPENDED)
         with pytest.raises(ValidationError) as exc_info:
             _assert_tenant_active_for_user_deactivation(tenant, {"is_active": False})
         assert exc_info.value.code == "TENANT_NOT_ACTIVE"
 
-    def test_revoke_tenant_access_only_skips_tenant_active_check(self) -> None:
+    def test_activate_user_skips_tenant_active_check(self) -> None:
         tenant = Tenant(id=1, status=TenantStatus.SUSPENDED)
-        _assert_tenant_active_for_user_deactivation(
-            tenant, {"is_active": True, "is_tenant_active": False}
-        )
-
-    def test_reactivate_tenant_access_only_skips_tenant_active_check(self) -> None:
-        tenant = Tenant(id=1, status=TenantStatus.SUSPENDED)
-        _assert_tenant_active_for_user_deactivation(tenant, {"is_tenant_active": True})
+        _assert_tenant_active_for_user_deactivation(tenant, {"is_active": True})
 
 
 def _status_body(status: TenantStatus) -> MagicMock:
@@ -150,8 +138,8 @@ class TestUpdateTenantStatusAuthorization:
         svc = _tenant_service_with_mocks()
         tenant_admin = User(
             id=uuid4(),
-            email="admin@example.com",
-            username="tenant_admin",
+            email="test-tenant-admin@example.invalid",
+            username=uuid4().hex[:12],
             tenant_id=1,
         )
         svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
@@ -177,15 +165,15 @@ class TestUpdateTenantStatusAuthorization:
         svc = _tenant_service_with_mocks()
         system_admin = User(
             id=uuid4(),
-            email="sys@example.com",
-            username="sys_admin",
+            email="test-system-admin@example.invalid",
+            username=uuid4().hex[:12],
             tenant_id=1,
         )
         tenant = Tenant(
             id=1,
             name="Acme",
             organisation="Acme",
-            email="contact@acme.com",
+            email="test-contact@example.invalid",
             status=TenantStatus.ACTIVE,
         )
         svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
@@ -208,8 +196,8 @@ class TestUpdateTenantStatusAuthorization:
         svc = _tenant_service_with_mocks()
         tenant_admin = User(
             id=uuid4(),
-            email="admin@example.com",
-            username="tenant_admin",
+            email="test-tenant-admin@example.invalid",
+            username=uuid4().hex[:12],
             tenant_id=1,
         )
         svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])

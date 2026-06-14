@@ -37,7 +37,7 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 
    ```bash
    git clone <repository-url>
-   cd Ai4V-C/frontend/simple-ui
+   cd ai4i-core/frontend/simple-ui
    ```
 
 2. **Install dependencies**

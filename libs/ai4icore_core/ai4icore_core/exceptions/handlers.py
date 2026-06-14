@@ -52,7 +52,8 @@ def _strip_status_prefix(message: str) -> str:
     """Remove leading HTTP status codes like ``403: `` from error messages."""
     if not isinstance(message, str):
         return str(message)
-    m = re.match(r"^\s*(\d{3})\s*:\s*(.+)$", message)
+    # {0,5} allows only spaces (not tabs/newlines) — intentional for HTTP status strings
+    m = re.match(r"^ {0,5}(\d{3}) {0,5}: {0,5}(.+)$", message)
     return m.group(2) if m else message
 
 

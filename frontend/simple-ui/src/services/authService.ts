@@ -857,7 +857,7 @@ class AuthService {
   public getLoginTimestamp(): number | null {
     if (typeof window === 'undefined') return null;
     const timestampStr = sessionStorage.getItem('login_timestamp');
-    return timestampStr ? parseInt(timestampStr, 10) : null;
+    return timestampStr ? Number.parseInt(timestampStr, 10) : null;
   }
 
   /**
