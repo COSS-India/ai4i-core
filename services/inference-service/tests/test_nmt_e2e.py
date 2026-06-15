@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 MOCK_ADAPTER_CONFIG = {
     "version": "1.0",
     "model_version": "1",
+    "call_mode": "per_item",
     "inputs": [
         {
             "tensor": "INPUT_TEXT",
@@ -160,7 +161,7 @@ async def test_multi_input_pipeline():
     ]
     call_count = 0
 
-    async def mock_post_json(url, body, headers=None):
+    async def mock_post_json(_self, url, body, headers=None):
         nonlocal call_count
         result = triton_responses[call_count]
         call_count += 1

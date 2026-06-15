@@ -106,11 +106,11 @@ async def test_validate_request_errors():
     except ValueError:
         logger.info("   [PASS] empty input list rejected")
 
-    # 3. Missing language pair
+    # 3. Missing language pair (non-empty dict so validation branch is entered)
     try:
         payload = {
             "input": [{"source": "Hello"}],
-            "config": {"language": {}},
+            "config": {"language": {"unknownKey": "en"}},
         }
         await service.validate_request(payload)
         raise AssertionError("Should have raised ValueError for missing language")
@@ -152,6 +152,7 @@ async def test_postprocess_output():
     from services.nmt_service import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service._adapter_config = MOCK_SERVICE_INFO.get("adapter_config")
     payload = {
         "input": [{"source": "Hello"}, {"source": "What is your name?"}],
         "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},

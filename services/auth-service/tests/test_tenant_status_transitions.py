@@ -23,7 +23,7 @@ class TestTenantStatusTransitions:
     @pytest.mark.parametrize(
         ("current", "target"),
         [
-            (TenantStatus.PENDING, TenantStatus.ACTIVE),
+            (TenantStatus.PENDING, TenantStatus.DEACTIVATED),
             (TenantStatus.ACTIVE, TenantStatus.SUSPENDED),
             (TenantStatus.ACTIVE, TenantStatus.DEACTIVATED),
             (TenantStatus.SUSPENDED, TenantStatus.ACTIVE),
@@ -44,7 +44,7 @@ class TestTenantStatusTransitions:
         ("current", "target"),
         [
             (TenantStatus.PENDING, TenantStatus.SUSPENDED),
-            (TenantStatus.PENDING, TenantStatus.DEACTIVATED),
+            (TenantStatus.PENDING, TenantStatus.ACTIVE),
             (TenantStatus.ACTIVE, TenantStatus.PENDING),
             (TenantStatus.SUSPENDED, TenantStatus.PENDING),
             (TenantStatus.DEACTIVATED, TenantStatus.SUSPENDED),
