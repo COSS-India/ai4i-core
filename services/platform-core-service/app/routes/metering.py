@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
 
 from app.dependencies.services import get_prometheus_client
@@ -18,62 +18,79 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/metering", tags=["Metering"])
 
 
+def _check_time_range(v: Optional[str]) -> Optional[str]:
+    if v and v not in TIME_RANGES:
+        raise ValueError(f"Invalid time_range '{v}'. Allowed: {list(TIME_RANGES)}")
+    return v
+
+
 class ActiveTenantsFilter(BaseModel):
     time_range: Optional[str] = None
 
     @field_validator("time_range")
     @classmethod
-    def _check_time_range(cls, v):
-        if v and v not in TIME_RANGES:
-            raise ValueError(f"Invalid time_range '{v}'. Allowed: {list(TIME_RANGES)}")
+    def validate_time_range(cls, v):
+        return _check_time_range(v)
+
+
+class RequestTotalFilter(BaseModel):
+    tenant: Optional[str] = None
+    service_id: Optional[str] = None
+    inference_only: bool = True
+    time_range: Optional[str] = None
+
+    @field_validator("time_range")
+    @classmethod
+    def validate_time_range(cls, v):
+        return _check_time_range(v)
+
+
+class TopInferenceServicesFilter(BaseModel):
+    limit: int = 10
+    tenant: Optional[str] = None
+    time_range: Optional[str] = None
+
+    @field_validator("limit")
+    @classmethod
+    def validate_limit(cls, v):
+        if not (1 <= v <= 50):
+            raise ValueError("limit must be between 1 and 50")
         return v
 
-
-def _validate_time_range(
-    time_range: Optional[str] = Query(
-        None,
-        description="Time window: 1h | 24h | 7d | 30d | all (default: all)",
-    )
-) -> Optional[str]:
-    if time_range and time_range not in TIME_RANGES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid time_range '{time_range}'. Allowed: {list(TIME_RANGES)}",
-        )
-    return time_range
+    @field_validator("time_range")
+    @classmethod
+    def validate_time_range(cls, v):
+        return _check_time_range(v)
 
 
-@router.get("/requesttotal")
+@router.post("/requesttotal")
 async def get_request_total(
-    tenant: Optional[str] = Query(None, description="Filter by tenant label"),
-    service_id: Optional[str] = Query(None, description="Filter by service_id label"),
-    inference_only: bool = Query(True, description="Count only inference endpoints (POST .*inference.*)"),
-    time_range: Optional[str] = Depends(_validate_time_range),
+    body: RequestTotalFilter,
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return total inference request count, optionally filtered by tenant/service and rolling time window."""
     selectors = []
-    if inference_only:
+    if body.inference_only:
         selectors.append(f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"')
         selectors.append('method="POST"')
-    if tenant:
-        selectors.append(f'tenant="{tenant}"')
-    if service_id:
-        selectors.append(f'service_id="{service_id}"')
+    if body.tenant:
+        selectors.append(f'tenant="{body.tenant}"')
+    if body.service_id:
+        selectors.append(f'service_id="{body.service_id}"')
 
     label_str = "{" + ",".join(selectors) + "}" if selectors else ""
     metric = f"telemetry_obsv_requests_total{label_str}"
-    promql = f"sum({apply_time_range(metric, time_range)})"
+    promql = f"sum({apply_time_range(metric, body.time_range)})"
 
     total = await client.scalar(promql)
 
     return {
         "total_requests": int(total),
         "filters": {
-            "inference_only": inference_only,
-            "tenant": tenant,
-            "service_id": service_id,
-            "time_range": time_range or "all",
+            "inference_only": body.inference_only,
+            "tenant": body.tenant,
+            "service_id": body.service_id,
+            "time_range": body.time_range or "all",
         },
         "promql": promql,
     }
@@ -118,11 +135,9 @@ async def get_active_tenants(
     }
 
 
-@router.get("/top-inference-services")
+@router.post("/top-inference-services")
 async def get_top_inference_services(
-    limit: int = Query(10, ge=1, le=50, description="Number of top services to return"),
-    tenant: Optional[str] = Query(None, description="Filter by tenant label"),
-    time_range: Optional[str] = Depends(_validate_time_range),
+    body: TopInferenceServicesFilter,
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return inference endpoints ranked by request count, optionally scoped to a rolling time window."""
@@ -130,12 +145,12 @@ async def get_top_inference_services(
         f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
         'method="POST"',
     ]
-    if tenant:
-        selectors.append(f'tenant="{tenant}"')
+    if body.tenant:
+        selectors.append(f'tenant="{body.tenant}"')
 
     label_str = "{" + ",".join(selectors) + "}"
     metric = f"telemetry_obsv_requests_total{label_str}"
-    promql = f"topk({limit}, sum by(endpoint) ({apply_time_range(metric, time_range)}))"
+    promql = f"topk({body.limit}, sum by(endpoint) ({apply_time_range(metric, body.time_range)}))"
 
     results = await client.query(promql)
 
@@ -154,6 +169,6 @@ async def get_top_inference_services(
     return {
         "services": services,
         "grand_total": grand_total,
-        "filters": {"tenant": tenant, "limit": limit, "time_range": time_range or "all"},
+        "filters": {"tenant": body.tenant, "limit": body.limit, "time_range": body.time_range or "all"},
         "promql": promql,
     }
