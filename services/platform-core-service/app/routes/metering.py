@@ -45,6 +45,15 @@ class RequestTotalFilter(BaseModel):
         return _check_time_range(v)
 
 
+class AvgRequestsPerTenantFilter(BaseModel):
+    time_range: Optional[str] = None
+
+    @field_validator("time_range")
+    @classmethod
+    def validate_time_range(cls, v):
+        return _check_time_range(v)
+
+
 class TopInferenceServicesFilter(BaseModel):
     limit: int = 10
     tenant: Optional[str] = None
@@ -130,6 +139,29 @@ async def get_active_tenants(
     return {
         "active_tenants": tenants,
         "count": len(tenants),
+        "filters": {"time_range": body.time_range or "all"},
+        "promql": promql,
+    }
+
+
+@router.post("/avg-requests-per-tenant")
+async def get_avg_requests_per_tenant(
+    body: AvgRequestsPerTenantFilter,
+    client: PrometheusClient = Depends(get_prometheus_client),
+):
+    """Return average inference requests per tenant over the given time window."""
+    selectors = [
+        f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
+        'method="POST"',
+    ]
+    metric = "telemetry_obsv_requests_total{" + ",".join(selectors) + "}"
+    windowed = apply_time_range(metric, body.time_range)
+    promql = f"avg(sum by(tenant) ({windowed}))"
+
+    avg = await client.scalar(promql)
+
+    return {
+        "avg_requests_per_tenant": round(float(avg), 2),
         "filters": {"time_range": body.time_range or "all"},
         "promql": promql,
     }
