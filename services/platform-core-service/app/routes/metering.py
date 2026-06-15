@@ -1,4 +1,5 @@
 """Prometheus metrics query endpoints."""
+import asyncio
 import logging
 from typing import Optional
 
@@ -8,9 +9,10 @@ from pydantic import BaseModel, field_validator
 from app.dependencies.services import get_prometheus_client
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
-    INFERENCE_ENDPOINT_REGEX,
     TIME_RANGES,
     apply_time_range,
+    build_base_selectors,
+    sum_over_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,16 +97,7 @@ async def get_request_total(
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return total inference request count, optionally filtered by tenant/service and rolling time window."""
-    selectors = []
-    if body.inference_only:
-        selectors.append(f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"')
-        selectors.append('method="POST"')
-    if body.tenant:
-        selectors.append(f'tenant="{body.tenant}"')
-    if body.service_id:
-        selectors.append(f'service_id="{body.service_id}"')
-
-    label_str = "{" + ",".join(selectors) + "}" if selectors else ""
+    label_str = build_base_selectors(body.inference_only, body.tenant, body.service_id)
     metric = f"telemetry_obsv_requests_total{label_str}"
     promql = f"sum({apply_time_range(metric, body.time_range)})"
 
@@ -128,11 +121,8 @@ async def get_active_tenants(
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return tenants that made at least one inference request in the given time window."""
-    selectors = [
-        f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
-        'method="POST"',
-    ]
-    metric = "telemetry_obsv_requests_total{" + ",".join(selectors) + "}"
+    label_str = build_base_selectors(inference_only=True)
+    metric = f"telemetry_obsv_requests_total{label_str}"
     window = body.time_range
     if window and window != "all":
         windowed = apply_time_range(metric, window)
@@ -167,13 +157,9 @@ async def get_avg_requests_per_tenant(
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return average inference requests per tenant over the given time window."""
-    selectors = [
-        f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
-        'method="POST"',
-    ]
-    metric = "telemetry_obsv_requests_total{" + ",".join(selectors) + "}"
-    windowed = apply_time_range(metric, body.time_range)
-    promql = f"avg(sum by(tenant) ({windowed}))"
+    label_str = build_base_selectors(inference_only=True)
+    metric = f"telemetry_obsv_requests_total{label_str}"
+    promql = f"avg(sum by(tenant) ({apply_time_range(metric, body.time_range)}))"
 
     avg = await client.scalar(promql)
 
@@ -190,14 +176,7 @@ async def get_top_inference_services(
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return inference endpoints ranked by request count, optionally scoped to a rolling time window."""
-    selectors = [
-        f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
-        'method="POST"',
-    ]
-    if body.tenant:
-        selectors.append(f'tenant="{body.tenant}"')
-
-    label_str = "{" + ",".join(selectors) + "}"
+    label_str = build_base_selectors(inference_only=True, tenant=body.tenant)
     metric = f"telemetry_obsv_requests_total{label_str}"
     promql = f"topk({body.limit}, sum by(endpoint) ({apply_time_range(metric, body.time_range)}))"
 
@@ -229,11 +208,8 @@ async def get_usage_concentration(
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
     """Return request share for the top N tenants and the aggregated remainder, for the given time window."""
-    selectors = [
-        f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
-        'method="POST"',
-    ]
-    metric = "telemetry_obsv_requests_total{" + ",".join(selectors) + "}"
+    label_str = build_base_selectors(inference_only=True)
+    metric = f"telemetry_obsv_requests_total{label_str}"
     windowed = apply_time_range(metric, body.time_range)
     window = TIME_RANGES.get(body.time_range or "all")
 
@@ -289,4 +265,68 @@ async def get_usage_concentration(
         "grand_total": grand_total,
         "filters": {"limit": body.limit, "time_range": body.time_range or "all"},
         "promql": promql,
+    }
+
+
+@router.post("/request-volume-health")
+async def get_request_volume_health(
+    body: RequestTotalFilter,
+    client: PrometheusClient = Depends(get_prometheus_client),
+):
+    """Return total, successful, and failed request counts with rates for the selected time window.
+
+    Successful = status_code 2xx; Failed = status_code 4xx/5xx.
+    When a time_range is set, also returns percentage change vs the previous equivalent period.
+    """
+    base_label_str = build_base_selectors(body.inference_only, body.tenant, body.service_id)
+    success_label_str = build_base_selectors(
+        body.inference_only, body.tenant, body.service_id, extra=['status_code=~"2.."']
+    )
+    failed_label_str = build_base_selectors(
+        body.inference_only, body.tenant, body.service_id, extra=['status_code=~"[45].."']
+    )
+
+    total_metric = f"telemetry_obsv_requests_total{base_label_str}"
+    success_metric = f"telemetry_obsv_requests_total{success_label_str}"
+    failed_metric = f"telemetry_obsv_requests_total{failed_label_str}"
+
+    total_promql = sum_over_window(total_metric, body.time_range)
+    success_promql = sum_over_window(success_metric, body.time_range)
+    failed_promql = sum_over_window(failed_metric, body.time_range)
+
+    total, success, failed = await asyncio.gather(
+        client.scalar(total_promql),
+        client.scalar(success_promql),
+        client.scalar(failed_promql),
+    )
+    total, success, failed = round(total), round(success), round(failed)
+
+    # Previous-period trend: only available when a rolling window is set
+    vs_previous_pct = None
+    window = TIME_RANGES.get(body.time_range or "all")
+    if window:
+        prev_promql = f"sum(increase({total_metric}[{window}] offset {window}))"
+        prev_total = round(await client.scalar(prev_promql))
+        if prev_total > 0:
+            vs_previous_pct = round((total - prev_total) / prev_total * 100, 1)
+
+    return {
+        "total_requests": {
+            "count": total,
+            "vs_previous_pct": vs_previous_pct,
+        },
+        "successful_requests": {
+            "count": success,
+            "success_rate_pct": round(success / total * 100, 2) if total else 0.0,
+        },
+        "failed_requests": {
+            "count": failed,
+            "failure_rate_pct": round(failed / total * 100, 2) if total else 0.0,
+        },
+        "filters": {
+            "inference_only": body.inference_only,
+            "tenant": body.tenant,
+            "service_id": body.service_id,
+            "time_range": body.time_range or "all",
+        },
     }
