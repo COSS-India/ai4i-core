@@ -51,15 +51,7 @@ async def get_request_total(
     time_range: Optional[str] = Depends(_validate_time_range),
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
-    """Return total request count from Prometheus.
-
-    Use `time_range` to filter by a rolling window:
-    - `1h`  → requests in the last 1 hour
-    - `24h` → requests in the last 24 hours
-    - `7d`  → requests in the last 7 days
-    - `30d` → requests in the last 30 days
-    - `all` → cumulative total since service started (default)
-    """
+    """Return total inference request count, optionally filtered by tenant/service and rolling time window."""
     selectors = []
     if inference_only:
         selectors.append(f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"')
@@ -101,11 +93,7 @@ async def get_active_tenants(
     window = body.time_range
     if window and window != "all":
         windowed = apply_time_range(metric, window)
-        # increase() needs ≥2 scrape points — brand-new series (first scrape within
-        # the window) return no result and get missed. The OR clause rescues them:
-        # include tenants whose counter exists now but had NO data before the window
-        # (counter value was 0 or absent at offset). This avoids the original bug of
-        # catching stale tenants whose counter simply had a scraping gap at offset.
+        # OR clause rescues brand-new series missed by increase() (no prior scrape point at offset)
         promql = (
             f"sum by(tenant) ({windowed}) > 0"
             f" or (sum by(tenant) ({metric}) unless (sum by(tenant) ({metric} offset {window}) > 0))"
@@ -137,10 +125,7 @@ async def get_top_inference_services(
     time_range: Optional[str] = Depends(_validate_time_range),
     client: PrometheusClient = Depends(get_prometheus_client),
 ):
-    """Return inference endpoints ranked by total request count (most called first).
-
-    Use `time_range` to rank by activity within a rolling window instead of all-time.
-    """
+    """Return inference endpoints ranked by request count, optionally scoped to a rolling time window."""
     selectors = [
         f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
         'method="POST"',
