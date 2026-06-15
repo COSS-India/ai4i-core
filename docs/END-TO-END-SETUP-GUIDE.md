@@ -129,6 +129,16 @@ IndicTrans2 model weights are **gated**. Before building NMT:
    - [indictrans2-indic-indic-dist-320M](https://huggingface.co/ai4bharat/indictrans2-indic-indic-dist-320M)
 3. Create a **Read** token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (`hf_...`). **Keep it secret** — never commit it.
 
+   When creating the token, you will be asked to choose a **Token type**:
+
+   | Option | Select? |
+   |--------|---------|
+   | Fine-grained | No |
+   | **Read** | **Yes — choose this** |
+   | Write | No |
+
+   > **Note:** The token type **cannot be changed after token creation.** Make sure **Read** is selected before confirming.
+
 ### Pre-flight checklist
 
 Run this once; every line should succeed:
