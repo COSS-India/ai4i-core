@@ -98,6 +98,34 @@ SIGNAL_METRIC_LABEL_TO_KEY: Dict[str, str] = {
 # Legacy service-name suffix — stripped if callers still pass e.g. "nmt-service".
 SERVICE_SUFFIX = "-service"
 
+# ── Metrics proxy — time-range helpers ──────────────────────────────────────
+
+# Allowed time range values mapped to Prometheus duration strings.
+# None means no window — returns the cumulative counter value.
+TIME_RANGES: dict = {
+    "1h":  "1h",
+    "24h": "24h",
+    "7d":  "7d",
+    "30d": "30d",
+    "all": None,
+}
+
+# Regex that matches inference endpoints (POST only).
+INFERENCE_ENDPOINT_REGEX = r".*inference.*"
+
+
+def apply_time_range(metric_expr: str, time_range: str | None) -> str:
+    """Wrap metric_expr in increase(...[window]) when a time range is given.
+
+    increase() returns how much the counter grew over the window.
+    When time_range is None or 'all', returns the raw cumulative counter.
+    """
+    window = TIME_RANGES.get(time_range or "all")
+    if window:
+        return f"increase({metric_expr}[{window}])"
+    return metric_expr
+
+
 # ── Inference task → endpoint scoping ────────────────────────────────────────
 # Each inference task is exposed by inference-service at a dedicated route
 # ``/api/v1/<task>/inference`` (see services/inference-service/routes/inference.py).

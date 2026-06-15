@@ -17,7 +17,7 @@ from app.routes.pii import router as pii_router
 from app.routes.service import router as service_router
 from app.routes.pay_per_use import router as pay_per_use_router, billing_router
 from app.routes.telemetry import router as telemetry_router
-from app.routes.metrics import router as metrics_router
+from app.routes.metering import router as metering_router
 
 # ── Versioning ──
 versioning = APIVersioning(
@@ -38,7 +38,7 @@ v1_router.include_router(billing_router)
 v1_router.include_router(alert_router)
 v1_router.include_router(pii_router)
 v1_router.include_router(telemetry_router)
-v1_router.include_router(metrics_router)
+v1_router.include_router(metering_router)
 
 # ── Top-level router ──
 api_router = APIRouter()

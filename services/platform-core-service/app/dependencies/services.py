@@ -17,6 +17,7 @@ import redis.asyncio as aioredis
 from app.core.config import settings
 from app.core.database import get_auth_db_optional, get_db
 from app.core.redis import get_redis
+from app.utils.prometheus_client import PrometheusClient
 from app.repositories.alert_management.alert_definition_repository import (
     AlertDefinitionRepository,
 )
@@ -48,6 +49,17 @@ SyncService = _alert_pkg.SyncService
 # between the periodic background loop (started in lifespan) and the per-request
 # triggers fired after alert CRUD writes.
 _sync_service_singleton = SyncService()
+
+
+def get_prometheus_client() -> PrometheusClient:
+    """Return a configured PrometheusClient. Raises 503 if PROMETHEUS_URL is unset."""
+    from fastapi import HTTPException, status as http_status
+    if not settings.prometheus_url:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Prometheus is not configured (PROMETHEUS_URL is unset).",
+        )
+    return PrometheusClient(settings.prometheus_url, timeout=settings.prometheus_timeout)
 
 
 def get_sync_service() -> "SyncService":

@@ -8,14 +8,15 @@ logger = logging.getLogger(__name__)
 
 
 class PrometheusClient:
-    def __init__(self, prometheus_url: str):
+    def __init__(self, prometheus_url: str, timeout: float = 10.0):
         self.base_url = prometheus_url.rstrip("/")
+        self.timeout = timeout
 
     async def query(self, promql: str) -> list:
         """Execute an instant PromQL query and return the raw result vector."""
         url = f"{self.base_url}/api/v1/query"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.get(url, params={"query": promql})
                 resp.raise_for_status()
                 data = resp.json()

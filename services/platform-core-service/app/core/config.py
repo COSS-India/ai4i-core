@@ -68,6 +68,7 @@ class CoreSettings(BaseSettings):
     sync_interval: int = 60
     default_receiver_emails: Optional[str] = None
     prometheus_url: Optional[str] = None
+    prometheus_timeout: float = 10.0
     alertmanager_url: Optional[str] = None
     prometheus_application_alerts_path: Optional[str] = None
     prometheus_infrastructure_alerts_path: Optional[str] = None
