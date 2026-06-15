@@ -72,6 +72,23 @@ class TopInferenceServicesFilter(BaseModel):
         return _check_time_range(v)
 
 
+class UsageConcentrationFilter(BaseModel):
+    limit: int = 5
+    time_range: Optional[str] = None
+
+    @field_validator("limit")
+    @classmethod
+    def validate_limit(cls, v):
+        if not (1 <= v <= 50):
+            raise ValueError("limit must be between 1 and 50")
+        return v
+
+    @field_validator("time_range")
+    @classmethod
+    def validate_time_range(cls, v):
+        return _check_time_range(v)
+
+
 @router.post("/requesttotal")
 async def get_request_total(
     body: RequestTotalFilter,
@@ -202,5 +219,74 @@ async def get_top_inference_services(
         "services": services,
         "grand_total": grand_total,
         "filters": {"tenant": body.tenant, "limit": body.limit, "time_range": body.time_range or "all"},
+        "promql": promql,
+    }
+
+
+@router.post("/usage-concentration")
+async def get_usage_concentration(
+    body: UsageConcentrationFilter,
+    client: PrometheusClient = Depends(get_prometheus_client),
+):
+    """Return request share for the top N tenants and the aggregated remainder, for the given time window."""
+    selectors = [
+        f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"',
+        'method="POST"',
+    ]
+    metric = "telemetry_obsv_requests_total{" + ",".join(selectors) + "}"
+    windowed = apply_time_range(metric, body.time_range)
+    window = TIME_RANGES.get(body.time_range or "all")
+
+    if window:
+        promql = (
+            f"sum by(tenant) ({windowed}) > 0"
+            f" or (sum by(tenant) ({metric}) unless (sum by(tenant) ({metric} offset {window}) > 0))"
+        )
+    else:
+        promql = f"sum by(tenant) ({metric})"
+
+    results = await client.query(promql)
+
+    all_tenants = sorted(
+        [
+            {
+                "tenant": r["metric"].get("tenant", "unknown"),
+                "requests": max(1, round(float(r["value"][1]))),
+            }
+            for r in results
+            if float(r["value"][1]) > 0
+        ],
+        key=lambda t: t["requests"],
+        reverse=True,
+    )
+
+    grand_total = sum(t["requests"] for t in all_tenants)
+
+    top = all_tenants[: body.limit]
+    rest = all_tenants[body.limit :]
+
+    top_tenants = [
+        {
+            "rank": idx + 1,
+            "tenant": t["tenant"],
+            "requests": t["requests"],
+            "percentage": round(t["requests"] / grand_total * 100, 1) if grand_total else 0.0,
+        }
+        for idx, t in enumerate(top)
+    ]
+
+    others_requests = sum(t["requests"] for t in rest)
+    top_concentration = round(sum(t["percentage"] for t in top_tenants), 1)
+
+    return {
+        "top_tenants": top_tenants,
+        "others": {
+            "count": len(rest),
+            "requests": others_requests,
+            "percentage": round(others_requests / grand_total * 100, 1) if grand_total else 0.0,
+        },
+        "top_concentration_percentage": top_concentration,
+        "grand_total": grand_total,
+        "filters": {"limit": body.limit, "time_range": body.time_range or "all"},
         "promql": promql,
     }
