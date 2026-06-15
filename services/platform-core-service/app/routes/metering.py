@@ -7,7 +7,7 @@ from pydantic import BaseModel, field_validator
 
 from app.dependencies.services import get_prometheus_client
 from app.utils.prometheus_client import PrometheusClient
-from app.utils.promql_builder import (
+from app.utils.metering_promql_builder import (
     INFERENCE_ENDPOINT_REGEX,
     TIME_RANGES,
     apply_time_range,
