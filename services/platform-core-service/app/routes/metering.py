@@ -100,13 +100,15 @@ async def get_active_tenants(
     metric = "telemetry_obsv_requests_total{" + ",".join(selectors) + "}"
     window = body.time_range
     if window and window != "all":
-        # increase() can return 0 for a brand-new counter with only 1 scrape point.
-        # The OR clause catches tenants whose counter exists NOW but had no data
-        # at the start of the window (i.e., truly new tenants in this window).
         windowed = apply_time_range(metric, window)
+        # increase() needs ≥2 scrape points — brand-new series (first scrape within
+        # the window) return no result and get missed. The OR clause rescues them:
+        # include tenants whose counter exists now but had NO data before the window
+        # (counter value was 0 or absent at offset). This avoids the original bug of
+        # catching stale tenants whose counter simply had a scraping gap at offset.
         promql = (
-            f"sum by(tenant) (clamp_min({windowed}, 0)) > 0"
-            f" or (sum by(tenant) ({metric}) unless sum by(tenant) ({metric} offset {window}))"
+            f"sum by(tenant) ({windowed}) > 0"
+            f" or (sum by(tenant) ({metric}) unless (sum by(tenant) ({metric} offset {window}) > 0))"
         )
     else:
         promql = f"sum by(tenant) ({metric}) > 0"
