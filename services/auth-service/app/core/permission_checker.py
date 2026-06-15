@@ -56,7 +56,7 @@ class PermissionChecker:
         self._template_index_fp = fp
         return index
 
-    async def get_required_permission(self, method: str, path: str) -> Optional[int]:
+    def get_required_permission(self, method: str, path: str) -> Optional[int]:
         """
         Look up the required permission for an endpoint.
         Supports exact match and path templates (e.g., /api-keys/{key_id}).

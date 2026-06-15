@@ -34,7 +34,7 @@ _CHAT_EXAMPLE = {
 _orchestrator = Orchestrator()
 
 
-async def get_orchestrator() -> Orchestrator:
+def get_orchestrator() -> Orchestrator:
     """
     Dependency for Orchestrator instance.
     Can be overridden in tests.

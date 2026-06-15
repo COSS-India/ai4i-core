@@ -20,7 +20,7 @@ os.environ["JWT_ISSUER"] = "auth-service"
 @pytest.fixture(scope="module")
 async def setup_keys():
     from app.core.security import key_manager
-    await key_manager.initialize()
+    key_manager.initialize()
     yield
     shutil.rmtree(_test_key_dir, ignore_errors=True)
 
