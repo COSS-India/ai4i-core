@@ -87,7 +87,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
 
             // First, try JSON parsing (replace single quotes with double quotes)
             try {
-              const jsonLike = rawMessage.replace(/'/g, '"');
+              const jsonLike = rawMessage.replaceAll(/'/g, '"');
               const parsed = JSON.parse(jsonLike);
               if (parsed && typeof parsed === 'object') {
                 // If it has a 'message' property, use that
@@ -169,7 +169,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           if (errorCode === 'LANGUAGE_PAIR_NOT_SUPPORTED') {
             const source = data.detail.sourceLanguage || data.detail.source || 'source';
             const target = data.detail.targetLanguage || data.detail.target || 'target';
-            errorMessage = data.detail.message || nmtError.description.replace('{source}', source).replace('{target}', target);
+            errorMessage = data.detail.message || nmtError.description.replaceAll('{source}', source).replaceAll('{target}', target);
           } else {
             errorMessage = data.detail.message || nmtError.description;
           }
@@ -191,7 +191,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           if (errorCode === 'S2S_LANGUAGE_PAIR_NOT_SUPPORTED') {
             const source = data.detail.sourceLanguage || data.detail.source || 'source';
             const target = data.detail.targetLanguage || data.detail.target || 'target';
-            errorMessage = data.detail.message || pipelineError.description.replace('{source}', source).replace('{target}', target);
+            errorMessage = data.detail.message || pipelineError.description.replaceAll('{source}', source).replaceAll('{target}', target);
           } else {
             errorMessage = data.detail.message || pipelineError.description;
           }
@@ -366,7 +366,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           if (errorCode === 'LANGUAGE_PAIR_NOT_SUPPORTED') {
             const source = data.detail.sourceLanguage || data.detail.source || 'source';
             const target = data.detail.targetLanguage || data.detail.target || 'target';
-            errorMessage = data.detail.message || nmtError.description.replace('{source}', source).replace('{target}', target);
+            errorMessage = data.detail.message || nmtError.description.replaceAll('{source}', source).replaceAll('{target}', target);
           } else {
             errorMessage = data.detail.message || nmtError.description;
           }
@@ -386,7 +386,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           if (errorCode === 'S2S_LANGUAGE_PAIR_NOT_SUPPORTED') {
             const source = data.detail.sourceLanguage || data.detail.source || 'source';
             const target = data.detail.targetLanguage || data.detail.target || 'target';
-            errorMessage = data.detail.message || pipelineError.description.replace('{source}', source).replace('{target}', target);
+            errorMessage = data.detail.message || pipelineError.description.replaceAll('{source}', source).replaceAll('{target}', target);
           } else {
             errorMessage = data.detail.message || pipelineError.description;
           }
