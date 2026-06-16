@@ -39,17 +39,77 @@ class MeteringService:
         time_range: Optional[str],
     ) -> dict:
         label_str = build_base_selectors(inference_only, tenant, service_id)
-        promql = f"sum({apply_time_range(f'{_METRIC}{label_str}', time_range)})"
-        total = int(await self._client.scalar(promql))
+        success_label_str = build_base_selectors(
+            inference_only, tenant, service_id, extra=['status_code=~"2.."']
+        )
+        base = f"{_METRIC}{label_str}"
+        success_base = f"{_METRIC}{success_label_str}"
+        window = TIME_RANGES.get(time_range or "all")
+        rate_window = window or "5m"
+
+        current_queries = [
+            self._client.scalar(sum_over_window(base, time_range)),          # 0: total
+            self._client.scalar(sum_over_window(success_base, time_range)),  # 1: success
+            self._client.scalar(f"sum(rate({base}[{rate_window}]))"),        # 2: avg rps
+        ]
+        prev_queries = (
+            [
+                self._client.scalar(f"sum(increase({base}[{window}] offset {window}))"),          # 3: prev total
+                self._client.scalar(f"sum(increase({success_base}[{window}] offset {window}))"),  # 4: prev success
+                self._client.scalar(f"sum(rate({base}[{window}] offset {window}))"),              # 5: prev avg rps
+            ]
+            if window
+            else []
+        )
+
+        raw = await asyncio.gather(*current_queries, *prev_queries, return_exceptions=True)
+
+        def _float(r, default: float = 0.0) -> float:
+            return float(r) if not isinstance(r, Exception) else default
+
+        total_v = round(_float(raw[0]))
+        success_v = round(_float(raw[1]))
+        avg_rps_v = round(_float(raw[2]), 2)
+        success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
+
+        total_vs_prev: Optional[float] = None
+        success_rate_vs_prev: Optional[float] = None
+        avg_rps_vs_prev: Optional[float] = None
+
+        if window:
+            prev_total = max(0, round(_float(raw[3])))
+            prev_success = max(0, round(_float(raw[4])))
+            prev_avg_rps = _float(raw[5])
+
+            if prev_total > 0:
+                total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
+                prev_success_rate = round(prev_success / prev_total * 100, 2)
+                # pp change so that "97.35 → 97.45" reports as +0.1
+                success_rate_vs_prev = round(success_rate - prev_success_rate, 2)
+
+            if prev_avg_rps > 0:
+                avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
+
         return {
-            "total_requests": total,
+            "total_requests": {
+                "count": total_v,
+                "formatted": self._format_count(total_v),
+                "vs_previous_pct": total_vs_prev,
+            },
+            "success_rate": {
+                "rate_pct": success_rate,
+                "vs_previous_pct": success_rate_vs_prev,
+            },
+            "avg_rps": {
+                "value": avg_rps_v,
+                "vs_previous_pct": avg_rps_vs_prev,
+            },
             "filters": {
                 "inference_only": inference_only,
                 "tenant": tenant,
                 "service_id": service_id,
                 "time_range": time_range or "all",
             },
-            "promql": promql,
         }
 
     async def active_tenants(self, time_range: Optional[str]) -> dict:
