@@ -84,7 +84,7 @@ export function normalizeTenantUserRow(user: TenantUserView): TenantUserView {
   };
 }
 
-/** Normalize tenant user rows from GET /tenants/{id}/users. */
+/** Normalize tenant user rows from GET /auth/tenants/{id}/users. */
 export function normalizeTenantUserRoles(users: TenantUserView[]): TenantUserView[] {
   return users.map(normalizeTenantUserRow);
 }
