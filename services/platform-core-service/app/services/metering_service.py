@@ -437,6 +437,78 @@ class MeteringService:
             },
         }
 
+    async def top_tenants_throughput(
+        self,
+        limit: int,
+        inference_only: bool,
+        time_range: Optional[str],
+    ) -> dict:
+        label_str = build_base_selectors(inference_only)
+        metric = f"{_METRIC}{label_str}"
+        window = TIME_RANGES.get(time_range or "all")
+
+        # Avg RPS per tenant over the selected window (5m fallback when window=None).
+        rate_window = window or "5m"
+        avg_q = f"topk({limit}, sum by(tenant) (rate({metric}[{rate_window}])))"
+        avg_results = await self._client.query(avg_q)
+
+        avg_by_tenant = {
+            r["metric"].get("tenant", "unknown"): round(float(r["value"][1]), 4)
+            for r in avg_results
+        }
+        top_tenants = list(avg_by_tenant)
+
+        # Peak RPS per tenant: one rate query per time bucket, pick per-tenant max.
+        peak_by_tenant: dict[str, float] = {t: 0.0 for t in top_tenants}
+        bucket_cfg = THROUGHPUT_BUCKET_CONFIG.get(time_range or "")
+        if bucket_cfg and window:
+            count = bucket_cfg["count"]
+            bw = bucket_cfg["bucket_window"]
+            unit = bucket_cfg["offset_unit"]
+            factor = bucket_cfg["offset_factor"]
+
+            def _bucket_q(i: int) -> str:
+                offset_steps = count - i
+                if offset_steps == 0:
+                    return f"sum by(tenant) (rate({metric}[{bw}]))"
+                return f"sum by(tenant) (rate({metric}[{bw}] offset {offset_steps * factor}{unit}))"
+
+            bucket_results = await asyncio.gather(
+                *[self._client.query(_bucket_q(i)) for i in range(1, count + 1)],
+                return_exceptions=True,
+            )
+            for result in bucket_results:
+                if isinstance(result, Exception):
+                    continue
+                for r in result:
+                    tenant = r["metric"].get("tenant", "unknown")
+                    if tenant in peak_by_tenant:
+                        v = float(r["value"][1])
+                        if v > peak_by_tenant[tenant]:
+                            peak_by_tenant[tenant] = v
+
+        tenants = sorted(
+            [
+                {
+                    "tenant": t,
+                    "avg_rps": avg_by_tenant[t],
+                    "peak_rps": round(peak_by_tenant[t], 3) if peak_by_tenant.get(t) else None,
+                }
+                for t in top_tenants
+            ],
+            key=lambda x: x["avg_rps"],
+            reverse=True,
+        )
+
+        return {
+            "tenants": tenants,
+            "filters": {
+                "limit": limit,
+                "inference_only": inference_only,
+                "time_range": time_range or "all",
+            },
+        }
+
     # ── private helpers ─────────────────────────────────────────────────────
 
     @staticmethod

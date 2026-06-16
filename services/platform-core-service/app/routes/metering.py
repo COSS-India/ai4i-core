@@ -75,6 +75,11 @@ class ThroughputFilter(_TimeRangeBase):
     inference_only: bool = True
 
 
+class TopTenantsThroughputFilter(_LimitMixin, _TimeRangeBase):
+    limit: int = 10
+    inference_only: bool = True
+
+
 # ── routes ──────────────────────────────────────────────────────────────────
 
 @router.post("/requesttotal")
@@ -147,3 +152,11 @@ async def get_throughput(
     svc: MeteringService = Depends(get_metering_service),
 ):
     return await svc.throughput(body.inference_only, body.tenant, body.service_id, body.time_range)
+
+
+@router.post("/top-tenants-throughput")
+async def get_top_tenants_throughput(
+    body: TopTenantsThroughputFilter,
+    svc: MeteringService = Depends(get_metering_service),
+):
+    return await svc.top_tenants_throughput(body.limit, body.inference_only, body.time_range)
