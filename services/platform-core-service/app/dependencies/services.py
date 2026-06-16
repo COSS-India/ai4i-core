@@ -62,6 +62,13 @@ def get_prometheus_client() -> PrometheusClient:
     return PrometheusClient(settings.prometheus_url, timeout=settings.prometheus_timeout)
 
 
+def get_metering_service(
+    client: PrometheusClient = Depends(get_prometheus_client),
+) -> "MeteringService":
+    from app.services.metering_service import MeteringService
+    return MeteringService(client)
+
+
 def get_sync_service() -> "SyncService":
     """Return the process-wide SyncService singleton."""
     return _sync_service_singleton
