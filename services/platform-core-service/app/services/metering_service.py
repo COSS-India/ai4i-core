@@ -509,6 +509,95 @@ class MeteringService:
             },
         }
 
+    async def usage_by_tenant_service(
+        self,
+        limit: int,
+        time_range: Optional[str],
+        services: Optional[list[str]],
+    ) -> dict:
+        """Heatmap matrix: top-N tenants × per-service request counts.
+
+        Uses a single sum by(tenant, endpoint) query with offset subtraction
+        (same approach as service_breakdown) to avoid increase() extrapolation errors.
+        """
+        active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
+
+        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}",method="POST"'
+        base_sel = "{" + _ep + "}"
+        metric = f"{_METRIC}{base_sel}"
+        window = TIME_RANGES.get(time_range or "all")
+
+        if window:
+            promql = (
+                f"sum by(tenant, endpoint) ({metric})"
+                f" - (sum by(tenant, endpoint) ({metric} offset {window})"
+                f" or sum by(tenant, endpoint) ({metric} * 0))"
+            )
+        else:
+            promql = f"sum by(tenant, endpoint) ({metric}) > 0"
+
+        results = await self._client.query(promql)
+
+        # Accumulate (tenant, task) → count
+        tenant_task: dict[str, dict[str, int]] = {}
+        for r in results:
+            ep = r["metric"].get("endpoint", "")
+            tenant_label = r["metric"].get("tenant", "unknown")
+            task = ENDPOINT_TO_TASK.get(ep)
+            if task is None:
+                parts = [p for p in ep.split("/") if p]
+                task = parts[2] if len(parts) >= 4 else None
+            if task not in active_services:
+                continue
+            v = max(0, round(float(r["value"][1])))
+            if v <= 0:
+                continue
+            bucket = tenant_task.setdefault(tenant_label, {})
+            bucket[task] = bucket.get(task, 0) + v
+
+        # Sort tenants by total descending, pick top N
+        ranked = sorted(
+            [(t, sum(tasks.values()), tasks) for t, tasks in tenant_task.items()],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        grand_total = sum(r[1] for r in ranked)
+        top = ranked[:limit]
+
+        rows = [
+            {
+                "rank": idx + 1,
+                "tenant": tenant_label,
+                "services": {
+                    svc: {
+                        "display_name": SERVICE_BREAKDOWN_CONFIG[svc]["display_name"],
+                        "requests": tasks.get(svc, 0),
+                        "formatted_requests": self._format_count(tasks.get(svc, 0)),
+                    }
+                    for svc in active_services
+                },
+                "total": total,
+                "formatted_total": self._format_count(total),
+            }
+            for idx, (tenant_label, total, tasks) in enumerate(top)
+        ]
+
+        return {
+            "tenants": rows,
+            "services": [
+                {"key": svc, "display_name": SERVICE_BREAKDOWN_CONFIG[svc]["display_name"]}
+                for svc in active_services
+            ],
+            "grand_total": grand_total,
+            "formatted_grand_total": self._format_count(grand_total),
+            "total_tenant_count": len(ranked),
+            "filters": {
+                "limit": limit,
+                "time_range": time_range or "all",
+                "services": active_services,
+            },
+        }
+
     # ── private helpers ─────────────────────────────────────────────────────
 
     @staticmethod

@@ -7,7 +7,7 @@ from pydantic import BaseModel, field_validator
 
 from app.dependencies.services import get_metering_service
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import TIME_RANGES
+from app.utils.metering_promql_builder import TIME_RANGES, SERVICE_BREAKDOWN_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,21 @@ class ThroughputFilter(_TimeRangeBase):
 class TopTenantsThroughputFilter(_LimitMixin, _TimeRangeBase):
     limit: int = 10
     inference_only: bool = True
+
+
+class UsageByTenantServiceFilter(_LimitMixin, _TimeRangeBase):
+    limit: int = 10
+    services: Optional[list[str]] = None
+
+    @field_validator("services")
+    @classmethod
+    def validate_services(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v:
+            valid = set(SERVICE_BREAKDOWN_CONFIG)
+            invalid = [s for s in v if s not in valid]
+            if invalid:
+                raise ValueError(f"Invalid services: {invalid}. Allowed: {sorted(valid)}")
+        return v
 
 
 # ── routes ──────────────────────────────────────────────────────────────────
@@ -160,3 +175,11 @@ async def get_top_tenants_throughput(
     svc: MeteringService = Depends(get_metering_service),
 ):
     return await svc.top_tenants_throughput(body.limit, body.inference_only, body.time_range)
+
+
+@router.post("/usage-by-tenant-service")
+async def get_usage_by_tenant_service(
+    body: UsageByTenantServiceFilter,
+    svc: MeteringService = Depends(get_metering_service),
+):
+    return await svc.usage_by_tenant_service(body.limit, body.time_range, body.services)
