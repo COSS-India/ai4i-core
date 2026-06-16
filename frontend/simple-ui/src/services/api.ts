@@ -217,8 +217,8 @@ apiClient.interceptors.request.use(
       }
     }
 
-    if (requiresJWT && !context.isAuthEndpoint) {
-      // All service endpoints use JWT Bearer token for authentication
+    if (requiresJWT && (!context.isAuthEndpoint || context.isMultiTenantEndpoint)) {
+      // Service endpoints use JWT Bearer; tenant routes live under /auth/tenants but still require JWT
       const jwtToken = getJwtToken();
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
