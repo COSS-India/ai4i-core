@@ -109,6 +109,10 @@ export interface AudioPlayerProps {
   audioSrc: string;
   downloadExtension?: string;
   showVisualization?: boolean;
+  /** Optional transcript shown as a captions track. */
+  captionText?: string;
+  captionDurationSeconds?: number;
+  captionLang?: string;
   onPlay?: () => void;
   onPause?: () => void;
   onEnded?: () => void;

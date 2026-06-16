@@ -27,6 +27,7 @@ import {
 import { useRouter } from 'next/router';
 import { ArrowBackIcon } from '@chakra-ui/icons';
 import ContentLayout from '../components/common/ContentLayout';
+import AccessibleAudio from '../components/common/AccessibleAudio';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
 import { base64ToAudioObjectUrl } from '../utils/helpers';
@@ -51,11 +52,11 @@ const PipelineBuilderPage: React.FC = () => {
   const [targetLanguage, setTargetLanguage] = useState('hi'); // Start with 'hi' (Hindi) which is TTS-supported
   const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu--tensorrt');
   const [ttsServiceId, setTtsServiceId] = useState('ai4bharat/indic-tts-coqui-indo-aryan-gpu');
-  
+
   // Input/Output
   const [inputText, setInputText] = useState('Hello, how are you today?');
   const [pipelineType, setPipelineType] = useState<'translation' | 'translation-tts'>('translation-tts');
-  
+
   // Results
   const [result, setResult] = useState<BuilderResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -131,10 +132,10 @@ const PipelineBuilderPage: React.FC = () => {
       }
 
       const response = await runPipelineInference(request);
-      
+
       // Handle different response formats based on pipeline type
       let displayResult: BuilderResult;
-      
+
       if (pipelineType === 'translation') {
         // Translation only
         const translationOutput = response.pipelineResponse?.[0]?.output?.[0];
@@ -147,7 +148,7 @@ const PipelineBuilderPage: React.FC = () => {
         // Translation → TTS
         const translationOutput = response.pipelineResponse?.[0]?.output?.[0];
         const ttsOutput = response.pipelineResponse?.[1];
-        
+
         // Handle audio from TTS response (use blob URL so CSP media-src allows playback)
         let audioContent = '';
         if (ttsOutput?.output && ttsOutput.output.length > 0) {
@@ -166,10 +167,10 @@ const PipelineBuilderPage: React.FC = () => {
           audio: audioUrl,
         };
       }
-      
+
       setResult(displayResult);
       setRawResponse(JSON.stringify(response, null, 2));
-      
+
       toast({
         title: 'Pipeline Completed',
         description: 'Pipeline executed successfully!',
@@ -372,10 +373,12 @@ const PipelineBuilderPage: React.FC = () => {
                           border="1px"
                           borderColor="green.200"
                         >
-                          <audio 
-                            controls 
-                            src={result.audio} 
+                          <AccessibleAudio
+                            controls
+                            src={result.audio}
                             style={{ width: '100%' }}
+                            captionText={result.targetText}
+                            captionLang={targetLanguage}
                           />
                         </Box>
                         <Text mt={2} fontSize="xs" color="gray.500">
@@ -422,4 +425,3 @@ const PipelineBuilderPage: React.FC = () => {
 };
 
 export default PipelineBuilderPage;
-
