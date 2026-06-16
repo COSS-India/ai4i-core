@@ -25,7 +25,7 @@ These come from the team's existing decisions and shape the whole design:
 ```bash
 git clone https://github.com/COSS-India/ai4i-core.git
 cd ai4i-core
-./scripts/dev/up frontend         # default profile is "frontend"; other profiles available
+./scripts/dev/up frontend         # "core" is the default (backend only); pass "frontend" to also get the UI
 ```
 
 When that command returns, the developer sees:
@@ -86,17 +86,17 @@ Notes on the layout:
 
 We mirror the docker-compose profile names so people who learn one mental model use it everywhere.
 
-| Profile (`./scripts/dev/up <name>`) | Docker (infra) | Native (apps) | Use when… |
-|---|---|---|---|
-| `minimal` | postgres, redis | auth, platform-core, inference | You're a backend dev, no UI needed |
-| `frontend` *(default)* | postgres, redis, nginx-gateway | auth, platform-core, inference, simple-ui | Everyday full-stack dev — **this is the new-contributor default** |
-| `observability` | minimal + prometheus, alertmanager, grafana, node-exporter | same as minimal | You're working on alerts / metrics dashboards |
-| `logging` | minimal + opensearch ×3, fluent-bit, kafka, zookeeper | same as minimal | You're working on the Logs Dashboard / trace ingestion |
-| `everything` | all of the above | all of the above | You want the kitchen sink |
+| Profile (`./scripts/dev/up <name>`) | Docker (infra) | Native (apps) | Observability / logging | Use when… |
+|---|---|---|---|---|
+| `core` *(default)* | postgres, redis | auth, platform-core, inference | Neither | You're a backend dev, no UI needed — **this is the default when no profile is given** |
+| `frontend` | postgres, redis, nginx-gateway | auth, platform-core, inference, simple-ui | **Neither — explicitly excluded** | Everyday full-stack dev. The UI (`simple-ui`) is brought up only for the inference services. |
+| `observability` | core + prometheus, alertmanager, grafana, node-exporter | same as core | Observability only | You're working on alerts / metrics dashboards |
+| `logging` | core + opensearch ×3, fluent-bit, kafka, zookeeper | same as core | Logging only | You're working on the Logs Dashboard / trace ingestion |
+| `all` | all of the above | all of the above | Both | You want the kitchen sink |
 
-Implementation note: a profile only adds to the previous one. Internally the orchestrator just translates a profile name into the right `docker compose --profile X --profile Y …` flags plus the set of native services to start. No duplicated logic.
+Implementation note: every profile builds on `core` (`observability`, `logging`, and `frontend` each add their own services on top of it; `all` is the union). Internally the orchestrator just translates a profile name into the right `docker compose --profile X --profile Y …` flags plus the set of native services to start. No duplicated logic. Because the layers are additive and every step is idempotent, profiles compose incrementally: after `./scripts/dev/up core` is already running, `./scripts/dev/up frontend` brings up **only** the remaining frontend services (`nginx-gateway` + `simple-ui`) and leaves the already-healthy core services untouched.
 
-When `logging` (or `everything`) is selected, `up` flips `KAFKA_ENABLED=true` in `services/inference-service/.env` before starting `inference-service`, then flips it back to `false` on `down` — so the inference-service trace exporter ships spans to Kafka while the logging stack is up, and silently degrades to stdout-only afterwards. (See the existing `KAFKA_ENABLED` plumbing in `services/inference-service/trace/setup.py`.)
+When `logging` (or `all`) is selected, `up` flips `KAFKA_ENABLED=true` in `services/inference-service/.env` before starting `inference-service`, then flips it back to `false` on `down` — so the inference-service trace exporter ships spans to Kafka while the logging stack is up, and silently degrades to stdout-only afterwards. (See the existing `KAFKA_ENABLED` plumbing in `services/inference-service/trace/setup.py`.)
 
 ## 6. What `./scripts/dev/up frontend` does, step by step
 
@@ -106,7 +106,7 @@ This is the contract. Every step prints one line and bails out loudly on failure
 2. **Check prerequisites** — docker (with `compose v2` subcommand), python3.11, node 18+, git. Print every missing one before exiting.
 3. **Ensure root `.env`** — if `.env` is missing, copy from `env.template` and pre-fill safe development defaults (`POSTGRES_USER=postgres`, `POSTGRES_PASSWORD=postgres`, `REDIS_PASSWORD=changeme`). **Never overwrite an existing `.env`.**
 4. **Generate service `.env` files** — call `scripts/setup-env.sh` (existing). Idempotent.
-5. **Bring up Docker infra** — `docker compose -f docker-compose-local.yml [--profile frontend …] up -d`. Wait for postgres + redis (and kafka + opensearch if in profile) to report `healthy` via `docker compose ps`. Hard cap of 90 seconds; on timeout, print last 50 lines of each unhealthy service's logs and exit.
+5. **Bring up Docker infra** — `docker compose -f docker-compose-local.yml [--profile frontend …] up -d --pull never`. `up` **never re-pulls images** — it uses whatever is already in the local image cache (pulling only happens via the explicit `./scripts/dev/up --pull` escape hatch). `docker compose up -d` is itself incremental: containers already running and healthy are left as-is, and only the services newly introduced by the selected profile are created. So running `up frontend` after `up core` starts just `nginx-gateway` and skips the already-up `postgres`/`redis`. Wait for postgres + redis (and kafka + opensearch if in profile) to report `healthy` via `docker compose ps`. Hard cap of 90 seconds; on timeout, print last 50 lines of each unhealthy service's logs and exit.
 6. **Create / update the shared `.venv`** —
    - Create `.venv` at the repo root if absent (`python3.11 -m venv .venv`).
    - `pip install -r services/auth-service/requirements.txt -r services/platform-core-service/requirements.txt -r services/inference-service/requirements.txt`. One pip invocation; pip's resolver picks a single version that satisfies all three lockfiles, and the shared deps (`fastapi`, `uvicorn`, `ai4icore-core`, `sqlalchemy`, `redis`, …) only get downloaded once. (`pip install` is itself idempotent — skips already-satisfied packages.)
@@ -118,7 +118,7 @@ This is the contract. Every step prints one line and bails out loudly on failure
    - `nohup python -m uvicorn …:app --host 0.0.0.0 --port <port> --reload > logs/<svc>.log 2>&1 &`
    - Write PID to `.run/<svc>.pid`.
    - Wait up to 30 s for `GET /health` (or the equivalent) to return 200; bail if it doesn't.
-9. **(profile = frontend or everything) Start simple-ui** — `npm install` (idempotent — uses `package-lock.json`), then `nohup npm run dev > logs/simple-ui.log 2>&1 &`, PID to `.run/simple-ui.pid`. Wait for `GET /` to return 200.
+9. **(profile = frontend or all) Start simple-ui** — skipped if `simple-ui` is already up (its `.run/simple-ui.pid` points at a live process), so re-running `up frontend` after `up core` only fills in this one missing piece. Otherwise: `npm install` (idempotent — uses `package-lock.json`), then `nohup npm run dev > logs/simple-ui.log 2>&1 &`, PID to `.run/simple-ui.pid`. Wait for `GET /` to return 200. No API key step is needed — the UI talks to the inference services directly.
 10. **Print the success banner** shown in § 3.
 
 If any step fails, the script:
@@ -144,8 +144,7 @@ Optional flag: `--prune` runs `docker compose down -v` to also wipe volumes. Hid
 | A backgrounded service crashes silently | `./scripts/dev/status` probes each port. The success banner from `up` also reminds about `logs/`. | No process supervisor needed for v1. If this hurts in practice, we add one later. |
 | Initial pip install is slow | **One shared `.venv` at the repo root**, populated by a single `pip install -r ... -r ... -r ...` invocation across all three services' `requirements.txt`. | Three separate venvs would each re-download the ~60 shared packages (`fastapi`, `uvicorn`, `ai4icore-core`, `sqlalchemy`, …). One shared venv downloads each package exactly once. Cold install drops from ~15 min to ~5. Trade-off: if two services pin incompatible versions of the same lib, pip fails fast — which we want, because that's a real bug. |
 | Postgres has to be healthy before migrations | Bash `wait_for_port` helper that polls `docker compose exec postgres pg_isready` until success or 90 s timeout. | Same pattern auth-service's `depends_on: condition: service_healthy` uses, ported to bash. |
-| Frontend needs an API key the admin user generates | Out of scope for v1. The simple-ui `.env` ships with `NEXT_PUBLIC_API_KEY=your_api_key_here`; the user logs in once via the UI, mints a key, pastes it into the `.env`, then re-runs `up` (which is idempotent). | Auto-minting requires a programmatic login + API-key-create flow that bypasses the UI. Doable, but it adds a moving part; defer until v1 ships. |
-| User reruns `up` while services are already running | Each step is idempotent: venv create is skipped if `.venv` exists, pip install is no-op when packages are present, `docker compose up -d` no-ops for already-healthy containers, uvicorn start checks `.run/<svc>.pid` and re-uses it if the process is alive. | The "double-run" is the most common new-dev mistake; making it safe is non-negotiable. |
+| User reruns `up` while services are already running, or runs a wider profile on top of a narrower one | Each step is idempotent and additive: venv create is skipped if `.venv` exists, pip install is no-op when packages are present, `docker compose up -d` no-ops for already-healthy containers and only creates the services the new profile adds, uvicorn/`simple-ui` start checks `.run/<svc>.pid` and re-uses it if the process is alive. So `up frontend` after `up core` only starts the missing `nginx-gateway` + `simple-ui`. | The "double-run" (and "I started core, now I want the UI too") are the most common new-dev flows; making them safe and incremental is non-negotiable. |
 | User has `.env` files already configured | Never overwrite. `env-bootstrap.sh` only **creates** missing files; existing files are left alone. | Trashing customised dev secrets would be the worst possible footgun. |
 | macOS Docker Desktop port quirks | Same as Windows/WSL — uses `host.docker.internal` and published ports. `nginx-gateway` already has the right `extra_hosts` entry. | Already works in the current manual flow; no special handling needed. |
 | WSL2 inotify on `/mnt/c` doesn't fire for Windows-side edits | Document only — auto-reload works perfectly when the repo lives in WSL home (`~/ai4i-core`). The `SETUP_GUIDE.md § Windows (WSL)` already recommends this. | Setting `WATCHFILES_FORCE_POLLING=true` everywhere costs ~1% CPU; we don't impose that on users who keep the repo where it should be. |
@@ -174,7 +173,7 @@ All defaults can be overridden via environment variables, kept short and obvious
 
 | Variable | Default | What it does |
 |---|---|---|
-| `AI4I_PROFILE` | `frontend` | Same as the positional arg to `up`; arg wins. |
+| `AI4I_PROFILE` | `core` | Same as the positional arg to `up`; arg wins. |
 | `AI4I_POSTGRES_PASSWORD` | `postgres` | Written into `.env` on first run only. |
 | `AI4I_REDIS_PASSWORD` | `changeme` | Same. |
 | `AI4I_SKIP_VENV` | unset | Skip step 6 (the shared venv create + pip install) — useful when only the docker layer changed. |
@@ -185,7 +184,6 @@ We deliberately **do not prompt interactively**. Unattended runs (CI, codespaces
 
 ## 11. What's explicitly out of scope (for v1)
 
-- Auto-minting a frontend API key (still a manual UI step).
 - TLS / HTTPS termination.
 - Cross-machine orchestration (e.g. infra on a shared host, apps on laptops).
 - Process supervision (`systemd`, `launchd`, `pm2`) — backgrounding + PID files is enough for dev.
@@ -196,12 +194,15 @@ We deliberately **do not prompt interactively**. Unattended runs (CI, codespaces
 
 ## 12. Open questions to resolve before implementation
 
-1. **Frontend API key bootstrap** — keep manual for v1, or invest in the programmatic mint? If automated, where does the minted key live (committed file? per-developer `.run/` file? printed once and forgotten?).
-2. **What does `status` show for a "running but unhealthy" service?** Just port liveness, or HTTP-level `/health` checks?
-3. **Should `up` ever re-pull docker images?** Probably no — leave that to an explicit `./scripts/dev/up --pull`. Speed matters.
-4. **Where do per-OS prereqs come from?** Document them in the script's `--help`, or maintain a `scripts/dev/install-prereqs.sh` (apt + brew + apk)?
-5. **Logs rotation** — do we cap `logs/*.log` size or let them grow? Easiest: don't cap, document `./scripts/dev/down && rm -rf logs/`.
-6. **Naming** — `scripts/dev/up` vs `scripts/up.sh` vs `bin/ai4i`. Decide before implementing because the docs change.
+1. **What does `status` show for a "running but unhealthy" service?** Just port liveness, or HTTP-level `/health` checks?
+2. **Where do per-OS prereqs come from?** Document them in the script's `--help`, or maintain a `scripts/dev/install-prereqs.sh` (apt + brew + apk)?
+3. **Logs rotation** — do we cap `logs/*.log` size or let them grow? Easiest: don't cap, document `./scripts/dev/down && rm -rf logs/`.
+
+Resolved (no longer open):
+
+- **No frontend API key bootstrap.** The simple-ui frontend does not require an admin-minted API key, so there is no key step to automate or document.
+- **`up` never re-pulls images.** It uses the local image cache (`up -d --pull never`); re-pulling is gated behind an explicit `./scripts/dev/up --pull`. Speed matters.
+- **Naming is `scripts/dev/up`** (with siblings `down` / `status` / `logs` / `reset`), not `scripts/up.sh` or `bin/ai4i`.
 
 ## 13. Estimated effort
 
