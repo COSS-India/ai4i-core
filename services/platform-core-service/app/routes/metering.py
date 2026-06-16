@@ -80,6 +80,10 @@ class TopTenantsThroughputFilter(_LimitMixin, _TimeRangeBase):
     inference_only: bool = True
 
 
+class TenantCountFilter(_TimeRangeBase):
+    pass
+
+
 class UsageByTenantServiceFilter(_LimitMixin, _TimeRangeBase):
     limit: int = 10
     services: Optional[list[str]] = None
@@ -175,6 +179,14 @@ async def get_top_tenants_throughput(
     svc: MeteringService = Depends(get_metering_service),
 ):
     return await svc.top_tenants_throughput(body.limit, body.inference_only, body.time_range)
+
+
+@router.post("/tenant-count")
+async def get_tenant_count(
+    body: TenantCountFilter,
+    svc: MeteringService = Depends(get_metering_service),
+):
+    return await svc.tenant_count(body.time_range)
 
 
 @router.post("/usage-by-tenant-service")

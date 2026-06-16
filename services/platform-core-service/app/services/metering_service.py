@@ -3,6 +3,9 @@ import asyncio
 import logging
 from typing import Optional
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
@@ -22,8 +25,9 @@ _METRIC = "telemetry_obsv_requests_total"
 
 
 class MeteringService:
-    def __init__(self, client: PrometheusClient) -> None:
+    def __init__(self, client: PrometheusClient, auth_db: Optional[AsyncSession] = None) -> None:
         self._client = client
+        self._auth_db = auth_db
 
     # ── public methods ──────────────────────────────────────────────────────
 
@@ -74,6 +78,39 @@ class MeteringService:
             "avg_requests_per_tenant": avg,
             "filters": {"time_range": time_range or "all"},
             "promql": promql,
+        }
+
+    # Maps TIME_RANGES keys to PostgreSQL interval literals for new-tenant queries.
+    _TIME_RANGE_TO_INTERVAL: dict = {
+        "1h":  "1 hour",
+        "24h": "24 hours",
+        "7d":  "7 days",
+        "30d": "30 days",
+    }
+
+    async def tenant_count(self, time_range: Optional[str]) -> dict:
+        if self._auth_db is None:
+            return {
+                "total_tenants": None,
+                "new_tenants": None,
+                "time_range": time_range or "all",
+                "auth_db_available": False,
+            }
+        total = (await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))).scalar()
+        interval = self._TIME_RANGE_TO_INTERVAL.get(time_range or "")
+        if interval:
+            new_tenants = (
+                await self._auth_db.execute(
+                    text(f"SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '{interval}'")
+                )
+            ).scalar()
+        else:
+            new_tenants = total
+        return {
+            "total_tenants": total,
+            "new_tenants": new_tenants,
+            "time_range": time_range or "all",
+            "auth_db_available": True,
         }
 
     async def top_inference_services(
