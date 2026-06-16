@@ -1,0 +1,36 @@
+"""
+Permission listing routes.
+"""
+
+from fastapi import APIRouter, Depends
+
+from app.core.responses import success_response, to_response
+from app.dependencies.permissions import require_any_role
+from app.dependencies.services import get_role_service
+from app.models.role_name import RoleName
+from app.models.user import User
+from app.schemas.role import PermissionResponse
+from app.services.role_service import RoleService
+
+router = APIRouter(prefix="/auth/permissions", tags=["Permissions"])
+inference_router = APIRouter(prefix="/auth/inference", tags=["Permissions"])
+
+
+@router.get("/")
+async def list_permissions(
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    svc: RoleService = Depends(get_role_service),
+):
+    permissions = await svc.list_permissions()
+    items = [to_response(p, PermissionResponse, json_mode=False) for p in permissions]
+    return success_response(data=items)
+
+
+@inference_router.get("/permissions")
+async def list_inference_permissions(
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    svc: RoleService = Depends(get_role_service),
+):
+    permissions = await svc.list_inference_permissions()
+    items = [to_response(p, PermissionResponse, json_mode=False) for p in permissions]
+    return success_response(data=items)

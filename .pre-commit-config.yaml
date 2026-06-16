@@ -1,0 +1,31 @@
+repos:
+  - repo: local
+    hooks:
+      - id: validate-migrations
+        name: Validate migration integrity
+        entry: python scripts/validate-migrations.py
+        language: python
+        pass_filenames: false
+        files: >-
+          (?x)(
+            infrastructure/databases/migrations/
+            |services/.*/models/
+            |services/.*/app/models/
+          )
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Force LF line endings on every commit (matches .gitattributes / .editorconfig)
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      # Ensure files end with a newline
+      - id: end-of-file-fixer
+      # Strip trailing whitespace (preserves Markdown line breaks)
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      # Block merge-conflict markers from being committed
+      - id: check-merge-conflict
+      # Block accidental large binary blobs (>5 MB)
+      - id: check-added-large-files
+        args: [--maxkb=5120]

@@ -1,0 +1,37 @@
+# Default: let git handle text/binary auto-detection.
+* text=auto
+
+# ─── Files that MUST use LF (Linux/WSL semantics) ───
+# Shell scripts: shebang and source-ing break with CRLF
+*.sh                  text eol=lf
+*.bash                text eol=lf
+# .env files: docker-compose env_file and bash `source` corrupt on CRLF
+.env                  text eol=lf
+.env.*                text eol=lf
+*.env                 text eol=lf
+*.env.template        text eol=lf
+env.template          text eol=lf
+# Dockerfiles: COPY/RUN line continuations break with CRLF in some buildkit modes
+Dockerfile            text eol=lf
+Dockerfile.*          text eol=lf
+*.dockerfile          text eol=lf
+# Compose / config YAML
+docker-compose*.yml   text eol=lf
+docker-compose*.yaml  text eol=lf
+# Alembic / migration scripts
+alembic.ini           text eol=lf
+
+# ─── Binary files (no conversion ever) ───
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+*.whl   binary
+*.so    binary
+*.dll   binary
+*.pyc   binary

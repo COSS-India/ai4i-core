@@ -1,0 +1,16 @@
+# Bootstrap config for fresh clone. No secrets — alert-config-sync-service overwrites
+# with full config from DB. If alertmanager.yml is missing, Docker creates a directory
+# and alertmanager fails; copy this file to alertmanager.yml via entrypoint.
+global:
+  resolve_timeout: 5m
+route:
+  receiver: default-admin
+  group_by: [alertname, category, severity, tenant]
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+receivers:
+  - name: default-admin
+    webhook_configs:
+      - url: http://alert-management-service:8098/alerts/history/webhook
+inhibit_rules: []

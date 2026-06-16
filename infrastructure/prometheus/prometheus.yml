@@ -1,0 +1,108 @@
+# Prometheus configuration for AI4I Core services
+# Scrapes metrics from ALL microservices
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    cluster: 'ai4i-core'
+    environment: 'production'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+# Load alert rules
+rule_files:
+  - '/etc/prometheus/rules/*.yml'
+# -----------------------------
+# Scrape all microservices
+# -----------------------------
+scrape_configs:
+
+  # --------------------------------------------
+  # 1. Platform metrics – /metrics
+  # --------------------------------------------
+  - job_name: "ai4i-services"
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "auth-service:8081"
+          - "config-service:8082"
+          - "metrics-service:8083"
+          - "telemetry-service:8084"
+          - "alerting-service:8085"
+          - "dashboard-service:8086"
+          - "asr-service:8087"
+          - "tts-service:8088"
+          - "nmt-service:8089"
+          - "ocr-service:8099"
+          - "ner-service:9001"
+          - "llm-service:8090"
+          - "pipeline-service:8090"
+          - "speaker-diarization-service:8095"
+          - "language-diarization-service:8090"
+          - "audio-lang-detection-service:8096"
+          # Note: transliteration-service and language-detection-service only expose /enterprise/metrics
+          # They are included in the ai4icore-enterprise job below
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):(\d+)'
+        target_label: service
+        replacement: '${1}'
+
+  # --------------------------------------------
+  # 2. AI4ICore Enterprise Metrics – /enterprise/metrics
+  # --------------------------------------------
+  - job_name: "ai4icore-enterprise"
+    scrape_interval: 5s
+    metrics_path: /enterprise/metrics
+    static_configs:
+      - targets:
+          - "auth-service:8081"
+          - "config-service:8082"
+          - "metrics-service:8083"
+          - "telemetry-service:8084"
+          - "alerting-service:8085"
+          - "dashboard-service:8086"
+          - "asr-service:8087"
+          - "tts-service:8088"
+          - "nmt-service:8089"
+          - "ocr-service:8099"
+          - "ner-service:9001"
+          - "llm-service:8090"
+          - "pipeline-service:8090"
+          - "transliteration-service:8090"
+          - "language-detection-service:8090"
+          - "speaker-diarization-service:8095"
+          - "language-diarization-service:8090"
+          - "audio-lang-detection-service:8096"
+          # - "host.docker.internal:8090"
+          - "inference-service:8090"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):(\d+)'
+        target_label: service
+        replacement: '${1}'
+
+  # --------------------------------------------
+  # 3. Prometheus self-monitoring
+  # --------------------------------------------
+  - job_name: "prometheus"
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "localhost:9090"
+
+  - job_name: "node-exporter"
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "node-exporter:9100"

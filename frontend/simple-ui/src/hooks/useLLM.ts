@@ -1,0 +1,217 @@
+// Custom React hook for LLM functionality with text processing
+
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
+import {
+  performLLMChat,
+  LLM_CHAT_MODEL,
+  LLM_CHAT_DEFAULT_SOURCE_LANGUAGE,
+  LLM_CHAT_DEFAULT_TARGET_LANGUAGE,
+} from '../services/llmService';
+import { getWordCount } from '../utils/helpers';
+import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
+import { extractErrorInfo } from '../utils/errorHandler';
+
+const MAX_TEXT_LENGTH = 50000;
+
+const isLlmChatModel = (id?: string) => id === LLM_CHAT_MODEL;
+
+export const useLLM = (serviceId?: string): UseLLMReturn => {
+  const useChatDefaults = isLlmChatModel(serviceId);
+
+  const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [inputLanguage, setInputLanguage] = useState<string>(
+    useChatDefaults ? LLM_CHAT_DEFAULT_SOURCE_LANGUAGE : ''
+  );
+  const [outputLanguage, setOutputLanguage] = useState<string>(
+    useChatDefaults ? LLM_CHAT_DEFAULT_TARGET_LANGUAGE : ''
+  );
+  const [inputText, setInputText] = useState<string>('');
+  const [outputText, setOutputText] = useState<string>('');
+  const [fetching, setFetching] = useState<boolean>(false);
+  const [fetched, setFetched] = useState<boolean>(false);
+  const [requestWordCount, setRequestWordCount] = useState<number>(0);
+  const [responseWordCount, setResponseWordCount] = useState<number>(0);
+  const [requestTime, setRequestTime] = useState<string>('0');
+  const [error, setError] = useState<string | null>(null);
+
+  const hasShownTextLimitToastRef = useRef(false);
+  const toast = useToastWithDeduplication();
+
+  useEffect(() => {
+    if (!isLlmChatModel(serviceId)) return;
+    setInputLanguage(LLM_CHAT_DEFAULT_SOURCE_LANGUAGE);
+    setOutputLanguage(LLM_CHAT_DEFAULT_TARGET_LANGUAGE);
+  }, [serviceId]);
+
+  const llmMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const config: LLMInferenceRequest['config'] = {
+        serviceId: serviceId || selectedModelId,
+        inputLanguage,
+        outputLanguage,
+      };
+      return performLLMChat(text, config);
+    },
+    onSuccess: (response: { data: { output: { target?: string }[] }; responseTime: number }) => {
+      try {
+        const output = response.data.output[0]?.target || '';
+        setOutputText(output);
+        setResponseWordCount(getWordCount(output));
+        setRequestTime(response.responseTime.toString());
+        setFetched(true);
+        setFetching(false);
+        setError(null);
+      } catch (err) {
+        console.error('Error processing LLM response:', err);
+        setError('Failed to process LLM response.');
+        setFetching(false);
+      }
+    },
+    onError: (error: unknown) => {
+      console.error('LLM chat error:', error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } =
+        extractErrorInfo(error);
+      setError(errorMessage);
+      setFetching(false);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: 'error',
+        duration: 7000,
+        isClosable: true,
+      });
+    },
+  });
+
+  const performInference = useCallback(
+    async (text: string) => {
+      if (!text || text.trim() === '') {
+        toast({
+          title: 'Input Required',
+          description: 'Please enter text to process.',
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      if (text.length > MAX_TEXT_LENGTH) {
+        toast({
+          title: 'Text Too Long',
+          description: `Text length exceeds maximum limit of ${MAX_TEXT_LENGTH} characters.`,
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      const effectiveServiceId = serviceId || selectedModelId;
+      if (!effectiveServiceId) {
+        toast({
+          title: 'Service Required',
+          description: 'Please select an LLM service.',
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      if (!inputLanguage?.trim() || !outputLanguage?.trim()) {
+        toast({
+          title: 'Language Required',
+          description: 'Please select both source and target languages.',
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      try {
+        setFetching(true);
+        setError(null);
+        setRequestWordCount(getWordCount(text));
+        await llmMutation.mutateAsync(text);
+      } catch (err) {
+        console.error('LLM chat error:', err);
+      }
+    },
+    [
+      llmMutation,
+      toast,
+      serviceId,
+      selectedModelId,
+      inputLanguage,
+      outputLanguage,
+    ]
+  );
+
+  const setInputTextWithValidation = useCallback(
+    (text: string) => {
+      setInputText(text);
+
+      if (text.length > MAX_TEXT_LENGTH) {
+        if (!hasShownTextLimitToastRef.current) {
+          hasShownTextLimitToastRef.current = true;
+          toast({
+            id: 'llm-text-exceeds-limit',
+            title: 'Text Length Warning',
+            description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
+            status: 'warning',
+            duration: 3000,
+            isClosable: true,
+          });
+        }
+      } else {
+        hasShownTextLimitToastRef.current = false;
+      }
+    },
+    [toast]
+  );
+
+  const clearResults = useCallback(() => {
+    setOutputText('');
+    setFetched(false);
+    setFetching(false);
+    setRequestWordCount(0);
+    setResponseWordCount(0);
+    setRequestTime('0');
+    setError(null);
+  }, []);
+
+  const swapLanguages = useCallback(() => {
+    const tempLang = inputLanguage;
+    setInputLanguage(outputLanguage);
+    setOutputLanguage(tempLang);
+
+    const tempText = inputText;
+    setInputText(outputText);
+    setOutputText(tempText);
+  }, [inputLanguage, outputLanguage, inputText, outputText]);
+
+  return {
+    selectedModelId,
+    inputLanguage,
+    outputLanguage,
+    inputText,
+    outputText,
+    fetching,
+    fetched,
+    requestWordCount,
+    responseWordCount,
+    requestTime,
+    error,
+    performInference,
+    setInputText: setInputTextWithValidation,
+    setInputLanguage,
+    setOutputLanguage,
+    setSelectedModelId,
+    clearResults,
+    swapLanguages,
+  };
+};
