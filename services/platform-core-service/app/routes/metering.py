@@ -69,6 +69,12 @@ class TenantRankingFilter(_LimitMixin, _TimeRangeBase):
     limit: int = 10
 
 
+class ThroughputFilter(_TimeRangeBase):
+    tenant: Optional[str] = None
+    service_id: Optional[str] = None
+    inference_only: bool = True
+
+
 # ── routes ──────────────────────────────────────────────────────────────────
 
 @router.post("/requesttotal")
@@ -133,3 +139,11 @@ async def get_tenant_ranking(
     svc: MeteringService = Depends(get_metering_service),
 ):
     return await svc.tenant_ranking(body.limit, body.time_range)
+
+
+@router.post("/throughput")
+async def get_throughput(
+    body: ThroughputFilter,
+    svc: MeteringService = Depends(get_metering_service),
+):
+    return await svc.throughput(body.inference_only, body.tenant, body.service_id, body.time_range)

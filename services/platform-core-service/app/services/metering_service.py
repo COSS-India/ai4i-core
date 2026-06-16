@@ -10,6 +10,7 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
+    THROUGHPUT_BUCKET_CONFIG,
     apply_time_range,
     build_base_selectors,
     sum_over_window,
@@ -372,6 +373,68 @@ class MeteringService:
             "formatted_grand_total": self._format_count(grand_total),
             "total_tenant_count": len(all_tenants),
             "filters": {"limit": limit, "time_range": time_range or "all"},
+        }
+
+    async def throughput(
+        self,
+        inference_only: bool,
+        tenant: Optional[str],
+        service_id: Optional[str],
+        time_range: Optional[str],
+    ) -> dict:
+        label_str = build_base_selectors(inference_only, tenant, service_id)
+        metric = f"{_METRIC}{label_str}"
+        window = TIME_RANGES.get(time_range or "all")
+
+        # Avg RPS: rate() already returns per-second rate averaged over the window.
+        # Fall back to a 5-minute window when no explicit range is selected ("all").
+        avg_q = f"sum(rate({metric}[{window}]))" if window else f"sum(rate({metric}[5m]))"
+        avg_rps = round(float(await self._client.scalar(avg_q)), 4)
+
+        # Peak RPS: fire one rate query per sub-bucket in parallel.
+        # Bucket i=1 is the oldest (largest offset); i=count is the newest (offset 0).
+        peak_rps: Optional[float] = None
+        peak_label: Optional[str] = None
+
+        bucket_cfg = THROUGHPUT_BUCKET_CONFIG.get(time_range or "")
+        if bucket_cfg and window:
+            count = bucket_cfg["count"]
+            bw = bucket_cfg["bucket_window"]
+            unit = bucket_cfg["offset_unit"]
+            factor = bucket_cfg["offset_factor"]
+            prefix = bucket_cfg["label_prefix"]
+
+            def _bucket_query(i: int) -> str:
+                offset_steps = count - i
+                if offset_steps == 0:
+                    return f"sum(rate({metric}[{bw}]))"
+                return f"sum(rate({metric}[{bw}] offset {offset_steps * factor}{unit}))"
+
+            rates = await asyncio.gather(
+                *[self._client.scalar(_bucket_query(i)) for i in range(1, count + 1)],
+                return_exceptions=True,
+            )
+
+            valid = [
+                (i + 1, float(v))
+                for i, v in enumerate(rates)
+                if not isinstance(v, Exception)
+            ]
+            if valid:
+                peak_i, peak_v = max(valid, key=lambda x: x[1])
+                peak_rps = round(peak_v, 2)
+                peak_label = f"{prefix}{peak_i}"
+
+        return {
+            "avg_rps": avg_rps,
+            "peak_rps": peak_rps,
+            "peak_label": peak_label,
+            "filters": {
+                "inference_only": inference_only,
+                "tenant": tenant,
+                "service_id": service_id,
+                "time_range": time_range or "all",
+            },
         }
 
     # ── private helpers ─────────────────────────────────────────────────────

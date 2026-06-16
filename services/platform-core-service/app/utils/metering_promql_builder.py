@@ -28,6 +28,17 @@ DOUBLE_TIME_RANGES: dict = {
     "30d": "60d",
 }
 
+# Bucket configuration for throughput peak detection.
+# Each entry describes how to split the time window into labelled sub-buckets
+# (M = minute, H = hour, D = day) so the peak RPS bucket can be identified.
+# Bucket i=1 is the oldest; i=count is the newest (offset 0).
+THROUGHPUT_BUCKET_CONFIG: dict = {
+    "1h":  {"count": 12, "bucket_window": "5m", "offset_unit": "m", "offset_factor": 5,  "label_prefix": "M"},
+    "24h": {"count": 24, "bucket_window": "1h", "offset_unit": "h", "offset_factor": 1,  "label_prefix": "H"},
+    "7d":  {"count":  7, "bucket_window": "1d", "offset_unit": "d", "offset_factor": 1,  "label_prefix": "D"},
+    "30d": {"count": 30, "bucket_window": "1d", "offset_unit": "d", "offset_factor": 1,  "label_prefix": "D"},
+}
+
 # Regex that matches inference endpoints (POST only).
 INFERENCE_ENDPOINT_REGEX = r".*inference.*"
 
