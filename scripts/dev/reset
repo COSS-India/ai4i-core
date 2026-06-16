@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+echo ""
+echo "WARNING"
+echo ""
+echo "This will remove:"
+echo "  docker volumes"
+echo "  .env files"
+echo "  service .venv"
+echo "  logs"
+echo ""
+read -rp "Continue? [y/N] " confirm
+
+if [[ ! "$confirm" =~ ^[Yy]$ ]]
+then
+    exit 0
+fi
+
+docker compose \
+    -f "$ROOT_DIR/docker-compose-local.yml" \
+    down -v
+
+rm -rf "$ROOT_DIR/.run"
+
+rm -rf "$ROOT_DIR/logs"
+
+find "$ROOT_DIR/services" \
+    -name ".venv" \
+    -type d \
+    -exec rm -rf {} +
+
+rm -rf "$ROOT_DIR/infrastructure/databases/.venv"
+
+find "$ROOT_DIR" \
+    -name ".env" \
+    ! -path "$ROOT_DIR/.env" \
+    -delete
+
+echo "Reset complete"

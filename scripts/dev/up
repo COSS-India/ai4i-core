@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+PROFILE="${1:-core}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/prereqs.sh"
+source "$SCRIPT_DIR/lib/env-bootstrap.sh"
+source "$SCRIPT_DIR/lib/infra.sh"
+source "$SCRIPT_DIR/lib/health.sh"
+source "$SCRIPT_DIR/lib/venv.sh"
+source "$SCRIPT_DIR/lib/migrate.sh"
+source "$SCRIPT_DIR/lib/services.sh"
+
+case "$PROFILE" in
+    core)
+        ;;
+    *)
+        die "Unsupported profile: $PROFILE"
+        ;;
+esac
+
+log "Starting AI4I Core"
+
+run_prereq_checks
+
+bootstrap_env
+
+start_core_infra
+
+wait_for_core_infra
+
+setup_all_venvs
+
+run_migrations
+
+start_all_services
+
+wait_for_all_services
+
+echo ""
+echo "=========================================="
+echo "AI4I CORE STARTED SUCCESSFULLY"
+echo "=========================================="
+echo ""
+echo "Auth Service:"
+echo "  http://localhost:8081/docs"
+echo ""
+echo "Platform Core:"
+echo "  http://localhost:8095/docs"
+echo ""
+echo "Inference Service:"
+echo "  http://localhost:8090/docs"
+echo ""
+echo "Gateway:"
+echo "  http://localhost:8080"
+echo ""
+echo "Grafana:"
+echo "  http://localhost:3001"
+echo ""
+echo "Prometheus:"
+echo "  http://localhost:9090"
+echo ""

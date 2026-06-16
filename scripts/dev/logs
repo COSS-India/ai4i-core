@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVICE="${1:-all}"
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+LOG_DIR="$ROOT_DIR/logs"
+
+case "$SERVICE" in
+
+    auth)
+        tail -f "$LOG_DIR/auth-service.log"
+        ;;
+
+    platform)
+        tail -f "$LOG_DIR/platform-core-service.log"
+        ;;
+
+    inference)
+        tail -f "$LOG_DIR/inference-service.log"
+        ;;
+
+    all)
+        tail -f \
+            "$LOG_DIR/auth-service.log" \
+            "$LOG_DIR/platform-core-service.log" \
+            "$LOG_DIR/inference-service.log"
+        ;;
+
+    *)
+        echo "Usage:"
+        echo "./scripts/dev/logs [auth|platform|inference|all]"
+        exit 1
+        ;;
+esac

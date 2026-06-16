@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/services.sh"
+source "$SCRIPT_DIR/lib/infra.sh"
+
+log "Stopping AI4I Core"
+
+stop_all_services
+
+stop_core_infra
+
+ok "Stopped"
