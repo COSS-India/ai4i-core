@@ -533,8 +533,7 @@ const PipelinePage: React.FC = () => {
                         w="full"
                         h="50px"
                       >
-                        Upload
-                        <input
+                        Upload<input
                           type="file"
                           accept="audio/*"
                           onChange={handleFileUpload}
