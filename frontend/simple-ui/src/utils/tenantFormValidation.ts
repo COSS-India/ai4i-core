@@ -29,7 +29,7 @@ export const PHONE_E164_MSG =
   "Phone number must be in E.164 format (e.g. +919876543210).";
 
 export function cleanText(value: string): string {
-  return (value ?? "").replace(INVISIBLE_CHARS, "").trim();
+  return (value ?? "").replaceAll(INVISIBLE_CHARS, "").trim();
 }
 
 // ES5-safe character checks (tsconfig target is es5; avoid \p{…} /u regex).
@@ -111,7 +111,7 @@ export function validateOptionalPersonName(value: string): string | undefined {
 }
 
 export function normalizePhoneInput(value: string): string {
-  return cleanText(value).replace(PHONE_FORMAT_CHARS, "");
+  return cleanText(value).replaceAll(PHONE_FORMAT_CHARS, "");
 }
 
 export function validateE164Phone(value: string): string | undefined {

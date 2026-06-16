@@ -72,7 +72,7 @@ export const useWebSocket = (
         setStatus('connected');
         setError(null);
         reconnectAttemptsRef.current = 0;
-        
+
         // Emit start event after connection
         newSocket.emit('start');
       });
@@ -81,12 +81,12 @@ export const useWebSocket = (
         console.log('WebSocket disconnected:', reason);
         setIsConnected(false);
         setStatus('disconnected');
-        
+
         // Attempt reconnection if not manual disconnect
         if (reason !== 'io client disconnect' && reconnectAttemptsRef.current < reconnectAttempts) {
           reconnectAttemptsRef.current++;
           setStatus('connecting');
-          
+
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
           }, reconnectDelay * reconnectAttemptsRef.current);
@@ -98,7 +98,7 @@ export const useWebSocket = (
         setError(err.message);
         setStatus('error');
         setIsConnected(false);
-        
+
         if (onError) {
           onError(err);
         }
@@ -117,7 +117,7 @@ export const useWebSocket = (
         console.error('WebSocket error:', err);
         setError(err.error || err.message || 'Unknown error');
         setStatus('error');
-        
+
         if (onError) {
           onError(err);
         }
@@ -142,12 +142,12 @@ export const useWebSocket = (
 
       // Emit disconnect event
       socket.emit('data', { disconnectStream: true });
-      
+
       // Disconnect socket
       socket.disconnect();
       setSocket(null);
     }
-    
+
     setIsConnected(false);
     setStatus('disconnected');
     setError(null);
@@ -174,8 +174,8 @@ export const useWebSocket = (
       try {
         // Convert ArrayBuffer to base64
         const uint8Array = new Uint8Array(audioData);
-        const base64 = btoa(Array.from(uint8Array, byte => String.fromCharCode(byte)).join(''));
-        
+        const base64 = btoa(Array.from(uint8Array, byte => String.fromCodePoint(byte)).join(''));
+
         socket.emit('data', {
           audio: base64,
           timestamp: Date.now(),

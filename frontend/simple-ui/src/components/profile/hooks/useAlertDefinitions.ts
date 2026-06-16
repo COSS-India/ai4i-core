@@ -52,12 +52,12 @@ function normalizeServiceForUi(raw: string): string {
 
   const allowedSet = new Set(TARGET_SERVICES.map((s) => s.value));
   const bare = v0.replace(/-service$/, "").replace(/_service$/, "");
-  const hyphen = bare.replace(/_+/g, "-");
+  const hyphen = bare.replaceAll(/_+/g, "-");
 
   if (allowedSet.has(hyphen)) return hyphen;
   if (allowedSet.has(bare)) return bare;
 
-  const canonical = bare.replace(/-/g, "_");
+  const canonical = bare.replaceAll(/-/g, "_");
   if (INFERENCE_TASK_TO_UI_VALUE[canonical]) {
     return INFERENCE_TASK_TO_UI_VALUE[canonical];
   }
@@ -80,7 +80,7 @@ function normalizeServiceForApi(raw: string): string {
     return UI_VALUE_TO_INFERENCE_TASK[bare];
   }
 
-  const canonical = bare.replace(/-/g, "_");
+  const canonical = bare.replaceAll(/-/g, "_");
   if (Object.values(UI_VALUE_TO_INFERENCE_TASK).includes(canonical)) {
     return canonical;
   }

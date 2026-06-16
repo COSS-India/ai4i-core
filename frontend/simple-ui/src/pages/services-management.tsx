@@ -438,7 +438,7 @@ const ServicesManagementPage: React.FC = () => {
     try {
       // Auto-generate serviceId from name and timestamp
       const timestamp = Date.now();
-      const serviceId = `${formData.name?.toLowerCase().replace(/\s+/g, '-') || 'service'}-${timestamp}`;
+      const serviceId = `${formData.name?.toLowerCase().replaceAll(/\s+/g, '-') || 'service'}-${timestamp}`;
 
       // Prepare service data with auto-generated serviceId.
       // Do not send modelSubmissionDate because backend owns this field.

@@ -7,7 +7,7 @@ import { getStoredAccessToken } from './tokenStorage';
  */
 export function maskPhoneForDisplay(phone: string | undefined): string {
   if (!phone || !phone.trim()) return "—";
-  const digits = phone.replace(/\D/g, "");
+  const digits = phone.replaceAll(/\D/g, "");
   const last4 = digits.slice(-4);
   if (last4.length === 0) return "—";
   return `+91 xxxxxx${last4}`;
@@ -134,7 +134,7 @@ export const base64ToBlob = (base64: string, mimeType: string = 'audio/wav'): Bl
     const byteNumbers = new Array(byteCharacters.length);
 
     for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+      byteNumbers[i] = byteCharacters.codePointAt(i)!;
     }
 
     const byteArray = new Uint8Array(byteNumbers);
@@ -332,7 +332,7 @@ export const convertWebmToWav = async (webmBlob: Blob, targetSampleRate: number 
     // RIFF header
     const writeString = (offset: number, string: string) => {
       for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
+        view.setUint8(offset + i, string.codePointAt(i)!);
       }
     };
 
