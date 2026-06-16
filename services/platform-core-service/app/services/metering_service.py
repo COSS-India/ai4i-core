@@ -6,6 +6,10 @@ from typing import Optional
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
+    DOUBLE_TIME_RANGES,
+    SERVICE_BREAKDOWN_CONFIG,
+    SERVICE_BREAKDOWN_ENDPOINT_REGEX,
+    ENDPOINT_TO_TASK,
     apply_time_range,
     build_base_selectors,
     sum_over_window,
@@ -195,7 +199,156 @@ class MeteringService:
             },
         }
 
+    async def service_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
+        """Per-service stats: requests, native units, success %, failed, vs prev period.
+
+        Fires all Prometheus queries in a single asyncio.gather:
+          - 4–5 endpoint-grouped queries for request counts / prev period
+          - 1 scalar query per service that has a dedicated native-unit metric
+        """
+        # Use the broader regex so /api/v1/chat (LLM) is included alongside
+        # the standard /api/v1/{task}/inference endpoints.
+        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}",method="POST"'
+        _tenant = f',tenant="{tenant}"' if tenant else ""
+        base_sel    = "{" + _ep + _tenant + "}"
+        success_sel = "{" + _ep + _tenant + ',status_code=~"2.."' + "}"
+        failed_sel  = "{" + _ep + _tenant + ',status_code=~"[45].."' + "}"
+
+        window = TIME_RANGES.get(time_range or "all")
+
+        def _by_ep(selector: str) -> str:
+            """Offset subtraction avoids increase() float extrapolation errors.
+
+            increase() interpolates over scrape samples and returns a tiny float
+            (e.g. 0.0012) for counters with very little history, which round()
+            collapses to 0. Subtracting the offset snapshot gives exact integers.
+            The inner `or` provides 0 for endpoints that didn't exist at offset.
+            """
+            metric = f"{_METRIC}{selector}"
+            if not window:
+                return f"sum by(endpoint) ({metric})"
+            return (
+                f"sum by(endpoint) ({metric})"
+                f" - (sum by(endpoint) ({metric} offset {window})"
+                f" or sum by(endpoint) ({metric} * 0))"
+            )
+
+        # ── Fixed-index queries (0-3, optional 4) ───────────────────────────
+        fixed_queries = [
+            self._client.query(_by_ep(base_sel)),     # 0 total
+            self._client.query(_by_ep(success_sel)),  # 1 success
+            self._client.query(_by_ep(failed_sel)),   # 2 failed
+        ]
+        # prev_period = requests during the window BEFORE the current window.
+        # e.g. for 24h: counter@24h_ago - counter@48h_ago  (not the raw snapshot).
+        double_window = DOUBLE_TIME_RANGES.get(time_range or "all") if window else None
+        if window and double_window:
+            prev_q = (
+                f"(sum by(endpoint) ({_METRIC}{base_sel} offset {window})"
+                f" or sum by(endpoint) ({_METRIC}{base_sel} * 0))"
+                f" - (sum by(endpoint) ({_METRIC}{base_sel} offset {double_window})"
+                f" or sum by(endpoint) ({_METRIC}{base_sel} * 0))"
+            )
+            fixed_queries.append(self._client.query(prev_q))  # 3 prev (optional)
+
+        # ── Per-service native-unit scalar queries ───────────────────────────
+        # Only for tasks that have a real Prometheus Histogram _sum metric.
+        native_tasks: list[str] = []
+        native_coros = []
+        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            native_metric = cfg.get("native_metric")
+            if not native_metric:
+                continue
+            extra = cfg.get("native_extra_labels") or []
+            parts = [f'tenant="{tenant}"'] if tenant else []
+            parts.extend(extra)
+            sel = "{" + ",".join(parts) + "}" if parts else ""
+            if window:
+                q = (
+                    f"(sum({native_metric}{sel}) or vector(0))"
+                    f" - (sum({native_metric}{sel} offset {window}) or vector(0))"
+                )
+            else:
+                q = f"sum({native_metric}{sel})"
+            native_tasks.append(task)
+            native_coros.append(self._client.scalar(q))
+
+        raw = await asyncio.gather(*fixed_queries, *native_coros, return_exceptions=True)
+
+        def _safe_list(r):
+            return r if not isinstance(r, Exception) else []
+
+        def _safe_float(r):
+            return r if not isinstance(r, Exception) else None
+
+        # Unpack fixed results
+        totals = self._endpoint_dict(_safe_list(raw[0]))
+        successes = self._endpoint_dict(_safe_list(raw[1]))
+        faileds = self._endpoint_dict(_safe_list(raw[2]))
+        prevs = self._endpoint_dict(_safe_list(raw[3])) if (window and double_window) else {}
+
+        # Unpack native results (start after fixed queries).
+        # Only store when > 0: a 0.0 result means the metric doesn't exist yet
+        # (the or vector(0) fallback fires), so we return null rather than 0.
+        native_offset = len(fixed_queries)
+        natives: dict = {}
+        for i, task in enumerate(native_tasks):
+            v = _safe_float(raw[native_offset + i])
+            if v is not None and v > 0:
+                natives[task] = round(v)
+
+        # ── Assemble service rows ────────────────────────────────────────────
+        services = []
+        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            total_v = totals.get(task, 0)
+            success_v = successes.get(task, 0)
+            failed_v = faileds.get(task, 0)
+            native_v = natives.get(task)
+            prev_v = prevs.get(task)
+
+            vs_prev_pct = None
+            if prev_v is not None and prev_v > 0:
+                vs_prev_pct = round((total_v - prev_v) / prev_v * 100, 1)
+
+            services.append({
+                "service": cfg["display_name"],
+                "metering_unit": cfg["metering_unit"],
+                "requests": total_v,
+                "native_units": native_v,
+                "native_unit_suffix": cfg["native_unit_suffix"],
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+                "failed": failed_v,
+                "vs_prev_period_pct": vs_prev_pct,
+                "prev_requests": prev_v,
+            })
+
+        services.sort(key=lambda s: s["requests"], reverse=True)
+
+        return {
+            "services": services,
+            "filters": {"tenant": tenant, "time_range": time_range or "all"},
+        }
+
     # ── private helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _endpoint_dict(results: list) -> dict:
+        """Map task key → rounded value from a `sum by(endpoint)` result vector.
+
+        Handles two endpoint patterns:
+          - Standard: /api/v1/{task}/inference  → task = path segment at index 2
+          - Non-standard: looked up via ENDPOINT_TO_TASK (e.g. /api/v1/chat → llm)
+        """
+        out: dict = {}
+        for r in results:
+            ep = r["metric"].get("endpoint", "")
+            task = ENDPOINT_TO_TASK.get(ep)
+            if task is None:
+                parts = [p for p in ep.split("/") if p]
+                # /api/v1/{task}/inference → ['api', 'v1', task, 'inference']
+                task = parts[2] if len(parts) >= 4 else ep
+            out[task] = out.get(task, 0) + round(float(r["value"][1]))
+        return out
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:

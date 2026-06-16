@@ -61,6 +61,10 @@ class UsageConcentrationFilter(_LimitMixin, _TimeRangeBase):
     limit: int = 5
 
 
+class ServiceBreakdownFilter(_TimeRangeBase):
+    tenant: Optional[str] = None
+
+
 # ── routes ──────────────────────────────────────────────────────────────────
 
 @router.post("/requesttotal")
@@ -109,3 +113,11 @@ async def get_request_volume_health(
     svc: MeteringService = Depends(get_metering_service),
 ):
     return await svc.request_volume_health(body.inference_only, body.tenant, body.service_id, body.time_range)
+
+
+@router.post("/service-breakdown")
+async def get_service_breakdown(
+    body: ServiceBreakdownFilter,
+    svc: MeteringService = Depends(get_metering_service),
+):
+    return await svc.service_breakdown(body.tenant, body.time_range)
