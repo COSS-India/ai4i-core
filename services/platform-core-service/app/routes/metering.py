@@ -65,6 +65,10 @@ class ServiceBreakdownFilter(_TimeRangeBase):
     tenant: Optional[str] = None
 
 
+class TenantRankingFilter(_LimitMixin, _TimeRangeBase):
+    limit: int = 10
+
+
 # ── routes ──────────────────────────────────────────────────────────────────
 
 @router.post("/requesttotal")
@@ -121,3 +125,11 @@ async def get_service_breakdown(
     svc: MeteringService = Depends(get_metering_service),
 ):
     return await svc.service_breakdown(body.tenant, body.time_range)
+
+
+@router.post("/tenant-ranking")
+async def get_tenant_ranking(
+    body: TenantRankingFilter,
+    svc: MeteringService = Depends(get_metering_service),
+):
+    return await svc.tenant_ranking(body.limit, body.time_range)

@@ -329,6 +329,51 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
+    async def tenant_ranking(self, limit: int, time_range: Optional[str]) -> dict:
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        # Offset subtraction avoids increase() extrapolation errors on short-lived series.
+        # increase() scales down the raw counter by (observed_duration / window_duration),
+        # so a series that's only a few hours old in a 7d query returns ~0 instead of its
+        # real counter value. Subtracting the offset snapshot gives exact integer deltas and
+        # correctly handles series that didn't exist at the start of the window (implied 0).
+        promql = self._tenant_delta_promql(metric, time_range)
+        results = await self._client.query(promql)
+
+        all_tenants = sorted(
+            [
+                {
+                    "tenant": r["metric"].get("tenant", "unknown"),
+                    "requests": max(1, round(float(r["value"][1]))),
+                }
+                for r in results
+                if float(r["value"][1]) > 0
+            ],
+            key=lambda t: t["requests"],
+            reverse=True,
+        )
+
+        grand_total = sum(t["requests"] for t in all_tenants)
+        top = all_tenants[:limit]
+
+        ranked = [
+            {
+                "rank": idx + 1,
+                "tenant": t["tenant"],
+                "requests": t["requests"],
+                "formatted_requests": self._format_count(t["requests"]),
+                "percentage": round(t["requests"] / grand_total * 100, 2) if grand_total else 0.0,
+            }
+            for idx, t in enumerate(top)
+        ]
+
+        return {
+            "tenants": ranked,
+            "grand_total": grand_total,
+            "formatted_grand_total": self._format_count(grand_total),
+            "total_tenant_count": len(all_tenants),
+            "filters": {"limit": limit, "time_range": time_range or "all"},
+        }
+
     # ── private helpers ─────────────────────────────────────────────────────
 
     @staticmethod
@@ -349,6 +394,34 @@ class MeteringService:
                 task = parts[2] if len(parts) >= 4 else ep
             out[task] = out.get(task, 0) + round(float(r["value"][1]))
         return out
+
+    @staticmethod
+    def _format_count(n: int) -> str:
+        """Human-readable request count: 1250000 → '1.25M', 973100 → '973.1K'."""
+        if n >= 1_000_000:
+            s = f"{n / 1_000_000:.2f}".rstrip("0").rstrip(".")
+            return f"{s}M"
+        if n >= 1_000:
+            s = f"{n / 1_000:.1f}".rstrip("0").rstrip(".")
+            return f"{s}K"
+        return str(n)
+
+    @staticmethod
+    def _tenant_delta_promql(metric: str, time_range: Optional[str]) -> str:
+        """Per-tenant request delta using offset subtraction instead of increase().
+
+        increase() extrapolates: a series that is only 2h old in a 7d query returns
+        2/168 of its real counter value. Offset subtraction gives the exact integer
+        difference; series absent at the offset point contribute their full current value.
+        """
+        window = TIME_RANGES.get(time_range or "all")
+        if not window:
+            return f"sum by(tenant) ({metric}) > 0"
+        return (
+            f"sum by(tenant) ({metric})"
+            f" - (sum by(tenant) ({metric} offset {window})"
+            f" or sum by(tenant) ({metric} * 0))"
+        )
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:
