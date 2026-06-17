@@ -71,14 +71,16 @@ cd ai4i-core
 
 ## Options
 
-Override behaviour with environment variables in front of the command:
+Override behaviour with environment variables. **Put them before `bash`, not
+before `curl`** — `VAR=x curl … | bash` would set the variable for `curl`, not
+for the script:
 
 ```bash
 # Clone into a specific directory and a specific branch
-AI4I_DIR=~/code/ai4i AI4I_BRANCH=master curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | bash
+curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_DIR=~/code/ai4i AI4I_BRANCH=master bash
 
 # I've already installed docker/python/node myself — skip the installer
-AI4I_SKIP_PREREQS=1 curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | bash
+curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_SKIP_PREREQS=1 bash
 ```
 
 | Variable | Default | Purpose |
@@ -115,10 +117,11 @@ values (most people don't — random local passwords are fine):
    ./scripts/dev/up core
    ```
 
-3. **Inline env vars** — one shot, no file (note: secrets land in shell history):
+3. **Inline env vars** — one shot, no file (note: secrets land in shell history).
+   The assignment goes before `bash`, not before `curl`:
 
    ```bash
-   AI4I_SMTP_AUTH_PASSWORD=... curl -fsSL <gist> | bash
+   curl -fsSL <gist> | AI4I_SMTP_AUTH_PASSWORD=... bash
    ```
 
 If you cloned manually (not via the gist), just `cp dev.secrets.example dev.secrets`,
