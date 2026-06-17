@@ -62,18 +62,26 @@ Clone into your WSL home directory for best file-system performance (avoid `/mnt
 
 ```bash
 cd ~
-git clone git@github.com:COSS-India/ai4i-core.git
+git clone --branch <release-tag> git@github.com:COSS-India/ai4i-core.git
 cd ai4i-core
 ```
+
+Replace `<release-tag>` with the tag from the [ai4i-core releases page](https://github.com/COSS-India/ai4i-core/releases).
 
 From this point, follow the rest of this guide in the same WSL terminal. Open additional WSL terminals for each service you need to run in parallel (auth, platform-core, inference, frontend).
 
 ## Step 1: Clone the Repository
 
+Clone the release branch your team uses 
+
 ```bash
-git clone git@github.com:COSS-India/ai4i-core.git
+git clone --branch <release-tag> git@github.com:COSS-India/ai4i-core.git
 cd ai4i-core
 ```
+
+Replace `<release-tag>` with the tag from the [ai4i-core releases page](https://github.com/COSS-India/ai4i-core/releases) (for example `release/2.2`). Use the tag that matches your project or internal documentation.
+
+> **Note:** Omitting `--branch <release-tag>` will clone `main`, which may contain latest version. 
 
 ## Step 2: Create the Root Environment File
 
@@ -228,10 +236,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
 
 The service is ready when you see `Application startup complete` in the logs. Verify at **http://localhost:8081/docs**.
 
-```bash
-deactivate
-cd ../..
-```
+> **This command runs in the foreground and keeps the terminal occupied.** Leave it running and open a **new terminal** for the next step. When you need to stop the service, press `Ctrl+C` — then run `deactivate && cd ../..` to exit the virtualenv and return to the repo root.
 
 ## Step 7: Platform Core Service
 
@@ -261,10 +266,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8095/docs**.
 
-```bash
-deactivate
-cd ../..
-```
+> **This command runs in the foreground and keeps the terminal occupied.** Leave it running and open a **new terminal** for the next step. When you need to stop the service, press `Ctrl+C` — then run `deactivate && cd ../..` to exit the virtualenv and return to the repo root.
 
 ## Step 8: Inference Service
 
@@ -294,10 +296,7 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 
 The service is ready when you see `Application startup complete`. Verify at **http://localhost:8090/docs**.
 
-```bash
-deactivate
-cd ../..
-```
+> **This command runs in the foreground and keeps the terminal occupied.** Leave it running and open a **new terminal** for the next step. When you need to stop the service, press `Ctrl+C` — then run `deactivate && cd ../..` to exit the virtualenv and return to the repo root.
 
 ## Step 9: Frontend (Simple UI)
 
