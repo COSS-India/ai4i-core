@@ -756,7 +756,10 @@ class TenantService:
             {
                 "is_delete": True,
                 "is_active": False,
-                "is_tenant_active": False,
+                "full_name": f"del_{target.id}",
+                "username": f"del_{target.id}",
+                "email": f"del_{target.id}@x.invalid",
+                "phone_number": None,
                 "updated_by": current_user.id,
             },
         )
