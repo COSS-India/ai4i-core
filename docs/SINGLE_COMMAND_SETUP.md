@@ -8,11 +8,12 @@ repo, installs anything that's missing, and brings up the **core** profile
 > [SETUP_GUIDE.md](SETUP_GUIDE.md). For how the automation is designed, see
 > [SETUP_AUTOMATION_PLAN.md](SETUP_AUTOMATION_PLAN.md).
 
-> ⚠️ **Temporary — branch:** these setup scripts currently live only on
-> **`feature/gist-testing`**, not `master`. The bootstrap therefore **defaults to
-> `feature/gist-testing`** for now, so every command below clones that branch.
-> Once it's merged to `master`, the default flips back and this note goes away.
-> To target another branch, set `AI4I_BRANCH` (before `bash`).
+> ⚠️ **Temporary — branch & folder:** these setup scripts currently live only on
+> **`feature/gist-testing`**, not `master`. For now the bootstrap **defaults to
+> branch `feature/gist-testing`** and clones into **`ai4i-core-test/`** (so it
+> won't clobber an existing `ai4i-core` checkout) — every command below reflects
+> that. Once merged to `master`, the defaults flip back (`master` + `ai4i-core`)
+> and this note goes away. Override with `AI4I_BRANCH` / `AI4I_DIR` (before `bash`).
 
 ---
 
@@ -68,8 +69,8 @@ The bootstrap script installs almost everything for you. You only need:
 The equivalent manual steps (what the gist automates) are:
 
 ```bash
-git clone -b feature/gist-testing https://github.com/COSS-India/ai4i-core.git   # until merged to master
-cd ai4i-core
+git clone -b feature/gist-testing https://github.com/COSS-India/ai4i-core.git ai4i-core-test   # temporary: branch + dir
+cd ai4i-core-test
 ./scripts/dev/up core        # "core" is the default; pass "frontend" to also get the UI
 ```
 
@@ -95,7 +96,7 @@ curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b893668
 | Variable | Default | Purpose |
 |---|---|---|
 | `AI4I_PROFILE` | `core` | Profile to bring up (or pass it positionally: `bash -s -- frontend`). |
-| `AI4I_DIR` | `ai4i-core` | Directory to clone into. |
+| `AI4I_DIR` | `ai4i-core-test` | Directory to clone into (temporary default until merged to `master`). |
 | `AI4I_BRANCH` | `feature/gist-testing` | Branch to check out (temporary default until merged to `master`). |
 | `AI4I_REPO_URL` | `https://github.com/COSS-India/ai4i-core.git` | Git URL to clone. |
 | `AI4I_SKIP_PREREQS` | _unset_ | Set to `1` to skip the prerequisite installer. |
@@ -121,7 +122,7 @@ values (most people don't — random local passwords are fine):
 
    ```bash
    curl -fsSL <gist> | bash -s -- --prepare   # clones, doesn't start
-   cd ai4i-core
+   cd ai4i-core-test
    # edit dev.secrets (set DB/Redis passwords and/or SMTP/SES creds)
    ./scripts/dev/up core
    ```
@@ -187,9 +188,9 @@ All commands live under `scripts/dev/` and act on the clone you set up:
 
 - **"Docker was just installed but its daemon isn't reachable."** Docker's group
   membership only applies to a new login session. Log out and back in (or run
-  `newgrp docker`), then finish with `cd ai4i-core && ./scripts/dev/up core`.
+  `newgrp docker`), then finish with `cd ai4i-core-test && ./scripts/dev/up core`.
 - **Native Windows shell detected.** Open a **WSL2** terminal and run the
-  command there. Keep the repo inside the WSL filesystem (e.g. `~/ai4i-core`)
+  command there. Keep the repo inside the WSL filesystem (e.g. `~/ai4i-core-test`)
   so file-watching / hot-reload works.
 - **A service didn't come up.** Check its log: `./scripts/dev/logs auth`
   (or `platform` / `inference` / `frontend`).
