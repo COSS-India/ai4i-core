@@ -33,7 +33,7 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
 
   const validatePhoneNumber = (phoneNumber: string): string | null => {
     if (!phoneNumber || phoneNumber.trim().length === 0) return null;
-    const cleanedPhone = phoneNumber.trim().replace(/\s+/g, "").replace(/[-\s()]/g, "");
+    const cleanedPhone = phoneNumber.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
     let digits = "";
     if (cleanedPhone.startsWith("+91")) {
       digits = cleanedPhone.substring(3);
@@ -57,7 +57,7 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
     if (userFormData.phone_number && userFormData.phone_number.length > 0) {
-      const cleanedPhone = userFormData.phone_number.trim().replace(/\s+/g, "").replace(/[-\s()]/g, "");
+      const cleanedPhone = userFormData.phone_number.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
       let isValid = false;
       let digits = "";
       if (cleanedPhone.startsWith("+91")) {

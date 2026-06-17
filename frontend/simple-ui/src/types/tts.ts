@@ -124,6 +124,9 @@ export interface TTSResultsProps {
   wordCount: number;
   responseTime: number;
   audioDuration: number;
+  /** Source text used to synthesize the audio; shown as captions. */
+  captionText?: string;
+  captionLang?: string;
   onPlay?: () => void;
   onPause?: () => void;
   onDownload?: () => void;

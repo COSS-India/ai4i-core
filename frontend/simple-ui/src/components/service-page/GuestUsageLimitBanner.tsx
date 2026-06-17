@@ -30,8 +30,7 @@ const GuestUsageLimitBanner: React.FC = () => {
           You can make up to{" "}
           <strong>
             {GUEST_REQUESTS_PER_HOUR_PER_SERVICE} requests per service per hour
-          </strong>
-          .
+          </strong>.
         </AlertDescription>
       </Box>
     </Alert>

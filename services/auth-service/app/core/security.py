@@ -54,7 +54,7 @@ class RS256KeyManager:
         self._keys_by_kid: dict[str, RSAKeyPair] = {}
         self._active_index: int = 0
 
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """
         Load keys from disk. In production, FAIL FAST if keys are missing.
         Auto-generation is only allowed in development/testing.

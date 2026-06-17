@@ -20,7 +20,7 @@ os.environ["JWT_ISSUER"] = "auth-service"
 @pytest.fixture(scope="module")
 async def setup_keys():
     from app.core.security import key_manager
-    await key_manager.initialize()
+    key_manager.initialize()
     yield
     shutil.rmtree(_test_key_dir, ignore_errors=True)
 
@@ -114,7 +114,7 @@ class TestRouteRegistration:
         # Validation
         assert "/api/v1/auth/validate" in paths
         # Health
-        assert "/health" in paths
+        assert "/api/v1/auth/health" in paths
 
     def test_protected_routes_have_guard(self):
         """User, role, permission, api_key routes should have endpoint guard."""

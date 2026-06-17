@@ -23,6 +23,7 @@ import { useRouter } from "next/router";
 import React, { useEffect, useMemo, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import AudioInputPreview from "../components/common/AudioInputPreview";
+import AccessibleAudio from "../components/common/AccessibleAudio";
 import {
   RequestContainer,
   ResponseContainer,
@@ -533,8 +534,7 @@ const PipelinePage: React.FC = () => {
                         w="full"
                         h="50px"
                       >
-                        Upload
-                        <input
+                        Upload<input
                           type="file"
                           accept="audio/*"
                           onChange={handleFileUpload}
@@ -632,10 +632,12 @@ const PipelinePage: React.FC = () => {
                     >
                       Synthesized Audio (Target)
                     </FormLabel>
-                    <audio
+                    <AccessibleAudio
                       controls
                       src={result.audio}
                       style={{ width: "100%" }}
+                      captionText={result.targetText}
+                      captionLang={targetLanguage}
                     />
                   </Box>
                 )}

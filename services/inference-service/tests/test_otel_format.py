@@ -38,7 +38,6 @@ tracer = trace.get_tracer(__name__)
 # Mock the context getters
 import ai4icore_core.context as ctx_module
 ctx_module.set_tenant_id("tenant_12345")
-ctx_module.set_user_id("user_67890")
 
 # Import after setting context
 from trace.inference_span import set_input_span_attributes, set_output_span_attributes

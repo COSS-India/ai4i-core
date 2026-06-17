@@ -52,8 +52,8 @@ async def lifespan(app: FastAPI):
         socket_timeout=settings.redis_timeout,
         redis_db=settings.redis_db,
     )
-    await key_manager.initialize()
-    await init_jwt_verifier()
+    key_manager.initialize()
+    init_jwt_verifier()
     await _load_api_permissions_with_retry(app)
     await role_permission_cache.start()
 
@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete.")
 
 
-async def load_api_permissions(app: FastAPI) -> None:
+def load_api_permissions(app: FastAPI) -> None:
     json_path = pathlib.Path(__file__).parent.parent / "api_permissions.json"
     if not json_path.exists():
         logger.info("No api_permissions.json found, skipping.")
@@ -104,7 +104,7 @@ async def _load_api_permissions_with_retry(
     last_exc: OSError | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            await load_api_permissions(app)
+            load_api_permissions(app)
             return
         except OSError as exc:
             last_exc = exc

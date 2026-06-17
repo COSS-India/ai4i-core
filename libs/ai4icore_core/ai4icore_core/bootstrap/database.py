@@ -20,7 +20,7 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-async def init_database(
+def init_database(
     db_url: str,
     pool_size: int = 20,
     max_overflow: int = 10,

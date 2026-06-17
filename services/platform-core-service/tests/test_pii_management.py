@@ -879,27 +879,22 @@ class TestPolicySyncServiceRefresh:
         tenant_repo_mock  = AsyncMock()
         tenant_repo_mock.get_all_as_dict.return_value = {"tenant-1": "logistics"}
 
+        # Patch inside the policy_sync module namespace (the only effective path
+        # since app.repositories is a stub without real sub-package attributes).
         with (
-            patch("app.repositories.pii_management.policy_repository.PolicyRepository",
-                  return_value=policy_repo_mock),
-            patch("app.repositories.pii_management.tenant_map_repository.TenantMapRepository",
-                  return_value=tenant_repo_mock),
+            patch.object(
+                sys.modules["app.services.pii_management.policy_sync_service"],
+                "PolicyRepository",
+                return_value=policy_repo_mock,
+            ),
+            patch.object(
+                sys.modules["app.services.pii_management.policy_sync_service"],
+                "TenantMapRepository",
+                return_value=tenant_repo_mock,
+            ),
         ):
-            # Patch inside the policy_sync module namespace
-            with (
-                patch.object(
-                    sys.modules["app.services.pii_management.policy_sync_service"],
-                    "PolicyRepository",
-                    return_value=policy_repo_mock,
-                ),
-                patch.object(
-                    sys.modules["app.services.pii_management.policy_sync_service"],
-                    "TenantMapRepository",
-                    return_value=tenant_repo_mock,
-                ),
-            ):
-                db_mock = MagicMock()
-                await svc.refresh(db_mock)
+            db_mock = MagicMock()
+            await svc.refresh(db_mock)
 
         assert "logistics"  in svc._policies
         assert "healthcare" in svc._policies

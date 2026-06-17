@@ -816,16 +816,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const successCount = getTag("ocr.success_count");
     displayName = "Batch Processing";
     let descParts = ["Processes multiple items in a batch"];
-    if (totalImages) descParts.push(`(${totalImages} image${Number.
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    
-                                    (totalImages, 10) !== 1 ? "s" : ""})`);
+    if (totalImages) descParts.push(`(${totalImages} image${Number.parseInt(totalImages, 10) !== 1 ? "s" : ""})`);
     if (resultsCount) descParts.push(`→ ${resultsCount} result${Number.parseInt(resultsCount, 10) !== 1 ? "s" : ""}`);
     if (successCount) descParts.push(`(${successCount} successful)`);
     description = descParts.join(" ");

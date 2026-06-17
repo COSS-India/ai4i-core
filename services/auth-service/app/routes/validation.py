@@ -64,7 +64,7 @@ async def _required_endpoint_permission(request: Request) -> tuple[bool, int | N
     checker = getattr(request.app.state, "permission_checker", None)
     if checker is None:
         return False, None
-    return True, await checker.get_required_permission(method, uri.split("?", 1)[0])
+    return True, checker.get_required_permission(method, uri.split("?", 1)[0])
 
 
 async def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> bool:

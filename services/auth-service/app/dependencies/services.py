@@ -43,7 +43,7 @@ def get_email_client() -> EmailClient:
     return _email_client_singleton()
 
 
-async def get_cache_service(
+def get_cache_service(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> CacheService:
     return CacheService(redis)
@@ -53,19 +53,19 @@ def get_token_service() -> TokenService:
     return TokenService()
 
 
-async def get_role_service(
+def get_role_service(
     db: AsyncSession = Depends(get_db),
 ) -> RoleService:
     return RoleService(RoleRepository(db))
 
 
-async def get_user_service(
+def get_user_service(
     db: AsyncSession = Depends(get_db),
 ) -> UserService:
     return UserService(UserRepository(db), RoleRepository(db))
 
 
-async def get_api_key_service(
+def get_api_key_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> APIKeyService:
@@ -77,7 +77,7 @@ async def get_api_key_service(
     )
 
 
-async def get_auth_service(
+def get_auth_service(
     db: AsyncSession = Depends(get_db),
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
@@ -97,7 +97,7 @@ async def get_auth_service(
     )
 
 
-async def get_tenant_service(
+def get_tenant_service(
     db: AsyncSession = Depends(get_db),
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
@@ -122,7 +122,7 @@ async def get_tenant_service(
     )
 
 
-async def get_oauth_service(
+def get_oauth_service(
     db: AsyncSession = Depends(get_db),
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
