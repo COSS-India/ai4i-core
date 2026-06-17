@@ -8,6 +8,12 @@ repo, installs anything that's missing, and brings up the **core** profile
 > [SETUP_GUIDE.md](SETUP_GUIDE.md). For how the automation is designed, see
 > [SETUP_AUTOMATION_PLAN.md](SETUP_AUTOMATION_PLAN.md).
 
+> ⚠️ **Temporary — branch:** these setup scripts currently live only on
+> **`feature/gist-testing`**, not `master`. The bootstrap therefore **defaults to
+> `feature/gist-testing`** for now, so every command below clones that branch.
+> Once it's merged to `master`, the default flips back and this note goes away.
+> To target another branch, set `AI4I_BRANCH` (before `bash`).
+
 ---
 
 ## TL;DR
@@ -62,7 +68,7 @@ The bootstrap script installs almost everything for you. You only need:
 The equivalent manual steps (what the gist automates) are:
 
 ```bash
-git clone https://github.com/COSS-India/ai4i-core.git
+git clone -b feature/gist-testing https://github.com/COSS-India/ai4i-core.git   # until merged to master
 cd ai4i-core
 ./scripts/dev/up core        # "core" is the default; pass "frontend" to also get the UI
 ```
@@ -79,8 +85,8 @@ before `curl`** — `VAR=x curl … | bash` would set the variable for `curl`, n
 for the script:
 
 ```bash
-# Clone into a specific directory and a specific branch
-curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_DIR=~/code/ai4i AI4I_BRANCH=master bash
+# Clone into a specific directory / target a different branch
+curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_DIR=~/code/ai4i AI4I_BRANCH=feature/gist-testing bash
 
 # I've already installed docker/python/node myself — skip the installer
 curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_SKIP_PREREQS=1 bash
@@ -90,7 +96,7 @@ curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b893668
 |---|---|---|
 | `AI4I_PROFILE` | `core` | Profile to bring up (or pass it positionally: `bash -s -- frontend`). |
 | `AI4I_DIR` | `ai4i-core` | Directory to clone into. |
-| `AI4I_BRANCH` | `master` | Branch to check out. |
+| `AI4I_BRANCH` | `feature/gist-testing` | Branch to check out (temporary default until merged to `master`). |
 | `AI4I_REPO_URL` | `https://github.com/COSS-India/ai4i-core.git` | Git URL to clone. |
 | `AI4I_SKIP_PREREQS` | _unset_ | Set to `1` to skip the prerequisite installer. |
 
