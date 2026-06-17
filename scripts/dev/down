@@ -5,13 +5,41 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/profiles.sh"
+source "$SCRIPT_DIR/lib/pids.sh"
+source "$SCRIPT_DIR/lib/env-bootstrap.sh"
 source "$SCRIPT_DIR/lib/services.sh"
+source "$SCRIPT_DIR/lib/frontend.sh"
 source "$SCRIPT_DIR/lib/infra.sh"
 
-log "Stopping AI4I Core"
+PRUNE="false"
+
+for arg in "$@"; do
+    case "$arg" in
+        --prune)    PRUNE="true" ;;
+        -h|--help)
+            echo "Usage: ./scripts/dev/down [--prune]"
+            echo "  --prune   also remove docker volumes (destructive)"
+            exit 0
+            ;;
+        *)          die "Unknown flag: $arg" ;;
+    esac
+done
+
+log "Stopping AI4I"
 
 stop_all_services
 
-stop_core_infra
+stop_frontend
+
+# Revert the inference-service trace exporter back to stdout-only.
+toggle_kafka false
+
+if [[ "$PRUNE" == "true" ]]; then
+    warn "--prune: removing containers and volumes"
+    remove_infra
+else
+    stop_infra
+fi
 
 ok "Stopped"

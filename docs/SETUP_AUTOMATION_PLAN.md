@@ -1,6 +1,6 @@
 # Setup Automation Plan
 
-This document is a **design proposal** for replacing the manual steps in [`SETUP_GUIDE.md`](SETUP_GUIDE.md) with a small set of shell scripts so a new contributor can go from `git clone` to a running stack with one command. Nothing here is implemented yet — this is the blueprint we'd build from.
+This document describes the shell-script setup automation that replaces the manual steps in [`SETUP_GUIDE.md`](SETUP_GUIDE.md), so a new contributor can go from `git clone` to a running stack with one command. The scripts described here are **implemented** under [`scripts/dev/`](../scripts/dev/).
 
 ---
 
@@ -52,22 +52,25 @@ We don't need one script per profile — that bloats fast. Instead, one orchestr
 ```
 scripts/
   dev/
-    up                    # main entrypoint: ./scripts/dev/up [profile]
-    down                  # stop everything this session started
+    up                    # main entrypoint: ./scripts/dev/up [profile] [--pull]
+    down                  # stop everything this session started ([--prune] also wipes volumes)
     status                # show what's up/down + log paths
     logs                  # tail logs for one service or all
-    reset                 # wipe everything (volumes, venvs, .env files) — destructive, confirms
+    reset                 # wipe everything (volumes, venv, .env files) — destructive, confirms
+    install-prereqs.sh    # OS-agnostic prereq installer (apt / brew / apk)
 
   dev/lib/
-    common.sh             # shared helpers: log(), ok(), die(), wait_for_port(), is_wsl(), etc.
-    prereqs.sh            # check docker / python3.11 / node18+ / git versions
-    env-bootstrap.sh      # generate root .env from defaults if missing, then run scripts/setup-env.sh
-    venv.sh               # create ONE shared .venv at the repo root + pip install every backend's requirements.txt into it (idempotent)
+    common.sh             # shared helpers: log(), ok(), die(), wait_for_port(), is_wsl(), track_started(), etc.
+    profiles.sh           # translate a profile name → compose --profile flags + native service set
+    prereqs.sh            # OS guard (refuse non-WSL Windows) + check docker / python3.11 / node18+ / git
+    env-bootstrap.sh      # generate root .env (dev defaults) if missing, run scripts/setup-env.sh, toggle KAFKA_ENABLED
+    venv.sh               # create ONE shared .venv at the repo root + single pip install of every backend's requirements.txt
     infra.sh              # `docker compose up` with the right --profile flags for the chosen profile
-    migrate.sh            # wait for postgres healthy, then run scripts/migrate.sh all upgrade
-    app-services.sh       # start each backend service under uvicorn in the background, write PID
-    frontend.sh           # npm install + npm run dev for simple-ui in the background
-    pids.sh               # write/read/check/kill PIDs under .run/<service>.pid
+    health.sh             # profile-aware health waits (postgres/redis always; nginx/kafka/opensearch per profile; service /docs)
+    migrate.sh            # run scripts/migrate.sh all upgrade under the shared venv (after postgres healthy)
+    services.sh           # start each backend under uvicorn --reload in the background, write PID (idempotent)
+    frontend.sh           # npm install + npm run dev for simple-ui in the background (idempotent)
+    pids.sh               # write/read/check/kill PIDs under .run/<service>.pid (SIGTERM → 10s → SIGKILL)
 
 scripts/
   setup-env.sh            # EXISTING — keep, called by env-bootstrap.sh
@@ -76,11 +79,13 @@ scripts/
 
 Notes on the layout:
 
-- One orchestrator (`up`) — not five sibling scripts (`up-core.sh`, `up-frontend.sh`, …). Subcommands take a profile name.
+- One orchestrator (`up`) — not five sibling scripts (`up-core.sh`, `up-frontend.sh`, …). It takes a profile name; `profiles.sh` maps that name to the docker `--profile` flags and the native service set.
 - Every helper under `lib/` is idempotent and re-runnable. The orchestrator calls them in order.
 - Existing scripts (`scripts/setup-env.sh`, `scripts/migrate.sh`) are reused, not replaced. The new layer wraps them.
 - Logs go to a tracked `logs/` directory; PIDs go to a tracked `.run/` directory. Both are gitignored.
 - No `start.sh` / `stop.sh` at the repo root — keeping all dev tooling under `scripts/dev/` keeps the root clean.
+- `health.sh` was split out from the orchestrator (it wasn't a named file in the original sketch) so health waits can be profile-aware without bloating `up`.
+- `install-prereqs.sh` is a single OS-agnostic installer (detects apt / brew / apk), **not** a file per OS — see § 9 and the resolved note in § 12.
 
 ## 5. Profiles — what each one brings up
 
@@ -104,9 +109,9 @@ This is the contract. Every step prints one line and bails out loudly on failure
 
 1. **Detect environment** — bash version, OS, WSL flag. Refuse to run on non-WSL Windows with a clear message pointing at `SETUP_GUIDE.md § Windows (WSL)`.
 2. **Check prerequisites** — docker (with `compose v2` subcommand), python3.11, node 18+, git. Print every missing one before exiting.
-3. **Ensure root `.env`** — if `.env` is missing, copy from `env.template` and pre-fill safe development defaults (`POSTGRES_USER=postgres`, `POSTGRES_PASSWORD=postgres`, `REDIS_PASSWORD=changeme`). **Never overwrite an existing `.env`.**
-4. **Generate service `.env` files** — call `scripts/setup-env.sh` (existing). Idempotent.
-5. **Bring up Docker infra** — `docker compose -f docker-compose-local.yml [--profile frontend …] up -d --pull never`. `up` **never re-pulls images** — it uses whatever is already in the local image cache (pulling only happens via the explicit `./scripts/dev/up --pull` escape hatch). `docker compose up -d` is itself incremental: containers already running and healthy are left as-is, and only the services newly introduced by the selected profile are created. So running `up frontend` after `up core` starts just `nginx-gateway` and skips the already-up `postgres`/`redis`. Wait for postgres + redis (and kafka + opensearch if in profile) to report `healthy` via `docker compose ps`. Hard cap of 90 seconds; on timeout, print last 50 lines of each unhealthy service's logs and exit.
+3. **Ensure root `.env`** — if `.env` is missing, copy from `env.template` and fill the credential placeholders. Credentials are **never hardcoded in this public repo**; they resolve in order: (1) `AI4I_*` env vars, (2) an untracked `dev.secrets` file (see `dev.secrets.example`) that `up` sources first, (3) a randomly-generated value for any password left unset (username defaults to `ai4i_user`). Whatever is resolved is written **once** into the gitignored `.env`, which drives both the dockerised postgres/redis and every service `.env` (via `setup-env.sh`) — one source of truth, so container and service credentials always match. **Never overwrite an existing `.env`.** If a postgres data volume already exists, warn that it may carry old credentials (postgres only applies them on first init).
+4. **Generate service `.env` files** — call `scripts/setup-env.sh` (existing). Idempotent. Then `fill_smtp` substitutes the SMTP placeholders in the platform-core `.env` from `AI4I_SMTP_*` env vars (default empty) — **live SMTP/SES secrets are never committed; they're injected at runtime only**.
+5. **Bring up Docker infra** — `docker compose -f docker-compose-local.yml [--profile frontend …] up -d`. `up` relies on compose's **default pull policy (`missing`)**: images already in the local cache are **never re-pulled**, and only absent images are fetched (so a first run still works). The explicit `./scripts/dev/up --pull` escape hatch adds `--pull always` to force a refresh. `docker compose up -d` is itself incremental: containers already running and healthy are left as-is, and only the services newly introduced by the selected profile are created. So running `up frontend` after `up core` starts just `nginx-gateway` and skips the already-up `postgres`/`redis`. Wait for postgres + redis (and kafka + opensearch if in profile) to report healthy. Hard cap of 180 seconds; on timeout, exit with a clear message.
 6. **Create / update the shared `.venv`** —
    - Create `.venv` at the repo root if absent (`python3.11 -m venv .venv`).
    - `pip install -r services/auth-service/requirements.txt -r services/platform-core-service/requirements.txt -r services/inference-service/requirements.txt`. One pip invocation; pip's resolver picks a single version that satisfies all three lockfiles, and the shared deps (`fastapi`, `uvicorn`, `ai4icore-core`, `sqlalchemy`, `redis`, …) only get downloaded once. (`pip install` is itself idempotent — skips already-satisfied packages.)
@@ -174,13 +179,20 @@ All defaults can be overridden via environment variables, kept short and obvious
 | Variable | Default | What it does |
 |---|---|---|
 | `AI4I_PROFILE` | `core` | Same as the positional arg to `up`; arg wins. |
-| `AI4I_POSTGRES_PASSWORD` | `postgres` | Written into `.env` on first run only. |
-| `AI4I_REDIS_PASSWORD` | `changeme` | Same. |
+| `AI4I_POSTGRES_USER` | `ai4i_user` | Written into `.env` on first run only. |
+| `AI4I_POSTGRES_PASSWORD` | _generated_ | If unset (and not in `dev.secrets`), a random password is generated on first run. Written to `.env` only. |
+| `AI4I_REDIS_PASSWORD` | _generated_ | Same. |
+| `AI4I_SMTP_AUTH_USERNAME` | unset → empty | SMTP/SES username injected into the platform-core `.env` (alert email). Not committed. |
+| `AI4I_SMTP_AUTH_PASSWORD` | unset → empty | SMTP/SES password. Supply at runtime only — never hardcoded into the repo. |
+| `AI4I_SMTP_SMARTHOST` | template default | Override the alert-email SMTP host:port. |
+| `AI4I_SMTP_FROM` | template default | Override the alert-email From address. |
 | `AI4I_SKIP_VENV` | unset | Skip step 6 (the shared venv create + pip install) — useful when only the docker layer changed. |
 | `AI4I_SKIP_FRONTEND` | unset | Force-skip step 9 even on `frontend` profile. |
 | `AI4I_LOGS_DIR` | `./logs` | Where backgrounded logs go. |
 
 We deliberately **do not prompt interactively**. Unattended runs (CI, codespaces, devcontainers) matter, and a `read -p` in the middle is fatal there.
+
+**Secrets never live in the repo.** No password or cloud credential is committed. DB/Redis passwords are supplied via `AI4I_*` env vars or an untracked `dev.secrets` file (copied from the committed, value-free `dev.secrets.example`), or randomly generated for local containers. Real cloud credentials (SMTP/SES) follow the same path and default to empty. Nothing sensitive reaches this public repository or the bootstrap gist; the generated `.env` files are gitignored.
 
 ## 11. What's explicitly out of scope (for v1)
 
@@ -194,15 +206,16 @@ We deliberately **do not prompt interactively**. Unattended runs (CI, codespaces
 
 ## 12. Open questions to resolve before implementation
 
-1. **What does `status` show for a "running but unhealthy" service?** Just port liveness, or HTTP-level `/health` checks?
-2. **Where do per-OS prereqs come from?** Document them in the script's `--help`, or maintain a `scripts/dev/install-prereqs.sh` (apt + brew + apk)?
-3. **Logs rotation** — do we cap `logs/*.log` size or let them grow? Easiest: don't cap, document `./scripts/dev/down && rm -rf logs/`.
+1. **What does `status` show for a "running but unhealthy" service?** Currently PID liveness (native) + `docker ps` (containers). HTTP-level `/health` probing is still open.
+2. **Logs rotation** — do we cap `logs/*.log` size or let them grow? Easiest: don't cap, document `./scripts/dev/down && rm -rf logs/`.
 
 Resolved (no longer open):
 
 - **No frontend API key bootstrap.** The simple-ui frontend does not require an admin-minted API key, so there is no key step to automate or document.
-- **`up` never re-pulls images.** It uses the local image cache (`up -d --pull never`); re-pulling is gated behind an explicit `./scripts/dev/up --pull`. Speed matters.
+- **`up` never re-pulls images.** It relies on compose's default `missing` pull policy — cached images are never re-pulled, only absent ones are fetched; `./scripts/dev/up --pull` forces a refresh with `--pull always`.
 - **Naming is `scripts/dev/up`** (with siblings `down` / `status` / `logs` / `reset`), not `scripts/up.sh` or `bin/ai4i`.
+- **Per-OS prereqs: one OS-agnostic `scripts/dev/install-prereqs.sh`** that detects apt / brew / apk — not a file per OS (an earlier Ubuntu-only `scripts/bootstrap/ubuntu.sh` was replaced). Consistent with the § 9 "bash, one codebase" policy.
+- **Node is only checked when the frontend will start.** A backend-only profile (`core`, `observability`, `logging`) doesn't require node/npm; `prereqs.sh` checks it only for `frontend`/`all` (or when `AI4I_SKIP_FRONTEND` is unset on those profiles).
 
 ## 13. Estimated effort
 
@@ -211,7 +224,7 @@ Roughly: one focused day for a strong bash author, two for someone refreshing on
 1. `common.sh` + `prereqs.sh` (the foundation — 2 h).
 2. `env-bootstrap.sh` + `infra.sh` (wrap existing stuff — 1 h).
 3. `venv.sh` + `migrate.sh` (single shared-venv pip install + postgres-wait loop — 1.5 h).
-4. `app-services.sh` + `pids.sh` + `frontend.sh` (the moving part — 3 h).
+4. `services.sh` + `pids.sh` + `frontend.sh` (the moving part — 3 h).
 5. Orchestrator `up` / `down` / `status` / `logs` (gluing it together — 2 h).
 6. Doc updates: rewrite `SETUP_GUIDE.md` § 4–9 to point at the new scripts, keep the manual steps as an appendix for debugging (2 h).
 

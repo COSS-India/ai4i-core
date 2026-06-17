@@ -6,7 +6,7 @@ SERVICE="${1:-all}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-LOG_DIR="$ROOT_DIR/logs"
+LOG_DIR="${AI4I_LOGS_DIR:-$ROOT_DIR/logs}"
 
 case "$SERVICE" in
 
@@ -22,16 +22,23 @@ case "$SERVICE" in
         tail -f "$LOG_DIR/inference-service.log"
         ;;
 
+    frontend|simple-ui)
+        tail -f "$LOG_DIR/simple-ui.log"
+        ;;
+
     all)
-        tail -f \
+        # tail -F tolerates files that don't exist yet (e.g. no frontend running).
+        tail -F \
             "$LOG_DIR/auth-service.log" \
             "$LOG_DIR/platform-core-service.log" \
-            "$LOG_DIR/inference-service.log"
+            "$LOG_DIR/inference-service.log" \
+            "$LOG_DIR/simple-ui.log" \
+            2>/dev/null
         ;;
 
     *)
         echo "Usage:"
-        echo "./scripts/dev/logs [auth|platform|inference|all]"
+        echo "./scripts/dev/logs [auth|platform|inference|frontend|all]"
         exit 1
         ;;
 esac

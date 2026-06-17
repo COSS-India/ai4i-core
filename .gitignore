@@ -2,6 +2,8 @@
 .env
 .env.local
 *.env.bak
+# Local developer secrets sourced by scripts/dev/up (NEVER commit; example is dev.secrets.example)
+dev.secrets
 env-local-setup/
 .env.development.local
 .env.test.local

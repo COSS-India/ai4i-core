@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-source "$(dirname "$0")/lib/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 pid_file() {
 
@@ -42,22 +42,40 @@ is_running() {
     kill -0 "$pid" >/dev/null 2>&1
 }
 
+# SIGTERM, wait up to 10s for a graceful exit, then SIGKILL survivors.
 kill_service() {
 
     local service="$1"
 
-    if is_running "$service"; then
-
-        local pid
-
-        pid=$(read_pid "$service")
-
-        kill "$pid"
-
+    if ! is_running "$service"; then
         rm -f "$(pid_file "$service")"
-
-        ok "Stopped $service"
+        return 0
     fi
+
+    local pid
+    pid=$(read_pid "$service")
+
+    log "Stopping $service (PID=$pid)..."
+
+    kill "$pid" >/dev/null 2>&1 || true
+
+    local waited=0
+    while (( waited < 10 )); do
+
+        kill -0 "$pid" >/dev/null 2>&1 || break
+
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if kill -0 "$pid" >/dev/null 2>&1; then
+        warn "$service did not stop within 10s — sending SIGKILL"
+        kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+
+    rm -f "$(pid_file "$service")"
+
+    ok "Stopped $service"
 }
 
 cleanup_dead_pids() {

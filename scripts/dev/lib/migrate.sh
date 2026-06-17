@@ -2,24 +2,24 @@
 
 set -euo pipefail
 
-source "$(dirname "$0")/lib/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
+# Run migrations under the shared root venv (plan § 6 step 7). The existing
+# scripts/migrate.sh honours PYTHON_BIN, so we point it at the shared venv's
+# interpreter rather than maintaining a separate migration venv.
 run_migrations() {
 
     log "Running database migrations..."
 
-    local db_venv
+    local venv="$ROOT_DIR/.venv"
 
-    db_venv="$ROOT_DIR/infrastructure/databases/.venv"
+    [[ -d "$venv" ]] \
+        || die "Shared venv missing at $venv — run setup_venv first"
 
-    [[ -d "$db_venv" ]] \
-        || die "Database venv missing"
-
-    export PYTHON_BIN="$db_venv/bin/python"
+    export PYTHON_BIN="$venv/bin/python"
 
     (
         cd "$ROOT_DIR"
-
         ./scripts/migrate.sh all upgrade
     )
 

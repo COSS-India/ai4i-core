@@ -2,11 +2,10 @@
 
 set -euo pipefail
 
-PROFILE="${1:-core}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/profiles.sh"
 source "$SCRIPT_DIR/lib/prereqs.sh"
 source "$SCRIPT_DIR/lib/env-bootstrap.sh"
 source "$SCRIPT_DIR/lib/infra.sh"
@@ -14,53 +13,132 @@ source "$SCRIPT_DIR/lib/health.sh"
 source "$SCRIPT_DIR/lib/venv.sh"
 source "$SCRIPT_DIR/lib/migrate.sh"
 source "$SCRIPT_DIR/lib/services.sh"
+source "$SCRIPT_DIR/lib/frontend.sh"
 
-case "$PROFILE" in
-    core)
-        ;;
-    *)
-        die "Unsupported profile: $PROFILE"
-        ;;
-esac
+print_usage() {
+    cat <<'EOF'
+Usage: ./scripts/dev/up [profile] [--pull]
 
-log "Starting AI4I Core"
+Profiles (each builds on core):
+  core           postgres + redis + auth/platform/inference (default; no UI)
+  frontend       core + nginx-gateway + simple-ui  (UI for the inference services)
+  observability  core + prometheus/alertmanager/grafana/node-exporter
+  logging        core + kafka/zookeeper/opensearch/fluent-bit (KAFKA_ENABLED=true)
+  all            everything above
 
-run_prereq_checks
+Flags:
+  --pull         Refresh docker images (docker compose --pull always).
+                 Without it, cached images are never re-pulled.
+
+Env overrides (plan § 10):
+  AI4I_PROFILE, AI4I_POSTGRES_PASSWORD, AI4I_REDIS_PASSWORD,
+  AI4I_SKIP_VENV, AI4I_SKIP_FRONTEND, AI4I_LOGS_DIR
+EOF
+}
+
+# ── Parse args: a positional profile + optional flags ────────────────────────
+PROFILE="${AI4I_PROFILE:-core}"
+PULL_IMAGES="false"
+
+for arg in "$@"; do
+    case "$arg" in
+        --pull)     PULL_IMAGES="true" ;;
+        -h|--help)  print_usage; exit 0 ;;
+        --*)        die "Unknown flag: $arg (see --help)" ;;
+        *)          PROFILE="$arg" ;;
+    esac
+done
+export PULL_IMAGES
+
+resolve_profile "$PROFILE"
+
+# AI4I_SKIP_FRONTEND force-skips the UI even on a frontend/all profile.
+if [[ -n "${AI4I_SKIP_FRONTEND:-}" ]]; then
+    START_FRONTEND="false"
+fi
+
+# On failure, tear down only the native services WE started this run; leave
+# docker containers up so they can be inspected (plan § 6 / § 8).
+cleanup_on_failure() {
+    local code=$?
+    trap - EXIT
+    if [[ $code -ne 0 ]]; then
+        warn "up failed (exit $code) — stopping services started this run"
+        local svc
+        for svc in ${STARTED_SERVICES[@]+"${STARTED_SERVICES[@]}"}; do
+            kill_service "$svc" || true
+        done
+    fi
+    exit $code
+}
+trap cleanup_on_failure EXIT
+
+log "Starting AI4I ($PROFILE profile)"
+
+run_prereq_checks "$START_FRONTEND"
 
 bootstrap_env
 
-start_core_infra
+start_infra
 
-wait_for_core_infra
+wait_for_infra
 
-setup_all_venvs
+setup_venv
 
 run_migrations
 
+# Toggle KAFKA_ENABLED before starting inference so the trace exporter picks it up.
+toggle_kafka "$ENABLE_KAFKA"
+
 start_all_services
+
+start_frontend
 
 wait_for_all_services
 
-echo ""
-echo "=========================================="
-echo "AI4I CORE STARTED SUCCESSFULLY"
-echo "=========================================="
-echo ""
-echo "Auth Service:"
-echo "  http://localhost:8081/docs"
-echo ""
-echo "Platform Core:"
-echo "  http://localhost:8095/docs"
-echo ""
-echo "Inference Service:"
-echo "  http://localhost:8090/docs"
-echo ""
-echo "Gateway:"
-echo "  http://localhost:8080"
-echo ""
-echo "Grafana:"
-echo "  http://localhost:3001"
-echo ""
-echo "Prometheus:"
-echo "  http://localhost:9090"
-echo ""
+if [[ "$START_FRONTEND" == "true" ]]; then
+    wait_for_frontend
+fi
+
+print_banner() {
+    echo ""
+    echo "=========================================="
+    echo "AI4I STARTED ($PROFILE profile)"
+    echo "=========================================="
+    echo ""
+    echo "Auth Service:            http://localhost:8081/docs"
+    echo "Platform Core:           http://localhost:8095/docs"
+    echo "Inference Service:       http://localhost:8090/docs"
+
+    if [[ "$START_FRONTEND" == "true" ]]; then
+        echo "Simple UI:               http://localhost:3000"
+        echo "Gateway:                 http://localhost:8080"
+    fi
+
+    if [[ "$WAIT_NGINX" == "true" && "$START_FRONTEND" != "true" ]]; then
+        echo "Gateway:                 http://localhost:8080"
+    fi
+
+    case "$PROFILE" in
+        observability|all)
+            echo "Grafana:                 http://localhost:3001"
+            echo "Prometheus:              http://localhost:9090"
+            ;;
+    esac
+
+    case "$PROFILE" in
+        logging|all)
+            echo "OpenSearch Dashboards:   http://localhost:5601"
+            ;;
+    esac
+
+    echo ""
+    echo "Logs:  ./scripts/dev/logs [auth|platform|inference|frontend|all]"
+    echo "Stop:  ./scripts/dev/down"
+    echo ""
+}
+
+print_banner
+
+# Success — drop the failure trap so services keep running.
+trap - EXIT

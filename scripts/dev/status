@@ -8,17 +8,17 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/pids.sh"
 
 echo ""
-echo "======== SERVICES ========"
+echo "======== NATIVE SERVICES ========"
 
 for svc in \
     auth-service \
     platform-core-service \
-    inference-service
+    inference-service \
+    simple-ui
 do
 
-    if is_running "$svc"
-    then
-        echo "✓ $svc"
+    if is_running "$svc"; then
+        echo "✓ $svc (PID=$(read_pid "$svc"), log: $LOG_DIR/$svc.log)"
     else
         echo "✗ $svc"
     fi

@@ -2,112 +2,65 @@
 
 set -euo pipefail
 
-source "$(dirname "$0")/lib/common.sh"
-source "$(dirname "$0")/lib/pids.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/pids.sh"
 
-start_auth_service() {
+VENV_DIR="$ROOT_DIR/.venv"
 
-    log "Starting auth-service..."
+# Start one backend under uvicorn in the background, hot-reload on. Idempotent:
+# if a live PID is already recorded, it's reused rather than double-started.
+_start_service() {
+
+    local name="$1"
+    local dir="$2"
+    local app="$3"
+    local port="$4"
+
+    if is_running "$name"; then
+        ok "$name already running (PID=$(read_pid "$name")) — skipping"
+        return 0
+    fi
+
+    log "Starting $name on :$port..."
 
     (
-        cd "$ROOT_DIR/services/auth-service"
-
-        source .venv/bin/activate
-
-        uvicorn \
-            app.main:app \
-            --host 0.0.0.0 \
-            --port 8081
-    ) > "$LOG_DIR/auth-service.log" 2>&1 &
+        cd "$ROOT_DIR/$dir"
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+        # exec so $! is the uvicorn PID itself (kept accurate for stop).
+        exec uvicorn "$app" --host 0.0.0.0 --port "$port" --reload
+    ) > "$LOG_DIR/$name.log" 2>&1 &
 
     local pid=$!
 
-    save_pid auth-service "$pid"
+    # Detach from the shell's job table so the service survives terminal close
+    # (nohup would keep itself as the parent and break PID tracking; disown
+    # keeps $pid pointing at uvicorn itself).
+    disown "$pid" 2>/dev/null || true
 
-    ok "auth-service started (PID=$pid)"
-}
+    save_pid "$name" "$pid"
+    track_started "$name"
 
-start_platform_service() {
-
-    log "Starting platform-core-service..."
-
-    (
-        cd "$ROOT_DIR/services/platform-core-service"
-
-        source .venv/bin/activate
-
-        uvicorn \
-            app.main:app \
-            --host 0.0.0.0 \
-            --port 8095
-    ) > "$LOG_DIR/platform-core-service.log" 2>&1 &
-
-    local pid=$!
-
-    save_pid platform-core-service "$pid"
-
-    ok "platform-core-service started (PID=$pid)"
-}
-
-start_inference_service() {
-
-    log "Starting inference-service..."
-
-    (
-        cd "$ROOT_DIR/services/inference-service"
-
-        source .venv/bin/activate
-
-        uvicorn \
-            main:app \
-            --host 0.0.0.0 \
-            --port 8090
-    ) > "$LOG_DIR/inference-service.log" 2>&1 &
-
-    local pid=$!
-
-    save_pid inference-service "$pid"
-
-    ok "inference-service started (PID=$pid)"
-}
-
-stop_auth_service() {
-
-    kill_service auth-service
-}
-
-stop_platform_service() {
-
-    kill_service platform-core-service
-}
-
-stop_inference_service() {
-
-    kill_service inference-service
+    ok "$name started (PID=$pid, log: $LOG_DIR/$name.log)"
 }
 
 start_all_services() {
 
-    start_auth_service
+    [[ -d "$VENV_DIR" ]] \
+        || die "Shared venv missing at $VENV_DIR — run setup_venv first"
 
-    sleep 5
+    _start_service auth-service           services/auth-service           app.main:app 8081
+    _start_service platform-core-service  services/platform-core-service  app.main:app 8095
+    _start_service inference-service      services/inference-service      main:app     8090
 
-    start_platform_service
-
-    sleep 5
-
-    start_inference_service
-
-    ok "All backend services started"
+    ok "Backend services started"
 }
 
 stop_all_services() {
 
-    stop_auth_service
+    kill_service auth-service
+    kill_service platform-core-service
+    kill_service inference-service
 
-    stop_platform_service
-
-    stop_inference_service
-
-    ok "All backend services stopped"
+    ok "Backend services stopped"
 }
