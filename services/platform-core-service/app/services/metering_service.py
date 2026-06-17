@@ -1,6 +1,8 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
+import time as _time
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -13,11 +15,18 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
-    THROUGHPUT_BUCKET_CONFIG,
+    WINDOW_STEP,
     apply_time_range,
     build_base_selectors,
     sum_over_window,
 )
+
+_WINDOW_SECONDS: dict = {
+    "1h":  3_600,
+    "24h": 86_400,
+    "7d":  604_800,
+    "30d": 2_592_000,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -140,36 +149,22 @@ class MeteringService:
             "promql": promql,
         }
 
-    # Maps TIME_RANGES keys to PostgreSQL interval literals for new-tenant queries.
-    _TIME_RANGE_TO_INTERVAL: dict = {
-        "1h":  "1 hour",
-        "24h": "24 hours",
-        "7d":  "7 days",
-        "30d": "30 days",
-    }
-
-    async def tenant_count(self, time_range: Optional[str]) -> dict:
+    async def tenant_count(self) -> dict:
         if self._auth_db is None:
             return {
                 "total_tenants": None,
                 "new_tenants": None,
-                "time_range": time_range or "all",
                 "auth_db_available": False,
             }
-        total = (await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))).scalar()
-        interval = self._TIME_RANGE_TO_INTERVAL.get(time_range or "")
-        if interval:
-            new_tenants = (
-                await self._auth_db.execute(
-                    text(f"SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '{interval}'")
-                )
-            ).scalar()
-        else:
-            new_tenants = total
+        total, new_tenants = await asyncio.gather(
+            self._auth_db.execute(text("SELECT COUNT(*) FROM tenants")),
+            self._auth_db.execute(
+                text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '7 days'")
+            ),
+        )
         return {
-            "total_tenants": total,
-            "new_tenants": new_tenants,
-            "time_range": time_range or "all",
+            "total_tenants": total.scalar(),
+            "new_tenants": new_tenants.scalar(),
             "auth_db_available": True,
         }
 
@@ -307,10 +302,10 @@ class MeteringService:
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
         _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _tenant = f',tenant="{tenant}"' if tenant else ""
-        base_sel    = "{" + _ep + _tenant + "}"
-        success_sel = "{" + _ep + _tenant + ',status_code=~"2.."' + "}"
-        failed_sel  = "{" + _ep + _tenant + ',status_code=~"[45].."' + "}"
+        _base = _ep + ',tenant!="unknown"' + (f',tenant="{tenant}"' if tenant else "")
+        base_sel    = "{" + _base + "}"
+        success_sel = "{" + _base + ',status_code=~"2.."' + "}"
+        failed_sel  = "{" + _base + ',status_code=~"[45].."' + "}"
 
         window = TIME_RANGES.get(time_range or "all")
 
@@ -391,8 +386,16 @@ class MeteringService:
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
             failed_v = faileds.get(task, 0)
-            native_v = natives.get(task)
             prev_v = prevs.get(task)
+
+            if cfg.get("use_success_as_native"):
+                native_v = success_v or None
+            else:
+                raw_native = natives.get(task)
+                if raw_native is not None and cfg.get("divide_by_60"):
+                    native_v = round(raw_native / 60, 2)
+                else:
+                    native_v = raw_native
 
             vs_prev_pct = None
             if prev_v is not None and prev_v > 0:
@@ -474,48 +477,34 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
 
         # Avg RPS: rate() already returns per-second rate averaged over the window.
-        # Fall back to a 5-minute window when no explicit range is selected ("all").
         avg_q = f"sum(rate({metric}[{window}]))" if window else f"sum(rate({metric}[5m]))"
-        avg_rps = round(float(await self._client.scalar(avg_q)), 4)
+        avg_rps = round(await self._client.scalar(avg_q), 4)
 
-        # Peak RPS: fire one rate query per sub-bucket in parallel.
-        # Bucket i=1 is the oldest (largest offset); i=count is the newest (offset 0).
+        # Peak RPS: one range query over the window, find the max point.
         peak_rps: Optional[float] = None
-        peak_label: Optional[str] = None
+        peak_at: Optional[str] = None
 
-        bucket_cfg = THROUGHPUT_BUCKET_CONFIG.get(time_range or "")
-        if bucket_cfg and window:
-            count = bucket_cfg["count"]
-            bw = bucket_cfg["bucket_window"]
-            unit = bucket_cfg["offset_unit"]
-            factor = bucket_cfg["offset_factor"]
-            prefix = bucket_cfg["label_prefix"]
-
-            def _bucket_query(i: int) -> str:
-                offset_steps = count - i
-                if offset_steps == 0:
-                    return f"sum(rate({metric}[{bw}]))"
-                return f"sum(rate({metric}[{bw}] offset {offset_steps * factor}{unit}))"
-
-            rates = await asyncio.gather(
-                *[self._client.scalar(_bucket_query(i)) for i in range(1, count + 1)],
-                return_exceptions=True,
+        if window and time_range in WINDOW_STEP:
+            now = _time.time()
+            w_secs = _WINDOW_SECONDS[time_range]
+            step = WINDOW_STEP[time_range]
+            range_results = await self._client.query_range(
+                f"sum(rate({metric}[1m]))",
+                start=now - w_secs,
+                end=now,
+                step=step,
             )
-
-            valid = [
-                (i + 1, float(v))
-                for i, v in enumerate(rates)
-                if not isinstance(v, Exception)
-            ]
-            if valid:
-                peak_i, peak_v = max(valid, key=lambda x: x[1])
-                peak_rps = round(peak_v, 2)
-                peak_label = f"{prefix}{peak_i}"
+            if range_results:
+                points = range_results[0].get("values", [])
+                if points:
+                    ts, val = max(points, key=lambda p: float(p[1]))
+                    peak_rps = round(float(val), 4)
+                    peak_at = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         return {
             "avg_rps": avg_rps,
             "peak_rps": peak_rps,
-            "peak_label": peak_label,
+            "peak_at": peak_at,
             "filters": {
                 "inference_only": inference_only,
                 "tenant": tenant,
@@ -534,7 +523,7 @@ class MeteringService:
         metric = f"{_METRIC}{label_str}"
         window = TIME_RANGES.get(time_range or "all")
 
-        # Avg RPS per tenant over the selected window (5m fallback when window=None).
+        # Step 1: instant topk to find which tenants to care about.
         rate_window = window or "5m"
         avg_q = f"topk({limit}, sum by(tenant) (rate({metric}[{rate_window}])))"
         avg_results = await self._client.query(avg_q)
@@ -545,41 +534,38 @@ class MeteringService:
         }
         top_tenants = list(avg_by_tenant)
 
-        # Peak RPS per tenant: one rate query per time bucket, pick per-tenant max.
+        # Step 2: one scoped range query over just the top-N tenant IDs.
         peak_by_tenant: dict[str, float] = {t: 0.0 for t in top_tenants}
-        bucket_cfg = THROUGHPUT_BUCKET_CONFIG.get(time_range or "")
-        if bucket_cfg and window:
-            count = bucket_cfg["count"]
-            bw = bucket_cfg["bucket_window"]
-            unit = bucket_cfg["offset_unit"]
-            factor = bucket_cfg["offset_factor"]
-
-            def _bucket_q(i: int) -> str:
-                offset_steps = count - i
-                if offset_steps == 0:
-                    return f"sum by(tenant) (rate({metric}[{bw}]))"
-                return f"sum by(tenant) (rate({metric}[{bw}] offset {offset_steps * factor}{unit}))"
-
-            bucket_results = await asyncio.gather(
-                *[self._client.query(_bucket_q(i)) for i in range(1, count + 1)],
-                return_exceptions=True,
+        if top_tenants and window and time_range in WINDOW_STEP:
+            tenant_re = "|".join(top_tenants)
+            scoped = metric.replace(
+                'tenant!="unknown"',
+                f'tenant=~"{tenant_re}"',
             )
-            for result in bucket_results:
-                if isinstance(result, Exception):
+            now = _time.time()
+            w_secs = _WINDOW_SECONDS[time_range]
+            step = WINDOW_STEP[time_range]
+            range_results = await self._client.query_range(
+                f"sum by(tenant) (rate({scoped}[1m]))",
+                start=now - w_secs,
+                end=now,
+                step=step,
+            )
+            for series in range_results:
+                t_label = series["metric"].get("tenant", "unknown")
+                if t_label not in peak_by_tenant:
                     continue
-                for r in result:
-                    tenant = r["metric"].get("tenant", "unknown")
-                    if tenant in peak_by_tenant:
-                        v = float(r["value"][1])
-                        if v > peak_by_tenant[tenant]:
-                            peak_by_tenant[tenant] = v
+                for _, val in series.get("values", []):
+                    v = float(val)
+                    if v > peak_by_tenant[t_label]:
+                        peak_by_tenant[t_label] = v
 
         tenants = sorted(
             [
                 {
                     "tenant": t,
                     "avg_rps": avg_by_tenant[t],
-                    "peak_rps": round(peak_by_tenant[t], 3) if peak_by_tenant.get(t) else None,
+                    "peak_rps": round(peak_by_tenant[t], 4) if peak_by_tenant.get(t) else None,
                 }
                 for t in top_tenants
             ],
@@ -610,7 +596,7 @@ class MeteringService:
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        base_sel = "{" + _ep + "}"
+        base_sel = '{' + _ep + ',tenant!="unknown"}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 

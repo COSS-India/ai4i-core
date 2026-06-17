@@ -52,6 +52,14 @@ ENDPOINT_TO_TASK: dict = {
     "/api/v1/chat": "llm",
 }
 
+# Resolution step for range queries (charts, peak RPS). Target ~300 points per window.
+WINDOW_STEP: dict = {
+    "1h":  "30s",
+    "24h": "5m",
+    "7d":  "1h",
+    "30d": "6h",
+}
+
 
 def apply_time_range(metric_expr: str, time_range: str | None) -> str:
     """Wrap metric_expr in increase(...[window]) when a time range is given.
@@ -110,11 +118,11 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "asr": {
         "display_name": "ASR",
-        # Prometheus metric name is *_seconds_processed — not minutes.
-        "metering_unit": "Audio seconds processed",
-        "native_unit_suffix": "sec",
+        "metering_unit": "Audio minutes processed",
+        "native_unit_suffix": "min",
         "native_metric": "telemetry_obsv_asr_audio_seconds_processed_sum",
         "native_extra_labels": None,
+        "divide_by_60": True,
     },
     "tts": {
         "display_name": "TTS",
@@ -134,11 +142,12 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "ocr": {
         "display_name": "OCR",
-        # metrics.py tracks characters and image KB — no "pages" counter exists.
-        "metering_unit": "Characters processed",
-        "native_unit_suffix": "chars",
-        "native_metric": "telemetry_obsv_ocr_characters_processed_sum",
+        # No per-image histogram exists; 1 successful request ≈ 1 image.
+        "metering_unit": "Images processed",
+        "native_unit_suffix": "images",
+        "native_metric": None,
         "native_extra_labels": None,
+        "use_success_as_native": True,
     },
     "transliteration": {
         "display_name": "Transliteration",
@@ -173,11 +182,19 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "speaker_diarization": {
         "display_name": "Speaker Diarization",
-        # Prometheus metric name is *_seconds_processed — not minutes.
-        "metering_unit": "Audio seconds processed",
-        "native_unit_suffix": "sec",
+        "metering_unit": "Audio minutes processed",
+        "native_unit_suffix": "min",
         "native_metric": "telemetry_obsv_speaker_diarization_seconds_processed_sum",
         "native_extra_labels": None,
+        "divide_by_60": True,
+    },
+    "audio_language_detection": {
+        "display_name": "Audio Language Detection",
+        "metering_unit": "Audio minutes processed",
+        "native_unit_suffix": "min",
+        "native_metric": "telemetry_obsv_audio_lang_detection_seconds_processed_sum",
+        "native_extra_labels": None,
+        "divide_by_60": True,
     },
 }
 
@@ -193,7 +210,7 @@ def build_base_selectors(
     Returns a brace-enclosed string like '{endpoint=~"...",tenant="foo"}'
     or an empty string when no filters apply.
     """
-    selectors: list[str] = []
+    selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
         selectors.append(f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"')
     if tenant:
@@ -202,4 +219,4 @@ def build_base_selectors(
         selectors.append(f'service_id="{service_id}"')
     if extra:
         selectors.extend(extra)
-    return "{" + ",".join(selectors) + "}" if selectors else ""
+    return "{" + ",".join(selectors) + "}"

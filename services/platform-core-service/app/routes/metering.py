@@ -1,197 +1,451 @@
-"""Prometheus metrics query endpoints."""
+"""Metering dashboard tab endpoints — 3 GET routes, one per tab."""
+from __future__ import annotations
+
+import asyncio
+import json
 import logging
+import re
+import time as _time
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, field_validator
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import text
 
+from app.core.exceptions import InsufficientPermissionsError
+from app.core.redis import get_redis
 from app.dependencies.services import get_metering_service
+from app.schemas.metering import (
+    Cell,
+    Graph,
+    GraphPoint,
+    GraphSeries,
+    OverviewResponse,
+    Scope,
+    ServiceConsumptionResponse,
+    ServiceRow,
+    TenantConsumptionResponse,
+    TenantRow,
+    ThroughputData,
+    UsageConcentration,
+)
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import TIME_RANGES, SERVICE_BREAKDOWN_CONFIG
+from app.utils.metering_promql_builder import TIME_RANGES, WINDOW_STEP
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/metering", tags=["Metering"])
 
+_ROLE_ADMIN = 1
+_ROLE_MODERATOR = 2
+_ROLE_TENANT_ADMIN = 5
 
-# ── request body models ─────────────────────────────────────────────────────
+_CACHE_TTL = 60  # seconds
 
-class _TimeRangeBase(BaseModel):
-    time_range: Optional[str] = None
-
-    @field_validator("time_range")
-    @classmethod
-    def validate_time_range(cls, v: Optional[str]) -> Optional[str]:
-        if v and v not in TIME_RANGES:
-            raise ValueError(f"Invalid time_range '{v}'. Allowed: {list(TIME_RANGES)}")
-        return v
-
-
-class _LimitMixin(BaseModel):
-    limit: int
-
-    @field_validator("limit")
-    @classmethod
-    def validate_limit(cls, v: int) -> int:
-        if not (1 <= v <= 50):
-            raise ValueError("limit must be between 1 and 50")
-        return v
+_WINDOW_SECONDS: dict = {
+    "1h":  3_600,
+    "24h": 86_400,
+    "7d":  604_800,
+    "30d": 2_592_000,
+}
 
 
-class ActiveTenantsFilter(_TimeRangeBase):
-    pass
+# ── Auth helpers ─────────────────────────────────────────────────────────────
 
 
-class AvgRequestsPerTenantFilter(_TimeRangeBase):
-    pass
+def _permission_ids(request: Request) -> set[int]:
+    raw = request.headers.get("X-Permission-IDS", "")
+    return {int(m) for m in re.findall(r"\d+", raw)}
 
 
-class RequestTotalFilter(_TimeRangeBase):
-    tenant: Optional[str] = None
-    service_id: Optional[str] = None
-    inference_only: bool = True
+def _require_metering_access(request: Request) -> None:
+    ids = _permission_ids(request)
+    if not ids & {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}:
+        raise InsufficientPermissionsError()
 
 
-class TopInferenceServicesFilter(_LimitMixin, _TimeRangeBase):
-    limit: int = 10
-    tenant: Optional[str] = None
+def _is_platform_admin(request: Request) -> bool:
+    return bool(_permission_ids(request) & {_ROLE_ADMIN, _ROLE_MODERATOR})
 
 
-class UsageConcentrationFilter(_LimitMixin, _TimeRangeBase):
-    limit: int = 5
+def _caller_tenant_id(request: Request) -> Optional[str]:
+    return request.headers.get("X-Tenant-Id") or None
 
 
-class ServiceBreakdownFilter(_TimeRangeBase):
-    tenant: Optional[str] = None
+def _caller_role_label(request: Request) -> str:
+    ids = _permission_ids(request)
+    if ids & {_ROLE_ADMIN, _ROLE_MODERATOR}:
+        return "admin"
+    if _ROLE_TENANT_ADMIN in ids:
+        return "tenant_admin"
+    return "unknown"
 
 
-class TenantRankingFilter(_LimitMixin, _TimeRangeBase):
-    limit: int = 10
+# ── Cache helpers ─────────────────────────────────────────────────────────────
 
 
-class ThroughputFilter(_TimeRangeBase):
-    tenant: Optional[str] = None
-    service_id: Optional[str] = None
-    inference_only: bool = True
+async def _cache_get(redis: aioredis.Redis, key: str) -> Optional[dict]:
+    try:
+        raw = await redis.get(key)
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
 
 
-class TopTenantsThroughputFilter(_LimitMixin, _TimeRangeBase):
-    limit: int = 10
-    inference_only: bool = True
+async def _cache_set(redis: aioredis.Redis, key: str, data: dict) -> None:
+    try:
+        await redis.set(key, json.dumps(data), ex=_CACHE_TTL)
+    except Exception:
+        pass
 
 
-class TenantCountFilter(_TimeRangeBase):
-    pass
+# ── Shared helpers ────────────────────────────────────────────────────────────
 
 
-class UsageByTenantServiceFilter(_LimitMixin, _TimeRangeBase):
-    limit: int = 10
-    services: Optional[list[str]] = None
-
-    @field_validator("services")
-    @classmethod
-    def validate_services(cls, v: Optional[list[str]]) -> Optional[list[str]]:
-        if v:
-            valid = set(SERVICE_BREAKDOWN_CONFIG)
-            invalid = [s for s in v if s not in valid]
-            if invalid:
-                raise ValueError(f"Invalid services: {invalid}. Allowed: {sorted(valid)}")
-        return v
+async def _resolve_org(svc: MeteringService, tenant_id: str) -> Optional[str]:
+    if svc._auth_db is None or not tenant_id:
+        return None
+    try:
+        row = await svc._auth_db.execute(
+            text("SELECT organisation FROM tenants WHERE id = :id"),
+            {"id": int(tenant_id)},
+        )
+        return row.scalar()
+    except Exception:
+        return None
 
 
-# ── routes ──────────────────────────────────────────────────────────────────
+async def _request_volume_chart(
+    svc: MeteringService,
+    window: str,
+    tenant: Optional[str],
+) -> Optional[Graph]:
+    if window not in WINDOW_STEP:
+        return None
+    from app.utils.metering_promql_builder import build_base_selectors
 
-@router.post("/requesttotal")
-async def get_request_total(
-    body: RequestTotalFilter,
+    sel = build_base_selectors(inference_only=True, tenant=tenant)
+    metric = f"telemetry_obsv_requests_total{sel}"
+    step = WINDOW_STEP[window]
+    w_secs = _WINDOW_SECONDS[window]
+    now = _time.time()
+
+    results = await svc._client.query_range(
+        f"sum(rate({metric}[1m]))",
+        start=now - w_secs,
+        end=now,
+        step=step,
+    )
+    if not results:
+        return None
+
+    points = [
+        GraphPoint(ts=int(ts), value=round(float(val), 4))
+        for ts, val in results[0].get("values", [])
+    ]
+    return Graph(
+        step=step,
+        series=[GraphSeries(key="requests", label="Request Rate (RPS)", points=points)],
+    )
+
+
+def _validate_window(window: str) -> None:
+    if window not in TIME_RANGES or window == "all":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid window '{window}'. Allowed: 1h, 24h, 7d, 30d",
+        )
+
+
+# ── Tab 1: Overview ───────────────────────────────────────────────────────────
+
+
+@router.get("/overview", response_model=OverviewResponse)
+async def get_overview(
+    request: Request,
+    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
+    redis: aioredis.Redis = Depends(get_redis),
 ):
-    return await svc.request_total(body.inference_only, body.tenant, body.service_id, body.time_range)
+    _require_metering_access(request)
+    _validate_window(window)
+
+    is_admin = _is_platform_admin(request)
+    caller_tid = _caller_tenant_id(request)
+    scope_tenant = caller_tid if not is_admin else (tenant_id or None)
+
+    cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cached = await _cache_get(redis, cache_key)
+    if cached:
+        return cached
+
+    degraded = False
+
+    async def _noop():
+        return None
+
+    results = await asyncio.gather(
+        svc.tenant_count(),
+        svc.active_tenants("24h"),
+        svc.active_tenants("7d"),
+        svc.active_tenants("30d"),
+        svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
+        svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
+        _request_volume_chart(svc, window, scope_tenant),
+        svc.usage_concentration(limit=5, time_range=window) if is_admin else _noop(),
+        svc.tenant_ranking(limit=5, time_range=window) if is_admin else _noop(),
+        return_exceptions=True,
+    )
+
+    def _ok(r):
+        if isinstance(r, Exception):
+            logger.warning("Metering query failed: %s", r)
+            nonlocal degraded
+            degraded = True
+            return None
+        return r
+
+    tc, at24, at7, at30, rt, tp, chart, conc, ranking = [_ok(r) for r in results]
+
+    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+
+    # KPI cells
+    kpis: list[Cell] = []
+    if rt:
+        kpis.extend([
+            Cell(
+                key="total_requests",
+                label="Total Requests",
+                value=rt["total_requests"]["formatted"],
+                pct_change=rt["total_requests"]["vs_previous_pct"],
+            ),
+            Cell(
+                key="success_rate",
+                label="Success Rate",
+                value=rt["success_rate"]["rate_pct"],
+                pct_change=rt["success_rate"]["vs_previous_pct"],
+            ),
+            Cell(
+                key="avg_rps",
+                label="Avg RPS",
+                value=rt["avg_rps"]["value"],
+                pct_change=rt["avg_rps"]["vs_previous_pct"],
+            ),
+        ])
+    if is_admin and rt and at30 and at30.get("count"):
+        kpis.append(Cell(
+            key="avg_requests_per_tenant",
+            label="Avg Requests / Tenant",
+            value=round(rt["total_requests"]["count"] / at30["count"], 1),
+        ))
+
+    active_cells: list[Cell] = [
+        Cell(key="active_24h", label="Active Tenants (24h)", value=at24["count"] if at24 else None),
+        Cell(key="active_7d",  label="Active Tenants (7d)",  value=at7["count"]  if at7  else None),
+        Cell(key="active_30d", label="Active Tenants (30d)", value=at30["count"] if at30 else None),
+    ]
+
+    # Platform adoption block (admin only)
+    platform_adoption: Optional[UsageConcentration] = None
+    if is_admin and tc:
+        platform_adoption = UsageConcentration(
+            top_tenants=[
+                TenantRow(
+                    rank=1,
+                    tenant="total",
+                    requests=tc["total_tenants"] or 0,
+                    formatted_requests=str(tc["total_tenants"] or 0),
+                    percentage=100.0,
+                )
+            ],
+            others={"new_tenants": tc["new_tenants"]},
+            top_concentration_pct=100.0,
+            grand_total=tc["total_tenants"] or 0,
+        )
+
+    # Usage concentration block (admin only)
+    usage_conc: Optional[UsageConcentration] = None
+    if is_admin and conc:
+        usage_conc = UsageConcentration(
+            top_tenants=[
+                TenantRow(
+                    rank=t["rank"],
+                    tenant=t["tenant"],
+                    requests=t["requests"],
+                    formatted_requests=MeteringService._format_count(t["requests"]),
+                    percentage=t["percentage"],
+                )
+                for t in conc["top_tenants"]
+            ],
+            others=conc["others"],
+            top_concentration_pct=conc["top_concentration_percentage"],
+            grand_total=conc["grand_total"],
+        )
+
+    response = OverviewResponse(
+        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        kpis=kpis,
+        active_tenants=active_cells,
+        platform_adoption=platform_adoption,
+        usage_concentration=usage_conc,
+        request_volume=chart,
+        throughput=ThroughputData(
+            avg_rps=tp["avg_rps"] if tp else 0.0,
+            peak_rps=tp.get("peak_rps") if tp else None,
+            peak_at=tp.get("peak_at") if tp else None,
+        ),
+        degraded=degraded,
+        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+    if not degraded:
+        await _cache_set(redis, cache_key, response.model_dump())
+
+    return response
 
 
-@router.post("/active-tenants")
-async def get_active_tenants(
-    body: ActiveTenantsFilter,
+# ── Tab 2: Tenant Consumption ─────────────────────────────────────────────────
+
+
+@router.get("/tenant-consumption", response_model=TenantConsumptionResponse)
+async def get_tenant_consumption(
+    request: Request,
+    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     svc: MeteringService = Depends(get_metering_service),
+    redis: aioredis.Redis = Depends(get_redis),
 ):
-    return await svc.active_tenants(body.time_range)
+    _require_metering_access(request)
+
+    if not _is_platform_admin(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admins cannot access tenant consumption.",
+        )
+
+    _validate_window(window)
+
+    cache_key = f"metering:tenant-consumption:{window}:{limit}"
+    cached = await _cache_get(redis, cache_key)
+    if cached:
+        return cached
+
+    degraded = False
+
+    ranking_result, heatmap_result = await asyncio.gather(
+        svc.tenant_ranking(limit=limit, time_range=window),
+        svc.usage_by_tenant_service(limit=limit, time_range=window, services=None),
+        return_exceptions=True,
+    )
+
+    def _ok(r):
+        if isinstance(r, Exception):
+            logger.warning("Metering query failed: %s", r)
+            nonlocal degraded
+            degraded = True
+            return None
+        return r
+
+    ranking = _ok(ranking_result)
+    heatmap = _ok(heatmap_result)
+
+    response = TenantConsumptionResponse(
+        scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
+        tenant_ranking=[
+            TenantRow(
+                rank=t["rank"],
+                tenant=t["tenant"],
+                requests=t["requests"],
+                formatted_requests=t["formatted_requests"],
+                percentage=t["percentage"],
+            )
+            for t in (ranking["tenants"] if ranking else [])
+        ],
+        usage_by_service=heatmap["tenants"] if heatmap else [],
+        degraded=degraded,
+        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+    if not degraded:
+        await _cache_set(redis, cache_key, response.model_dump())
+
+    return response
 
 
-@router.post("/avg-requests-per-tenant")
-async def get_avg_requests_per_tenant(
-    body: AvgRequestsPerTenantFilter,
+# ── Tab 3: Service Consumption ────────────────────────────────────────────────
+
+
+@router.get("/service-consumption", response_model=ServiceConsumptionResponse)
+async def get_service_consumption(
+    request: Request,
+    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
+    redis: aioredis.Redis = Depends(get_redis),
 ):
-    return await svc.avg_requests_per_tenant(body.time_range)
+    _require_metering_access(request)
+    _validate_window(window)
 
+    is_admin = _is_platform_admin(request)
+    caller_tid = _caller_tenant_id(request)
+    scope_tenant = caller_tid if not is_admin else (tenant_id or None)
 
-@router.post("/top-inference-services")
-async def get_top_inference_services(
-    body: TopInferenceServicesFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.top_inference_services(body.limit, body.tenant, body.time_range)
+    cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cached = await _cache_get(redis, cache_key)
+    if cached:
+        return cached
 
+    degraded = False
 
-@router.post("/usage-concentration")
-async def get_usage_concentration(
-    body: UsageConcentrationFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.usage_concentration(body.limit, body.time_range)
+    breakdown_result, tp_result, chart_result = await asyncio.gather(
+        svc.service_breakdown(tenant=scope_tenant, time_range=window),
+        svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
+        _request_volume_chart(svc, window, scope_tenant),
+        return_exceptions=True,
+    )
 
+    def _ok(r):
+        if isinstance(r, Exception):
+            logger.warning("Metering query failed: %s", r)
+            nonlocal degraded
+            degraded = True
+            return None
+        return r
 
-@router.post("/request-volume-health")
-async def get_request_volume_health(
-    body: RequestTotalFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.request_volume_health(body.inference_only, body.tenant, body.service_id, body.time_range)
+    breakdown = _ok(breakdown_result)
+    tp = _ok(tp_result)
+    chart = _ok(chart_result)
 
+    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
-@router.post("/service-breakdown")
-async def get_service_breakdown(
-    body: ServiceBreakdownFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.service_breakdown(body.tenant, body.time_range)
+    response = ServiceConsumptionResponse(
+        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        service_breakdown=[
+            ServiceRow(
+                service=s["service"],
+                metering_unit=s["metering_unit"],
+                requests=s["requests"],
+                native_units=s["native_units"],
+                native_unit_suffix=s["native_unit_suffix"],
+                success_pct=s["success_pct"],
+                failed=s["failed"],
+                vs_prev_period_pct=s["vs_prev_period_pct"],
+            )
+            for s in (breakdown["services"] if breakdown else [])
+        ],
+        throughput=ThroughputData(
+            avg_rps=tp["avg_rps"] if tp else 0.0,
+            peak_rps=tp.get("peak_rps") if tp else None,
+            peak_at=tp.get("peak_at") if tp else None,
+        ),
+        request_volume=chart,
+        degraded=degraded,
+        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
 
+    if not degraded:
+        await _cache_set(redis, cache_key, response.model_dump())
 
-@router.post("/tenant-ranking")
-async def get_tenant_ranking(
-    body: TenantRankingFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.tenant_ranking(body.limit, body.time_range)
-
-
-@router.post("/throughput")
-async def get_throughput(
-    body: ThroughputFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.throughput(body.inference_only, body.tenant, body.service_id, body.time_range)
-
-
-@router.post("/top-tenants-throughput")
-async def get_top_tenants_throughput(
-    body: TopTenantsThroughputFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.top_tenants_throughput(body.limit, body.inference_only, body.time_range)
-
-
-@router.post("/tenant-count")
-async def get_tenant_count(
-    body: TenantCountFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.tenant_count(body.time_range)
-
-
-@router.post("/usage-by-tenant-service")
-async def get_usage_by_tenant_service(
-    body: UsageByTenantServiceFilter,
-    svc: MeteringService = Depends(get_metering_service),
-):
-    return await svc.usage_by_tenant_service(body.limit, body.time_range, body.services)
+    return response
