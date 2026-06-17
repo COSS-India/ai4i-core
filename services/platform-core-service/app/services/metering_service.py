@@ -306,7 +306,7 @@ class MeteringService:
         """
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
-        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}",method="POST"'
+        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant = f',tenant="{tenant}"' if tenant else ""
         base_sel    = "{" + _ep + _tenant + "}"
         success_sel = "{" + _ep + _tenant + ',status_code=~"2.."' + "}"
@@ -315,20 +315,14 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
 
         def _by_ep(selector: str) -> str:
-            """Offset subtraction avoids increase() float extrapolation errors.
-
-            increase() interpolates over scrape samples and returns a tiny float
-            (e.g. 0.0012) for counters with very little history, which round()
-            collapses to 0. Subtracting the offset snapshot gives exact integers.
-            The inner `or` provides 0 for endpoints that didn't exist at offset.
-            """
             metric = f"{_METRIC}{selector}"
             if not window:
                 return f"sum by(endpoint) ({metric})"
             return (
-                f"sum by(endpoint) ({metric})"
-                f" - (sum by(endpoint) ({metric} offset {window})"
-                f" or sum by(endpoint) ({metric} * 0))"
+                f"sum by(endpoint) ("
+                f"(increase({metric}[{window}]) > 0)"
+                f" or ({metric} unless {metric} offset {window})"
+                f")"
             )
 
         # ── Fixed-index queries (0-3, optional 4) ───────────────────────────
@@ -338,14 +332,10 @@ class MeteringService:
             self._client.query(_by_ep(failed_sel)),   # 2 failed
         ]
         # prev_period = requests during the window BEFORE the current window.
-        # e.g. for 24h: counter@24h_ago - counter@48h_ago  (not the raw snapshot).
         double_window = DOUBLE_TIME_RANGES.get(time_range or "all") if window else None
         if window and double_window:
             prev_q = (
-                f"(sum by(endpoint) ({_METRIC}{base_sel} offset {window})"
-                f" or sum by(endpoint) ({_METRIC}{base_sel} * 0))"
-                f" - (sum by(endpoint) ({_METRIC}{base_sel} offset {double_window})"
-                f" or sum by(endpoint) ({_METRIC}{base_sel} * 0))"
+                f"sum by(endpoint) (increase({_METRIC}{base_sel} offset {window}[{window}]))"
             )
             fixed_queries.append(self._client.query(prev_q))  # 3 prev (optional)
 
@@ -619,16 +609,17 @@ class MeteringService:
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
-        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}",method="POST"'
+        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         base_sel = "{" + _ep + "}"
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
         if window:
             promql = (
-                f"sum by(tenant, endpoint) ({metric})"
-                f" - (sum by(tenant, endpoint) ({metric} offset {window})"
-                f" or sum by(tenant, endpoint) ({metric} * 0))"
+                f"sum by(tenant, endpoint) ("
+                f"(increase({metric}[{window}]) > 0)"
+                f" or ({metric} unless {metric} offset {window})"
+                f") > 0"
             )
         else:
             promql = f"sum by(tenant, endpoint) ({metric}) > 0"
@@ -643,7 +634,8 @@ class MeteringService:
             task = ENDPOINT_TO_TASK.get(ep)
             if task is None:
                 parts = [p for p in ep.split("/") if p]
-                task = parts[2] if len(parts) >= 4 else None
+                raw = parts[2] if len(parts) >= 4 else None
+                task = raw.replace("-", "_") if raw else None
             if task not in active_services:
                 continue
             v = max(0, round(float(r["value"][1])))
@@ -712,7 +704,9 @@ class MeteringService:
             if task is None:
                 parts = [p for p in ep.split("/") if p]
                 # /api/v1/{task}/inference → ['api', 'v1', task, 'inference']
-                task = parts[2] if len(parts) >= 4 else ep
+                # Normalise hyphens to underscores so speaker-diarization → speaker_diarization
+                raw = parts[2] if len(parts) >= 4 else ep
+                task = raw.replace("-", "_")
             out[task] = out.get(task, 0) + round(float(r["value"][1]))
         return out
 
@@ -729,34 +723,25 @@ class MeteringService:
 
     @staticmethod
     def _tenant_delta_promql(metric: str, time_range: Optional[str]) -> str:
-        """Per-tenant request delta using offset subtraction instead of increase().
-
-        increase() extrapolates: a series that is only 2h old in a 7d query returns
-        2/168 of its real counter value. Offset subtraction gives the exact integer
-        difference; series absent at the offset point contribute their full current value.
-        """
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return f"sum by(tenant) ({metric}) > 0"
         return (
-            f"sum by(tenant) ({metric})"
-            f" - (sum by(tenant) ({metric} offset {window})"
-            f" or sum by(tenant) ({metric} * 0))"
+            f"sum by(tenant) ("
+            f"(increase({metric}[{window}]) > 0)"
+            f" or ({metric} unless {metric} offset {window})"
+            f") > 0"
         )
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:
-        """PromQL that sums per-tenant over a rolling window, including new series.
-
-        The OR clause rescues series that first appeared mid-window — increase() would
-        return 0 for them because Prometheus never saw the 0→N transition at the offset point.
-        """
         window = TIME_RANGES.get(time_range or "all")
         if window:
-            windowed = apply_time_range(metric, time_range)
             return (
-                f"sum by(tenant) ({windowed}) > 0"
-                f" or (sum by(tenant) ({metric}) unless (sum by(tenant) ({metric} offset {window}) > 0))"
+                f"sum by(tenant) ("
+                f"(increase({metric}[{window}]) > 0)"
+                f" or ({metric} unless {metric} offset {window})"
+                f") > 0"
             )
         base = f"sum by(tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base

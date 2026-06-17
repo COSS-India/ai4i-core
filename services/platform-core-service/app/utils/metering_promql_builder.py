@@ -39,8 +39,8 @@ THROUGHPUT_BUCKET_CONFIG: dict = {
     "30d": {"count": 30, "bucket_window": "1d", "offset_unit": "d", "offset_factor": 1,  "label_prefix": "D"},
 }
 
-# Regex that matches inference endpoints (POST only).
-INFERENCE_ENDPOINT_REGEX = r".*inference.*"
+# Regex that matches only endpoints ending in /inference (excludes /inference/health etc.).
+INFERENCE_ENDPOINT_REGEX = r".*/inference$"
 
 # Regex for service-breakdown queries — covers all inference-style endpoints
 # plus non-standard ones (e.g. LLM uses /api/v1/chat, not /api/v1/llm/inference).
@@ -66,20 +66,26 @@ def apply_time_range(metric_expr: str, time_range: str | None) -> str:
 
 
 def sum_over_window(metric_expr: str, time_range: str | None) -> str:
-    """Build a PromQL sum-delta query using offset subtraction instead of increase().
+    """Build a PromQL sum that captures every request, including very recent ones.
 
-    increase() misses new series that first appear mid-window (Prometheus never saw
-    the 0→N transition, so it returns 0 for all samples = no change).
-    Offset subtraction correctly handles this: if the series didn't exist at the
-    start of the window, the implied previous value is 0.
+    Two-part approach so no data is lost:
+    1. increase() >= 0  — established series (2+ scrape points); handles counter
+       resets across service restarts automatically.
+    2. metric unless metric offset window — raw counter for brand-new series that
+       have only 1 scrape point (increase() returns NaN for them). The `unless`
+       guard ensures only truly new series (didn't exist at window-start) use the
+       raw counter, preventing old series from inflating the total with their
+       all-time value.
     Falls back to a plain sum for time_range="all"/None.
     """
     window = TIME_RANGES.get(time_range or "all")
     if not window:
         return f"sum({metric_expr})"
     return (
-        f"(sum({metric_expr}) or vector(0))"
-        f" - (sum({metric_expr} offset {window}) or vector(0))"
+        f"sum("
+        f"(increase({metric_expr}[{window}]) > 0)"
+        f" or ({metric_expr} unless {metric_expr} offset {window})"
+        f")"
     )
 
 
@@ -190,7 +196,6 @@ def build_base_selectors(
     selectors: list[str] = []
     if inference_only:
         selectors.append(f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"')
-        selectors.append('method="POST"')
     if tenant:
         selectors.append(f'tenant="{tenant}"')
     if service_id:
