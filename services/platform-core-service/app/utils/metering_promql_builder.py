@@ -39,8 +39,8 @@ THROUGHPUT_BUCKET_CONFIG: dict = {
     "30d": {"count": 30, "bucket_window": "1d", "offset_unit": "d", "offset_factor": 1,  "label_prefix": "D"},
 }
 
-# Regex that matches only endpoints ending in /inference (excludes /inference/health etc.).
-INFERENCE_ENDPOINT_REGEX = r".*/inference$"
+# Matches endpoints ending in /inference (excludes /inference/health) plus /api/v1/chat (LLM).
+INFERENCE_ENDPOINT_REGEX = r"(.*/inference|/api/v1/chat)"
 
 # Regex for service-breakdown queries — covers all inference-style endpoints
 # plus non-standard ones (e.g. LLM uses /api/v1/chat, not /api/v1/llm/inference).
