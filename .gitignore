@@ -60,6 +60,10 @@ Thumbs.db
 *.log
 logs/
 
+# Dev runner PID files (scripts/dev/* writes .run/<service>.pid)
+.run/
+*.pid
+
 # Database
 *.db
 *.sqlite3
