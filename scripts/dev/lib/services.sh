@@ -64,3 +64,17 @@ stop_all_services() {
 
     ok "Backend services stopped"
 }
+
+# Start a single backend by short name (used by `restart --only`).
+start_one_service() {
+
+    [[ -d "$VENV_DIR" ]] \
+        || die "Shared venv missing at $VENV_DIR — run setup_venv first"
+
+    case "$1" in
+        auth)      _start_service auth-service          services/auth-service          app.main:app 8081 ;;
+        platform)  _start_service platform-core-service services/platform-core-service app.main:app 8095 ;;
+        inference) _start_service inference-service      services/inference-service     main:app     8090 ;;
+        *)         die "Unknown service: $1 (expected: auth | platform | inference)" ;;
+    esac
+}

@@ -133,8 +133,9 @@ print_banner() {
     esac
 
     echo ""
-    echo "Logs:  ./scripts/dev/logs [auth|platform|inference|frontend|all]"
-    echo "Stop:  ./scripts/dev/down"
+    echo "Logs:     ./scripts/dev/logs [auth|platform|inference|frontend|all]"
+    echo "Restart:  ./scripts/dev/restart [profile|service]   (native services only)"
+    echo "Stop:     ./scripts/dev/down"
     echo ""
 }
 

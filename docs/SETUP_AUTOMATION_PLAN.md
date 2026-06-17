@@ -54,6 +54,7 @@ scripts/
   dev/
     up                    # main entrypoint: ./scripts/dev/up [profile] [--pull]
     down                  # stop everything this session started ([--prune] also wipes volumes)
+    restart               # re-apply env + bounce native services only ([profile|service] [--no-env])
     status                # show what's up/down + log paths
     logs                  # tail logs for one service or all
     reset                 # wipe everything (volumes, venv, .env files) — destructive, confirms

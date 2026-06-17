@@ -1,4 +1,4 @@
-# Developer Single-Command Setup
+# Single-Command Setup
 
 Get AI4I Core running on a fresh machine with **one command**. It clones the
 repo, installs anything that's missing, and brings up the **core** profile
@@ -67,6 +67,9 @@ cd ai4i-core
 ./scripts/dev/up core        # "core" is the default; pass "frontend" to also get the UI
 ```
 
+> **Tip:** add `--prepare` (`… | bash -s -- --prepare`) to clone + install
+> prerequisites but **stop before starting**, so you can set `dev.secrets` first.
+
 ---
 
 ## Options
@@ -131,21 +134,46 @@ edit it, and run `./scripts/dev/up core`.
 files that drive both the containers and the services. Real cloud secrets
 (SMTP/SES) belong **only** here — never in `env.template` or any committed file.
 
+### Inference model endpoints (Triton / LLM)
+
+Actual inference requires reachable model servers (Triton, and an LLM upstream).
+Their addresses are sensitive infra and are **not** committed. Set them in
+`dev.secrets`:
+
+- `TRITON_ENDPOINT_NMT`, `TRITON_ENDPOINT_ASR`, `TRITON_ENDPOINT_TTS`, … — the DB
+  **seed migration reads these env vars** and writes them into
+  `mm_services.endpoint`. They take effect when the seed runs, i.e. on a **fresh
+  database** (first `up`). If your DB already exists, re-seed by resetting the
+  volume: `./scripts/dev/down --prune` then `./scripts/dev/up core`.
+- `AI4I_LLM_DEFAULT_ENDPOINT` — injected into `services/inference-service/.env`
+  as `LLM_DEFAULT_ENDPOINT` (the inference-service's own LLM proxy upstream).
+
+Without these, the platform still comes up; only the actual inference calls fail
+(`UnsupportedProtocol` → 500), because there's no model server to reach.
+
 ---
 
-## After it finishes
+## Day-to-day commands
 
-```bash
-cd ai4i-core
+All commands live under `scripts/dev/` and act on the clone you set up:
 
-./scripts/dev/status                 # what's up + log locations
-./scripts/dev/logs all               # tail all service logs
-./scripts/dev/down                   # stop everything (keeps your data)
-./scripts/dev/up frontend            # add the UI later (only starts the missing bits)
-```
+| Command | What it does |
+|---|---|
+| `./scripts/dev/up [profile] [--pull]` | Start/extend the stack. Idempotent — re-running only fills in what's missing. `--pull` refreshes Docker images. |
+| `./scripts/dev/restart [profile\|service] [--no-env]` | Re-apply env (`dev.secrets` + `.env`) and bounce the **native** services only; Docker keeps running. `service` = `auth\|platform\|inference\|ui`. |
+| `./scripts/dev/status` | Show native services (PID + log path) and Docker containers. |
+| `./scripts/dev/logs [auth\|platform\|inference\|frontend\|all]` | Tail service logs. |
+| `./scripts/dev/down [--prune]` | Stop everything (volumes kept). `--prune` also removes Docker volumes. |
+| `./scripts/dev/reset` | Wipe volumes, the shared `.venv`, `.env` files, and logs (confirms first). |
+| `./scripts/dev/install-prereqs.sh` | Install prerequisites (apt/brew/apk) — run manually if you skipped them. |
 
-Re-running the command (or `./scripts/dev/up core`) on an already-up
-environment is safe — every step is idempotent and won't double-start anything.
+- **Changed `dev.secrets` or a config value?** Run `./scripts/dev/restart` (or
+  `restart <service>`) — it regenerates the `.env` files and restarts the native
+  services without bouncing Docker or re-running migrations. A bare `up` won't
+  pick it up because it skips already-running services.
+- **Add the UI later:** `./scripts/dev/up frontend` starts only the missing
+  `nginx-gateway` + `simple-ui`.
+- Re-running `up` on an already-up environment is safe — every step is idempotent.
 
 ---
 

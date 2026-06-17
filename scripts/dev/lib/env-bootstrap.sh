@@ -154,6 +154,27 @@ fill_smtp() {
     return 0
 }
 
+# Set LLM_DEFAULT_ENDPOINT in the inference-service .env from AI4I_LLM_DEFAULT_ENDPOINT
+# (the inference-service's own LLM proxy upstream — distinct from the platform's
+# TRITON_ENDPOINT_LLM service endpoint). Supplied at runtime via dev.secrets; left
+# as-is when unset.
+fill_inference_llm() {
+
+    [[ -f "$INFERENCE_ENV" ]] || return 0
+
+    local ep="${AI4I_LLM_DEFAULT_ENDPOINT:-}"
+    [[ -n "$ep" ]] || return 0
+
+    if grep -q '^LLM_DEFAULT_ENDPOINT=' "$INFERENCE_ENV"; then
+        sed -i.bak "s|^LLM_DEFAULT_ENDPOINT=.*|LLM_DEFAULT_ENDPOINT=$(_sed_escape "$ep")|" "$INFERENCE_ENV"
+        rm -f "$INFERENCE_ENV.bak"
+    else
+        printf '\nLLM_DEFAULT_ENDPOINT=%s\n' "$ep" >> "$INFERENCE_ENV"
+    fi
+
+    log "Set LLM_DEFAULT_ENDPOINT in inference-service/.env"
+}
+
 bootstrap_env() {
 
     log "Bootstrapping environment..."
@@ -165,6 +186,8 @@ bootstrap_env() {
     generate_service_envs
 
     fill_smtp
+
+    fill_inference_llm
 }
 
 # Flip KAFKA_ENABLED in the inference-service .env so the trace exporter ships

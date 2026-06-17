@@ -6,7 +6,7 @@
 # from nothing to a running stack: it clones the repo (or updates an existing
 # clone), installs any missing prerequisites, and runs ./scripts/dev/up.
 #
-# Default profile is "core" (backend only). See docs/DEVELOPER_SINGLE_COMMAND_SETUP.md.
+# Default profile is "core" (backend only). See docs/SINGLE_COMMAND_SETUP.md.
 #
 # Usage (once published as a Gist):
 #   curl -fsSL <GIST_RAW_URL> | bash                 # core profile, start immediately
