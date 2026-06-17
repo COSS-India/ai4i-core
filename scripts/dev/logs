@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVICE="${1:-all}"
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+LOG_DIR="${AI4I_LOGS_DIR:-$ROOT_DIR/logs}"
+
+case "$SERVICE" in
+
+    auth)
+        tail -f "$LOG_DIR/auth-service.log"
+        ;;
+
+    platform)
+        tail -f "$LOG_DIR/platform-core-service.log"
+        ;;
+
+    inference)
+        tail -f "$LOG_DIR/inference-service.log"
+        ;;
+
+    frontend|simple-ui)
+        tail -f "$LOG_DIR/simple-ui.log"
+        ;;
+
+    all)
+        # tail -F tolerates files that don't exist yet (e.g. no frontend running).
+        tail -F \
+            "$LOG_DIR/auth-service.log" \
+            "$LOG_DIR/platform-core-service.log" \
+            "$LOG_DIR/inference-service.log" \
+            "$LOG_DIR/simple-ui.log" \
+            2>/dev/null
+        ;;
+
+    *)
+        echo "Usage:"
+        echo "./scripts/dev/logs [auth|platform|inference|frontend|all]"
+        exit 1
+        ;;
+esac
