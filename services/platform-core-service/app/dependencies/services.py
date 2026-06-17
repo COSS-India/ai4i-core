@@ -9,7 +9,7 @@ business-logic services.
 import importlib
 from typing import Optional
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
@@ -51,15 +51,19 @@ SyncService = _alert_pkg.SyncService
 _sync_service_singleton = SyncService()
 
 
-def get_prometheus_client() -> PrometheusClient:
-    """Return a configured PrometheusClient. Raises 503 if PROMETHEUS_URL is unset."""
+def get_prometheus_client(request: Request) -> PrometheusClient:
+    """Return a configured PrometheusClient backed by the shared connection pool."""
     from fastapi import HTTPException, status as http_status
     if not settings.prometheus_url:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Prometheus is not configured (PROMETHEUS_URL is unset).",
         )
-    return PrometheusClient(settings.prometheus_url, timeout=settings.prometheus_timeout)
+    return PrometheusClient(
+        settings.prometheus_url,
+        request.app.state.http_client,
+        timeout=settings.prometheus_timeout,
+    )
 
 
 async def get_metering_service(
