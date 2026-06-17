@@ -153,3 +153,10 @@ skills/
 
 # Architecture docs (local ADRs, designs, diagrams), not committed
 arch-docs/
+
+# local dev runner (dev.sh) logs and pids
+dev.sh
+.dev/
+
+# Local PRD docs, not committed
+docs/prd/
