@@ -58,11 +58,39 @@ class TenantRow(BaseModel):
     percentage: float
 
 
+class OthersData(BaseModel):
+    count: int
+    requests: int
+    percentage: float
+
+
 class UsageConcentration(BaseModel):
     top_tenants: list[TenantRow]
-    others: dict
+    others: OthersData
     top_concentration_pct: float
     grand_total: int
+
+
+class PlatformAdoption(BaseModel):
+    total_tenants: Optional[int] = None
+    new_tenants_7d: Optional[int] = None
+    active_24h: Optional[int] = None
+    active_7d: Optional[int] = None
+    active_30d: Optional[int] = None
+
+
+class ServiceEntry(BaseModel):
+    display_name: str
+    requests: int
+    formatted_requests: str
+
+
+class TenantServiceRow(BaseModel):
+    rank: int
+    tenant: str
+    services: dict[str, ServiceEntry]
+    total: int
+    formatted_total: str
 
 
 class ThroughputData(BaseModel):
@@ -77,7 +105,7 @@ class OverviewResponse(BaseModel):
     scope: Scope
     kpis: list[Cell]
     active_tenants: list[Cell]
-    platform_adoption: Optional[UsageConcentration] = None
+    platform_adoption: Optional[PlatformAdoption] = None
     usage_concentration: Optional[UsageConcentration] = None
     request_volume: Optional[Graph] = None
     throughput: ThroughputData
@@ -88,7 +116,7 @@ class OverviewResponse(BaseModel):
 class TenantConsumptionResponse(BaseModel):
     scope: Scope
     tenant_ranking: list[TenantRow]
-    usage_by_service: list[dict]
+    usage_by_service: list[TenantServiceRow]
     degraded: bool = False
     generated_at: str
 

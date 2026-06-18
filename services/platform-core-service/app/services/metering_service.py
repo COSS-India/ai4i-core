@@ -16,7 +16,6 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     WINDOW_STEP,
-    apply_time_range,
     build_base_selectors,
     sum_over_window,
 )
@@ -139,16 +138,6 @@ class MeteringService:
             "promql": promql,
         }
 
-    async def avg_requests_per_tenant(self, time_range: Optional[str]) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
-        promql = f"avg(sum by(tenant) ({apply_time_range(metric, time_range)}))"
-        avg = round(float(await self._client.scalar(promql)), 2)
-        return {
-            "avg_requests_per_tenant": avg,
-            "filters": {"time_range": time_range or "all"},
-            "promql": promql,
-        }
-
     async def tenant_count(self) -> dict:
         if self._auth_db is None:
             return {
@@ -166,34 +155,6 @@ class MeteringService:
             "total_tenants": total.scalar(),
             "new_tenants": new_tenants.scalar(),
             "auth_db_available": True,
-        }
-
-    async def top_inference_services(
-        self,
-        limit: int,
-        tenant: Optional[str],
-        time_range: Optional[str],
-    ) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
-        promql = f"topk({limit}, sum by(endpoint) ({apply_time_range(metric, time_range)}))"
-        results = await self._client.query(promql)
-
-        services = [
-            {
-                "endpoint": r["metric"].get("endpoint", "unknown"),
-                "total_requests": int(float(r["value"][1])),
-            }
-            for r in results
-        ]
-        grand_total = sum(s["total_requests"] for s in services)
-        for s in services:
-            s["percentage"] = round(s["total_requests"] / grand_total * 100, 1) if grand_total else 0.0
-
-        return {
-            "services": services,
-            "grand_total": grand_total,
-            "filters": {"tenant": tenant, "limit": limit, "time_range": time_range or "all"},
-            "promql": promql,
         }
 
     async def usage_concentration(self, limit: int, time_range: Optional[str]) -> dict:
@@ -239,57 +200,6 @@ class MeteringService:
             "grand_total": grand_total,
             "filters": {"limit": limit, "time_range": time_range or "all"},
             "promql": promql,
-        }
-
-    async def request_volume_health(
-        self,
-        inference_only: bool,
-        tenant: Optional[str],
-        service_id: Optional[str],
-        time_range: Optional[str],
-    ) -> dict:
-        base = f"{_METRIC}{build_base_selectors(inference_only, tenant, service_id)}"
-        success_selector = build_base_selectors(inference_only, tenant, service_id, extra=['status_code=~"2.."'])
-        failed_selector = build_base_selectors(inference_only, tenant, service_id, extra=['status_code=~"[45].."'])
-        success = f"{_METRIC}{success_selector}"
-        failed = f"{_METRIC}{failed_selector}"
-
-        total_q = sum_over_window(base, time_range)
-        success_q = sum_over_window(success, time_range)
-        failed_q = sum_over_window(failed, time_range)
-
-        total_v, success_v, failed_v = await asyncio.gather(
-            self._client.scalar(total_q),
-            self._client.scalar(success_q),
-            self._client.scalar(failed_q),
-        )
-        total_v, success_v, failed_v = round(total_v), round(success_v), round(failed_v)
-
-        vs_previous_pct = None
-        window = TIME_RANGES.get(time_range or "all")
-        if window:
-            prev_total = round(await self._client.scalar(
-                f"sum(increase({base}[{window}] offset {window}))"
-            ))
-            if prev_total > 0:
-                vs_previous_pct = round((total_v - prev_total) / prev_total * 100, 1)
-
-        return {
-            "total_requests": {"count": total_v, "vs_previous_pct": vs_previous_pct},
-            "successful_requests": {
-                "count": success_v,
-                "success_rate_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
-            },
-            "failed_requests": {
-                "count": failed_v,
-                "failure_rate_pct": round(failed_v / total_v * 100, 2) if total_v else 0.0,
-            },
-            "filters": {
-                "inference_only": inference_only,
-                "tenant": tenant,
-                "service_id": service_id,
-                "time_range": time_range or "all",
-            },
         }
 
     async def service_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
@@ -509,75 +419,6 @@ class MeteringService:
                 "inference_only": inference_only,
                 "tenant": tenant,
                 "service_id": service_id,
-                "time_range": time_range or "all",
-            },
-        }
-
-    async def top_tenants_throughput(
-        self,
-        limit: int,
-        inference_only: bool,
-        time_range: Optional[str],
-    ) -> dict:
-        label_str = build_base_selectors(inference_only)
-        metric = f"{_METRIC}{label_str}"
-        window = TIME_RANGES.get(time_range or "all")
-
-        # Step 1: instant topk to find which tenants to care about.
-        rate_window = window or "5m"
-        avg_q = f"topk({limit}, sum by(tenant) (rate({metric}[{rate_window}])))"
-        avg_results = await self._client.query(avg_q)
-
-        avg_by_tenant = {
-            r["metric"].get("tenant", "unknown"): round(float(r["value"][1]), 4)
-            for r in avg_results
-        }
-        top_tenants = list(avg_by_tenant)
-
-        # Step 2: one scoped range query over just the top-N tenant IDs.
-        peak_by_tenant: dict[str, float] = {t: 0.0 for t in top_tenants}
-        if top_tenants and window and time_range in WINDOW_STEP:
-            tenant_re = "|".join(top_tenants)
-            scoped = metric.replace(
-                'tenant!="unknown"',
-                f'tenant=~"{tenant_re}"',
-            )
-            now = _time.time()
-            w_secs = _WINDOW_SECONDS[time_range]
-            step = WINDOW_STEP[time_range]
-            range_results = await self._client.query_range(
-                f"sum by(tenant) (rate({scoped}[1m]))",
-                start=now - w_secs,
-                end=now,
-                step=step,
-            )
-            for series in range_results:
-                t_label = series["metric"].get("tenant", "unknown")
-                if t_label not in peak_by_tenant:
-                    continue
-                for _, val in series.get("values", []):
-                    v = float(val)
-                    if v > peak_by_tenant[t_label]:
-                        peak_by_tenant[t_label] = v
-
-        tenants = sorted(
-            [
-                {
-                    "tenant": t,
-                    "avg_rps": avg_by_tenant[t],
-                    "peak_rps": round(peak_by_tenant[t], 4) if peak_by_tenant.get(t) else None,
-                }
-                for t in top_tenants
-            ],
-            key=lambda x: x["avg_rps"],
-            reverse=True,
-        )
-
-        return {
-            "tenants": tenants,
-            "filters": {
-                "limit": limit,
-                "inference_only": inference_only,
                 "time_range": time_range or "all",
             },
         }

@@ -39,17 +39,18 @@ THROUGHPUT_BUCKET_CONFIG: dict = {
     "30d": {"count": 30, "bucket_window": "1d", "offset_unit": "d", "offset_factor": 1,  "label_prefix": "D"},
 }
 
-# Matches endpoints ending in /inference (excludes /inference/health) plus /api/v1/chat (LLM).
-INFERENCE_ENDPOINT_REGEX = r"(.*/inference|/api/v1/chat)"
+# Matches endpoints ending in /inference (excludes /inference/health) plus LLM chat paths.
+# Anchored in Prometheus =~ so /api/v1/chat(/completions)? matches both label forms.
+INFERENCE_ENDPOINT_REGEX = r"(.*/inference|/api/v1/chat(/completions)?)"
 
-# Regex for service-breakdown queries — covers all inference-style endpoints
-# plus non-standard ones (e.g. LLM uses /api/v1/chat, not /api/v1/llm/inference).
-SERVICE_BREAKDOWN_ENDPOINT_REGEX = r"/api/v1/(.+/inference|chat)"
+# Regex for service-breakdown queries — same coverage as INFERENCE_ENDPOINT_REGEX.
+SERVICE_BREAKDOWN_ENDPOINT_REGEX = r"/api/v1/(.+/inference|chat(/completions)?)"
 
 # Maps Prometheus endpoint label values to SERVICE_BREAKDOWN_CONFIG task keys
 # for services whose endpoint doesn't follow the /api/v1/{task}/inference pattern.
 ENDPOINT_TO_TASK: dict = {
     "/api/v1/chat": "llm",
+    "/api/v1/chat/completions": "llm",
 }
 
 # Resolution step for range queries (charts, peak RPS). Target ~300 points per window.

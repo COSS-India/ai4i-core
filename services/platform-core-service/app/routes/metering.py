@@ -13,6 +13,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.redis import get_redis
 from app.dependencies.services import get_metering_service
@@ -22,6 +23,7 @@ from app.schemas.metering import (
     GraphPoint,
     GraphSeries,
     OverviewResponse,
+    PlatformAdoption,
     Scope,
     ServiceConsumptionResponse,
     ServiceRow,
@@ -41,7 +43,7 @@ _ROLE_ADMIN = 1
 _ROLE_MODERATOR = 2
 _ROLE_TENANT_ADMIN = 5
 
-_CACHE_TTL = 60  # seconds
+_CACHE_TTL = settings.metering_cache_ttl_seconds
 
 _WINDOW_SECONDS: dict = {
     "1h":  3_600,
@@ -71,6 +73,12 @@ def _is_platform_admin(request: Request) -> bool:
 
 def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
+
+
+def _validate_scope_tenant(tenant_id: Optional[str]) -> Optional[str]:
+    if tenant_id is not None and not re.fullmatch(r"[0-9]+", tenant_id):
+        raise HTTPException(status_code=400, detail="tenant_id must be a positive integer")
+    return tenant_id
 
 
 def _caller_role_label(request: Request) -> str:
@@ -174,7 +182,7 @@ async def get_overview(
 
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
-    scope_tenant = caller_tid if not is_admin else (tenant_id or None)
+    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
 
     cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
@@ -191,6 +199,7 @@ async def get_overview(
         svc.active_tenants("24h"),
         svc.active_tenants("7d"),
         svc.active_tenants("30d"),
+        svc.active_tenants(window),   # window-scoped, used as avg_requests_per_tenant denominator
         svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
         svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
         _request_volume_chart(svc, window, scope_tenant),
@@ -207,7 +216,7 @@ async def get_overview(
             return None
         return r
 
-    tc, at24, at7, at30, rt, tp, chart, conc, ranking = [_ok(r) for r in results]
+    tc, at24, at7, at30, at_window, rt, tp, chart, conc, ranking = [_ok(r) for r in results]
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
@@ -234,11 +243,11 @@ async def get_overview(
                 pct_change=rt["avg_rps"]["vs_previous_pct"],
             ),
         ])
-    if is_admin and rt and at30 and at30.get("count"):
+    if is_admin and rt and at_window and at_window.get("count"):
         kpis.append(Cell(
             key="avg_requests_per_tenant",
             label="Avg Requests / Tenant",
-            value=round(rt["total_requests"]["count"] / at30["count"], 1),
+            value=round(rt["total_requests"]["count"] / at_window["count"], 1),
         ))
 
     active_cells: list[Cell] = [
@@ -248,21 +257,14 @@ async def get_overview(
     ]
 
     # Platform adoption block (admin only)
-    platform_adoption: Optional[UsageConcentration] = None
+    platform_adoption: Optional[PlatformAdoption] = None
     if is_admin and tc:
-        platform_adoption = UsageConcentration(
-            top_tenants=[
-                TenantRow(
-                    rank=1,
-                    tenant="total",
-                    requests=tc["total_tenants"] or 0,
-                    formatted_requests=str(tc["total_tenants"] or 0),
-                    percentage=100.0,
-                )
-            ],
-            others={"new_tenants": tc["new_tenants"]},
-            top_concentration_pct=100.0,
-            grand_total=tc["total_tenants"] or 0,
+        platform_adoption = PlatformAdoption(
+            total_tenants=tc["total_tenants"],
+            new_tenants_7d=tc["new_tenants"],
+            active_24h=at24["count"] if at24 else None,
+            active_7d=at7["count"] if at7 else None,
+            active_30d=at30["count"] if at30 else None,
         )
 
     # Usage concentration block (admin only)
@@ -390,7 +392,7 @@ async def get_service_consumption(
 
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
-    scope_tenant = caller_tid if not is_admin else (tenant_id or None)
+    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
 
     cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)

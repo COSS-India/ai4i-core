@@ -100,6 +100,7 @@ class CoreSettings(BaseSettings):
     # Cache TTLs
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 3600
+    metering_cache_ttl_seconds: int = 60
 
     # ── Model management business rules ──
     max_active_versions_per_model: int = 5
