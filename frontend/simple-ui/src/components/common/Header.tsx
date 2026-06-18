@@ -112,6 +112,9 @@ const Header: React.FC = () => {
       case "/logs":
         setTitle("Logs Dashboard");
         break;
+      case "/usage-dashboard":
+        setTitle("Usage Dashboard");
+        break;
       case "/policy-management":
         setTitle("Policy Management");
         break;

@@ -36,8 +36,9 @@ export const getTenantIdFromToken = (): string | null => {
     const decoded = atob(payload);
     const payloadObj = JSON.parse(decoded);
 
-    // Extract tenant_id from JWT payload
-    return payloadObj.tenant_id || null;
+    // Extract tenant_id from JWT payload (may be string or number)
+    const tid = payloadObj.tenant_id;
+    return tid != null && tid !== "" ? String(tid) : null;
   } catch (error) {
     console.error('Failed to extract tenant_id from token:', error);
     return null;

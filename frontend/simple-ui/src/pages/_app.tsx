@@ -14,14 +14,14 @@ import '../styles/globals.css';
 
 // Define routes that need the full layout
 const layoutRoutes = [
-  '/', 
-  '/asr', 
-  '/tts', 
-  '/nmt', 
-  '/llm', 
-  '/pipeline', 
-  '/pipeline-builder', 
-  '/profile', 
+  '/',
+  '/asr',
+  '/tts',
+  '/nmt',
+  '/llm',
+  '/pipeline',
+  '/pipeline-builder',
+  '/profile',
   '/model-management',
   '/services-management',
   '/tenant-management',
@@ -34,6 +34,7 @@ const layoutRoutes = [
   '/audio-language-detection',
   '/ner',
   '/logs',
+  '/usage-dashboard',
   '/traces',
   '/alerts-management',
   '/pii-management',
@@ -77,7 +78,7 @@ export default function App({ Component, pageProps }: AppProps) {
             <Component {...pageProps} />
           )}
         </AuthGuard>
-        
+
         {/* React Query DevTools */}
         <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>

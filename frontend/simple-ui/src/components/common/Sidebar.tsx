@@ -35,6 +35,7 @@ import {
   IoNotificationsOutline,
   IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
+  IoStatsChartOutline,
 } from "react-icons/io5";
 import { TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
@@ -42,7 +43,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { canAccessServicesManagement } from "../../utils/rbac";
+import { canAccessServicesManagement, canAccessUsageDashboard } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -142,6 +143,12 @@ const safeColorMap = {
     400: "#66BB6A",
     600: "#43A047",
   },
+  [TABS.usageDashboard]: {
+    50:  "#FFF7ED",
+    300: "#FDBA74",
+    400: "#FB923C",
+    600: "#EA580C",
+  },
   [TABS.traces]: { // Purple → Pastel Purple
     50:  "#F3E5F5",
     300: "#BA68C8",
@@ -239,6 +246,15 @@ const topNavItems: NavItem[] = [
     icon: IoDocumentTextOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: TABS.usageDashboard,
+    label: "Usage Dashboard",
+    path: `/${TABS.usageDashboard}`,
+    icon: IoStatsChartOutline,
+    iconSize: 10,
+    iconColor: "",
     requiresAuth: true,
   },
   {
@@ -436,6 +452,7 @@ const Sidebar: React.FC = () => {
         if (item.id === TABS.apiKeyManagement && !(isAdmin || isTenantAdmin)) return false;
         if (item.id === TABS.logs && (isUser || isGuest)) return false;
         if (item.id === TABS.logs && !tenantId && !isAdmin) return false;
+        if (item.id === TABS.usageDashboard && !canAccessUsageDashboard(user?.roles)) return false;
         return true;
       }),
     [

@@ -1229,6 +1229,7 @@ export const TABS = {
   tenantManagement: "tenant-management",
   apiKeyManagement: "api-key-management",
   logs: "logs",
+  usageDashboard: "usage-dashboard",
   traces: "traces",
   alertsManagement: "alerts-management",
   piiManagement: "pii-management",

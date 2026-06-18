@@ -5,6 +5,7 @@ import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { Spinner, Center } from '@chakra-ui/react';
 import { useAuth } from '../../hooks/useAuth';
+import { canAccessUsageDashboard } from '../../utils/rbac';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -12,10 +13,13 @@ interface AuthGuardProps {
 
 // Routes that require authentication
 // Note: /nmt is excluded to allow anonymous "try-it" access
-const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/tenant-management', '/api-key-management', '/profile', '/logs', '/traces', '/alerts-management', '/pii-management', '/policy-management'];
+const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/tenant-management', '/api-key-management', '/profile', '/logs', '/usage-dashboard', '/traces', '/alerts-management', '/pii-management', '/policy-management'];
 
 // Routes that require ADMIN role
 const adminOnlyRoutes = ['/alerts-management'];
+
+// Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
+const usageDashboardRoutes = ['/usage-dashboard'];
 
 // Routes that allow anonymous access with limited functionality
 const tryItRoutes = ['/nmt'];
@@ -27,10 +31,12 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   // Check if current route requires authentication
   const isProtectedRoute = protectedRoutes.includes(router.pathname);
   const isAdminOnlyRoute = adminOnlyRoutes.includes(router.pathname);
+  const isUsageDashboardRoute = usageDashboardRoutes.includes(router.pathname);
   const isTryItRoute = tryItRoutes.includes(router.pathname);
 
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
+  const canAccessUsage = canAccessUsageDashboard(user?.roles);
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -48,6 +54,14 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
       router.push('/');
     }
   }, [isLoading, isAdminOnlyRoute, isAuthenticated, isAdmin, router]);
+
+  // Redirect users without Usage Dashboard access
+  useEffect(() => {
+    if (!isLoading && isUsageDashboardRoute && isAuthenticated && !canAccessUsage) {
+      console.log('AuthGuard: Usage dashboard route denied for current roles, redirecting to home');
+      router.push('/');
+    }
+  }, [isLoading, isUsageDashboardRoute, isAuthenticated, canAccessUsage, router]);
 
   // Show loading spinner while checking auth
   if (isLoading) {
@@ -67,6 +81,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   // If admin-only route and user is not ADMIN, don't render children (will redirect)
   if (isAdminOnlyRoute && (!isAuthenticated || !isAdmin)) {
     return null; // Will redirect via useEffect
+  }
+
+  // If usage dashboard route and user lacks access, don't render children (will redirect)
+  if (isUsageDashboardRoute && isAuthenticated && !canAccessUsage) {
+    return null;
   }
 
   // Allow access if:
