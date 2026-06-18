@@ -5,6 +5,7 @@ import { getStoredAccessToken, getRememberMeFromStorage } from '../utils/tokenSt
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 import { apiEndpoints, API_URL_PATH_MARKERS } from './apiEndpoints';
 import BaseApiService from './baseApiService';
+import { showErrorAlert } from '../utils/errorHandler';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
@@ -366,8 +367,8 @@ apiClient.interceptors.response.use(
                     await clearSessionAndRedirect('/auth');
                     return Promise.reject(new Error('Session expired. Please sign in again.'));
                   } else {
-                    // Refresh failed for other reasons - don't logout, let UI handle it
                     console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
+                    showErrorAlert(refreshError);
                   }
                 }
               } else if (isTokenExpired) {
@@ -439,8 +440,8 @@ apiClient.interceptors.response.use(
                     await clearSessionAndRedirect('/auth');
                     return Promise.reject(new Error('Session expired. Please sign in again.'));
                   } else {
-                    // Other refresh error - logout
                     console.error('Token refresh failed for auth endpoint:', refreshError);
+                    showErrorAlert(refreshError);
                     await clearSessionAndRedirect('/');
                   }
                 }

@@ -625,6 +625,31 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
   };
 }
 
+let lastAlertText = '';
+let lastAlertAt = 0;
+const ALERT_DEDUPE_MS = 3000;
+
+/**
+ * Show a browser alert for API/runtime errors using the same message format as toasts.
+ * Deduplicates identical messages within a short window to avoid alert spam.
+ *
+ * Set `meta: { suppressErrorAlert: true }` on a React Query query/mutation to skip
+ * the global alert handler in `_app.tsx`.
+ */
+export function showErrorAlert(error: unknown, service?: ErrorHandlerService): void {
+  if (typeof window === 'undefined') return;
+
+  const { title, message, showOnlyMessage } = extractErrorInfo(error, service);
+  const alertText = showOnlyMessage ? message : `${title}\n\n${message}`;
+  const now = Date.now();
+  if (alertText === lastAlertText && now - lastAlertAt < ALERT_DEDUPE_MS) {
+    return;
+  }
+  lastAlertText = alertText;
+  lastAlertAt = now;
+  window.alert(alertText);
+}
+
 /**
  * Formats error codes to readable titles
  * Converts "PERMISSION_DENIED" to "PERMISSION DENIED"

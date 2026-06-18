@@ -164,7 +164,9 @@ export const useAuth = () => {
       }
     };
 
-    initializeAuth();
+    void initializeAuth().catch((error) => {
+      console.error('Auth initialization failed:', error);
+    });
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', handleSessionRevokedFromStorage);
     }

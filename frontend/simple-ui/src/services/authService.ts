@@ -29,6 +29,7 @@ import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
 import { API_BASE_URL, apiService } from './api';
 import { ApiValidationError } from './dto/apiValidationError';
+import { showErrorAlert } from '../utils/errorHandler';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import {
   adminApiKeyWithUserSchema,
@@ -812,6 +813,7 @@ class AuthService {
       return true;
     } catch (error) {
       console.error('Failed to refresh token:', error);
+      showErrorAlert(error);
       return false;
     }
   }
@@ -831,7 +833,7 @@ class AuthService {
         await this.refreshToken();
         return true;
       } catch (refreshError) {
-        // Refresh failed, clear tokens
+        showErrorAlert(refreshError);
         this.clearTokens();
         this.clearStoredUser();
         return false;
