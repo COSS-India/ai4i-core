@@ -143,12 +143,10 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "ocr": {
         "display_name": "OCR",
-        # No per-image histogram exists; 1 successful request ≈ 1 image.
-        "metering_unit": "Images processed",
-        "native_unit_suffix": "images",
-        "native_metric": None,
+        "metering_unit": "Image KB processed",
+        "native_unit_suffix": "KB",
+        "native_metric": "telemetry_obsv_ocr_image_size_kb_sum",
         "native_extra_labels": None,
-        "use_success_as_native": True,
     },
     "transliteration": {
         "display_name": "Transliteration",
