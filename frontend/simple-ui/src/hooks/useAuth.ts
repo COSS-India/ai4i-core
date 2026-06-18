@@ -28,7 +28,7 @@ function runAuthInitOnce(): Promise<void> {
 
     if (hasToken && storedUser) {
       try {
-        const currentUser = await authService.getCurrentUser();
+        const currentUser = await authService.getCurrentUser({ suppressErrorAlert: true });
         authService.setStoredUser(currentUser);
       } catch (error: any) {
         const errorMessage = error?.message || 'Token validation failed';

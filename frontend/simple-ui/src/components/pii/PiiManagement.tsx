@@ -29,9 +29,9 @@ import {
   Tooltip,
   useColorModeValue,
   useDisclosure,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";
@@ -88,7 +88,7 @@ function actionBadgeColorScheme(action: string): string {
 }
 
 export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const { tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
   const pageBg = useColorModeValue("gray.50", "gray.900");
   const mutedText = useColorModeValue("gray.600", "gray.400");
@@ -135,7 +135,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   useEffect(() => {
     if (!isAdmin || activeTab !== "admin") return;
-    void refreshAdminDataWithRetry();
+    void refreshAdminDataWithRetry().catch(() => undefined);
   }, [isAdmin, activeTab]);
 
   const fetchAllDomains = async () => {
@@ -183,14 +183,14 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     try {
       await Promise.all([fetchAllDomains(), fetchTenantMappings()]);
       return;
-    } catch (e) {
-      console.error("Admin data fetch failed, retrying once...", e);
+    } catch {
+      console.warn("Admin data fetch failed, retrying once...");
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       await Promise.all([fetchAllDomains(), fetchTenantMappings()]);
-    } catch (e) {
-      console.error("Admin data fetch failed after retry", e);
+    } catch {
+      console.warn("Admin data fetch failed after retry");
       setAdminDataError("Could not load domains/mappings. Please click Refresh.");
     }
   };

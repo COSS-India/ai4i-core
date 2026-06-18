@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import alertingService from "../../../services/alertingService";
 import type { AlertHistoryItem } from "../../../types/alerting";
 
 const DEFAULT_PAGE_SIZE = 25;
 
 export function useAlertHistory(enabled: boolean) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [items, setItems] = useState<AlertHistoryItem[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);

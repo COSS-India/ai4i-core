@@ -3,10 +3,12 @@ import {
   AxiosInstance,
   AxiosRequestConfig,
   AxiosResponse,
+  isCancel,
   Method,
 } from 'axios';
 import type { ZodTypeAny } from 'zod';
 import { parseResponseData } from './dto/parseResponseData';
+import { handleApiError } from '../utils/errorHandler';
 
 const warnOnMissingResponseSchema =
   process.env.NODE_ENV === 'development' &&
@@ -26,6 +28,8 @@ export interface BaseApiRequestConfig<D = any> extends AxiosRequestConfig<D> {
   headers?: ApiRequestHeaders;
   /** When set, `response.data` is validated (and replaced with the parsed value). */
   responseSchema?: ZodTypeAny;
+  /** Skip the global browser alert for this request (e.g. silent auth bootstrap). */
+  suppressErrorAlert?: boolean;
 }
 
 /**
@@ -39,7 +43,7 @@ class BaseApiService {
   /** Omit Zod-only options before passing config to axios. */
   private toAxiosConfig<D = any>(config?: BaseApiRequestConfig<D>): AxiosRequestConfig<D> {
     if (!config) return {};
-    const { responseSchema: _omit, ...rest } = config;
+    const { responseSchema: _omitSchema, suppressErrorAlert: _omitAlert, ...rest } = config;
     return rest as AxiosRequestConfig<D>;
   }
 
@@ -73,6 +77,7 @@ class BaseApiService {
         const message =
           data?.detail?.message ||
           data?.detail ||
+          data?.error_msg ||
           data?.message ||
           error?.message ||
           `Request failed with status ${status ?? 'unknown'}`;
@@ -124,6 +129,10 @@ class BaseApiService {
       }
       return response;
     } catch (error) {
+      const suppressAlert = config?.suppressErrorAlert === true;
+      if (typeof window !== 'undefined' && !suppressAlert && !isCancel(error)) {
+        handleApiError(error);
+      }
       this.normalizeError(error);
     }
   }

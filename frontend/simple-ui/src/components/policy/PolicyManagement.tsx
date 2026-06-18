@@ -31,9 +31,11 @@ import {
   Textarea,
   Tooltip,
   useDisclosure,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+
+type ToastFn = ReturnType<typeof useToastWithDeduplication>;
 import {
   AddIcon,
   DeleteIcon,
@@ -146,7 +148,7 @@ export interface PolicyManagementProps {
 }
 
 export default function PolicyManagement({ canManage }: PolicyManagementProps) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [tab, setTab] = useState<PolicySectionId>("pii");
 
   useEffect(() => {
@@ -230,7 +232,7 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
   );
 }
 
-function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+function PoliciesPanel({ toast }: { toast: ToastFn }) {
   const [allPolicies, setAllPolicies] = useState<PolicyOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1326,7 +1328,7 @@ function PiiTypeDetailModal({
   );
 }
 
-function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+function PiiTypesPanel({ toast }: { toast: ToastFn }) {
   const [allTypes, setAllTypes] = useState<PiiTypeOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1814,7 +1816,7 @@ function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   );
 }
 
-function AuditPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+function AuditPanel({ toast }: { toast: ToastFn }) {
   const [items, setItems] = useState<AuditLogOut[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, limit: 50 });
   const [loading, setLoading] = useState(true);

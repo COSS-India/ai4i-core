@@ -4,6 +4,11 @@
 
 import { ASR_ERRORS, TTS_ERRORS, NMT_ERRORS, PIPELINE_ERRORS, COMMON_ERRORS, OCR_ERRORS, TRANSLITERATION_ERRORS, LANGUAGE_DETECTION_ERRORS, SPEAKER_DIARIZATION_ERRORS, AUDIO_LANGUAGE_DETECTION_ERRORS, NER_ERRORS } from '../config/constants';
 import { ApiValidationError } from '../services/dto/apiValidationError';
+import { handleApiError as handleGenericApiError, showParsedErrorToast } from './errorHandling';
+import type { ErrorHandlerService } from './errorHandling/types';
+
+export type { ErrorHandlerService } from './errorHandling/types';
+export { parseApiError, handleApiError as handleGenericApiError } from './errorHandling';
 
 export interface ErrorInfo {
   title: string;
@@ -19,7 +24,6 @@ export interface ErrorInfo {
  * - { message: "Error message" }
  * - Standard error objects
  */
-export type ErrorHandlerService = 'asr' | 'tts' | 'nmt' | 'pipeline' | 'ocr' | 'transliteration' | 'language-detection' | 'speaker-diarization' | 'audio-language-detection' | 'ner';
 
 export function extractErrorInfo(error: any, service?: ErrorHandlerService): ErrorInfo {
   let errorMessage = 'An unexpected error occurred. Please try again.';
@@ -38,7 +42,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
     const data = error?.response?.data;
 
     // Prefer backend message as default when we have one (for unknown error codes)
-    const backendMessage = data.detail?.message || data.message;
+    const backendMessage = data.detail?.message || data.message || data.error_msg;
     if (backendMessage && typeof backendMessage === 'string') {
       errorMessage = backendMessage;
     }
@@ -625,29 +629,81 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
   };
 }
 
-let lastAlertText = '';
-let lastAlertAt = 0;
-const ALERT_DEDUPE_MS = 3000;
+const GLOBAL_ERROR_HANDLING_KEY = '__ai4iGlobalErrorHandlingInstalled';
+
+function formatErrorArg(arg: unknown): unknown {
+  if (arg instanceof Error) {
+    return arg.message;
+  }
+  return arg;
+}
 
 /**
- * Show a browser alert for API/runtime errors using the same message format as toasts.
- * Deduplicates identical messages within a short window to avoid alert spam.
+ * Show an error toast for API/runtime errors using the same message format as page-level handlers.
+ * Deduplicates identical messages within a short window to avoid toast spam.
  *
- * Set `meta: { suppressErrorAlert: true }` on a React Query query/mutation to skip
- * the global alert handler in `_app.tsx`.
+ * Set `suppressErrorAlert: true` on a BaseApiService request config to skip the toast.
+ * Set `meta: { suppressErrorAlert: true }` on React Query options for non-API failures.
  */
 export function showErrorAlert(error: unknown, service?: ErrorHandlerService): void {
   if (typeof window === 'undefined') return;
 
-  const { title, message, showOnlyMessage } = extractErrorInfo(error, service);
-  const alertText = showOnlyMessage ? message : `${title}\n\n${message}`;
-  const now = Date.now();
-  if (alertText === lastAlertText && now - lastAlertAt < ALERT_DEDUPE_MS) {
+  if (service) {
+    const { title, message, showOnlyMessage } = extractErrorInfo(error, service);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('[showErrorAlert]', message, error);
+    }
+    showParsedErrorToast(
+      title,
+      message,
+      showOnlyMessage ?? false,
+      7000
+    );
     return;
   }
-  lastAlertText = alertText;
-  lastAlertAt = now;
-  window.alert(alertText);
+
+  handleGenericApiError(error);
+}
+
+/** Service-aware API error handler — delegates to `extractErrorInfo` when a service is provided. */
+export function handleApiError(
+  error: unknown,
+  options?: { service?: ErrorHandlerService; silent?: boolean; duration?: number }
+): void {
+  if (options?.silent) return;
+  if (options?.service) {
+    showErrorAlert(error, options.service);
+    return;
+  }
+  handleGenericApiError(error, options);
+}
+
+/**
+ * Install global client-side error handling once per browser session:
+ * - API errors surface via error toasts in BaseApiService
+ * - Uncaught promise rejections and window errors show error toasts (no Next.js overlay)
+ * - `console.error` is patched so logging caught Error objects does not trigger the dev overlay
+ */
+export function installGlobalErrorHandling(): void {
+  if (typeof window === 'undefined') return;
+  const win = window as Window & { [GLOBAL_ERROR_HANDLING_KEY]?: boolean };
+  if (win[GLOBAL_ERROR_HANDLING_KEY]) return;
+  win[GLOBAL_ERROR_HANDLING_KEY] = true;
+
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    originalConsoleError(...args.map(formatErrorArg));
+  };
+
+  window.addEventListener('unhandledrejection', (event) => {
+    event.preventDefault();
+    handleApiError(event.reason);
+  });
+
+  window.addEventListener('error', (event) => {
+    event.preventDefault();
+    handleApiError(event.error ?? event.message);
+  });
 }
 
 /**

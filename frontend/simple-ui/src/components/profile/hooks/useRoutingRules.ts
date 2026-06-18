@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import alertingService from "../../../services/alertingService";
 import type {
   NotificationReceiver,
@@ -39,7 +39,7 @@ type UpdateForm = {
 };
 
 export function useRoutingRules() {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const [rules, setRules] = useState<NotificationReceiver[]>([]);
   const [isLoading, setIsLoading] = useState(false);

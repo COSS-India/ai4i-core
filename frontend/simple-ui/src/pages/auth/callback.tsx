@@ -6,7 +6,6 @@ import { useRouter } from 'next/router';
 import { Box, Spinner, Text, VStack, Alert, AlertIcon, AlertTitle, AlertDescription } from '@chakra-ui/react';
 import authService from '../../services/authService';
 import { getRememberMeFromStorage } from '../../utils/tokenStorage';
-import { showErrorAlert } from '../../utils/errorHandler';
 
 const OAuthCallback = () => {
   const router = useRouter();
@@ -91,7 +90,6 @@ const OAuthCallback = () => {
     if (router.isReady) {
       void handleOAuthCallback().catch((err) => {
         console.error('OAuth callback error:', err);
-        showErrorAlert(err);
         setError('An error occurred during authentication. Please try again.');
         setIsProcessing(false);
         setTimeout(() => {

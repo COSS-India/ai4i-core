@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import alertingService from "../../../services/alertingService";
 import type {
   AlertDefinition,
@@ -119,7 +119,7 @@ function resolveUpdateField<T>(
 }
 
 export function useAlertDefinitions() {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const [definitions, setDefinitions] = useState<AlertDefinition[]>([]);
   const [isLoading, setIsLoading] = useState(false);

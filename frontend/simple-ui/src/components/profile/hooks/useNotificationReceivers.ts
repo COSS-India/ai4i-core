@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import alertingService from "../../../services/alertingService";
 import type {
   NotificationReceiver,
@@ -22,7 +22,7 @@ const EMPTY_CREATE_FORM: NotificationReceiverCreate = {
 };
 
 export function useNotificationReceivers() {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const [receivers, setReceivers] = useState<NotificationReceiver[]>([]);
   const [isLoading, setIsLoading] = useState(false);
