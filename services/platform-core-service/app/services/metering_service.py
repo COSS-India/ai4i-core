@@ -177,17 +177,24 @@ class MeteringService:
                 "new_tenants": None,
                 "auth_db_available": False,
             }
-        total, new_tenants = await asyncio.gather(
-            self._auth_db.execute(text("SELECT COUNT(*) FROM tenants")),
-            self._auth_db.execute(
+        try:
+            # AsyncSession is not concurrency-safe — run sequentially, not via gather.
+            total = await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))
+            new_tenants = await self._auth_db.execute(
                 text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '7 days'")
-            ),
-        )
-        return {
-            "total_tenants": total.scalar(),
-            "new_tenants": new_tenants.scalar(),
-            "auth_db_available": True,
-        }
+            )
+            return {
+                "total_tenants": total.scalar(),
+                "new_tenants": new_tenants.scalar(),
+                "auth_db_available": True,
+            }
+        except Exception:
+            logger.warning("tenant_count: auth DB query failed", exc_info=True)
+            return {
+                "total_tenants": None,
+                "new_tenants": None,
+                "auth_db_available": False,
+            }
 
     async def usage_concentration(self, limit: int, time_range: Optional[str]) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"

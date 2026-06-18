@@ -368,6 +368,21 @@ async def get_overview(
             pct_change=avg_pct_change,
         ))
 
+    # Tenant counts from auth DB (not Prometheus) — admin only
+    if is_admin and tc and tc.get("auth_db_available"):
+        kpis.extend([
+            Cell(
+                key="total_tenants",
+                label="Total Tenants",
+                value=tc["total_tenants"],
+            ),
+            Cell(
+                key="new_tenants_7d",
+                label="New Tenants (Last 7 Days)",
+                value=tc["new_tenants"],
+            ),
+        ])
+
     active_cells: list[Cell] = [
         Cell(key="active_24h", label="Active Tenants (24h)", value=at24["count"] if at24 else None),
         Cell(key="active_7d",  label="Active Tenants (7d)",  value=at7["count"]  if at7  else None),
