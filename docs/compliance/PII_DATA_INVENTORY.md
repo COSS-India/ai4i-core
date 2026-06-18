@@ -3,9 +3,6 @@
 | | |
 |---|---|
 | **Document purpose** | Inventory of all Personally Identifiable Information (PII) collected, stored, or processed by the AI4I Core platform, for DPG certification review and privacy compliance. |
-| **Audience** | DPG review team, platform operators (data controllers), end users. |
-| **Status** | Reflects the codebase as of June 2026. Derived from source code, database migrations, and infrastructure configuration — not from a deployed environment. |
-| **Deployment model** | Self-hosted open-source software. The **operator deploying the platform is the data controller**. Retention values below are code/config defaults that operators can change. |
 
 ---
 
@@ -173,17 +170,6 @@ Access is enforced in two layers: the API gateway maps each endpoint to a requir
 | Browser tokens | AES-wrapped in sessionStorage; cleared on logout; cross-tab logout signal |
 | Database auth | Postgres SCRAM-SHA-256; Redis optional password |
 
-### Known protection gaps (for remediation tracking)
-
-1. **API keys, refresh tokens, and verification tokens are stored unhashed** in PostgreSQL (passwords are the only hashed credential).
-2. **Emails appear in some application log lines** (OAuth user creation/login, tenant user provisioning), and **full API keys are logged** on revoke/update operations.
-3. **OpenSearch indices have no lifecycle/delete policy**, so client IPs and user/tenant identifiers in logs and traces accumulate indefinitely; the local OpenSearch config has security disabled.
-4. **No field-level encryption at rest** for PII columns; protection relies on database/host security.
-5. **Soft-deleted users retain all PII** in the database; there is no hard delete, anonymisation, or cascade purge of logs/traces on deletion.
-6. **`GET /auth/check-email`** allows account-existence enumeration.
-7. **`POST /auth/tenants/{id}/users` returns the setup token in the API response**, and notification recipient emails are duplicated into the generated `alertmanager.yml` on disk.
-8. **No automated cleanup** of expired/deactivated rows in `token_verification` or stale refresh rows.
-
 ---
 
 ## 7. Data-subject rights (current state)
@@ -197,43 +183,6 @@ Access is enforced in two layers: the API gateway maps each endpoint to a requir
 | Consent management | Not implemented (registration implies consent; no consent records) |
 
 Per `docs/architecture/00-overview.md`, GDPR/DPDPA data-subject rights are explicitly delegated to the deploying operator. For DPG certification, this delegation must be stated in the privacy policy, and operators need documented procedures (or built-in features) for erasure and export.
-
----
-
-## 8. Privacy policy gap analysis
-
-**There is no privacy policy in the repository.** The only privacy-related documentation is:
-
-- `docs/architecture/00-overview.md` — "Regulatory Compliance & Privacy" section (operator-as-controller model, DPDPA 2023, IT Act/SPDI Rules, GDPR delegation).
-- `docs/architecture/01-auth-service.md` — "Data Privacy & Security" (technical controls).
-- `CODE_OF_CONDUCT.MD` — privacy of incident reporters only.
-
-A privacy policy must be authored and must accurately state, at minimum:
-
-| Policy statement required | Backed by this inventory |
-|---------------------------|--------------------------|
-| What is collected: email (required), password, optional name/phone/timezone; Google profile data if OAuth is used | Sections 2–3 |
-| That submitted inference content (text/audio/images) is processed transiently and **not stored**, but is sent to configured model backends | Section 2 row 16, Section 3.7 |
-| That technical logs record IP addresses, user/tenant identifiers, and timestamps, and current default retention (no automatic log expiry — must be fixed or disclosed) | Section 3.5, Section 4 |
-| That usage records are kept for billing with pseudonymous identifiers | Section 2 row 11 |
-| Account data retention: kept until deletion; deletion is currently soft (flag-based) | Sections 4, 7 |
-| Who can see user data: self, tenant admins (same tenant), platform admins, infrastructure operators | Section 5 |
-| Third parties: email provider, Google (optional), model inference backends | Section 3.7 |
-| How to exercise rights and the grievance contact (operator-specific) | Section 7 |
-
-**Consistency check result:** since no policy exists, there is no statement that contradicts actual storage — but certification requires the policy to exist. The two most likely sources of policy-vs-reality drift once written are (a) log retention ("we keep logs for N days" is not currently enforced in OpenSearch) and (b) deletion ("we delete your account" would be inaccurate while deletion is soft-only).
-
----
-
-## 9. Recommended actions before DPG submission
-
-1. **Author a user-facing privacy policy** (and link it from the README and frontend) using Section 8 as the checklist.
-2. **Configure OpenSearch index lifecycle management** so logs/traces expire on a defined schedule, and document that schedule.
-3. **Implement or document data-subject erasure**: hard delete or anonymisation of user rows, plus purge of related tokens, API keys, and identifier scrubbing in observability stores.
-4. **Hash API keys and refresh/verification tokens at rest**; stop logging full API keys and email addresses.
-5. **Add cleanup jobs** for expired `token_verification` and `refresh` rows.
-6. **Decide on `GET /auth/check-email`** (rate-limit or remove the enumeration vector) and stop returning setup tokens in API responses.
-7. **Document operator responsibilities** (backups, OpenSearch security, retention configuration) in the setup guide.
 
 ---
 
