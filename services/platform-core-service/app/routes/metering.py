@@ -22,11 +22,15 @@ from app.schemas.metering import (
     Graph,
     GraphPoint,
     GraphSeries,
+    HighestFailureService,
+    MostUsedService,
     OverviewResponse,
     PlatformAdoption,
+    RequestHealth,
     Scope,
     ServiceConsumptionResponse,
     ServiceRow,
+    ServiceSummary,
     TenantConsumptionResponse,
     TenantRow,
     ThroughputData,
@@ -124,11 +128,77 @@ async def _resolve_org(svc: MeteringService, tenant_id: str) -> Optional[str]:
         return None
 
 
-async def _request_volume_chart(
+def _series_points(res, ndigits: int) -> list[GraphPoint]:
+    """Build GraphPoints from a query_range result, skipping NaN/Inf samples."""
+    if isinstance(res, Exception) or not res:
+        return []
+    out: list[GraphPoint] = []
+    for ts, val in res[0].get("values", []):
+        try:
+            f = float(val)
+        except (TypeError, ValueError):
+            continue
+        if f != f or f in (float("inf"), float("-inf")):  # NaN / ±Inf
+            continue
+        out.append(GraphPoint(ts=int(ts), value=round(f, ndigits)))
+    return out
+
+
+async def _request_health_chart(
     svc: MeteringService,
     window: str,
     tenant: Optional[str],
 ) -> Optional[Graph]:
+    """OVERVIEW "Request Volume & Health" chart — two series:
+      - "requests"     : request COUNT per bucket (left axis)
+      - "failure_rate" : failure rate % per bucket (right axis)
+    """
+    if window not in WINDOW_STEP:
+        return None
+    from app.utils.metering_promql_builder import build_base_selectors
+
+    sel = build_base_selectors(inference_only=True, tenant=tenant)
+    failed_sel = build_base_selectors(
+        inference_only=True, tenant=tenant, extra=['status_code=~"[45].."']
+    )
+    metric = f"telemetry_obsv_requests_total{sel}"
+    failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
+    step = WINDOW_STEP[window]
+    w_secs = _WINDOW_SECONDS[window]
+    now = _time.time()
+    start = now - w_secs
+
+    count_q = f"sum(increase({metric}[{step}]))"
+    failure_rate_q = f"100 * sum(rate({failed_metric}[{step}])) / sum(rate({metric}[{step}]))"
+
+    count_res, fr_res = await asyncio.gather(
+        svc._client.query_range(count_q, start=start, end=now, step=step),
+        svc._client.query_range(failure_rate_q, start=start, end=now, step=step),
+        return_exceptions=True,
+    )
+
+    req_points = _series_points(count_res, 0)        # counts
+    fr_points = _series_points(fr_res, 2)            # percent
+
+    if not req_points and not fr_points:
+        return None
+
+    series = [GraphSeries(key="requests", label="Requests", points=req_points)]
+    if fr_points:
+        series.append(GraphSeries(key="failure_rate", label="Failure Rate %", points=fr_points))
+    return Graph(step=step, series=series)
+
+
+async def _throughput_chart(
+    svc: MeteringService,
+    window: str,
+    tenant: Optional[str],
+) -> Optional[Graph]:
+    """TENANT/SERVICE CONSUMPTION "Throughput & Load" chart — RPS over time.
+
+    Single "requests" series in requests/second (the avg/peak reference values
+    come from the separate throughput() block).
+    """
     if window not in WINDOW_STEP:
         return None
     from app.utils.metering_promql_builder import build_base_selectors
@@ -139,23 +209,61 @@ async def _request_volume_chart(
     w_secs = _WINDOW_SECONDS[window]
     now = _time.time()
 
-    results = await svc._client.query_range(
-        f"sum(rate({metric}[1m]))",
+    res = await svc._client.query_range(
+        f"sum(rate({metric}[{step}]))",
         start=now - w_secs,
         end=now,
         step=step,
     )
-    if not results:
+    points = _series_points(res, 4)
+    if not points:
         return None
-
-    points = [
-        GraphPoint(ts=int(ts), value=round(float(val), 4))
-        for ts, val in results[0].get("values", [])
-    ]
     return Graph(
         step=step,
         series=[GraphSeries(key="requests", label="Request Rate (RPS)", points=points)],
     )
+
+
+async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
+    """Batch-resolve tenant id -> organisation name from the auth DB.
+
+    Ids are pre-sanitized numeric strings; cast to int for the IN-list. Returns
+    {} when the auth DB is unavailable so callers fall back to the id.
+    """
+    numeric = [int(t) for t in tenant_ids if t and t.isdigit()]
+    if svc._auth_db is None or not numeric:
+        return {}
+    try:
+        rows = await svc._auth_db.execute(
+            text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"),
+            {"ids": numeric},
+        )
+        return {str(r[0]): r[1] for r in rows.all()}
+    except Exception:
+        return {}
+
+
+async def _resolve_plans(svc: MeteringService, tenant_ids: list[str]) -> dict:
+    """Batch-resolve tenant id -> plan tier (Enterprise / Pro / …) from the auth DB.
+
+    Takes the latest plan per tenant (most recent assigned_at). Returns {} when
+    the auth DB is unavailable so callers fall back to no badge.
+    """
+    numeric = [int(t) for t in tenant_ids if t and t.isdigit()]
+    if svc._auth_db is None or not numeric:
+        return {}
+    try:
+        rows = await svc._auth_db.execute(
+            text(
+                "SELECT DISTINCT ON (tenant_id) tenant_id, tier "
+                "FROM tenant_plans WHERE tenant_id = ANY(:ids) "
+                "ORDER BY tenant_id, assigned_at DESC"
+            ),
+            {"ids": numeric},
+        )
+        return {str(r[0]): r[1] for r in rows.all()}
+    except Exception:
+        return {}
 
 
 def _validate_window(window: str) -> None:
@@ -202,9 +310,10 @@ async def get_overview(
         svc.active_tenants(window),   # window-scoped, used as avg_requests_per_tenant denominator
         svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
         svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
-        _request_volume_chart(svc, window, scope_tenant),
+        _request_health_chart(svc, window, scope_tenant),
         svc.usage_concentration(limit=5, time_range=window) if is_admin else _noop(),
         svc.tenant_ranking(limit=5, time_range=window) if is_admin else _noop(),
+        svc.active_tenants_count_previous(window),  # prev-window denominator for avg/tenant trend
         return_exceptions=True,
     )
 
@@ -216,7 +325,7 @@ async def get_overview(
             return None
         return r
 
-    tc, at24, at7, at30, at_window, rt, tp, chart, conc, ranking = [_ok(r) for r in results]
+    tc, at24, at7, at30, at_window, rt, tp, chart, conc, ranking, prev_active = [_ok(r) for r in results]
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
@@ -244,10 +353,19 @@ async def get_overview(
             ),
         ])
     if is_admin and rt and at_window and at_window.get("count"):
+        avg_per_tenant = round(rt["total_requests"]["count"] / at_window["count"], 1)
+        # Trend vs previous window: prev avg = prev_total / prev_active_tenants.
+        avg_pct_change = None
+        prev_total = rt["total_requests"].get("previous_count")
+        if prev_total and prev_active:
+            prev_avg = prev_total / prev_active
+            if prev_avg > 0:
+                avg_pct_change = round((avg_per_tenant - prev_avg) / prev_avg * 100, 1)
         kpis.append(Cell(
             key="avg_requests_per_tenant",
             label="Avg Requests / Tenant",
-            value=round(rt["total_requests"]["count"] / at_window["count"], 1),
+            value=avg_per_tenant,
+            pct_change=avg_pct_change,
         ))
 
     active_cells: list[Cell] = [
@@ -267,14 +385,30 @@ async def get_overview(
             active_30d=at30["count"] if at30 else None,
         )
 
-    # Usage concentration block (admin only)
+    # Request Volume & Health — total / successful / failed counts + rates
+    request_health: Optional[RequestHealth] = None
+    if rt:
+        request_health = RequestHealth(
+            total=rt["total_requests"]["count"],
+            successful=rt["successful_requests"]["count"],
+            failed=rt["failed_requests"]["count"],
+            total_formatted=rt["total_requests"]["formatted"],
+            successful_formatted=rt["successful_requests"]["formatted"],
+            failed_formatted=rt["failed_requests"]["formatted"],
+            success_rate_pct=rt["success_rate"]["rate_pct"],
+            failure_rate_pct=rt["failure_rate"]["rate_pct"],
+        )
+
+    # Usage concentration block (admin only) — resolve org names in one batched query
     usage_conc: Optional[UsageConcentration] = None
     if is_admin and conc:
+        org_map = await _resolve_orgs(svc, [t["tenant"] for t in conc["top_tenants"]])
         usage_conc = UsageConcentration(
             top_tenants=[
                 TenantRow(
                     rank=t["rank"],
                     tenant=t["tenant"],
+                    organisation=org_map.get(t["tenant"]),
                     requests=t["requests"],
                     formatted_requests=MeteringService._format_count(t["requests"]),
                     percentage=t["percentage"],
@@ -292,6 +426,7 @@ async def get_overview(
         active_tenants=active_cells,
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
+        request_health=request_health,
         request_volume=chart,
         throughput=ThroughputData(
             avg_rps=tp["avg_rps"] if tp else 0.0,
@@ -316,6 +451,9 @@ async def get_tenant_consumption(
     request: Request,
     window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
+    services: Optional[str] = Query(
+        None, description="Comma-separated service keys for the heatmap columns (default: all)"
+    ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -329,16 +467,21 @@ async def get_tenant_consumption(
 
     _validate_window(window)
 
-    cache_key = f"metering:tenant-consumption:{window}:{limit}"
+    service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
+
+    cache_key = f"metering:tenant-consumption:{window}:{limit}:{services or 'all'}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
     degraded = False
 
-    ranking_result, heatmap_result = await asyncio.gather(
+    # Platform-wide (admin-only endpoint): tenant=None throughout.
+    ranking_result, heatmap_result, tp_result, chart_result = await asyncio.gather(
         svc.tenant_ranking(limit=limit, time_range=window),
-        svc.usage_by_tenant_service(limit=limit, time_range=window, services=None),
+        svc.usage_by_tenant_service(limit=limit, time_range=window, services=service_filter),
+        svc.throughput(inference_only=True, tenant=None, service_id=None, time_range=window),
+        _throughput_chart(svc, window, None),
         return_exceptions=True,
     )
 
@@ -352,6 +495,19 @@ async def get_tenant_consumption(
 
     ranking = _ok(ranking_result)
     heatmap = _ok(heatmap_result)
+    tp = _ok(tp_result)
+    chart = _ok(chart_result)
+
+    ranking_tenants = ranking["tenants"] if ranking else []
+    heatmap_rows = heatmap["tenants"] if heatmap else []
+
+    # Batched auth-DB lookups: organisation names (both lists) + plan tier (ranking).
+    all_ids = list({t["tenant"] for t in ranking_tenants} | {r["tenant"] for r in heatmap_rows})
+    org_map = await _resolve_orgs(svc, all_ids)
+    plan_map = await _resolve_plans(svc, [t["tenant"] for t in ranking_tenants])
+
+    for r in heatmap_rows:
+        r["organisation"] = org_map.get(r["tenant"])
 
     response = TenantConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
@@ -359,13 +515,21 @@ async def get_tenant_consumption(
             TenantRow(
                 rank=t["rank"],
                 tenant=t["tenant"],
+                organisation=org_map.get(t["tenant"]),
+                plan=plan_map.get(t["tenant"]),
                 requests=t["requests"],
                 formatted_requests=t["formatted_requests"],
                 percentage=t["percentage"],
             )
-            for t in (ranking["tenants"] if ranking else [])
+            for t in ranking_tenants
         ],
-        usage_by_service=heatmap["tenants"] if heatmap else [],
+        usage_by_service=heatmap_rows,
+        throughput=ThroughputData(
+            avg_rps=tp["avg_rps"] if tp else 0.0,
+            peak_rps=tp.get("peak_rps") if tp else None,
+            peak_at=tp.get("peak_at") if tp else None,
+        ),
+        request_volume=chart,
         degraded=degraded,
         generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
@@ -404,7 +568,7 @@ async def get_service_consumption(
     breakdown_result, tp_result, chart_result = await asyncio.gather(
         svc.service_breakdown(tenant=scope_tenant, time_range=window),
         svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
-        _request_volume_chart(svc, window, scope_tenant),
+        _throughput_chart(svc, window, scope_tenant),
         return_exceptions=True,
     )
 
@@ -422,20 +586,48 @@ async def get_service_consumption(
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
+    services = breakdown["services"] if breakdown else []
+    total_reqs = sum(s["requests"] for s in services)
+
+    # Summary KPIs — computed over services with traffic (a 0-request service
+    # must not win "highest failure rate").
+    summary: Optional[ServiceSummary] = None
+    if breakdown is not None:
+        active = [s for s in services if s["requests"] > 0]
+        most_used = max(active, key=lambda s: s["requests"]) if active else None
+        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+        summary = ServiceSummary(
+            active_services=len(active),
+            most_used=(
+                MostUsedService(service=most_used["service"], requests=most_used["requests"])
+                if most_used else None
+            ),
+            highest_failure_rate=(
+                HighestFailureService(
+                    service=worst["service"],
+                    failure_rate_pct=round(100 - worst["success_pct"], 2),
+                )
+                if worst else None
+            ),
+        )
+
     response = ServiceConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        summary=summary,
         service_breakdown=[
             ServiceRow(
                 service=s["service"],
                 metering_unit=s["metering_unit"],
                 requests=s["requests"],
+                percentage=round(s["requests"] / total_reqs * 100, 2) if total_reqs else 0.0,
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
                 success_pct=s["success_pct"],
+                failure_rate_pct=round(100 - s["success_pct"], 2),
                 failed=s["failed"],
                 vs_prev_period_pct=s["vs_prev_period_pct"],
             )
-            for s in (breakdown["services"] if breakdown else [])
+            for s in services
         ],
         throughput=ThroughputData(
             avg_rps=tp["avg_rps"] if tp else 0.0,
