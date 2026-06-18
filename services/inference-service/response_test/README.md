@@ -1,9 +1,11 @@
 # Response-Size Load Testing Framework
 
-A lightweight, isolated framework for simulating NER inference load based on
+A lightweight, isolated framework for simulating inference load based on
 response size — **no model is invoked**.  The goal is to measure how the
 service handles payloads of different sizes and to provide realistic pre-defined
 responses that mirror the real output contract.
+
+Currently supported services: **NER**, **NMT**
 
 ---
 
@@ -12,12 +14,14 @@ responses that mirror the real output contract.
 ```
 response_test/
 ├── __init__.py
-├── base_response_test.py   ← shared classification + timing logic
-├── ner_response_test.py    ← NER tests and standalone demo
+├── base_response_test.py    ← shared classification + timing logic
+├── ner_response_test.py     ← NER tests and standalone demo
+├── nmt_response_test.py     ← NMT tests and standalone demo
 ├── responses/
 │   ├── __init__.py
-│   └── ner_responses.py    ← pre-defined SMALL / MEDIUM / LARGE NER responses
-└── README.md               ← this file
+│   ├── ner_responses.py     ← pre-defined SMALL / MEDIUM / LARGE NER responses
+│   └── nmt_responses.py     ← pre-defined SMALL / MEDIUM / LARGE NMT responses
+└── README.md                ← this file
 ```
 
 ---
@@ -30,20 +34,27 @@ response_test/
 # From the inference-service root:
 cd services/inference-service
 
-# Run only the response tests:
+# Run NER response tests:
 pytest response_test/ner_response_test.py -v
 
+# Run NMT response tests:
+pytest response_test/nmt_response_test.py -v
+
+# Run all response tests:
+pytest response_test/ -v
+
 # Run with live console output (print statements visible):
-pytest response_test/ner_response_test.py -v -s
+pytest response_test/ -v -s
 ```
 
 ### Standalone (console demo)
 
 ```bash
 python response_test/ner_response_test.py
+python response_test/nmt_response_test.py
 ```
 
-Example output:
+Example output (NER):
 
 ```
 =======================================================
@@ -74,6 +85,37 @@ Entities in response : 40
 Done.
 ```
 
+Example output (NMT):
+
+```
+=======================================================
+NMT Response-Size Load Testing — Demo Run
+=======================================================
+
+[SMALL payload]
+Payload Size : 17 chars
+Response Type: SMALL
+Response Time: 0.002 ms
+Translated target length : 22 chars
+----------------------------------------
+
+[MEDIUM payload]
+Payload Size : 269 chars
+Response Type: MEDIUM
+Response Time: 0.001 ms
+Translated target length : 189 chars
+----------------------------------------
+
+[LARGE payload]
+Payload Size : 1122 chars
+Response Type: LARGE
+Response Time: 0.001 ms
+Translated target length : 612 chars
+----------------------------------------
+
+Done.
+```
+
 ---
 
 ## How Response Size Is Determined
@@ -94,17 +136,17 @@ and can be overridden per subclass without touching the base class.
 
 ## How Timing Metrics Are Reported
 
-Each call to `NERResponseTest.run(payload)` returns an `(InferenceMetrics, response)` tuple.
+Each call to `run(payload)` returns an `(InferenceMetrics, response)` tuple.
 
 `InferenceMetrics` fields:
 
-| Field            | Type    | Description                        |
-|------------------|---------|------------------------------------|
-| `payload_size`   | `int`   | Character count of the input       |
-| `response_size`  | `ResponseSize` | SMALL / MEDIUM / LARGE      |
-| `start_time_ms`  | `float` | `perf_counter` timestamp (ms)      |
-| `end_time_ms`    | `float` | `perf_counter` timestamp (ms)      |
-| `duration_ms`    | `float` | `end_time_ms - start_time_ms`      |
+| Field            | Type           | Description                        |
+|------------------|----------------|------------------------------------|
+| `payload_size`   | `int`          | Character count of the input       |
+| `response_size`  | `ResponseSize` | SMALL / MEDIUM / LARGE             |
+| `start_time_ms`  | `float`        | `perf_counter` timestamp (ms)      |
+| `end_time_ms`    | `float`        | `perf_counter` timestamp (ms)      |
+| `duration_ms`    | `float`        | `end_time_ms - start_time_ms`      |
 
 `str(metrics)` produces a ready-to-print report:
 
@@ -116,10 +158,11 @@ Response Time: 0.003 ms
 
 ---
 
-## Response Format
+## Response Formats
 
-Pre-defined responses mirror the output of `NERTaskService.postprocess_output`,
-verified against the real dev instance:
+Pre-defined responses mirror the real dev instance output for each service.
+
+### NER
 
 ```json
 {
@@ -142,13 +185,33 @@ verified against the real dev instance:
 }
 ```
 
-Three pre-defined responses are in `responses/ner_responses.py`:
+Tags: `PER` (person), `LOC` (location), `ORG` (organisation), `DATE`, `O` (non-entity)
 
-| Constant              | Entities | Source text                                    |
-|-----------------------|----------|------------------------------------------------|
-| `SMALL_NER_RESPONSE`  | 3 tokens | "John visited Paris."                         |
-| `MEDIUM_NER_RESPONSE` | 20 tokens| Two-sentence office announcement               |
-| `LARGE_NER_RESPONSE`  | 40 tokens| Multi-sentence research-paper abstract         |
+| Constant              | Tokens | Source text                                     |
+|-----------------------|--------|-------------------------------------------------|
+| `SMALL_NER_RESPONSE`  | 3      | "John visited Paris."                           |
+| `MEDIUM_NER_RESPONSE` | 20     | Two-sentence office announcement                |
+| `LARGE_NER_RESPONSE`  | 40     | Multi-sentence research-paper abstract          |
+
+### NMT
+
+```json
+{
+  "output": [
+    {
+      "source": "<original text>",
+      "target": "<translated text>"
+    }
+  ],
+  "smr_response": null
+}
+```
+
+| Constant               | Source                       | Target language |
+|------------------------|------------------------------|-----------------|
+| `SMALL_NMT_RESPONSE`   | "Hello how are you"          | Hindi           |
+| `MEDIUM_NMT_RESPONSE`  | 3-sentence meeting message   | Hindi           |
+| `LARGE_NMT_RESPONSE`   | Multi-sentence AI paragraph  | Hindi           |
 
 ---
 
