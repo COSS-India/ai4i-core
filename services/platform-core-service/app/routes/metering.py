@@ -184,6 +184,17 @@ async def get_overview(
     caller_tid = _caller_tenant_id(request)
     scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
 
+    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
+    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
+    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
+    # rather than widen scope (defense-in-depth; the gateway should never let this
+    # through, but the backstop guarantees it).
+    if not is_admin and scope_tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
+        )
+
     cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -393,6 +404,17 @@ async def get_service_consumption(
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
     scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+
+    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
+    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
+    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
+    # rather than widen scope (defense-in-depth; the gateway should never let this
+    # through, but the backstop guarantees it).
+    if not is_admin and scope_tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
+        )
 
     cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)

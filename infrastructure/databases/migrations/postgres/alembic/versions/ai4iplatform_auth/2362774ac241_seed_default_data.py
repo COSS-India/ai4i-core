@@ -121,6 +121,7 @@ def upgrade() -> None:
         (130, "logs.read",                      "logs",               "read"),
         (131, "traces.read",                    "traces",             "read"),
         (132, "telemetry.write",                "telemetry",          "write"),
+        (133, "metering.read",                  "metering",           "read"),
     ]
 
     # Delete role_permission first (FK to both roles and permissions)
