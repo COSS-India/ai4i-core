@@ -16,7 +16,7 @@
 #
 # Optional overrides (env vars):
 #   AI4I_REPO_URL    git URL to clone        (default: COSS-India/ai4i-core)
-#   AI4I_BRANCH      branch to check out     (default: feature/gist-testing — see below)
+#   AI4I_BRANCH      branch to check out     (default: feature/single-command-setup — see below)
 #   AI4I_DIR         target directory        (default: ai4i-core-test — see below)
 #   AI4I_PROFILE     profile if no arg given (default: core)
 #   AI4I_SKIP_PREREQS=1   don't auto-install prerequisites
@@ -29,10 +29,10 @@ say() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 REPO_URL="${AI4I_REPO_URL:-https://github.com/COSS-India/ai4i-core.git}"
-# TEMPORARY: the setup scripts currently live only on feature/gist-testing, and
+# TEMPORARY: the setup scripts currently live only on feature/single-command-setup, and
 # we clone into ai4i-core-test to avoid clobbering an existing ai4i-core checkout.
 # Once merged, change BRANCH back to "master" and TARGET_DIR back to "ai4i-core".
-BRANCH="${AI4I_BRANCH:-feature/gist-testing}"
+BRANCH="${AI4I_BRANCH:-feature/single-command-setup}"
 TARGET_DIR="${AI4I_DIR:-ai4i-core-test}"
 PROFILE="${AI4I_PROFILE:-core}"
 NO_START="${AI4I_NO_START:-}"
