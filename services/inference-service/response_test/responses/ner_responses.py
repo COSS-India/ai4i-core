@@ -1,4 +1,5 @@
-"""Pre-defined NER stub responses for load-test simulations.
+
+"""Pre-defined NER responses for response-size load testing.
 
 Tag format matches the real dev instance output:
   "PER"  — person

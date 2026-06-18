@@ -1,6 +1,6 @@
 """NER response-size load testing framework.
 
-Simulates inference latency for the NER service using pre-defined stub
+Simulates inference latency for the NER service using pre-defined
 responses — no model is invoked.  Three response sizes are tested (SMALL,
 MEDIUM, LARGE) driven by input payload length.
 
@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from response_test.base_response_test import BaseResponseTest, ResponseSize, InferenceMetrics
-from response_test.stubs.ner_stubs import (
+from response_test.responses.ner_responses import (
     SMALL_NER_RESPONSE,
     MEDIUM_NER_RESPONSE,
     LARGE_NER_RESPONSE,
@@ -34,16 +34,16 @@ from response_test.stubs.ner_stubs import (
 # ---------------------------------------------------------------------------
 
 class NERResponseTest(BaseResponseTest):
-    """Load-test harness for NER inference stub responses."""
+    """Load-test harness for NER inference responses."""
 
-    _stubs = {
+    _responses = {
         ResponseSize.SMALL:  SMALL_NER_RESPONSE,
         ResponseSize.MEDIUM: MEDIUM_NER_RESPONSE,
         ResponseSize.LARGE:  LARGE_NER_RESPONSE,
     }
 
-    def stub_response(self, size: ResponseSize) -> dict:
-        return self._stubs[size]
+    def get_response(self, size: ResponseSize) -> dict:
+        return self._responses[size]
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +112,10 @@ class TestPayloadClassification:
 
 
 # ---------------------------------------------------------------------------
-# Stub response structure tests
+# Response structure tests
 # ---------------------------------------------------------------------------
 
-class TestNERStubResponses:
+class TestNERResponses:
     def _assert_valid_ner_response(self, response: dict) -> None:
         assert response["taskType"] == "ner"
         assert isinstance(response["output"], list)
@@ -131,26 +131,26 @@ class TestNERStubResponses:
                 assert "tokenStartIndex" in pred
                 assert "tokenEndIndex" in pred
 
-    def test_small_stub_has_valid_structure(self, ner_tester):
-        response = ner_tester.stub_response(ResponseSize.SMALL)
+    def test_small_response_has_valid_structure(self, ner_tester):
+        response = ner_tester.get_response(ResponseSize.SMALL)
         self._assert_valid_ner_response(response)
 
-    def test_medium_stub_has_valid_structure(self, ner_tester):
-        response = ner_tester.stub_response(ResponseSize.MEDIUM)
+    def test_medium_response_has_valid_structure(self, ner_tester):
+        response = ner_tester.get_response(ResponseSize.MEDIUM)
         self._assert_valid_ner_response(response)
 
-    def test_large_stub_has_valid_structure(self, ner_tester):
-        response = ner_tester.stub_response(ResponseSize.LARGE)
+    def test_large_response_has_valid_structure(self, ner_tester):
+        response = ner_tester.get_response(ResponseSize.LARGE)
         self._assert_valid_ner_response(response)
 
-    def test_large_stub_has_more_entities_than_medium(self, ner_tester):
-        medium_preds = ner_tester.stub_response(ResponseSize.MEDIUM)["output"][0]["nerPrediction"]
-        large_preds  = ner_tester.stub_response(ResponseSize.LARGE)["output"][0]["nerPrediction"]
+    def test_large_response_has_more_entities_than_medium(self, ner_tester):
+        medium_preds = ner_tester.get_response(ResponseSize.MEDIUM)["output"][0]["nerPrediction"]
+        large_preds  = ner_tester.get_response(ResponseSize.LARGE)["output"][0]["nerPrediction"]
         assert len(large_preds) > len(medium_preds)
 
-    def test_medium_stub_has_more_entities_than_small(self, ner_tester):
-        small_preds  = ner_tester.stub_response(ResponseSize.SMALL)["output"][0]["nerPrediction"]
-        medium_preds = ner_tester.stub_response(ResponseSize.MEDIUM)["output"][0]["nerPrediction"]
+    def test_medium_response_has_more_entities_than_small(self, ner_tester):
+        small_preds  = ner_tester.get_response(ResponseSize.SMALL)["output"][0]["nerPrediction"]
+        medium_preds = ner_tester.get_response(ResponseSize.MEDIUM)["output"][0]["nerPrediction"]
         assert len(medium_preds) > len(small_preds)
 
 

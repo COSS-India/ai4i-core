@@ -1,7 +1,7 @@
 """Base class for response-size load testing across inference service types.
 
 Extend this class to add NER, Image, Audio, or Text response tests.
-Each subclass provides its own stub responses and the shared machinery
+Each subclass provides its own pre-defined responses and the shared machinery
 (payload classification, timing, reporting) is inherited from here.
 """
 
@@ -48,7 +48,7 @@ class BaseResponseTest:
     """Shared load-test harness for all inference task types.
 
     Subclasses must implement:
-        - stub_response(size: ResponseSize) -> Any
+        - get_response(size: ResponseSize) -> Any
     """
 
     # Override in subclasses if different thresholds are needed.
@@ -64,18 +64,18 @@ class BaseResponseTest:
             return ResponseSize.MEDIUM
         return ResponseSize.LARGE
 
-    def stub_response(self, size: ResponseSize) -> Any:
-        """Return the pre-defined stub response for *size*. Must be overridden."""
+    def get_response(self, _size: ResponseSize) -> Any:
+        """Return the pre-defined response for *_size*. Must be overridden."""
         raise NotImplementedError(
-            f"{self.__class__.__name__} must implement stub_response()"
+            f"{self.__class__.__name__} must implement get_response()"
         )
 
     def run(self, payload: str) -> tuple[InferenceMetrics, Any]:
-        """Classify the payload, fetch the stub, measure elapsed time, and return both."""
+        """Classify the payload, fetch the response, measure elapsed time, and return both."""
         size = self.classify_payload(payload)
 
         start = time.perf_counter() * 1000
-        response = self.stub_response(size)
+        response = self.get_response(size)
         end = time.perf_counter() * 1000
 
         metrics = InferenceMetrics(

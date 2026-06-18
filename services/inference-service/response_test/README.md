@@ -2,7 +2,7 @@
 
 A lightweight, isolated framework for simulating NER inference load based on
 response size — **no model is invoked**.  The goal is to measure how the
-service handles payloads of different sizes and to provide realistic stub
+service handles payloads of different sizes and to provide realistic pre-defined
 responses that mirror the real output contract.
 
 ---
@@ -14,9 +14,9 @@ response_test/
 ├── __init__.py
 ├── base_response_test.py   ← shared classification + timing logic
 ├── ner_response_test.py    ← NER tests and standalone demo
-├── stubs/
+├── responses/
 │   ├── __init__.py
-│   └── ner_stubs.py        ← pre-defined SMALL / MEDIUM / LARGE NER responses
+│   └── ner_responses.py    ← pre-defined SMALL / MEDIUM / LARGE NER responses
 └── README.md               ← this file
 ```
 
@@ -116,9 +116,10 @@ Response Time: 0.003 ms
 
 ---
 
-## Stub Response Format
+## Response Format
 
-Stubs mirror the output of `NERTaskService.postprocess_output`:
+Pre-defined responses mirror the output of `NERTaskService.postprocess_output`,
+verified against the real dev instance:
 
 ```json
 {
@@ -141,7 +142,7 @@ Stubs mirror the output of `NERTaskService.postprocess_output`:
 }
 ```
 
-Three pre-defined stubs are in `stubs/ner_stubs.py`:
+Three pre-defined responses are in `responses/ner_responses.py`:
 
 | Constant              | Entities | Source text                                    |
 |-----------------------|----------|------------------------------------------------|
@@ -155,27 +156,27 @@ Three pre-defined stubs are in `stubs/ner_stubs.py`:
 
 To add Image, Audio, or Text response tests:
 
-1. Create `stubs/image_stubs.py` (or `audio_stubs.py`, `text_stubs.py`) with
-   three stub constants following the appropriate response contract.
+1. Create `responses/image_responses.py` (or `audio_responses.py`, `text_responses.py`) with
+   three response constants following the appropriate response contract.
 
 2. Create `image_response_test.py` that imports `BaseResponseTest` and
-   overrides `stub_response()`:
+   overrides `get_response()`:
 
    ```python
    from response_test.base_response_test import BaseResponseTest, ResponseSize
-   from response_test.stubs.image_stubs import (
+   from response_test.responses.image_responses import (
        SMALL_IMAGE_RESPONSE, MEDIUM_IMAGE_RESPONSE, LARGE_IMAGE_RESPONSE
    )
 
    class ImageResponseTest(BaseResponseTest):
-       _stubs = {
+       _responses = {
            ResponseSize.SMALL:  SMALL_IMAGE_RESPONSE,
            ResponseSize.MEDIUM: MEDIUM_IMAGE_RESPONSE,
            ResponseSize.LARGE:  LARGE_IMAGE_RESPONSE,
        }
 
-       def stub_response(self, size):
-           return self._stubs[size]
+       def get_response(self, size):
+           return self._responses[size]
    ```
 
 3. Write pytest test classes following the same pattern as `ner_response_test.py`.
