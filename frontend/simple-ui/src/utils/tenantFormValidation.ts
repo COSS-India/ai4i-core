@@ -34,7 +34,7 @@ export function cleanText(value: string): string {
 
 // ES5-safe character checks (tsconfig target is es5; avoid \p{…} /u regex).
 const LETTER_OR_MARK_RE =
-  /[A-Za-z\u00C0-\u024F\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0300-\u036F]/;
+  /[A-Za-z\u00C0-\u024F]|[\u0300-\u036F]|[\u0900-\u097F]|[\u0980-\u09FF]|[\u0A00-\u0A7F]/;
 
 function isLetterOrMark(char: string): boolean {
   return LETTER_OR_MARK_RE.test(char);
