@@ -8,6 +8,7 @@ import logging
 from contextlib import asynccontextmanager
 import time
 
+import httpx
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
+
+    # Shared HTTP client — connection pool reused across all Prometheus queries.
+    app.state.http_client = httpx.AsyncClient()
 
     # ── Core DB & Redis ───────────────────────────────────────────────────
     await init_database(
@@ -133,6 +137,7 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(sync_task, return_exceptions=True)
 
     # ── Shutdown ──────────────────────────────────────────────────────────
+    await app.state.http_client.aclose()
     await policy_sync.stop_listener()
     await close_redis()
     await close_auth_database()
