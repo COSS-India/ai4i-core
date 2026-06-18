@@ -5,7 +5,7 @@ response size — **no model is invoked**.  The goal is to measure how the
 service handles payloads of different sizes and to provide realistic pre-defined
 responses that mirror the real output contract.
 
-Currently supported services: **NER**, **NMT**, **Transliteration**
+Currently supported services: **NER**, **NMT**, **Transliteration**, **Language Detection**
 
 ---
 
@@ -18,12 +18,14 @@ response_test/
 ├── ner_response_test.py                  ← NER tests and standalone demo
 ├── nmt_response_test.py                  ← NMT tests and standalone demo
 ├── transliteration_response_test.py      ← Transliteration tests and standalone demo
+├── language_detection_response_test.py   ← Language Detection tests and standalone demo
 ├── responses/
 │   ├── __init__.py
 │   ├── ner_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NER responses
 │   ├── nmt_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NMT responses
-│   └── transliteration_responses.py      ← pre-defined SMALL / MEDIUM / LARGE Transliteration responses
-└── README.md                ← this file
+│   ├── transliteration_responses.py      ← pre-defined SMALL / MEDIUM / LARGE Transliteration responses
+│   └── language_detection_responses.py   ← pre-defined SMALL / MEDIUM / LARGE Language Detection responses
+└── README.md                             ← this file
 ```
 
 ---
@@ -45,6 +47,9 @@ pytest response_test/nmt_response_test.py -v
 # Run Transliteration response tests:
 pytest response_test/transliteration_response_test.py -v
 
+# Run Language Detection response tests:
+pytest response_test/language_detection_response_test.py -v
+
 # Run all response tests:
 pytest response_test/ -v
 
@@ -58,6 +63,7 @@ pytest response_test/ -v -s
 python response_test/ner_response_test.py
 python response_test/nmt_response_test.py
 python response_test/transliteration_response_test.py
+python response_test/language_detection_response_test.py
 ```
 
 Example output (NER):
@@ -117,6 +123,37 @@ Payload Size : 1122 chars
 Response Type: LARGE
 Response Time: 0.001 ms
 Translated target length : 612 chars
+----------------------------------------
+
+Done.
+```
+
+Example output (Language Detection):
+
+```
+=======================================================
+Language Detection Response-Size Load Testing — Demo Run
+=======================================================
+
+[SMALL payload]
+Payload Size : 17 chars
+Response Type: SMALL
+Response Time: 0.002 ms
+Detected language : eng_Latn  (confidence: 0.9823)
+----------------------------------------
+
+[MEDIUM payload]
+Payload Size : 237 chars
+Response Type: MEDIUM
+Response Time: 0.001 ms
+Detected language : eng_Latn  (confidence: 0.9971)
+----------------------------------------
+
+[LARGE payload]
+Payload Size : 1041 chars
+Response Type: LARGE
+Response Time: 0.001 ms
+Detected language : eng_Latn  (confidence: 0.9995)
 ----------------------------------------
 
 Done.
@@ -241,6 +278,37 @@ in the adapter config).
 | `SMALL_TRANSLITERATION_RESPONSE`      | "Hello Good Morning"            | Hindi         |
 | `MEDIUM_TRANSLITERATION_RESPONSE`     | 3-sentence daily-life message   | Hindi         |
 | `LARGE_TRANSLITERATION_RESPONSE`      | Multi-sentence India paragraph  | Hindi         |
+
+### Language Detection
+
+```json
+{
+  "output": [
+    {
+      "source": "<original text>",
+      "langPrediction": [
+        {
+          "input": "<echo of input text>",
+          "langCode": "eng_Latn",
+          "confidence": 0.9823415279388428,
+          "model": "IndicLID-FTR"
+        }
+      ]
+    }
+  ],
+  "config": null
+}
+```
+
+`langCode` uses ISO 639-3 + script tag format (e.g. `eng_Latn`, `hin_Deva`, `ori_Latn`).
+`config` is present and `null` — unlike Transliteration which omits it entirely.
+`smr_response` is excluded by the route handler.
+
+| Constant                                  | Source                              | Detected `langCode` |
+|-------------------------------------------|-------------------------------------|---------------------|
+| `SMALL_LANGUAGE_DETECTION_RESPONSE`       | "hello how are you"                 | `eng_Latn`          |
+| `MEDIUM_LANGUAGE_DETECTION_RESPONSE`      | 4-sentence general English text     | `eng_Latn`          |
+| `LARGE_LANGUAGE_DETECTION_RESPONSE`       | Multi-sentence NLP paragraph        | `eng_Latn`          |
 
 ---
 
