@@ -5,7 +5,7 @@ response size — **no model is invoked**.  The goal is to measure how the
 service handles payloads of different sizes and to provide realistic pre-defined
 responses that mirror the real output contract.
 
-Currently supported services: **NER**, **NMT**
+Currently supported services: **NER**, **NMT**, **Transliteration**
 
 ---
 
@@ -15,12 +15,14 @@ Currently supported services: **NER**, **NMT**
 response_test/
 ├── __init__.py
 ├── base_response_test.py    ← shared classification + timing logic
-├── ner_response_test.py     ← NER tests and standalone demo
-├── nmt_response_test.py     ← NMT tests and standalone demo
+├── ner_response_test.py                  ← NER tests and standalone demo
+├── nmt_response_test.py                  ← NMT tests and standalone demo
+├── transliteration_response_test.py      ← Transliteration tests and standalone demo
 ├── responses/
 │   ├── __init__.py
-│   ├── ner_responses.py     ← pre-defined SMALL / MEDIUM / LARGE NER responses
-│   └── nmt_responses.py     ← pre-defined SMALL / MEDIUM / LARGE NMT responses
+│   ├── ner_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NER responses
+│   ├── nmt_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NMT responses
+│   └── transliteration_responses.py      ← pre-defined SMALL / MEDIUM / LARGE Transliteration responses
 └── README.md                ← this file
 ```
 
@@ -40,6 +42,9 @@ pytest response_test/ner_response_test.py -v
 # Run NMT response tests:
 pytest response_test/nmt_response_test.py -v
 
+# Run Transliteration response tests:
+pytest response_test/transliteration_response_test.py -v
+
 # Run all response tests:
 pytest response_test/ -v
 
@@ -52,6 +57,7 @@ pytest response_test/ -v -s
 ```bash
 python response_test/ner_response_test.py
 python response_test/nmt_response_test.py
+python response_test/transliteration_response_test.py
 ```
 
 Example output (NER):
@@ -212,6 +218,29 @@ Tags: `PER` (person), `LOC` (location), `ORG` (organisation), `DATE`, `O` (non-e
 | `SMALL_NMT_RESPONSE`   | "Hello how are you"          | Hindi           |
 | `MEDIUM_NMT_RESPONSE`  | 3-sentence meeting message   | Hindi           |
 | `LARGE_NMT_RESPONSE`   | Multi-sentence AI paragraph  | Hindi           |
+
+### Transliteration
+
+```json
+{
+  "output": [
+    {
+      "source": "<original text>",
+      "target": "<text in target script>"
+    }
+  ]
+}
+```
+
+No `config`, no `smr_response`, no `taskType` — the endpoint excludes all three
+(confirmed via `response_model_exclude` in the route handler and `include_config: false`
+in the adapter config).
+
+| Constant                              | Source                          | Target script |
+|---------------------------------------|---------------------------------|---------------|
+| `SMALL_TRANSLITERATION_RESPONSE`      | "Hello Good Morning"            | Hindi         |
+| `MEDIUM_TRANSLITERATION_RESPONSE`     | 3-sentence daily-life message   | Hindi         |
+| `LARGE_TRANSLITERATION_RESPONSE`      | Multi-sentence India paragraph  | Hindi         |
 
 ---
 
