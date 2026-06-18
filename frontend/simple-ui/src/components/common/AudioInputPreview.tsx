@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, HStack, IconButton, Text, Tooltip } from '@chakra-ui/react';
 import { DeleteIcon } from '@chakra-ui/icons';
+import AccessibleAudio from './AccessibleAudio';
 import { base64ToAudioObjectUrl } from '../../utils/helpers';
 
 /** Normalize base64 or data URL to [base64, format] for playback */
@@ -104,14 +105,15 @@ const AudioInputPreview: React.FC<AudioInputPreviewProps> = ({
           </Tooltip>
         )}
       </HStack>
-      <audio
+      <AccessibleAudio
         controls
         src={blobUrl ?? undefined}
         style={{ width: '100%', maxWidth: '400px' }}
         preload="metadata"
+        noCaptionsFallback="Recorded or uploaded audio input. Submit for transcription to obtain captions."
       >
         Your browser does not support the audio element.
-      </audio>
+      </AccessibleAudio>
     </Box>
   );
 };

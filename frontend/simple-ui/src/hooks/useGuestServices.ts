@@ -23,7 +23,7 @@ const SERVICE_ID_ALIASES: Record<string, string> = {
 };
 
 const normalizeServiceId = (value: string): string | null => {
-  const normalized = value.trim().toLowerCase().replace(/[\s_/]+/g, '-');
+  const normalized = value.trim().toLowerCase().replaceAll(/[\s_/]+/g, '-');
   if (!normalized) return null;
   if (SERVICE_ID_ALIASES[normalized]) {
     return SERVICE_ID_ALIASES[normalized];
@@ -107,4 +107,3 @@ export const useGuestServices = () => {
     allowedServiceIds,
   };
 };
-

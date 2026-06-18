@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+echo ""
+echo "WARNING"
+echo ""
+echo "This will remove:"
+echo "  docker volumes"
+echo "  .env files"
+echo "  the shared .venv (and any leftover per-service .venv)"
+echo "  logs and PID files"
+echo ""
+read -rp "Continue? [y/N] " confirm
+
+if [[ ! "$confirm" =~ ^[Yy]$ ]]
+then
+    exit 0
+fi
+
+docker compose \
+    -f "$ROOT_DIR/docker-compose-local.yml" \
+    --profile frontend --profile observability --profile logging \
+    down -v
+
+rm -rf "$ROOT_DIR/.run"
+
+rm -rf "$ROOT_DIR/logs"
+
+# Shared root venv (current layout).
+rm -rf "$ROOT_DIR/.venv"
+
+# Leftover per-service venvs from earlier layouts.
+find "$ROOT_DIR/services" \
+    -name ".venv" \
+    -type d \
+    -exec rm -rf {} + 2>/dev/null || true
+
+rm -rf "$ROOT_DIR/infrastructure/databases/.venv"
+
+find "$ROOT_DIR" \
+    -name ".env" \
+    ! -path "$ROOT_DIR/.env" \
+    ! -path "*/node_modules/*" \
+    -delete
+
+rm -f "$ROOT_DIR/.env"
+
+echo "Reset complete"

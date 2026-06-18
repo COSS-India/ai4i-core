@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
 
     # ── Core DB & Redis ───────────────────────────────────────────────────
-    init_database(
+    await init_database(
         db_url=settings.get_database_url(),
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,

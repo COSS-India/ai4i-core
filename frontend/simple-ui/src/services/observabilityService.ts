@@ -2,7 +2,6 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
-import { getTenantIdFromToken } from '../utils/helpers';
 import {
   logAggregationResponseSchema,
   logSearchResponseSchema,
@@ -49,31 +48,6 @@ const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`
 /** Path segment for GET /telemetry/traces/{id} (keep 0x prefix as returned by search). */
 export function telemetryTraceIdForApi(traceId: string): string {
   return encodeURIComponent(traceId.trim());
-}
-
-/** Headers expected by platform-core telemetry routes (gateway also injects these from JWT). */
-async function getTelemetryAuthHeaders(
-  tenantIdOverride?: string
-): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {};
-  try {
-    const { default: authService } = await import('./authService');
-    const user = authService.getStoredUser();
-    if (user?.roles?.length) {
-      headers['X-Roles'] = user.roles.join(',');
-    }
-    const tenantId =
-      tenantIdOverride?.trim() ||
-      user?.tenant_id?.trim() ||
-      getTenantIdFromToken() ||
-      undefined;
-    if (tenantId) {
-      headers['X-Tenant-Id'] = tenantId;
-    }
-  } catch {
-    // optional — Bearer auth still required via api client
-  }
-  return headers;
 }
 
 /** Map UI status filter to OpenSearch `attributes.status` values. */
@@ -291,11 +265,9 @@ export const searchTelemetryTraces = async (
     queryParams.append('page', String(params.page ?? 1));
     queryParams.append('page_size', String(params.pageSize ?? 15));
 
-    const telemetryHeaders = await getTelemetryAuthHeaders(params.tenant_id);
-
     const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
-      { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema, headers: telemetryHeaders }
+      { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema }
     );
 
     return response.data;
@@ -378,11 +350,9 @@ export const getTelemetryTraceById = async (traceId: string): Promise<TelemetryT
   const apiTraceId = telemetryTraceIdForApi(traceId);
 
   try {
-    const telemetryHeaders = await getTelemetryAuthHeaders();
-
     const response = await apiService.get(
       telemetryUrl(apiEndpoints.telemetry.traceById(apiTraceId)),
-      { timeout: 30000, responseSchema: telemetryTraceDetailSchema, headers: telemetryHeaders }
+      { timeout: 30000, responseSchema: telemetryTraceDetailSchema }
     );
     return response.data;
   } catch (error: any) {

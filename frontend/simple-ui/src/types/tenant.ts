@@ -1,4 +1,4 @@
-// Tenant + tenant-user types — calls auth-service /api/v1/tenants endpoints.
+// Tenant + tenant-user types — calls auth-service /api/v1/auth/tenants endpoints.
 
 import type { TenantStatusValue, TenantUserStatusValue } from '../config/constants';
 
@@ -44,7 +44,7 @@ export interface ListUsersResponse {
   users: TenantUserView[];
 }
 
-// POST /api/v1/tenants
+// POST /api/v1/auth/tenants
 export interface TenantRegisterRequest {
   contact_name: string;
   organisation: string;
@@ -56,7 +56,7 @@ export type TenantRegisterResponse = TenantView;
 /** Roles assignable to tenant-scoped users (auth-service TenantUserRole). */
 export type TenantAssignableRole = 'USER' | 'TENANT ADMIN';
 
-// POST /api/v1/tenants/{tenant_id}/users
+// POST /api/v1/auth/tenants/{tenant_id}/users
 export interface UserRegisterRequest {
   email: string;
   full_name?: string;
@@ -70,20 +70,20 @@ export interface UserRegisterResponse {
   message: string;
 }
 
-// PATCH /api/v1/tenants/{tenant_id}/status
+// PATCH /api/v1/auth/tenants/{tenant_id}/status
 export interface TenantStatusUpdateRequest {
   status: TenantStatus;
 }
 export type TenantStatusUpdateResponse = TenantView;
 
-// PATCH /api/v1/tenants/{tenant_id}/users/{user_id}/status
+// PATCH /api/v1/auth/tenants/{tenant_id}/users/{user_id}/status
 export interface TenantUserStatusUpdateRequest {
   is_active?: boolean;
   is_tenant_active?: boolean;
 }
 export type TenantUserStatusUpdateResponse = TenantUserView;
 
-// PATCH /api/v1/tenants/{tenant_id}
+// PATCH /api/v1/auth/tenants/{tenant_id}
 export interface TenantUpdateRequest {
   contact_name?: string;
   organisation?: string;
@@ -92,7 +92,7 @@ export interface TenantUpdateRequest {
 }
 export type TenantUpdateResponse = TenantView;
 
-// PATCH /api/v1/tenants/{tenant_id}/users/{user_id}
+// PATCH /api/v1/auth/tenants/{tenant_id}/users/{user_id}
 export interface TenantUserUpdateRequest {
   email?: string;
   full_name?: string;

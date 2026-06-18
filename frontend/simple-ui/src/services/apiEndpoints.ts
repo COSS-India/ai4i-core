@@ -53,10 +53,10 @@ export const apiEndpoints = {
   },
 
   tenants: {
-    base: `${API_V1}/tenants`,
+    base: `${API_V1}/auth/tenants`,
     /** POST — re-send onboarding verification to tenant contact (pending backend). */
     resendVerification: (tenantId: string) =>
-      `${API_V1}/tenants/${tenantId}/resend-verification`,
+      `${API_V1}/auth/tenants/${tenantId}/resend-verification`,
   },
 
   alerts: {

@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     if settings.environment != ENV_DEVELOPMENT and settings.debug:
         raise RuntimeError(f"FATAL: DEBUG=true is not allowed in {settings.environment}.")
 
-    init_database(
+    await init_database(
         db_url=settings.get_database_url(),
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
