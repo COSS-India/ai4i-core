@@ -9,11 +9,11 @@ all gated on metering.read (133) at the gateway. platform-core then decides
 breadth from the X-Permission-IDS header (role 1/2 platform-wide; role 5 own
 tenant only), mirroring telemetry traces.read (131).
 
-metering.read is added to the seed (2362774ac241) so fresh DBs get the row plus
-the ADMIN grant via its CROSS JOIN. This migration covers EXISTING DBs (which
-already ran the seed without 133): it inserts the permission if absent and grants
-it to ADMIN, MODERATOR and TENANT_ADMIN. Name-based, NOT EXISTS guarded,
-re-run-safe (same idiom as 1c2d3e4f5a6b / d7a1c3f9e2b4).
+This migration owns metering.read for ALL databases (fresh and existing) — the
+seed (2362774ac241) is intentionally left untouched (never edit an applied
+migration). It inserts the permission if absent and grants it to ADMIN,
+MODERATOR and TENANT_ADMIN. Name-based, NOT EXISTS guarded, re-run-safe (same
+idiom as the traces.read grants 1c2d3e4f5a6b / d7a1c3f9e2b4).
 
 Revision ID: b7e1c2d3f4a5
 Revises: 1c2d3e4f5a6b
