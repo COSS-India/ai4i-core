@@ -5,7 +5,7 @@ response size — **no model is invoked**.  The goal is to measure how the
 service handles payloads of different sizes and to provide realistic pre-defined
 responses that mirror the real output contract.
 
-Currently supported services: **NER**, **NMT**, **Transliteration**, **Language Detection**
+Currently supported services: **NER**, **NMT**, **Transliteration**, **Language Detection**, **ASR**
 
 ---
 
@@ -19,12 +19,14 @@ response_test/
 ├── nmt_response_test.py                  ← NMT tests and standalone demo
 ├── transliteration_response_test.py      ← Transliteration tests and standalone demo
 ├── language_detection_response_test.py   ← Language Detection tests and standalone demo
+├── asr_response_test.py                  ← ASR tests and standalone demo
 ├── responses/
 │   ├── __init__.py
 │   ├── ner_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NER responses
 │   ├── nmt_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NMT responses
 │   ├── transliteration_responses.py      ← pre-defined SMALL / MEDIUM / LARGE Transliteration responses
-│   └── language_detection_responses.py   ← pre-defined SMALL / MEDIUM / LARGE Language Detection responses
+│   ├── language_detection_responses.py   ← pre-defined SMALL / MEDIUM / LARGE Language Detection responses
+│   └── asr_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE ASR responses
 └── README.md                             ← this file
 ```
 
@@ -50,6 +52,9 @@ pytest response_test/transliteration_response_test.py -v
 # Run Language Detection response tests:
 pytest response_test/language_detection_response_test.py -v
 
+# Run ASR response tests:
+pytest response_test/asr_response_test.py -v
+
 # Run all response tests:
 pytest response_test/ -v
 
@@ -64,6 +69,7 @@ python response_test/ner_response_test.py
 python response_test/nmt_response_test.py
 python response_test/transliteration_response_test.py
 python response_test/language_detection_response_test.py
+python response_test/asr_response_test.py
 ```
 
 Example output (NER):
@@ -309,6 +315,35 @@ in the adapter config).
 | `SMALL_LANGUAGE_DETECTION_RESPONSE`       | "hello how are you"                 | `eng_Latn`          |
 | `MEDIUM_LANGUAGE_DETECTION_RESPONSE`      | 4-sentence general English text     | `eng_Latn`          |
 | `LARGE_LANGUAGE_DETECTION_RESPONSE`       | Multi-sentence NLP paragraph        | `eng_Latn`          |
+
+### ASR
+
+```json
+{
+  "output": [
+    {
+      "source": "<transcribed text>",
+      "nBestTokens": null
+    }
+  ],
+  "config": null,
+  "smr_response": null
+}
+```
+
+Unlike text services, the ASR endpoint takes **base64-encoded audio** as input.
+Payload size therefore reflects the length of the base64 string, which correlates
+with audio duration. All three envelope fields (`config`, `smr_response`,
+`nBestTokens`) are present and null — the ASR route has no `response_model_exclude`.
+
+The sample payloads in the test file are minimal base64 strings that hit each
+size bucket. For integration-style runs, replace them with real base64 audio.
+
+| Constant              | Payload size       | Transcript              |
+|-----------------------|--------------------|-------------------------|
+| `SMALL_ASR_RESPONSE`  | ~80 chars (base64) | Short utterance (Hindi) |
+| `MEDIUM_ASR_RESPONSE` | ~400 chars         | 1–2 sentences (Hindi)   |
+| `LARGE_ASR_RESPONSE`  | ~2136 chars        | Full paragraph (Hindi)  |
 
 ---
 
