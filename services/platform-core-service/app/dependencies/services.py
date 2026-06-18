@@ -9,7 +9,7 @@ business-logic services.
 import importlib
 from typing import Optional
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
@@ -17,6 +17,7 @@ import redis.asyncio as aioredis
 from app.core.config import settings
 from app.core.database import get_auth_db_optional, get_db
 from app.core.redis import get_redis
+from app.utils.prometheus_client import PrometheusClient
 from app.repositories.alert_management.alert_definition_repository import (
     AlertDefinitionRepository,
 )
@@ -48,6 +49,28 @@ SyncService = _alert_pkg.SyncService
 # between the periodic background loop (started in lifespan) and the per-request
 # triggers fired after alert CRUD writes.
 _sync_service_singleton = SyncService()
+
+
+def get_prometheus_client(request: Request) -> PrometheusClient:
+    """Return a configured PrometheusClient backed by the shared connection pool."""
+    if not settings.prometheus_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Prometheus is not configured (PROMETHEUS_URL is unset).",
+        )
+    return PrometheusClient(
+        settings.prometheus_url,
+        request.app.state.http_client,
+        timeout=settings.prometheus_timeout,
+    )
+
+
+async def get_metering_service(
+    client: PrometheusClient = Depends(get_prometheus_client),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
+) -> "MeteringService":
+    from app.services.metering_service import MeteringService
+    return MeteringService(client, auth_db)
 
 
 def get_sync_service() -> "SyncService":
