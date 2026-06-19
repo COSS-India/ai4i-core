@@ -243,29 +243,6 @@ async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
         return {}
 
 
-async def _resolve_plans(svc: MeteringService, tenant_ids: list[str]) -> dict:
-    """Batch-resolve tenant id -> plan tier (Enterprise / Pro / …) from the auth DB.
-
-    Takes the latest plan per tenant (most recent assigned_at). Returns {} when
-    the auth DB is unavailable so callers fall back to no badge.
-    """
-    numeric = [int(t) for t in tenant_ids if t and t.isdigit()]
-    if svc._auth_db is None or not numeric:
-        return {}
-    try:
-        rows = await svc._auth_db.execute(
-            text(
-                "SELECT DISTINCT ON (tenant_id) tenant_id, tier "
-                "FROM tenant_plans WHERE tenant_id = ANY(:ids) "
-                "ORDER BY tenant_id, assigned_at DESC"
-            ),
-            {"ids": numeric},
-        )
-        return {str(r[0]): r[1] for r in rows.all()}
-    except Exception:
-        return {}
-
-
 def _validate_window(window: str) -> None:
     if window not in TIME_RANGES or window == "all":
         raise HTTPException(
@@ -504,7 +481,6 @@ async def get_tenant_consumption(
     # Batched auth-DB lookups: organisation names (both lists) + plan tier (ranking).
     all_ids = list({t["tenant"] for t in ranking_tenants} | {r["tenant"] for r in heatmap_rows})
     org_map = await _resolve_orgs(svc, all_ids)
-    plan_map = await _resolve_plans(svc, [t["tenant"] for t in ranking_tenants])
 
     for r in heatmap_rows:
         r["organisation"] = org_map.get(r["tenant"])
@@ -516,7 +492,6 @@ async def get_tenant_consumption(
                 rank=t["rank"],
                 tenant=t["tenant"],
                 organisation=org_map.get(t["tenant"]),
-                plan=plan_map.get(t["tenant"]),
                 requests=t["requests"],
                 formatted_requests=t["formatted_requests"],
                 percentage=t["percentage"],

@@ -55,7 +55,6 @@ class TenantRow(BaseModel):
     rank: int
     tenant: str
     organisation: Optional[str] = None
-    plan: Optional[str] = None          # tenant plan tier (Enterprise / Pro / …); null if unassigned
     requests: int
     formatted_requests: str
     percentage: float
