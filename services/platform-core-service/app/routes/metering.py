@@ -666,7 +666,10 @@ async def get_service_consumption(
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
                 success_pct=s["success_pct"],
-                failure_rate_pct=round(100 - s["success_pct"], 2),
+                # No traffic → nothing succeeded AND nothing failed. Without this
+                # guard, success_pct=0 for a 0-request service makes 100-0=100%
+                # failure, which is wrong (it should be 0%).
+                failure_rate_pct=round(100 - s["success_pct"], 2) if s["requests"] else 0.0,
                 failed=s["failed"],
                 vs_prev_period_pct=s["vs_prev_period_pct"],
             )
