@@ -74,6 +74,11 @@ class Orchestrator:
             task_type = payload.get("task_type", "").upper()
             self._validate_task_type(task_type)
 
+            # NMT stub: skip MMS/Triton entirely, return size-based response directly
+            if task_type == "NMT":
+                from services.nmt_service import NMTTaskService
+                return await NMTTaskService().process(payload)
+
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
 

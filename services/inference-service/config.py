@@ -82,6 +82,12 @@ class Settings(BaseSettings):
         "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"
     )
 
+    # Stub mode — return pre-defined responses without calling Triton
+    NMT_STUB_MODE: bool = Field(
+        False,
+        description="Return pre-defined NMT responses based on payload size (no Triton call)",
+    )
+
     # Security — user-supplied audio/image URI downloads (SSRF guard)
     ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
         False,
