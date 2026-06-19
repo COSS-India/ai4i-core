@@ -11,6 +11,7 @@ from app.core.config import RoleId
 from app.core.exceptions import UserNotFoundError
 from app.utils.auth_helper import check_permission_ids
 from app.core.responses import success_response, to_response
+from app.utils.masking import mask_pii_in_dict
 from app.dependencies.auth import get_current_user
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.core.database import get_db
@@ -63,7 +64,7 @@ async def list_users(
     user_roles = await RoleRepository(db).get_user_roles(caller.id)
     request.state.user_roles = user_roles
     users = await svc.list_users_for_caller(caller, offset, limit, role_set=set(user_roles))
-    items = [to_response(u, UserListResponse) for u in users]
+    items = [mask_pii_in_dict(to_response(u, UserListResponse)) for u in users]
     return success_response(data=items)
 
 

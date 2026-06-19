@@ -34,9 +34,12 @@ class UserRepository(BaseRepository):
         return is_active is True
 
     async def get_by_email(self, email: str) -> Optional[User]:
+        # email is stored as deterministic, lower-normalised ciphertext, so a
+        # direct equality comparison matches case-insensitively (the column's
+        # bind processor encrypts the parameter the same way it was stored).
         result = await self._db.execute(
             select(User).where(
-                func.lower(User.email) == email.lower().strip(),
+                User.email == email,
                 User.is_delete.isnot(True),
             )
         )
@@ -45,9 +48,7 @@ class UserRepository(BaseRepository):
     async def email_exists(self, email: str) -> bool:
         """Return True if any user (including soft-deleted) has this email."""
         result = await self._db.execute(
-            select(User.id).where(
-                func.lower(User.email) == email.lower().strip()
-            )
+            select(User.id).where(User.email == email)
         )
         return result.scalar_one_or_none() is not None
 

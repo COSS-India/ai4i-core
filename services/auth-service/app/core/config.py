@@ -79,6 +79,13 @@ class AuthSettings(BaseSettings):
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
 
+    # ── PII field encryption (email / phone at rest) ──
+    # Base64- or hex-encoded AES-SIV key (decodes to 32, 48, or 64 bytes; use
+    # 64 for AES-256-SIV). Deterministic so encrypted email can be compared
+    # directly for duplicate detection. Generate with:
+    #   python -c "import base64,os;print(base64.b64encode(os.urandom(64)).decode())"
+    pii_encryption_key: Optional[SecretStr] = None
+
     # ── Password hashing (argon2id) ──
     argon2_time_cost: int = 3
     argon2_memory_cost: int = 65536
@@ -182,6 +189,16 @@ class AuthSettings(BaseSettings):
 
 
 settings = AuthSettings()
+
+
+# Hand the PII encryption key to the crypto module so the SQLAlchemy encrypted
+# column types can source it from settings (pydantic loads .env into settings,
+# not os.environ). Migrations configure the same key via the env var instead.
+from app.core import pii_crypto  # noqa: E402
+
+pii_crypto.configure_key(
+    settings.pii_encryption_key.get_secret_value() if settings.pii_encryption_key else None
+)
 
 
 # ── Role IDs (must match the seeded values in roles table) ───────────

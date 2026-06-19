@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from app.core.responses import success_response, to_response
+from app.utils.masking import mask_pii_in_dict
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_tenant_service
 from app.models.tenant import TenantStatus
@@ -33,7 +34,7 @@ async def create_tenant(
     svc: TenantService = Depends(get_tenant_service),
 ):
     tenant = await svc.create_tenant(body, current_user, background_tasks)
-    return success_response(data=to_response(tenant, TenantResponse))
+    return success_response(data=mask_pii_in_dict(to_response(tenant, TenantResponse)))
 
 
 @router.get("")
@@ -45,7 +46,9 @@ async def list_tenants(
     svc: TenantService = Depends(get_tenant_service),
 ):
     tenants = await svc.list_tenants(current_user, offset, limit, status_filter)
-    return success_response(data=[to_response(t, TenantResponse) for t in tenants])
+    return success_response(
+        data=[mask_pii_in_dict(to_response(t, TenantResponse)) for t in tenants]
+    )
 
 
 @router.get("/{tenant_id}")
@@ -55,7 +58,7 @@ async def get_tenant(
     svc: TenantService = Depends(get_tenant_service),
 ):
     tenant = await svc.get_tenant(current_user, tenant_id)
-    return success_response(data=to_response(tenant, TenantResponse))
+    return success_response(data=mask_pii_in_dict(to_response(tenant, TenantResponse)))
 
 
 @router.patch("/{tenant_id}")
@@ -67,7 +70,7 @@ async def update_tenant(
     svc: TenantService = Depends(get_tenant_service),
 ):
     tenant = await svc.update_tenant(current_user, tenant_id, body, background)
-    return success_response(data=to_response(tenant, TenantResponse))
+    return success_response(data=mask_pii_in_dict(to_response(tenant, TenantResponse)))
 
 
 @router.patch("/{tenant_id}/status")
@@ -81,7 +84,7 @@ async def update_tenant_status(
     tenant = await svc.update_tenant_status(
         current_user, tenant_id, body, background_tasks
     )
-    return success_response(data=to_response(tenant, TenantResponse))
+    return success_response(data=mask_pii_in_dict(to_response(tenant, TenantResponse)))
 
 
 @router.get("/{tenant_id}/plan")
