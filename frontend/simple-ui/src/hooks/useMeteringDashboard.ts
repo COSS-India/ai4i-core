@@ -15,6 +15,7 @@ import {
   type MeteringRoleView,
 } from "../utils/rbac";
 import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery";
+import { resolveMeteringGeneratedAt } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
 
 export interface TenantPreviewOption {
@@ -245,6 +246,26 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const organisationLabel = overview?.scope.organisation ?? previewOrganisation ?? null;
 
+  const lastGeneratedAt = useMemo(
+    () =>
+      resolveMeteringGeneratedAt([
+        (isAdopterView || tenantOverviewEnabled) ? overview?.generated_at : null,
+        isAdopterView && subTab === METERING.SUB_TAB.TENANT
+          ? tenantQuery.data?.generated_at
+          : null,
+        serviceQueryEnabled ? serviceQuery.data?.generated_at : null,
+      ]),
+    [
+      isAdopterView,
+      tenantOverviewEnabled,
+      overview?.generated_at,
+      subTab,
+      tenantQuery.data?.generated_at,
+      serviceQueryEnabled,
+      serviceQuery.data?.generated_at,
+    ],
+  );
+
   const parseQueryError = (error: unknown) =>
     error ? parseMeteringError(error) : null;
 
@@ -280,6 +301,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     totalRequestsKpi,
     successRateKpi,
     organisationLabel,
+    lastGeneratedAt,
     parseQueryError,
   };
 }

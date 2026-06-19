@@ -54,6 +54,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     totalRequestsKpi,
     successRateKpi,
     organisationLabel,
+    lastGeneratedAt,
     parseQueryError,
   } = dash;
 
@@ -117,7 +118,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       <MeteringControls
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
-        lastRefreshed={formatMeteringRefreshTime(overview?.generated_at)}
+        lastRefreshed={formatMeteringRefreshTime(lastGeneratedAt)}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         showTenantFilter={isTenantView === false}
