@@ -8,7 +8,7 @@ from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
-from app.utils.masking import looks_masked, mask_email, mask_phone
+from app.utils.masking import drop_masked_pii, mask_email, mask_phone
 
 
 class UserService:
@@ -45,10 +45,11 @@ class UserService:
         (route Pydantic schema); the repo silently drops unknown keys.
 
         Responses return masked PII, so a client may echo a masked value back
-        on save. Drop any field whose value is masked to avoid overwriting the
-        stored plaintext with mask characters.
+        on save. Drop only masked email/phone fields to avoid overwriting the
+        stored plaintext, while leaving other fields (which may legitimately
+        contain ``*``) untouched.
         """
-        data = {k: v for k, v in data.items() if not looks_masked(v)}
+        data = drop_masked_pii(data)
         await self._users.update(user, data)
         await self._users.commit()
         return user

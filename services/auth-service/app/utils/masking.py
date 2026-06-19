@@ -76,3 +76,24 @@ def mask_pii_in_dict(
         if data.get(key) is not None:
             data[key] = mask_phone(data[key])
     return data
+
+
+def drop_masked_pii(
+    data: dict[str, Any],
+    *,
+    email_keys: Iterable[str] = _DEFAULT_EMAIL_KEYS,
+    phone_keys: Iterable[str] = _DEFAULT_PHONE_KEYS,
+) -> dict[str, Any]:
+    """Return a copy of ``data`` with masked email/phone values dropped.
+
+    Update paths return masked PII, so a client may echo a masked value back on
+    save. Only the known PII keys are inspected: a masked email/phone is dropped
+    so it can't overwrite the stored plaintext, while a non-PII field that merely
+    happens to contain the mask character (``*``) is left untouched.
+    """
+    pii_keys = set(email_keys) | set(phone_keys)
+    return {
+        key: value
+        for key, value in data.items()
+        if not (key in pii_keys and looks_masked(value))
+    }

@@ -1,19 +1,22 @@
-"""encrypt user/tenant email & phone at rest
+"""encrypt user/tenant email & phone at rest (schema only)
 
-Widens the email/phone columns to TEXT, encrypts every existing value with the
-deterministic AES-SIV scheme (so duplicate-email detection keeps working via
-direct ciphertext comparison), and replaces the tenants lower(email) expression
-index with a plain unique index on the encrypted value.
+Prepares the schema for transparent, application-level PII encryption:
 
-Requires PII_ENCRYPTION_KEY (base64/hex AES-SIV key) in the migration
-environment — the SAME key auth-service uses. The crypto helper is imported
-from auth-service, which the centralized Alembic env adds to sys.path.
+  * widens the email/phone columns to TEXT, since the deterministic AES-SIV
+    ciphertext the app now writes is longer than the original plaintext, and
+  * replaces the tenants ``lower(email)`` expression index with a plain unique
+    index on ``email`` — the app lower-normalises before encrypting, so a plain
+    unique index on the deterministic ciphertext already enforces
+    case-insensitive uniqueness.
 
-Idempotent: encryption skips values already carrying the ``enc:v1:`` prefix,
-so re-running upgrade is safe.
+This migration deliberately does NOT touch existing row data. Encryption is
+handled entirely by the application's SQLAlchemy column types on read/write, and
+any pre-existing data is reset as part of rolling out this change. As a result
+the migration has no dependency on ``pii_crypto`` and the Alembic environment
+does NOT need ``PII_ENCRYPTION_KEY`` configured.
 
 Revision ID: b7e1c9a4f2d0
-Revises: 0c5afbf03dee
+Revises: 1c2d3e4f5a6b
 Create Date: 2026-06-17 00:00:00.000000
 
 """
@@ -22,104 +25,33 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-# auth-service is placed on sys.path by the centralized Alembic env
-# (migration_registry._load_auth_service_metadata), so this import resolves.
-from app.core import pii_crypto
-
 # revision identifiers, used by Alembic.
 revision: str = "b7e1c9a4f2d0"
-down_revision: Union[str, None] = "0c5afbf03dee"
+down_revision: Union[str, None] = "1c2d3e4f5a6b"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
 
-def _encrypt_existing(conn) -> None:
-    # Users: email (deterministic, lower-normalised) + phone.
-    for user_id, email, phone in conn.execute(
-        sa.text("SELECT id, email, phone_number FROM users")
-    ).fetchall():
-        new_email = pii_crypto.encrypt(
-            email.strip().lower() if email else email, pii_crypto.EMAIL_CONTEXT
-        )
-        new_phone = pii_crypto.encrypt(phone, pii_crypto.PHONE_CONTEXT)
-        conn.execute(
-            sa.text(
-                "UPDATE users SET email = :email, phone_number = :phone WHERE id = :id"
-            ),
-            {"email": new_email, "phone": new_phone, "id": user_id},
-        )
-
-    # Tenants: email (deterministic, lower-normalised) + phone.
-    for tenant_id, email, phone in conn.execute(
-        sa.text("SELECT id, email, phone_number FROM tenants")
-    ).fetchall():
-        new_email = pii_crypto.encrypt(
-            email.strip().lower() if email else email, pii_crypto.EMAIL_CONTEXT
-        )
-        new_phone = pii_crypto.encrypt(phone, pii_crypto.PHONE_CONTEXT)
-        conn.execute(
-            sa.text(
-                "UPDATE tenants SET email = :email, phone_number = :phone WHERE id = :id"
-            ),
-            {"email": new_email, "phone": new_phone, "id": tenant_id},
-        )
-
-
-def _decrypt_existing(conn) -> None:
-    for user_id, email, phone in conn.execute(
-        sa.text("SELECT id, email, phone_number FROM users")
-    ).fetchall():
-        conn.execute(
-            sa.text(
-                "UPDATE users SET email = :email, phone_number = :phone WHERE id = :id"
-            ),
-            {
-                "email": pii_crypto.decrypt(email, pii_crypto.EMAIL_CONTEXT),
-                "phone": pii_crypto.decrypt(phone, pii_crypto.PHONE_CONTEXT),
-                "id": user_id,
-            },
-        )
-    for tenant_id, email, phone in conn.execute(
-        sa.text("SELECT id, email, phone_number FROM tenants")
-    ).fetchall():
-        conn.execute(
-            sa.text(
-                "UPDATE tenants SET email = :email, phone_number = :phone WHERE id = :id"
-            ),
-            {
-                "email": pii_crypto.decrypt(email, pii_crypto.EMAIL_CONTEXT),
-                "phone": pii_crypto.decrypt(phone, pii_crypto.PHONE_CONTEXT),
-                "id": tenant_id,
-            },
-        )
-
-
 def upgrade() -> None:
-    conn = op.get_bind()
-
-    # 1. Widen columns so ciphertext (longer than plaintext) fits.
+    # 1. Widen columns so the encrypted ciphertext (longer than plaintext) fits.
     op.alter_column("users", "email", type_=sa.Text(), existing_nullable=False)
     op.alter_column("users", "phone_number", type_=sa.Text(), existing_nullable=True)
     op.alter_column("tenants", "email", type_=sa.Text(), existing_nullable=False)
     op.alter_column("tenants", "phone_number", type_=sa.Text(), existing_nullable=True)
 
-    # 2. Encrypt every existing row in place.
-    _encrypt_existing(conn)
-
-    # 3. Replace tenants' lower(email) expression index with a plain unique index
-    #    on the (now deterministic, lower-normalised) ciphertext.
+    # 2. Replace tenants' lower(email) expression index with a plain unique index.
+    #    The app lower-normalises email before encrypting, so a plain unique index
+    #    on the deterministic ciphertext enforces case-insensitive uniqueness.
     op.execute("DROP INDEX IF EXISTS uq_tenants_email_lower")
     op.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tenants_email ON tenants (email)")
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-
     op.execute("DROP INDEX IF EXISTS uq_tenants_email")
-    op.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tenants_email_lower ON tenants (lower(email))")
-
-    # Decrypt back to plaintext before narrowing column types.
-    _decrypt_existing(conn)
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tenants_email_lower "
+        "ON tenants (lower(email))"
+    )
 
     op.alter_column(
         "users", "email", type_=sa.String(length=255), existing_nullable=False

@@ -91,6 +91,21 @@ def _cipher() -> AESSIV:
     return AESSIV(key)
 
 
+def validate_key() -> None:
+    """Eagerly build the cipher so a missing or malformed key fails fast.
+
+    The encrypted column types build the cipher lazily on first use, so without
+    this an absent/invalid ``PII_ENCRYPTION_KEY`` would only surface on the first
+    request that binds an encrypted email/phone column (login, register,
+    get_by_email) — taking auth down at request time instead of at startup. Call
+    this from the service startup hook so a bad config fails visibly on boot.
+
+    Raises:
+        PIIEncryptionError: if the key is missing or cannot be decoded.
+    """
+    _cipher()
+
+
 def is_encrypted(value: Optional[str]) -> bool:
     """True when ``value`` is one of our stored ciphertext tokens."""
     return isinstance(value, str) and value.startswith(_PREFIX)
