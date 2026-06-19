@@ -2,12 +2,15 @@
 
 import base64
 from io import BytesIO
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
+
+_SMALL_THRESHOLD = 200
+_MEDIUM_THRESHOLD = 1000
 
 
 class ASRTaskService(AudioBase):
@@ -26,6 +29,30 @@ class ASRTaskService(AudioBase):
     """
 
     TARGET_SAMPLE_RATE = 16000  # All audio is resampled to this rate before Triton
+
+    async def process(
+        self,
+        payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        return self._stub_response(payload)
+
+    def _stub_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from response_test.responses.asr_responses import (
+            SMALL_ASR_RESPONSE,
+            MEDIUM_ASR_RESPONSE,
+            LARGE_ASR_RESPONSE,
+        )
+        audio_items = payload.get("audio") or []
+        total_length = sum(
+            len(item.get("audioContent") or item.get("audio_content", ""))
+            for item in audio_items
+        )
+        if total_length < _SMALL_THRESHOLD:
+            return SMALL_ASR_RESPONSE
+        if total_length < _MEDIUM_THRESHOLD:
+            return MEDIUM_ASR_RESPONSE
+        return LARGE_ASR_RESPONSE
 
     # ------------------------------------------------------------------
     # Validation

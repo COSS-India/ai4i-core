@@ -74,14 +74,37 @@ class Orchestrator:
             task_type = payload.get("task_type", "").upper()
             self._validate_task_type(task_type)
 
-            # NMT/NER stub: skip MMS/Triton entirely, return size-based response directly
+            # Stub: skip MMS/Triton entirely, return size-based response directly
             if task_type == "NMT":
                 from services.nmt_service import NMTTaskService
                 return await NMTTaskService().process(payload)
-
             if task_type == "NER":
                 from services.ner_service import NERTaskService
                 return await NERTaskService().process(payload)
+            if task_type == "ASR":
+                from services.asr_service import ASRTaskService
+                return await ASRTaskService().process(payload)
+            if task_type == "OCR":
+                from services.ocr_service import OCRTaskService
+                return await OCRTaskService().process(payload)
+            if task_type == "TTS":
+                from services.tts_service import TTSTaskService
+                return await TTSTaskService().process(payload)
+            if task_type == "TRANSLITERATION":
+                from services.transliteration_service import TransliterationTaskService
+                return await TransliterationTaskService().process(payload)
+            if task_type == "LANGUAGE_DETECTION":
+                from services.language_detection_service import LanguageDetectionTaskService
+                return await LanguageDetectionTaskService().process(payload)
+            if task_type == "SPEAKER_DIARIZATION":
+                from services.speaker_diarization_service import SpeakerDiarizationTaskService
+                return await SpeakerDiarizationTaskService().process(payload)
+            if task_type == "LANGUAGE_DIARIZATION":
+                from services.language_diarization_service import LanguageDiarizationTaskService
+                return await LanguageDiarizationTaskService().process(payload)
+            if task_type == "AUDIO_LANGUAGE_DETECTION":
+                from services.audio_lang_detection_service import AudioLanguageDetectionTaskService
+                return await AudioLanguageDetectionTaskService().process(payload)
 
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)

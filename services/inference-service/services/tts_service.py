@@ -2,7 +2,7 @@
 
 import base64
 from io import BytesIO
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import scipy.io.wavfile as wav_io
@@ -13,6 +13,8 @@ from pydub import AudioSegment
 
 # Triton model always outputs at this rate
 _TRITON_SAMPLE_RATE = 22050
+_SMALL_THRESHOLD = 200
+_MEDIUM_THRESHOLD = 1000
 # Maximum characters per Triton call
 _MAX_CHUNK_LENGTH = 400
 # Bounds for user-controlled numerics (OWASP API4 — resource consumption):
@@ -43,6 +45,27 @@ class TTSTaskService(TextBase):
 
     # One Triton call per (chunk) item — the TTS model takes one text per call.
     TRITON_CALL_MODE = "per_item"
+
+    async def process(
+        self,
+        payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        return self._stub_response(payload)
+
+    def _stub_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from response_test.responses.tts_responses import (
+            SMALL_TTS_RESPONSE,
+            MEDIUM_TTS_RESPONSE,
+            LARGE_TTS_RESPONSE,
+        )
+        input_items = payload.get("input") or []
+        total_length = sum(len(item.get("source", "")) for item in input_items)
+        if total_length < _SMALL_THRESHOLD:
+            return SMALL_TTS_RESPONSE
+        if total_length < _MEDIUM_THRESHOLD:
+            return MEDIUM_TTS_RESPONSE
+        return LARGE_TTS_RESPONSE
 
     # ------------------------------------------------------------------
     # Preprocess — sanitize, then chunk expansion

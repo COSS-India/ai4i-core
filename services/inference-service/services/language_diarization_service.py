@@ -11,9 +11,12 @@ Triton tensor contract (adapter_config from MMS):
   Output:  DIARIZATION_RESULT (BYTES) — JSON blob
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from services.base.audio_base import AudioBase
+
+_SMALL_THRESHOLD = 200
+_MEDIUM_THRESHOLD = 1000
 
 
 class LanguageDiarizationTaskService(AudioBase):
@@ -24,6 +27,30 @@ class LanguageDiarizationTaskService(AudioBase):
     Overrides convert_payload_to_triton_format (normalise target_language),
     and postprocess (parse DIARIZATION_RESULT JSON + envelope).
     """
+
+    async def process(
+        self,
+        payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        return self._stub_response(payload)
+
+    def _stub_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from response_test.responses.language_diarization_responses import (
+            SMALL_LANGUAGE_DIARIZATION_RESPONSE,
+            MEDIUM_LANGUAGE_DIARIZATION_RESPONSE,
+            LARGE_LANGUAGE_DIARIZATION_RESPONSE,
+        )
+        audio_items = payload.get("audio") or []
+        total_length = sum(
+            len(item.get("audioContent") or item.get("audio_content", ""))
+            for item in audio_items
+        )
+        if total_length < _SMALL_THRESHOLD:
+            return SMALL_LANGUAGE_DIARIZATION_RESPONSE
+        if total_length < _MEDIUM_THRESHOLD:
+            return MEDIUM_LANGUAGE_DIARIZATION_RESPONSE
+        return LARGE_LANGUAGE_DIARIZATION_RESPONSE
 
     async def convert_payload_to_triton_format(
         self,
