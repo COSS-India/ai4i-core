@@ -205,6 +205,12 @@ export const apiEndpoints = {
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
   },
+  metering: {
+    base: `${API_V1}/metering`,
+    overview: `${API_V1}/metering/overview`,
+    tenantConsumption: `${API_V1}/metering/tenant-consumption`,
+    serviceConsumption: `${API_V1}/metering/service-consumption`,
+  },
 } as const;
 
 /** `/api/v1/{service}` prefix derived from inference routes (substring checks in interceptors). */

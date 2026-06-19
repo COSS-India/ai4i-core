@@ -104,6 +104,7 @@ const SERVICE_BASE_PATHS = [
   API_URL_PATH_MARKERS.languageDiarization,
   API_URL_PATH_MARKERS.audioLangDetection,
   apiEndpoints.telemetry.base,
+  apiEndpoints.metering.base,
   apiEndpoints.policy.base,
 ];
 

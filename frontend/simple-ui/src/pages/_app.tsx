@@ -11,17 +11,18 @@ import customTheme from '../theme';
 import Layout from '../components/common/Layout';
 import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
+import '../styles/metering.css';
 
 // Define routes that need the full layout
 const layoutRoutes = [
-  '/', 
-  '/asr', 
-  '/tts', 
-  '/nmt', 
-  '/llm', 
-  '/pipeline', 
-  '/pipeline-builder', 
-  '/profile', 
+  '/',
+  '/asr',
+  '/tts',
+  '/nmt',
+  '/llm',
+  '/pipeline',
+  '/pipeline-builder',
+  '/profile',
   '/model-management',
   '/services-management',
   '/tenant-management',
@@ -34,6 +35,7 @@ const layoutRoutes = [
   '/audio-language-detection',
   '/ner',
   '/logs',
+  '/usage-dashboard',
   '/traces',
   '/alerts-management',
   '/pii-management',
@@ -77,7 +79,7 @@ export default function App({ Component, pageProps }: AppProps) {
             <Component {...pageProps} />
           )}
         </AuthGuard>
-        
+
         {/* React Query DevTools */}
         <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
