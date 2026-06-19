@@ -1,18 +1,22 @@
 import { SimpleGrid } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
+import { METERING } from "../../config/meteringConstants";
+import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
 import { getWindowLabel } from "../../utils/meteringFormatters";
-import type { MeteringGraph, ThroughputData } from "../../types/metering";
+import type { MeteringGraph, MeteringWindow, ThroughputData } from "../../types/metering";
 import {
   extractMeteringRateChartData,
   formatMeteringPeakAt,
+  formatMeteringRps,
 } from "../../utils/meteringFormatters";
 import MeteringChartPanel from "./MeteringChartPanel";
 import MeteringSectionCard, { InlineMetricCard } from "./MeteringSectionCard";
 
 interface ThroughputLoadSectionProps {
   throughput?: ThroughputData | null;
-  window?: string;
+  /** Scope window from API response (not browser global). */
+  timeWindow: MeteringWindow;
   requestVolumeGraph?: MeteringGraph | null;
   /** Optional 4th metric label/value (e.g. tenant total requests). */
   fourthMetric?: { label: string; value: string; helper: string };
@@ -20,39 +24,41 @@ interface ThroughputLoadSectionProps {
 
 const ThroughputLoadSection: React.FC<ThroughputLoadSectionProps> = ({
   throughput,
-  window = "24h",
+  timeWindow,
   requestVolumeGraph,
   fourthMetric,
 }) => {
-  const windowLabel = getWindowLabel(window as "1h" | "24h" | "7d" | "30d");
+  const section = METERING.SECTIONS.THROUGHPUT;
+  const windowLabel = getWindowLabel(timeWindow);
+  const colors = useMeteringChartColors();
 
   const chartData = useMemo(
-    () => extractMeteringRateChartData(requestVolumeGraph, window),
-    [requestVolumeGraph, window],
+    () => extractMeteringRateChartData(requestVolumeGraph, timeWindow),
+    [requestVolumeGraph, timeWindow],
   );
 
   return (
     <MeteringSectionCard
-      title="Throughput & load"
-      subtitle={`Request rate over the selected window · ${windowLabel}`}
+      title={section.TITLE}
+      subtitle={`${section.SUBTITLE_PREFIX} ${windowLabel}`}
       sectionLabel
     >
       <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4} mb={6}>
         <InlineMetricCard
-          label="Avg RPS"
-          value={throughput?.avg_rps ?? "—"}
-          helper="requests per second"
+          label={section.AVG_RPS}
+          value={formatMeteringRps(throughput?.avg_rps)}
+          helper={section.AVG_RPS_HELPER}
           accent="orange.600"
         />
         <InlineMetricCard
-          label="Peak RPS"
-          value={throughput?.peak_rps ?? "—"}
-          helper="highest in window"
+          label={section.PEAK_RPS}
+          value={formatMeteringRps(throughput?.peak_rps)}
+          helper={section.PEAK_RPS_HELPER}
         />
         <InlineMetricCard
-          label="Peak at"
+          label={section.PEAK_AT}
           value={formatMeteringPeakAt(throughput?.peak_at)}
-          helper="time bucket of peak load"
+          helper={section.PEAK_AT_HELPER}
           valueSize="lg"
         />
         {fourthMetric ? (
@@ -67,35 +73,35 @@ const ThroughputLoadSection: React.FC<ThroughputLoadSectionProps> = ({
       <MeteringChartPanel
         height={260}
         minWidth={280}
-        title="Request rate trend"
+        title={section.CHART_TITLE}
         hasData={chartData.length > 0}
-        emptyMessage="Request rate trend is not available for the selected window."
+        emptyMessage={METERING.EMPTY.REQUEST_RATE}
       >
         {(size) => (
           <AreaChart width={size.width} height={size.height} data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#A0AEC0" />
+            <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke={colors.axis} />
             <YAxis
               tick={{ fontSize: 11 }}
-              stroke="#3182CE"
+              stroke={colors.primaryStroke}
               tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v))}
             />
             <Tooltip
               contentStyle={{
-                background: "white",
-                border: "1px solid #E2E8F0",
+                background: colors.tooltipBg,
+                border: `1px solid ${colors.tooltipBorder}`,
                 borderRadius: "8px",
                 fontSize: "12px",
               }}
-              formatter={(value: number) => [`${value.toLocaleString()} req/s`, "RPS"]}
+              formatter={(value: number) => [`${value.toLocaleString()} req/s`, section.AVG_RPS]}
               labelFormatter={(label) => `Time: ${label}`}
             />
             <Area
               type="monotone"
               dataKey="rps"
-              name="RPS"
-              stroke="#3182CE"
-              fill="#BEE3F8"
+              name={section.AVG_RPS}
+              stroke={colors.primaryStroke}
+              fill={colors.primaryFill}
               fillOpacity={0.65}
               strokeWidth={2}
             />

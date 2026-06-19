@@ -20,27 +20,20 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDownIcon } from "@chakra-ui/icons";
 import React, { useEffect, useMemo, useState } from "react";
+import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
+import { formatTenantLabel } from "../../utils/meteringFormatters";
 import {
-  formatTenantLabel,
-  meteringColorAt,
-  meteringServiceColor,
-} from "../../utils/meteringFormatters";
-import {
+  getHeatmapLegendColors,
   heatmapIntensityColor,
   heatmapTextColor,
-  METERING_HEATMAP_SERVICES,
-} from "../../utils/meteringHeatmap";
+  meteringColorAt,
+  meteringServiceColor,
+} from "../../utils/meteringColors";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
-
-const TOP_N_OPTIONS = [
-  { id: "5", label: "Top 5" },
-  { id: "10", label: "Top 10" },
-  { id: "25", label: "Top 25" },
-] as const;
 
 interface TenantServiceHeatmapSectionProps {
   rows: TenantServiceRow[];
@@ -64,10 +57,13 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
     rows.forEach((row) => {
       Object.keys(row.services).forEach((k) => fromData.add(k));
     });
-    return METERING_HEATMAP_SERVICES.filter(
+    return METERING.HEATMAP.SERVICES.filter(
       (s) => fromData.size === 0 || fromData.has(s.key),
     );
   }, [rows]);
+
+  const heatmap = METERING.HEATMAP;
+  const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
 
   const [selectedServices, setSelectedServices] = useState<Set<string>>(() =>
     new Set(availableServiceKeys.map((s) => s.key)),
@@ -86,7 +82,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
     const allKeys = availableServiceKeys.map((s) => s.key);
     const isAllSelected =
       allKeys.length > 0 && allKeys.every((key) => next.has(key));
-    onServicesFilterChange(isAllSelected ? null : [...next].sort());
+    onServicesFilterChange(isAllSelected ? null : Array.from(next).sort());
   };
 
   const visibleServices = useMemo(
@@ -125,7 +121,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
 
   const topNControls = (
     <SegmentedTabBar
-      options={[...TOP_N_OPTIONS]}
+      options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
       activeId={String(topN)}
       onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
     />
@@ -162,8 +158,8 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
   if (!rows.length) {
     return (
       <MeteringSectionCard
-        title="Usage by tenant & service"
-        subtitle={`Heatmap of request volume per tenant per service · ${windowLabel}`}
+        title={heatmap.TITLE}
+        subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
         sectionLabel
         action={
           <HStack spacing={3} flexWrap="wrap">
@@ -174,7 +170,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
       >
         <Flex h="200px" align="center" justify="center">
           <Text color="gray.500" fontSize="sm">
-            No tenant × service data for the selected window.
+            {heatmap.EMPTY}
           </Text>
         </Flex>
       </MeteringSectionCard>
@@ -183,8 +179,8 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
 
   return (
     <MeteringSectionCard
-      title="Usage by tenant & service"
-      subtitle={`Heatmap of request volume per tenant per service · ${windowLabel}`}
+      title={heatmap.TITLE}
+      subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
       sectionLabel
       action={
         <HStack spacing={3} flexWrap="wrap" justify="flex-end">
@@ -206,7 +202,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
               left={0}
               zIndex={1}
             >
-              Tenant
+              {heatmap.TABLE_TENANT}
             </Th>
             {visibleServices.map((svc, i) => (
               <Th
@@ -231,7 +227,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
               </Th>
             ))}
             <Th fontSize="xs" textTransform="uppercase" color="gray.500" bg="gray.50" isNumeric minW="100px">
-              Total
+              {heatmap.TABLE_TOTAL}
             </Th>
           </Tr>
         </Thead>
@@ -308,21 +304,21 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
       >
         <VStack align="flex-start" spacing={0}>
           <Text fontSize="xs" color="gray.500">
-            Showing Top {topN} tenants by total request volume. Adjust using the selector above.
+            {heatmap.FOOTER_PRIMARY.replace("{topN}", String(topN))}
           </Text>
           <Text fontSize="xs" color="gray.400">
-            Colour intensity = request volume
+            {heatmap.FOOTER_SECONDARY}
           </Text>
         </VStack>
         <HStack spacing={2}>
           <Text fontSize="xs" color="gray.500">
-            Low
+            {heatmap.LEGEND_LOW}
           </Text>
-          {["#FFFAF5", "#FFEDD5", "#FED7AA", "#FDBA74", "#FB923C", "#EA580C"].map((color) => (
+          {heatmapLegendColors.map((color) => (
             <Box key={color} w={4} h={4} borderRadius="sm" bg={color} borderWidth="1px" borderColor="gray.200" />
           ))}
           <Text fontSize="xs" color="gray.500">
-            High
+            {heatmap.LEGEND_HIGH}
           </Text>
         </HStack>
       </Flex>

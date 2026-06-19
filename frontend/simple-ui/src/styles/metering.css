@@ -1,0 +1,49 @@
+/*
+ * Metering dashboard color tokens.
+ * Values are defined in src/config/meteringConstants.ts (METERING.COLORS).
+ * This file exposes them as CSS custom properties for non-React styling if needed.
+ */
+:root {
+  --metering-rank-color-0: #DD6B20;
+  --metering-rank-color-1: #3182CE;
+  --metering-rank-color-2: #38A169;
+  --metering-rank-color-3: #805AD5;
+  --metering-rank-color-4: #00B5D8;
+  --metering-service-nmt: #38A169;
+  --metering-service-asr: #FF7A61;
+  --metering-service-tts: #3182CE;
+  --metering-service-llm: #F061C8;
+  --metering-service-ocr: #319795;
+  --metering-service-transliteration: #99F45A;
+  --metering-service-pipeline: #805AD5;
+  --metering-service-ner: #9D72FF;
+  --metering-service-language-detection: #DD6B20;
+  --metering-service-audio-language-detection: #F5C554;
+  --metering-service-speaker-diarization: #718096;
+  --metering-service-language-diarization: #4FD1C5;
+  --metering-palette-0: #DD6B20;
+  --metering-palette-1: #3182CE;
+  --metering-palette-2: #38A169;
+  --metering-palette-3: #805AD5;
+  --metering-palette-4: #D69E2E;
+  --metering-palette-5: #319795;
+  --metering-palette-6: #E53E3E;
+  --metering-palette-7: #718096;
+  --metering-palette-8: #B7791F;
+  --metering-palette-9: #4FD1C5;
+  --metering-heatmap-0: #FFFAF5;
+  --metering-heatmap-1: #FFF7ED;
+  --metering-heatmap-2: #FFEDD5;
+  --metering-heatmap-3: #FED7AA;
+  --metering-heatmap-4: #FDBA74;
+  --metering-heatmap-5: #FB923C;
+  --metering-heatmap-6: #EA580C;
+  --metering-chart-grid: #E2E8F0;
+  --metering-chart-grid-dark: #4A5568;
+  --metering-chart-axis: #A0AEC0;
+  --metering-chart-primary-stroke: #3182CE;
+  --metering-chart-primary-fill: #BEE3F8;
+  --metering-chart-failure-stroke: #E53E3E;
+  --metering-chart-tooltip-border: #E2E8F0;
+  --metering-chart-donut-stroke: #FFFFFF;
+}

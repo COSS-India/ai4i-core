@@ -9,21 +9,13 @@ import {
 } from "@chakra-ui/react";
 import { RepeatIcon } from "@chakra-ui/icons";
 import React from "react";
+import { METERING, type MeteringSubTab } from "../../config/meteringConstants";
 import type { MeteringTopN, MeteringWindow } from "../../types/metering";
-import MeteringSubTabBar, { type MeteringSubTab } from "./MeteringSubTabBar";
-
-const WINDOW_OPTIONS: { value: MeteringWindow; label: string }[] = [
-  { value: "1h", label: "Last 1 hour" },
-  { value: "24h", label: "Last 24 hours" },
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-];
-
-const TOP_N_OPTIONS: MeteringTopN[] = [5, 10, 25];
+import SegmentedTabBar from "./SegmentedTabBar";
 
 interface MeteringControlsProps {
-  window: MeteringWindow;
-  onWindowChange: (w: MeteringWindow) => void;
+  timeWindow: MeteringWindow;
+  onTimeWindowChange: (w: MeteringWindow) => void;
   topN?: MeteringTopN;
   onTopNChange?: (n: MeteringTopN) => void;
   showTopN?: boolean;
@@ -40,8 +32,8 @@ interface MeteringControlsProps {
 }
 
 const MeteringControls: React.FC<MeteringControlsProps> = ({
-  window,
-  onWindowChange,
+  timeWindow,
+  onTimeWindowChange,
   topN,
   onTopNChange,
   showTopN = false,
@@ -58,13 +50,13 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
 }) => (
   <VStack align="stretch" spacing={3}>
     <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
-      {WINDOW_OPTIONS.map((opt) => (
+      {METERING.TIME_WINDOWS.map((opt) => (
         <Button
           key={opt.value}
-          onClick={() => onWindowChange(opt.value)}
-          colorScheme={window === opt.value ? "orange" : "gray"}
-          variant={window === opt.value ? "solid" : "outline"}
-          fontWeight={window === opt.value ? "semibold" : "normal"}
+          onClick={() => onTimeWindowChange(opt.value)}
+          colorScheme={timeWindow === opt.value ? "orange" : "gray"}
+          variant={timeWindow === opt.value ? "solid" : "outline"}
+          fontWeight={timeWindow === opt.value ? "semibold" : "normal"}
           borderRadius="full"
         >
           {opt.label}
@@ -82,7 +74,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
             onChange={(e) => onTenantChange?.(e.target.value)}
             bg="white"
           >
-            <option value="">All Tenants</option>
+            <option value="">{METERING.CONTROLS.ALL_TENANTS}</option>
             {tenantOptions.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.label}
@@ -92,7 +84,11 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
         ) : null}
 
         {showSubTabs && subTab && onSubTabChange ? (
-          <MeteringSubTabBar activeTab={subTab} onChange={onSubTabChange} />
+          <SegmentedTabBar
+            options={[...METERING.SUB_TABS]}
+            activeId={subTab}
+            onChange={onSubTabChange}
+          />
         ) : null}
 
         {showTopN && topN != null && onTopNChange ? (
@@ -103,9 +99,9 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
             onChange={(e) => onTopNChange(Number(e.target.value) as MeteringTopN)}
             bg="white"
           >
-            {TOP_N_OPTIONS.map((n) => (
+            {METERING.TOP_N_OPTIONS.map((n) => (
               <option key={n} value={n}>
-                Top {n}
+                {METERING.CONTROLS.TOP_N_PREFIX} {n}
               </option>
             ))}
           </Select>
@@ -117,7 +113,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
           <HStack spacing={1}>
             <Box w={2} h={2} borderRadius="full" bg="green.400" />
             <Text fontSize="xs" color="gray.500" fontStyle="italic">
-              Last refreshed: {lastRefreshed}
+              {METERING.CONTROLS.LAST_REFRESHED_PREFIX} {lastRefreshed}
             </Text>
           </HStack>
         ) : null}
@@ -130,7 +126,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
             isLoading={isRefreshing}
             color="gray.500"
           >
-            Refresh
+            {METERING.CONTROLS.REFRESH}
           </Button>
         ) : null}
       </VStack>

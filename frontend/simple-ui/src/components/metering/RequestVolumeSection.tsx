@@ -1,4 +1,4 @@
-import { SimpleGrid, useColorModeValue } from "@chakra-ui/react";
+import { SimpleGrid } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import {
   Area,
@@ -9,11 +9,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { METERING } from "../../config/meteringConstants";
+import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
 import type { MeteringGraph, RequestHealth } from "../../types/metering";
 import {
-  extractMeteringRequestsSeries,
+  buildRequestVolumeChartData,
+  findMeteringSeries,
   formatCompactNumber,
-  formatMeteringTimestamp,
   formatSuccessRateDisplay,
   parseCompactTotal,
   parseSuccessRatePct,
@@ -34,23 +36,17 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
   totalRequests,
   successRate,
 }) => {
-  const gridColor = useColorModeValue("#E2E8F0", "#4A5568");
-  const tooltipBg = useColorModeValue("white", "gray.700");
+  const colors = useMeteringChartColors();
+  const section = METERING.SECTIONS.REQUEST_VOLUME;
 
-  const failureSeries = graph?.series?.find((s) => s.key === "failure_rate");
+  const failureSeries = findMeteringSeries(
+    graph,
+    METERING.GRAPH.SERIES_KEYS.FAILURE_RATE,
+  );
 
-  const chartData = useMemo(() => {
-    const requestsSeries = extractMeteringRequestsSeries(graph);
-    if (!requestsSeries?.points?.length || !graph) return [];
+  const chartData = useMemo(() => buildRequestVolumeChartData(graph), [graph]);
 
-    return requestsSeries.points.map((p, i) => ({
-      label: formatMeteringTimestamp(p.ts, graph.step),
-      requests: p.value,
-      failureRate: failureSeries?.points[i]?.value ?? 0,
-    }));
-  }, [graph, failureSeries]);
-
-  const total = requestHealth?.total_formatted ?? totalRequests ?? "—";
+  const total = requestHealth?.total_formatted ?? totalRequests ?? METERING.GRAPH.EMPTY_VALUE;
   const successPct = requestHealth?.success_rate_pct ?? parseSuccessRatePct(successRate);
   const rateDisplay = requestHealth
     ? `${requestHealth.success_rate_pct.toFixed(2)}%`
@@ -59,49 +55,47 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
     ? `${requestHealth.failure_rate_pct.toFixed(2)}%`
     : successPct != null
       ? `${(100 - successPct).toFixed(2)}%`
-      : "—";
+      : METERING.GRAPH.EMPTY_VALUE;
 
   const successfulValue = requestHealth?.successful_formatted ?? (() => {
     const totalNum = parseCompactTotal(totalRequests ?? total);
     return totalNum != null && successPct != null
       ? formatCompactNumber(totalNum * (successPct / 100))
-      : "—";
+      : METERING.GRAPH.EMPTY_VALUE;
   })();
 
   const failedValue = requestHealth?.failed_formatted ?? (() => {
     const totalNum = parseCompactTotal(totalRequests ?? total);
     return totalNum != null && successPct != null
       ? formatCompactNumber(totalNum * ((100 - successPct) / 100))
-      : "—";
+      : METERING.GRAPH.EMPTY_VALUE;
   })();
 
   const hasFailureSeries = Boolean(failureSeries?.points?.length);
-  const yAxisLabel = hasFailureSeries ? "REQUESTS" : "RPS";
+  const hasRequestCounts = hasFailureSeries;
+
+  const yAxisLabel = hasRequestCounts ? section.Y_AXIS_REQUESTS : section.Y_AXIS_RPS;
 
   return (
     <MeteringSectionCard
-      title="Request volume & health"
-      subtitle={
-        hasFailureSeries
-          ? "Total requests and failure rate over the selected period"
-          : "Request rate (RPS) over the selected period"
-      }
+      title={section.TITLE}
+      subtitle={hasRequestCounts ? section.SUBTITLE_WITH_FAILURE : section.SUBTITLE_RPS}
       sectionLabel
       bare
     >
       <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={6}>
-        <SummaryMetricCard label="Total requests" value={String(total)} leftBorderColor="gray.700" />
+        <SummaryMetricCard label={section.TOTAL} value={String(total)} leftBorderColor="gray.700" />
         <SummaryMetricCard
-          label="Successful"
+          label={section.SUCCESSFUL}
           value={successfulValue}
-          helper={`${rateDisplay} success rate`}
+          helper={`${rateDisplay} ${section.SUCCESS_RATE_SUFFIX}`}
           leftBorderColor="green.400"
           helperColor="green.600"
         />
         <SummaryMetricCard
-          label="Failed"
+          label={section.FAILED}
           value={failedValue}
-          helper={`${failedPct} failure rate`}
+          helper={`${failedPct} ${section.FAILURE_RATE_SUFFIX}`}
           leftBorderColor="orange.400"
           helperColor="orange.500"
         />
@@ -115,18 +109,18 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
             data={chartData}
             margin={{ top: 8, right: hasFailureSeries ? 48 : 16, left: 8, bottom: 0 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#A0AEC0" />
+            <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke={colors.axis} />
             <YAxis
               yAxisId="requests"
               tick={{ fontSize: 11 }}
-              stroke="#3182CE"
+              stroke={colors.primaryStroke}
               tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v))}
               label={{
                 value: yAxisLabel,
                 angle: -90,
                 position: "insideLeft",
-                style: { fontSize: 10, fill: "#3182CE", fontWeight: 600 },
+                style: { fontSize: 10, fill: colors.primaryStroke, fontWeight: 600 },
               }}
             />
             {hasFailureSeries ? (
@@ -134,38 +128,41 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
                 yAxisId="failure"
                 orientation="right"
                 tick={{ fontSize: 11 }}
-                stroke="#E53E3E"
+                stroke={colors.failureStroke}
                 tickFormatter={(v) => `${v}%`}
-                domain={[0, 10]}
+                domain={[0, 100]}
                 label={{
-                  value: "FAILURE RATE %",
+                  value: section.Y_AXIS_FAILURE,
                   angle: 90,
                   position: "insideRight",
-                  style: { fontSize: 10, fill: "#E53E3E", fontWeight: 600 },
+                  style: { fontSize: 10, fill: colors.failureStroke, fontWeight: 600 },
                 }}
               />
             ) : null}
             <Tooltip
               contentStyle={{
-                background: tooltipBg,
-                border: "1px solid #E2E8F0",
+                background: colors.tooltipBg,
+                border: `1px solid ${colors.tooltipBorder}`,
                 borderRadius: "8px",
                 fontSize: "12px",
               }}
-              formatter={(value: number, name: string) => [
-                hasFailureSeries || name !== "Requests"
-                  ? value
-                  : `${value.toLocaleString()} req/s`,
-                name,
-              ]}
+              formatter={(value: number, name: string) => {
+                if (name === section.SERIES_FAILURE) {
+                  return [`${value}%`, name];
+                }
+                if (hasRequestCounts) {
+                  return [value.toLocaleString(), name];
+                }
+                return [`${value.toLocaleString()} req/s`, name];
+              }}
             />
             <Area
               yAxisId="requests"
               type="monotone"
               dataKey="requests"
-              name={hasFailureSeries ? "Requests" : "RPS"}
-              stroke="#3182CE"
-              fill="#BEE3F8"
+              name={hasRequestCounts ? section.SERIES_REQUESTS : section.SERIES_RPS}
+              stroke={colors.primaryStroke}
+              fill={colors.primaryFill}
               fillOpacity={0.6}
               strokeWidth={2}
             />
@@ -174,9 +171,10 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
                 yAxisId="failure"
                 type="monotone"
                 dataKey="failureRate"
-                name="Failure rate %"
-                stroke="#E53E3E"
+                name={section.SERIES_FAILURE}
+                stroke={colors.failureStroke}
                 strokeWidth={2}
+                connectNulls={false}
                 dot={false}
               />
             ) : null}

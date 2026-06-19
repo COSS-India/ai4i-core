@@ -1,22 +1,16 @@
 import { Box, Flex, SimpleGrid, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
-import type { OverviewResponse } from "../../types/metering";
+import { METERING } from "../../config/meteringConstants";
+import type { OverviewResponse, PlatformAdoption } from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
   getWindowLabel,
-  meteringColorAt,
 } from "../../utils/meteringFormatters";
+import { meteringColorAt } from "../../utils/meteringColors";
 import MeteringDonutChart from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
-
-const KPI_HELPERS: Record<string, string> = {
-  total_requests: "across selected window",
-  success_rate: "of all requests",
-  avg_rps: "requests per second",
-  avg_requests_per_tenant: "across active tenants",
-};
 
 interface OverviewKpiCardsProps {
   data: OverviewResponse;
@@ -31,7 +25,7 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({ data }) => (
         label={kpi.label}
         value={formatMeteringKpiValue(kpi.key, kpi.value)}
         pctChange={kpi.pct_change}
-        helper={KPI_HELPERS[kpi.key]}
+        helper={METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS]}
       />
     ))}
   </SimpleGrid>
@@ -49,6 +43,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
 }) => {
   const conc = data.usage_concentration;
   const windowLabel = getWindowLabel(data.scope.window);
+  const section = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
 
   const pieData = useMemo(
     () =>
@@ -64,8 +59,8 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
 
   return (
     <MeteringSectionCard
-      title="Consumption overview"
-      subtitle={`reflects selected time window · ${windowLabel}`}
+      title={section.TITLE}
+      subtitle={`${section.SUBTITLE_SUFFIX} ${windowLabel}`}
       sectionLabel
     >
       <VStack align="stretch" spacing={4}>
@@ -78,10 +73,10 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
             letterSpacing="wider"
             mb={1}
           >
-            Usage concentration
+            {section.CONCENTRATION_TITLE}
           </Text>
           <Text fontSize="xs" color="gray.500">
-            Top 5 by request volume · reflects selected time window
+            {section.CONCENTRATION_SUBTITLE}
           </Text>
         </Box>
 
@@ -93,8 +88,8 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
               innerRadius={65}
               outerRadius={100}
               showTooltip
-              centerPrimary="Top 5"
-              centerSecondary="tenants"
+              centerPrimary={section.DONUT_PRIMARY}
+              centerSecondary={section.DONUT_SECONDARY}
             />
           </Box>
 
@@ -112,42 +107,51 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
   );
 };
 
-const ADOPTION_CARDS = [
-  { key: "total_tenants", label: "Total tenants", helper: "registered on platform" },
-  { key: "active_24h", label: "Active tenants", helper: "last 24 hours" },
-  { key: "active_7d", label: "Active tenants", helper: "last 7 days" },
-  { key: "active_30d", label: "Active tenants", helper: "last 30 days" },
-  { key: "new_tenants_7d", label: "New — Last 7 days", helper: "onboarded in last 7 days" },
-] as const;
-
 interface PlatformAdoptionSectionProps {
   data: OverviewResponse;
 }
 
 export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = ({ data }) => {
   const adoption = data.platform_adoption;
-  if (!adoption) return null;
+  const section = METERING.SECTIONS.PLATFORM_ADOPTION;
 
-  const values: Record<string, number | null | undefined> = {
-    total_tenants: adoption.total_tenants,
-    active_24h: adoption.active_24h,
-    active_7d: adoption.active_7d,
-    active_30d: adoption.active_30d,
-    new_tenants_7d: adoption.new_tenants_7d,
+  const activeByKey = useMemo(
+    () => Object.fromEntries((data.active_tenants ?? []).map((cell) => [cell.key, cell])),
+    [data.active_tenants],
+  );
+
+  if (!adoption && !data.active_tenants?.length) return null;
+
+  const adoptionValues: Record<string, number | null | undefined> = {
+    total_tenants: adoption?.total_tenants,
+    new_tenants_7d: adoption?.new_tenants_7d,
+    active_24h: adoption?.active_24h,
+    active_7d: adoption?.active_7d,
+    active_30d: adoption?.active_30d,
   };
 
   return (
-    <MeteringSectionCard title="Platform adoption" subtitle="Tenant overview" sectionLabel bare>
+    <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel bare>
       <SimpleGrid columns={{ base: 1, sm: 2, lg: 5 }} spacing={4}>
-        {ADOPTION_CARDS.map((card) => (
-          <KpiCard
-            key={card.key}
-            label={card.label}
-            value={values[card.key] ?? "—"}
-            helper={card.helper}
-            accent="teal"
-          />
-        ))}
+        {section.CARDS.map((card) => {
+          const activeCell = activeByKey[card.key];
+          const adoptionValue = adoptionValues[card.key as keyof PlatformAdoption];
+
+          return (
+            <KpiCard
+              key={card.key}
+              label={activeCell?.label ?? card.label}
+              value={
+                activeCell?.value ??
+                adoptionValue ??
+                METERING.GRAPH.EMPTY_VALUE
+              }
+              pctChange={activeCell?.pct_change}
+              helper={card.helper}
+              accent="teal"
+            />
+          );
+        })}
       </SimpleGrid>
     </MeteringSectionCard>
   );

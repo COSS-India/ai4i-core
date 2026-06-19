@@ -1,7 +1,9 @@
 import { Badge, HStack, Progress, Tbody, Td, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React from "react";
-import type { MeteringGraph, MeteringTopN, TenantConsumptionResponse, ThroughputData } from "../../types/metering";
-import { formatTenantLabel, getWindowLabel, meteringColorAt } from "../../utils/meteringFormatters";
+import { METERING } from "../../config/meteringConstants";
+import type { MeteringTopN, TenantConsumptionResponse } from "../../types/metering";
+import { meteringColorAt } from "../../utils/meteringColors";
+import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard from "./MeteringSectionCard";
@@ -11,8 +13,6 @@ import ThroughputLoadSection from "./ThroughputLoadSection";
 
 interface TenantConsumptionTabProps {
   data?: TenantConsumptionResponse;
-  fallbackThroughput?: ThroughputData;
-  fallbackRequestVolumeGraph?: MeteringGraph | null;
   topN: MeteringTopN;
   onTopNChange: (n: MeteringTopN) => void;
   onHeatmapServicesChange?: (services: string[] | null) => void;
@@ -23,8 +23,6 @@ interface TenantConsumptionTabProps {
 
 const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
   data,
-  fallbackThroughput,
-  fallbackRequestVolumeGraph,
   topN,
   onTopNChange,
   onHeatmapServicesChange,
@@ -32,8 +30,7 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
   isLoading,
   errorMessage,
 }) => {
-  const throughput = data?.throughput ?? fallbackThroughput;
-  const requestVolumeGraph = data?.request_volume ?? fallbackRequestVolumeGraph ?? null;
+  const section = METERING.SECTIONS.TENANT_RANKING;
   const windowLabel = data ? getWindowLabel(data.scope.window) : "";
   const totalRankedRequests = data?.tenant_ranking.reduce((sum, row) => sum + row.requests, 0) ?? 0;
 
@@ -42,13 +39,13 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
       isLoading={isLoading}
       isEmpty={!data}
       errorMessage={errorMessage}
-      emptyMessage="No tenant consumption data available."
+      emptyMessage={METERING.EMPTY.TENANT_CONSUMPTION}
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
           <MeteringSectionCard
-            title="Tenant ranking"
-            subtitle={`By request volume · ${windowLabel}`}
+            title={section.TITLE}
+            subtitle={`${section.SUBTITLE_PREFIX} ${windowLabel}`}
             sectionLabel
           >
             <MeteringDataTable>
@@ -126,13 +123,13 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
           </MeteringSectionCard>
 
           <ThroughputLoadSection
-            throughput={throughput}
-            window={data.scope.window}
-            requestVolumeGraph={requestVolumeGraph}
+            throughput={data.throughput}
+            timeWindow={data.scope.window}
+            requestVolumeGraph={data.request_volume}
             fourthMetric={{
-              label: "Ranked tenant requests",
+              label: section.RANKED_REQUESTS_LABEL,
               value: `${(totalRankedRequests / 1000).toFixed(1)}K`,
-              helper: "across listed tenants",
+              helper: section.RANKED_REQUESTS_HELPER,
             }}
           />
 

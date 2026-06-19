@@ -82,7 +82,7 @@ export const throughputDataSchema = z.object({
 export const overviewResponseSchema = z.object({
   scope: meteringScopeSchema,
   kpis: z.array(meteringCellSchema),
-  active_tenants: z.array(meteringCellSchema),
+  active_tenants: z.array(meteringCellSchema).default([]),
   platform_adoption: platformAdoptionSchema.nullable().optional(),
   usage_concentration: usageConcentrationSchema.nullable().optional(),
   request_health: requestHealthSchema.nullable().optional(),

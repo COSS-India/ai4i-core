@@ -91,52 +91,32 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   pctChange,
   helper,
   accent = "orange",
-}) => {
-
-  return (
-    <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" h="full">
-      <CardBody>
-        <VStack align="flex-start" spacing={2}>
-          <Text fontSize="xs" fontWeight="semibold" color="gray.500" textTransform="uppercase" letterSpacing="wide">
-            {label}
+}) => (
+  <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" h="full">
+    <CardBody>
+      <VStack align="flex-start" spacing={2}>
+        <Text fontSize="xs" fontWeight="semibold" color="gray.500" textTransform="uppercase" letterSpacing="wide">
+          {label}
+        </Text>
+        <Box fontSize="2xl" fontWeight="bold" color={`${accent}.600`} lineHeight="1.2">
+          {value ?? "—"}
+        </Box>
+        {pctChange != null ? (
+          <HStack spacing={1}>
+            <Badge colorScheme={pctChange >= 0 ? "green" : "red"} fontSize="xs" borderRadius="md">
+              {pctChange >= 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
+            </Badge>
+          </HStack>
+        ) : null}
+        {helper ? (
+          <Text fontSize="xs" color="gray.500">
+            {helper}
           </Text>
-          <Box fontSize="2xl" fontWeight="bold" color={`${accent}.600`} lineHeight="1.2">
-            {value ?? "—"}
-          </Box>
-          {pctChange != null ? (
-            <HStack spacing={1}>
-              <Badge colorScheme={pctChange >= 0 ? "green" : "red"} fontSize="xs" borderRadius="md">
-                {pctChange >= 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
-              </Badge>
-            </HStack>
-          ) : null}
-          {helper ? (
-            <Text fontSize="xs" color="gray.500">
-              {helper}
-            </Text>
-          ) : null}
-        </VStack>
-      </CardBody>
-    </Card>
-  );
-};
-
-export const formatPctChange = (pct?: number | null): string => {
-  if (pct == null) return "";
-  const prefix = pct > 0 ? "+" : "";
-  return `${prefix}${pct}%`;
-};
-
-export const ChangeBadge: React.FC<{ pct?: number | null }> = ({ pct }) => {
-  if (pct == null) return null;
-  const color = pct >= 0 ? "green" : "red";
-  const prefix = pct > 0 ? "+" : "";
-  return (
-    <Badge colorScheme={color} fontSize="xs" borderRadius="md">
-      {prefix}{pct}% vs previous
-    </Badge>
-  );
-};
+        ) : null}
+      </VStack>
+    </CardBody>
+  </Card>
+);
 
 interface SummaryMetricCardProps {
   label: string;

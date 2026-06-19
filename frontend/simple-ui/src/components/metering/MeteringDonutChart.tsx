@@ -1,12 +1,19 @@
-import { Box, Text } from "@chakra-ui/react";
+import { Box, Flex, HStack, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
-import MeteringChartContainer from "./MeteringChartContainer";
+import { getMeteringChartColor } from "../../utils/meteringColors";
+import MeteringChartPanel from "./MeteringChartPanel";
 
 export interface DonutChartDatum {
   name: string;
   value: number;
   color: string;
+}
+
+export interface DonutLegendItem {
+  name: string;
+  color: string;
+  pct?: number;
 }
 
 interface DonutTooltipProps {
@@ -59,7 +66,36 @@ interface MeteringDonutChartProps {
   showTooltip?: boolean;
   centerPrimary?: string;
   centerSecondary?: string;
+  legendItems?: DonutLegendItem[];
+  legendVariant?: "dotted" | "simple";
+  chartMaxW?: string | Record<string, string>;
 }
+
+const DonutLegend: React.FC<{
+  items: DonutLegendItem[];
+  variant: "dotted" | "simple";
+}> = ({ items, variant }) => (
+  <VStack align="stretch" spacing={3} flex="1" w="full">
+    {items.map((row) => (
+      <HStack key={row.name} spacing={3} fontSize="sm">
+        <Box w={2.5} h={2.5} borderRadius="full" bg={row.color} flexShrink={0} />
+        <Text fontWeight="medium" minW="140px" noOfLines={1}>
+          {row.name}
+        </Text>
+        {variant === "dotted" ? (
+          <>
+            <Box flex="1" borderBottom="1px dotted" borderColor="gray.300" mx={2} />
+            {row.pct != null ? (
+              <Text color="gray.600" fontWeight="medium" flexShrink={0}>
+                {row.pct.toFixed(2)}%
+              </Text>
+            ) : null}
+          </>
+        ) : null}
+      </HStack>
+    ))}
+  </VStack>
+);
 
 const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
   data,
@@ -69,21 +105,21 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
   showTooltip = true,
   centerPrimary,
   centerSecondary,
+  legendItems,
+  legendVariant = "dotted",
+  chartMaxW,
 }) => {
   const total = data.reduce((sum, d) => sum + d.value, 0);
+  if (!data.length) return null;
 
-  if (!data.length) {
-    return null;
-  }
-
-  return (
+  const chart = (
     <Box
       w="100%"
       position="relative"
       overflow="visible"
       sx={{ "& .recharts-wrapper": { overflow: "visible" } }}
     >
-      <MeteringChartContainer height={height} minWidth={240}>
+      <MeteringChartPanel height={height} minWidth={240} bare>
         {(size) => (
           <PieChart width={size.width} height={size.height}>
             <Pie
@@ -95,7 +131,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
               innerRadius={innerRadius}
               outerRadius={outerRadius}
               paddingAngle={2}
-              stroke="#fff"
+              stroke={getMeteringChartColor("DONUT_STROKE")}
               strokeWidth={2}
             >
               {data.map((entry) => (
@@ -111,7 +147,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
             ) : null}
           </PieChart>
         )}
-      </MeteringChartContainer>
+      </MeteringChartPanel>
       {centerPrimary ? (
         <Box
           position="absolute"
@@ -133,6 +169,19 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
         </Box>
       ) : null}
     </Box>
+  );
+
+  if (!legendItems) {
+    return chart;
+  }
+
+  return (
+    <Flex direction={{ base: "column", lg: "row" }} gap={6} align="center">
+      <Box flex="1" w="full" maxW={chartMaxW ?? { lg: "50%" }} mx="auto">
+        {chart}
+      </Box>
+      <DonutLegend items={legendItems} variant={legendVariant} />
+    </Flex>
   );
 };
 

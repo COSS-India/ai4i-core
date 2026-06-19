@@ -1,21 +1,22 @@
 import { Box, HStack, SimpleGrid, Tbody, Td, Text, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
-import type { ServiceConsumptionResponse, ServiceRow } from "../../types/metering";
+import { METERING } from "../../config/meteringConstants";
+import type { ServiceConsumptionResponse } from "../../types/metering";
 import {
-  getWindowLabel,
-  formatNativeConsumption,
+  buildServiceBreakdownChart,
+  deriveServiceInsights,
   formatCompactNumber,
-  meteringServiceColor,
+  formatNativeConsumption,
+  getWindowLabel,
+  serviceFailureRate,
 } from "../../utils/meteringFormatters";
-import DonutWithLegend from "./DonutWithLegend";
+import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
+import MeteringDonutChart from "./MeteringDonutChart";
 import { KpiCard } from "./MeteringSectionCard";
 import MeteringSectionCard from "./MeteringSectionCard";
 import ThroughputLoadSection from "./ThroughputLoadSection";
-
-const formatNative = (row: ServiceRow): string =>
-  formatNativeConsumption(row.native_units, row.native_unit_suffix);
 
 interface ServiceConsumptionTabProps {
   data?: ServiceConsumptionResponse;
@@ -28,91 +29,59 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   isLoading,
   errorMessage,
 }) => {
+  const section = METERING.SECTIONS.SERVICE;
   const breakdown = data?.service_breakdown ?? [];
-  const totalRequests = breakdown.reduce((sum, s) => sum + s.requests, 0);
 
-  const pieData = useMemo(
-    () =>
-      breakdown.map((s, i) => ({
-        name: s.service,
-        value: s.requests,
-        color: meteringServiceColor(s.service, i),
-      })),
+  const { slices } = useMemo(
+    () => buildServiceBreakdownChart(breakdown),
     [breakdown],
   );
 
-  const legendItems = useMemo(
-    () =>
-      pieData.map((row, i) => {
-        const svc = breakdown[i];
-        const pct =
-          svc?.percentage ??
-          (totalRequests > 0 ? (row.value / totalRequests) * 100 : 0);
-        return {
-          name: row.name,
-          color: row.color,
-          pct,
-        };
-      }),
-    [pieData, breakdown, totalRequests],
+  const insights = useMemo(
+    () => deriveServiceInsights(data?.summary, breakdown),
+    [data?.summary, breakdown],
   );
 
-  const insights = useMemo(() => {
-    if (data?.summary) {
-      const { summary } = data;
-      return {
-        activeCount: summary.active_services,
-        mostUsed: summary.most_used,
-        highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
-        highestFailureService: summary.highest_failure_rate.service,
-      };
-    }
-    if (!breakdown.length) return null;
-    const active = breakdown.filter((s) => s.requests > 0);
-    const mostUsed = [...breakdown].sort((a, b) => b.requests - a.requests)[0];
-    const highestFailure = [...breakdown].sort(
-      (a, b) =>
-        (a.failure_rate_pct ?? 100 - a.success_pct) -
-        (b.failure_rate_pct ?? 100 - b.success_pct),
-    )[0];
-    return {
-      activeCount: active.length,
-      mostUsed: { service: mostUsed.service, requests: mostUsed.requests },
-      highestFailureRate: highestFailure.failure_rate_pct ?? 100 - highestFailure.success_pct,
-      highestFailureService: highestFailure.service,
-    };
-  }, [data?.summary, breakdown]);
+  const pieData = useMemo(
+    () => slices.map(({ name, value, color }) => ({ name, value, color })),
+    [slices],
+  );
+
+  const legendItems = useMemo(
+    () => slices.map(({ name, color, pct }) => ({ name, color, pct })),
+    [slices],
+  );
 
   return (
     <MeteringAsyncState
       isLoading={isLoading}
       isEmpty={!data}
       errorMessage={errorMessage}
-      emptyMessage="No service consumption data available."
+      emptyMessage={METERING.EMPTY.SERVICE_CONSUMPTION}
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
             <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
               <KpiCard
-                label="Active services"
+                label={section.ACTIVE_SERVICES}
                 value={insights.activeCount}
-                helper="with requests in selected window"
+                helper={section.ACTIVE_SERVICES_HELPER}
                 accent="gray"
               />
               <KpiCard
-                label="Most used service"
+                label={section.MOST_USED}
                 value={
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="green.400" />
                     <Text as="span">{insights.mostUsed.service}</Text>
                   </HStack>
                 }
-                helper={`${formatCompactNumber(insights.mostUsed.requests, "indian")} requests`}
+                helper={`${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`}
                 accent="gray"
               />
               <KpiCard
-                label="Highest failure rate"
+                label={section.HIGHEST_FAILURE}
                 value={
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="pink.300" />
@@ -121,7 +90,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                     </Text>
                   </HStack>
                 }
-                helper={`${insights.highestFailureRate.toFixed(2)}% failure rate`}
+                helper={`${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`}
                 accent="gray"
               />
             </SimpleGrid>
@@ -129,80 +98,59 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
 
           <ThroughputLoadSection
             throughput={data.throughput}
-            window={data.scope.window}
+            timeWindow={data.scope.window}
             requestVolumeGraph={data.request_volume}
           />
 
-          <MeteringSectionCard
-            title="Service consumption"
-            subtitle="Platform-wide request distribution · reflects selected time window"
-            sectionLabel
-          >
-            <DonutWithLegend
+          <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
+            <MeteringDonutChart
               data={pieData}
               legendItems={legendItems}
               height={300}
               innerRadius={70}
               outerRadius={110}
-              centerPrimary="All"
-              centerSecondary="Services"
+              centerPrimary={section.DONUT_PRIMARY}
+              centerSecondary={section.DONUT_SECONDARY}
             />
           </MeteringSectionCard>
 
           <MeteringSectionCard
-            title="Service breakdown"
-            subtitle={`Consumption across all services · ${getWindowLabel(data.scope.window)}`}
+            title={section.BREAKDOWN_TITLE}
+            subtitle={`${section.BREAKDOWN_SUBTITLE_PREFIX} ${getWindowLabel(data.scope.window)}`}
             sectionLabel
             bare
           >
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">
-                    Service
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    Total requests
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    Native consumption
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    Success rate %
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    Failure rate %
-                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">Service</Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Total requests</Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Native consumption</Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Success rate %</Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Failure rate %</Th>
                 </Tr>
               </Thead>
               <Tbody>
-                {breakdown.map((row, i) => {
-                  const failureRate = row.failure_rate_pct ?? 100 - row.success_pct;
-                  return (
-                    <Tr key={row.service}>
-                      <Td>
-                        <HStack spacing={2}>
-                          <Box w={1} h={5} borderRadius="sm" bg={meteringServiceColor(row.service, i)} />
-                          <Text fontWeight="medium" fontSize="sm">
-                            {row.service}
-                          </Text>
-                        </HStack>
-                      </Td>
-                      <Td isNumeric fontSize="sm">
-                        {formatCompactNumber(row.requests, "indian")}
-                      </Td>
-                      <Td isNumeric fontSize="sm" color="gray.600">
-                        {formatNative(row)}
-                      </Td>
-                      <Td isNumeric fontSize="sm" color="green.600" fontWeight="medium">
-                        {row.success_pct.toFixed(2)}%
-                      </Td>
-                      <Td isNumeric fontSize="sm" color="red.500" fontWeight="medium">
-                        {failureRate.toFixed(2)}%
-                      </Td>
-                    </Tr>
-                  );
-                })}
+                {breakdown.map((row, i) => (
+                  <Tr key={row.service}>
+                    <Td>
+                      <HStack spacing={2}>
+                        <Box w={1} h={5} borderRadius="sm" bg={meteringServiceColor(row.service, i)} />
+                        <Text fontWeight="medium" fontSize="sm">{row.service}</Text>
+                      </HStack>
+                    </Td>
+                    <Td isNumeric fontSize="sm">{formatCompactNumber(row.requests, "indian")}</Td>
+                    <Td isNumeric fontSize="sm" color="gray.600">
+                      {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
+                    </Td>
+                    <Td isNumeric fontSize="sm" color="green.600" fontWeight="medium">
+                      {row.success_pct.toFixed(2)}%
+                    </Td>
+                    <Td isNumeric fontSize="sm" color="red.500" fontWeight="medium">
+                      {serviceFailureRate(row).toFixed(2)}%
+                    </Td>
+                  </Tr>
+                ))}
               </Tbody>
             </MeteringDataTable>
           </MeteringSectionCard>

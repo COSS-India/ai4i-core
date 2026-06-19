@@ -11,6 +11,7 @@ import customTheme from '../theme';
 import Layout from '../components/common/Layout';
 import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
+import '../styles/metering.css';
 
 // Define routes that need the full layout
 const layoutRoutes = [

@@ -1,6 +1,7 @@
 import { Badge, Box, HStack, Progress, Text, VStack } from "@chakra-ui/react";
 import React from "react";
-import { meteringColorAt } from "../../utils/meteringFormatters";
+import { METERING } from "../../config/meteringConstants";
+import { meteringColorAt } from "../../utils/meteringColors";
 import MeteringTableText from "./MeteringTableText";
 
 export interface RankedShareRow {
@@ -18,8 +19,8 @@ interface RankedShareListProps {
 
 const RankedShareList: React.FC<RankedShareListProps> = ({
   rows,
-  headerLeft = "Request volume & share",
-  headerRight = "% of total",
+  headerLeft = METERING.SECTIONS.RANKED_SHARE.HEADER_LEFT,
+  headerRight = METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT,
 }) => (
   <VStack align="stretch" spacing={4} flex="1.5" w="full">
     <HStack justify="space-between" fontSize="xs" color="gray.500" px={1}>
