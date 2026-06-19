@@ -119,7 +119,7 @@ export const TenantUsageView: React.FC<TenantUsageViewProps> = ({
       <MeteringControls
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
-        lastRefreshed={formatMeteringRefreshTime(overview?.generated_at)}
+        lastRefreshed={formatMeteringRefreshTime(dash.lastGeneratedAt)}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
       />
@@ -190,7 +190,7 @@ export const AdopterUsageView: React.FC<AdopterUsageViewProps> = ({
       <MeteringControls
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
-        lastRefreshed={formatMeteringRefreshTime(overview?.generated_at)}
+        lastRefreshed={formatMeteringRefreshTime(dash.lastGeneratedAt)}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         showTenantFilter
