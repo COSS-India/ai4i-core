@@ -1,10 +1,36 @@
 """NER (Named Entity Recognition) TaskService."""
+from typing import Any, Dict, Optional
+
 from services.base.text_base import TextBase
 from services.base.task_service import PostProcessFormat
+
+_SMALL_THRESHOLD = 200
+_MEDIUM_THRESHOLD = 1000
 
 
 class NERTaskService(TextBase):
     # source_language check handled by base; no target language needed
+
+    async def process(
+        self,
+        payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        return self._stub_response(payload)
+
+    def _stub_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from response_test.responses.ner_responses import (
+            SMALL_NER_RESPONSE,
+            MEDIUM_NER_RESPONSE,
+            LARGE_NER_RESPONSE,
+        )
+        input_items = payload.get("input") or []
+        total_length = sum(len(item.get("source", "")) for item in input_items)
+        if total_length < _SMALL_THRESHOLD:
+            return SMALL_NER_RESPONSE
+        if total_length < _MEDIUM_THRESHOLD:
+            return MEDIUM_NER_RESPONSE
+        return LARGE_NER_RESPONSE
 
     async def postprocess_output(self, result: PostProcessFormat):
         """
