@@ -1,7 +1,7 @@
 /** Shared RBAC role helpers for the simple-ui app. */
 
 export function normalizeRole(role?: string | null): string {
-  return (role ?? "").trim().toUpperCase().replace(/_/g, " ");
+  return (role ?? "").trim().toUpperCase().replaceAll("_", " ");
 }
 
 export function userHasRole(roles: string[] | undefined, target: string): boolean {

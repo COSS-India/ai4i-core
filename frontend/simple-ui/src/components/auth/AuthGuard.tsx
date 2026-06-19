@@ -13,26 +13,31 @@ interface AuthGuardProps {
 
 // Routes that require authentication
 // Note: /nmt is excluded to allow anonymous "try-it" access
-const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/tenant-management', '/api-key-management', '/profile', '/logs', '/usage-dashboard', '/traces', '/alerts-management', '/pii-management', '/policy-management'];
+const protectedRoutes = new Set([
+  '/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management',
+  '/services-management', '/tenant-management', '/api-key-management', '/profile',
+  '/logs', '/usage-dashboard', '/traces', '/alerts-management', '/pii-management',
+  '/policy-management',
+]);
 
 // Routes that require ADMIN role
-const adminOnlyRoutes = ['/alerts-management'];
+const adminOnlyRoutes = new Set(['/alerts-management']);
 
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
-const usageDashboardRoutes = ['/usage-dashboard'];
+const usageDashboardRoutes = new Set(['/usage-dashboard']);
 
 // Routes that allow anonymous access with limited functionality
-const tryItRoutes = ['/nmt'];
+const tryItRoutes = new Set(['/nmt']);
 
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
 
   // Check if current route requires authentication
-  const isProtectedRoute = protectedRoutes.includes(router.pathname);
-  const isAdminOnlyRoute = adminOnlyRoutes.includes(router.pathname);
-  const isUsageDashboardRoute = usageDashboardRoutes.includes(router.pathname);
-  const isTryItRoute = tryItRoutes.includes(router.pathname);
+  const isProtectedRoute = protectedRoutes.has(router.pathname);
+  const isAdminOnlyRoute = adminOnlyRoutes.has(router.pathname);
+  const isUsageDashboardRoute = usageDashboardRoutes.has(router.pathname);
+  const isTryItRoute = tryItRoutes.has(router.pathname);
 
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;

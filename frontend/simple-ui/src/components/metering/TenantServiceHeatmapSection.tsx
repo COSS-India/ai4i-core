@@ -9,7 +9,6 @@ import {
   MenuItem,
   MenuList,
   Progress,
-  Table,
   Tbody,
   Td,
   Text,
@@ -82,7 +81,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
     const allKeys = availableServiceKeys.map((s) => s.key);
     const isAllSelected =
       allKeys.length > 0 && allKeys.every((key) => next.has(key));
-    onServicesFilterChange(isAllSelected ? null : Array.from(next).sort());
+    onServicesFilterChange(isAllSelected ? null : Array.from(next).sort((a, b) => a.localeCompare(b)));
   };
 
   const visibleServices = useMemo(

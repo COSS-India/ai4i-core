@@ -14,7 +14,7 @@ import { ChevronDownIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { TenantPreviewOption } from "../../hooks/useMeteringDashboard";
 
-export type { TenantPreviewOption };
+export type { TenantPreviewOption } from "../../hooks/useMeteringDashboard";
 
 interface TenantPreviewSelectProps {
   tenants: TenantPreviewOption[];

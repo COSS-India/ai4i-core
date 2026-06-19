@@ -85,11 +85,11 @@ const DonutLegend: React.FC<{
         {variant === "dotted" ? (
           <>
             <Box flex="1" borderBottom="1px dotted" borderColor="gray.300" mx={2} />
-            {row.pct != null ? (
+            {row.pct == null ? null : (
               <Text color="gray.600" fontWeight="medium" flexShrink={0}>
                 {row.pct.toFixed(2)}%
               </Text>
-            ) : null}
+            )}
           </>
         ) : null}
       </HStack>
@@ -110,7 +110,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
   chartMaxW,
 }) => {
   const total = data.reduce((sum, d) => sum + d.value, 0);
-  if (!data.length) return null;
+  if (data.length === 0) return null;
 
   const chart = (
     <Box
@@ -171,18 +171,18 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
     </Box>
   );
 
-  if (!legendItems) {
-    return chart;
+  if (legendItems) {
+    return (
+      <Flex direction={{ base: "column", lg: "row" }} gap={6} align="center">
+        <Box flex="1" w="full" maxW={chartMaxW ?? { lg: "50%" }} mx="auto">
+          {chart}
+        </Box>
+        <DonutLegend items={legendItems} variant={legendVariant} />
+      </Flex>
+    );
   }
 
-  return (
-    <Flex direction={{ base: "column", lg: "row" }} gap={6} align="center">
-      <Box flex="1" w="full" maxW={chartMaxW ?? { lg: "50%" }} mx="auto">
-        {chart}
-      </Box>
-      <DonutLegend items={legendItems} variant={legendVariant} />
-    </Flex>
-  );
+  return chart;
 };
 
 export default MeteringDonutChart;

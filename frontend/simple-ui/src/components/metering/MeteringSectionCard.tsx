@@ -101,13 +101,13 @@ export const KpiCard: React.FC<KpiCardProps> = ({
         <Box fontSize="2xl" fontWeight="bold" color={`${accent}.600`} lineHeight="1.2">
           {value ?? "—"}
         </Box>
-        {pctChange != null ? (
+        {pctChange == null ? null : (
           <HStack spacing={1}>
             <Badge colorScheme={pctChange >= 0 ? "green" : "red"} fontSize="xs" borderRadius="md">
               {pctChange >= 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
             </Badge>
           </HStack>
-        ) : null}
+        )}
         {helper ? (
           <Text fontSize="xs" color="gray.500">
             {helper}

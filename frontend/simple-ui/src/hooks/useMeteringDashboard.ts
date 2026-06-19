@@ -28,6 +28,22 @@ interface UseMeteringDashboardOptions {
   tenantId?: string | null;
 }
 
+function resolveEffectiveTenantId(
+  isTenantView: boolean,
+  canSwitchViews: boolean,
+  previewTenantId: string,
+  tenantId: string | null | undefined,
+  scopeTenantId: string,
+): string | null {
+  if (!isTenantView) {
+    return scopeTenantId || null;
+  }
+  if (canSwitchViews) {
+    return previewTenantId || null;
+  }
+  return tenantId?.trim() || getTenantIdFromToken() || null;
+}
+
 export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboardOptions) {
   const roleViewConfig = useMemo(
     () => getMeteringRoleViewConfig(userRoles),
@@ -96,11 +112,13 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const isAdminPreviewingTenant = roleViewConfig.canSwitchViews && isTenantView;
   const effectiveIsPlatformAdmin = isAdopterView || isAdminPreviewingTenant;
-  const effectiveTenantId = isTenantView
-    ? roleViewConfig.canSwitchViews
-      ? previewTenantId || null
-      : tenantId?.trim() || getTenantIdFromToken() || null
-    : scopeTenantId || null;
+  const effectiveTenantId = resolveEffectiveTenantId(
+    isTenantView,
+    roleViewConfig.canSwitchViews,
+    previewTenantId,
+    tenantId,
+    scopeTenantId,
+  );
 
   const tenantOverviewEnabled =
     isTenantView &&

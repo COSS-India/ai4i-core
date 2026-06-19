@@ -1,9 +1,4 @@
-import {
-  Box,
-  Heading,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { Box, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
@@ -12,17 +7,14 @@ import type { MeteringRoleView } from "../../utils/rbac";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { MeteringAlerts } from "./MeteringAsyncState";
 import MeteringControls from "./MeteringControls";
+import { PlatformAdoptionSection } from "./OverviewSections";
+import RequestVolumeSection from "./RequestVolumeSection";
 import SegmentedTabBar from "./SegmentedTabBar";
 import {
-  ConsumptionOverviewSection,
-  OverviewKpiCards,
-  PlatformAdoptionSection,
-} from "./OverviewSections";
-import RequestVolumeSection from "./RequestVolumeSection";
-import ServiceConsumptionTab from "./ServiceConsumptionTab";
-import TenantConsumptionTab from "./TenantConsumptionTab";
-import TenantPreviewSelect from "./TenantPreviewSelect";
-import ThroughputLoadSection from "./ThroughputLoadSection";
+  AdopterDashboardPanels,
+  TenantDashboardHeader,
+  TenantDashboardPanels,
+} from "./UsageDashboardPanels";
 
 interface UsageDashboardProps {
   userRoles?: string[];
@@ -78,14 +70,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     />
   ) : null;
 
-  const controlsProps = {
-    timeWindow,
-    onTimeWindowChange: setTimeWindow,
-    lastRefreshed: formatMeteringRefreshTime(overview?.generated_at),
-    onRefresh: handleRefresh,
-    isRefreshing,
-  };
-
   const requestVolumeSection = overview ? (
     <RequestVolumeSection
       graph={requestVolumeGraph}
@@ -94,6 +78,10 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       successRate={successRateKpi}
     />
   ) : null;
+
+  const showPlatformAdoption =
+    isTenantView === false &&
+    Boolean(overview?.platform_adoption || overview?.active_tenants?.length);
 
   if (isLoading) {
     return (
@@ -111,104 +99,63 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       {roleViewBar}
 
       {isTenantView ? (
-        <>
-          {roleViewConfig.canSwitchViews ? (
-            <TenantPreviewSelect
-              tenants={previewTenants}
-              selectedTenantId={previewTenantId}
-              onSelect={setPreviewTenantId}
-            />
-          ) : null}
-          {organisationLabel ? (
-            <Heading size="md" color="gray.700">
-              {METERING.TENANT_VIEW.TITLE} · {organisationLabel}
-            </Heading>
-          ) : (
-            <Text color="gray.600" fontSize="sm">{METERING.TENANT_VIEW.TITLE}</Text>
-          )}
-        </>
+        <TenantDashboardHeader
+          canSwitchViews={roleViewConfig.canSwitchViews}
+          previewTenants={previewTenants}
+          previewTenantId={previewTenantId}
+          onSelectTenant={setPreviewTenantId}
+          organisationLabel={organisationLabel}
+        />
       ) : null}
 
       <MeteringAlerts errorMessage={primaryError} isDegraded={isDegraded} />
 
-      {!isTenantView && (overview?.platform_adoption || overview?.active_tenants?.length) ? (
-        <PlatformAdoptionSection data={overview!} />
+      {showPlatformAdoption && overview ? (
+        <PlatformAdoptionSection data={overview} />
       ) : null}
 
       <MeteringControls
-        {...controlsProps}
-        {...(!isTenantView
-          ? {
-              showTenantFilter: true,
-              tenantOptions: previewTenants.map((t) => ({ id: t.id, label: t.organisation })),
-              selectedTenantId: scopeTenantId,
-              onTenantChange: setScopeTenantId,
-              showSubTabs: true,
-              subTab,
-              onSubTabChange: setSubTab,
-              topN,
-              onTopNChange: setTopN,
-            }
-          : {})}
+        timeWindow={timeWindow}
+        onTimeWindowChange={setTimeWindow}
+        lastRefreshed={formatMeteringRefreshTime(overview?.generated_at)}
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+        showTenantFilter={isTenantView === false}
+        tenantOptions={previewTenants.map((t) => ({ id: t.id, label: t.organisation }))}
+        selectedTenantId={scopeTenantId}
+        onTenantChange={setScopeTenantId}
+        showSubTabs={isTenantView === false}
+        subTab={subTab}
+        onSubTabChange={setSubTab}
+        topN={topN}
+        onTopNChange={setTopN}
       />
 
-      {isTenantView ? (
-        <>
-          {overview ? (
-            <VStack align="stretch" spacing={6}>
-              <OverviewKpiCards data={overview} />
-              <ThroughputLoadSection
-                throughput={overview.throughput}
-                timeWindow={overview.scope.window}
-                requestVolumeGraph={requestVolumeGraph}
-                fourthMetric={{
-                  label: METERING.TENANT_VIEW.TOTAL_REQUESTS_LABEL,
-                  value: String(totalRequestsKpi ?? METERING.GRAPH.EMPTY_VALUE),
-                  helper: METERING.TENANT_VIEW.TOTAL_REQUESTS_HELPER,
-                }}
-              />
-              {requestVolumeSection}
-            </VStack>
-          ) : null}
-          <Box ref={serviceSectionRef}>
-            <ServiceConsumptionTab
-              data={serviceQuery.data}
-              isLoading={serviceQuery.isLoading}
-              errorMessage={parseQueryError(serviceQuery.error)}
-            />
-          </Box>
-        </>
-      ) : (
-        <Box pt={2}>
-          {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
-            <VStack align="stretch" spacing={6}>
-              <OverviewKpiCards data={overview} />
-              <ConsumptionOverviewSection
-                data={overview}
-                tenantOrganisationById={tenantOrganisationById}
-              />
-              {requestVolumeSection}
-            </VStack>
-          ) : null}
-          {subTab === METERING.SUB_TAB.TENANT && (
-            <TenantConsumptionTab
-              data={tenantQuery.data}
-              topN={topN}
-              onTopNChange={setTopN}
-              onHeatmapServicesChange={setTenantHeatmapServices}
-              tenantOrganisationById={tenantOrganisationById}
-              isLoading={tenantQuery.isLoading}
-              errorMessage={parseQueryError(tenantQuery.error)}
-            />
-          )}
-          {subTab === METERING.SUB_TAB.SERVICE && (
-            <ServiceConsumptionTab
-              data={serviceQuery.data}
-              isLoading={serviceQuery.isLoading}
-              errorMessage={parseQueryError(serviceQuery.error)}
-            />
-          )}
-        </Box>
+      {isTenantView && overview ? (
+        <TenantDashboardPanels
+          overview={overview}
+          requestVolumeGraph={requestVolumeGraph}
+          totalRequestsKpi={totalRequestsKpi}
+          requestVolumeSection={requestVolumeSection}
+          serviceSectionRef={serviceSectionRef}
+          serviceQuery={serviceQuery}
+          parseQueryError={parseQueryError}
+        />
+      ) : null}
+
+      {isTenantView ? null : (
+        <AdopterDashboardPanels
+          subTab={subTab}
+          overview={overview}
+          tenantOrganisationById={tenantOrganisationById}
+          requestVolumeSection={requestVolumeSection}
+          topN={topN}
+          onTopNChange={setTopN}
+          onHeatmapServicesChange={setTenantHeatmapServices}
+          tenantQuery={tenantQuery}
+          serviceQuery={serviceQuery}
+          parseQueryError={parseQueryError}
+        />
       )}
     </VStack>
   );

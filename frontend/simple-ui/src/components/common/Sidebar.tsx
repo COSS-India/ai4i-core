@@ -407,6 +407,44 @@ const baseNavItems: NavItem[] = [
   },
 ];
 
+interface TopNavFilterContext {
+  isGuest: boolean;
+  isUser: boolean;
+  isAdmin: boolean;
+  isTenantAdmin: boolean;
+  showTenantManagement: boolean;
+  tenantId: string | null;
+  userRoles?: string[];
+}
+
+function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+  switch (itemId) {
+    case TABS.home:
+      return true;
+    case TABS.traces:
+    case TABS.policyManagement:
+      return false;
+    case TABS.modelManagement:
+      return !ctx.isGuest && !ctx.isUser;
+    case TABS.servicesManagement:
+      return !ctx.isGuest && !ctx.isUser && canAccessServicesManagement(ctx.userRoles);
+    case TABS.tenantManagement:
+      return ctx.showTenantManagement;
+    case TABS.apiKeyManagement:
+      return ctx.isAdmin || ctx.isTenantAdmin;
+    case TABS.logs:
+      return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
+    case TABS.usageDashboard:
+      return canAccessUsageDashboard(ctx.userRoles);
+    case TABS.alertsManagement:
+      return ctx.isAdmin;
+    case TABS.piiManagement:
+      return ctx.isAdmin || ctx.isTenantAdmin;
+    default:
+      return true;
+  }
+}
+
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isLoading, user } = useAuth();
@@ -431,39 +469,22 @@ const Sidebar: React.FC = () => {
   // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();
 
-  const topItems = useMemo(
-    () =>
-      topNavItems.filter((item) => {
-        if (item.id === TABS.home) return true;
-        if (item.id === TABS.traces) return false;
-        if (
-          (isGuest || isUser) &&
-          (item.id === TABS.modelManagement || item.id === TABS.servicesManagement)
-        ) {
-          return false;
-        }
-        if (item.id === TABS.servicesManagement && !canAccessServicesManagement(user?.roles)) {
-          return false;
-        }
-        if (item.id === TABS.tenantManagement && !showTenantManagement) return false;
-        if (item.id === TABS.alertsManagement && !isAdmin) return false;
-        if (item.id === TABS.piiManagement && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === TABS.policyManagement) return false;
-        if (item.id === TABS.apiKeyManagement && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === TABS.logs && (isUser || isGuest)) return false;
-        if (item.id === TABS.logs && !tenantId && !isAdmin) return false;
-        if (item.id === TABS.usageDashboard && !canAccessUsageDashboard(user?.roles)) return false;
-        return true;
-      }),
-    [
-      isAdmin,
+  const topNavFilterContext = useMemo<TopNavFilterContext>(
+    () => ({
       isGuest,
       isUser,
+      isAdmin,
       isTenantAdmin,
       showTenantManagement,
       tenantId,
-      user?.roles,
-    ],
+      userRoles: user?.roles,
+    }),
+    [isGuest, isUser, isAdmin, isTenantAdmin, showTenantManagement, tenantId, user?.roles],
+  );
+
+  const topItems = useMemo(
+    () => topNavItems.filter((item) => isTopNavItemVisible(item.id, topNavFilterContext)),
+    [topNavFilterContext],
   );
 
   const serviceItems = useMemo(

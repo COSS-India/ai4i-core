@@ -3,13 +3,13 @@ import React, { useMemo } from "react";
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
-import { getWindowLabel } from "../../utils/meteringFormatters";
-import type { MeteringGraph, MeteringWindow, ThroughputData } from "../../types/metering";
 import {
   extractMeteringRateChartData,
   formatMeteringPeakAt,
   formatMeteringRps,
+  getWindowLabel,
 } from "../../utils/meteringFormatters";
+import type { MeteringGraph, MeteringWindow, ThroughputData } from "../../types/metering";
 import MeteringChartPanel from "./MeteringChartPanel";
 import MeteringSectionCard, { InlineMetricCard } from "./MeteringSectionCard";
 

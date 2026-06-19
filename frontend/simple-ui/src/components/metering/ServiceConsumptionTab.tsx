@@ -14,8 +14,7 @@ import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
-import { KpiCard } from "./MeteringSectionCard";
-import MeteringSectionCard from "./MeteringSectionCard";
+import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import ThroughputLoadSection from "./ThroughputLoadSection";
 
 interface ServiceConsumptionTabProps {

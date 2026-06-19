@@ -5,6 +5,8 @@ import { meteringServiceColor } from "./meteringColors";
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
 
+export type MeteringKpiInput = string | number | null | undefined;
+
 export interface MeteringRatePoint {
   label: string;
   rps: number;
@@ -46,7 +48,7 @@ export function buildRequestVolumeChartData(
   return requestsSeries.points.map((p) => ({
     label: formatMeteringTimestamp(p.ts, graph.step),
     requests: p.value,
-    failureRate: failureByTs.has(p.ts) ? failureByTs.get(p.ts)! : null,
+    failureRate: failureByTs.get(p.ts) ?? null,
   }));
 }
 
@@ -67,7 +69,7 @@ export function extractMeteringRequestsSeries(
 
 export function extractMeteringRateChartData(
   graph?: MeteringGraph | null,
-  stepFallback: MeteringWindow | string = METERING.GRAPH.STEP.ONE_HOUR,
+  stepFallback: string = METERING.GRAPH.STEP.ONE_HOUR,
 ): MeteringRatePoint[] {
   const series = extractMeteringRequestsSeries(graph);
   if (!series?.points?.length) return [];
@@ -141,33 +143,43 @@ export function formatTenantLabel(
 }
 
 /** Parse success rate from API Cell.value (number or "99.1%" string). */
-export function parseSuccessRatePct(
-  rate: string | number | null | undefined,
-): number | null {
+export function parseSuccessRatePct(rate: MeteringKpiInput): number | null {
   if (rate == null) return null;
   if (typeof rate === "number") return rate;
   const s = String(rate).trim();
   if (!s) return null;
   if (s.endsWith("%")) {
-    const n = parseFloat(s);
+    const n = Number.parseFloat(s);
     return Number.isNaN(n) ? null : n;
   }
-  const n = parseFloat(s);
+  const n = Number.parseFloat(s);
   return Number.isNaN(n) ? null : n;
 }
 
-export function formatSuccessRateDisplay(
-  rate: string | number | null | undefined,
-): string {
+export function formatSuccessRateDisplay(rate: MeteringKpiInput): string {
   const pct = parseSuccessRatePct(rate);
   if (pct == null) return METERING.GRAPH.EMPTY_VALUE;
   return `${pct}%`;
 }
 
+/** Failure rate label for request health summary cards. */
+export function formatFailureRateDisplay(
+  requestHealth?: { failure_rate_pct: number } | null,
+  successPct?: number | null,
+): string {
+  if (requestHealth) {
+    return `${requestHealth.failure_rate_pct.toFixed(2)}%`;
+  }
+  if (successPct != null) {
+    return `${(100 - successPct).toFixed(2)}%`;
+  }
+  return METERING.GRAPH.EMPTY_VALUE;
+}
+
 /** Format KPI Cell.value for display (mixed types per key). */
 export function formatMeteringKpiValue(
   key: string,
-  value: string | number | null | undefined,
+  value: MeteringKpiInput,
 ): string | number {
   if (value == null) return METERING.GRAPH.EMPTY_VALUE;
   if (key === METERING.KPI.KEYS.SUCCESS_RATE) return formatSuccessRateDisplay(value);
@@ -201,9 +213,9 @@ export function parseCompactTotal(total: string | number): number | null {
   if (typeof total === "number") return total;
   if (!total || total === METERING.GRAPH.EMPTY_VALUE) return null;
   const s = String(total).trim();
-  if (s.endsWith("M")) return parseFloat(s) * 1_000_000;
-  if (s.endsWith("K")) return parseFloat(s) * 1_000;
-  const n = parseFloat(s);
+  if (s.endsWith("M")) return Number.parseFloat(s) * 1_000_000;
+  if (s.endsWith("K")) return Number.parseFloat(s) * 1_000;
+  const n = Number.parseFloat(s);
   return Number.isNaN(n) ? null : n;
 }
 
@@ -273,12 +285,14 @@ export function deriveServiceInsights(
   if (!breakdown.length) return null;
 
   const active = breakdown.filter((s) => s.requests > 0);
-  const mostUsed = [...breakdown].sort((a, b) => b.requests - a.requests)[0]!;
+  const mostUsed = [...breakdown].sort((a, b) => b.requests - a.requests)[0];
   const highestFailure = [...breakdown].sort(
     (a, b) =>
       (a.failure_rate_pct ?? 100 - a.success_pct) -
       (b.failure_rate_pct ?? 100 - b.success_pct),
-  )[0]!;
+  )[0];
+
+  if (!mostUsed || !highestFailure) return null;
 
   return {
     activeCount: active.length,

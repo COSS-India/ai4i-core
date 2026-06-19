@@ -7,11 +7,11 @@ export interface SegmentedTabOption<T extends string> {
 }
 
 interface SegmentedTabBarProps<T extends string> {
-  options: SegmentedTabOption<T>[];
-  activeId: T;
-  onChange: (id: T) => void;
-  justify?: "flex-start" | "flex-end" | "center";
-  mb?: number;
+  readonly options: ReadonlyArray<SegmentedTabOption<T>>;
+  readonly activeId: T;
+  readonly onChange: (id: T) => void;
+  readonly justify?: "flex-start" | "flex-end" | "center";
+  readonly mb?: number;
 }
 
 function SegmentedTabBar<T extends string>({
@@ -20,7 +20,7 @@ function SegmentedTabBar<T extends string>({
   onChange,
   justify = "flex-start",
   mb = 0,
-}: SegmentedTabBarProps<T>) {
+}: Readonly<SegmentedTabBarProps<T>>) {
   return (
     <HStack justify={justify} spacing={3} mb={mb} flexWrap="wrap">
       <ButtonGroup

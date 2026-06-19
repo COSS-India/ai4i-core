@@ -16,6 +16,7 @@ import {
   buildRequestVolumeChartData,
   findMeteringSeries,
   formatCompactNumber,
+  formatFailureRateDisplay,
   formatSuccessRateDisplay,
   parseCompactTotal,
   parseSuccessRatePct,
@@ -51,24 +52,18 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
   const rateDisplay = requestHealth
     ? `${requestHealth.success_rate_pct.toFixed(2)}%`
     : formatSuccessRateDisplay(successRate);
-  const failedPct = requestHealth
-    ? `${requestHealth.failure_rate_pct.toFixed(2)}%`
-    : successPct != null
-      ? `${(100 - successPct).toFixed(2)}%`
-      : METERING.GRAPH.EMPTY_VALUE;
+  const failedPct = formatFailureRateDisplay(requestHealth, successPct);
 
   const successfulValue = requestHealth?.successful_formatted ?? (() => {
     const totalNum = parseCompactTotal(totalRequests ?? total);
-    return totalNum != null && successPct != null
-      ? formatCompactNumber(totalNum * (successPct / 100))
-      : METERING.GRAPH.EMPTY_VALUE;
+    if (totalNum == null || successPct == null) return METERING.GRAPH.EMPTY_VALUE;
+    return formatCompactNumber(totalNum * (successPct / 100));
   })();
 
   const failedValue = requestHealth?.failed_formatted ?? (() => {
     const totalNum = parseCompactTotal(totalRequests ?? total);
-    return totalNum != null && successPct != null
-      ? formatCompactNumber(totalNum * ((100 - successPct) / 100))
-      : METERING.GRAPH.EMPTY_VALUE;
+    if (totalNum == null || successPct == null) return METERING.GRAPH.EMPTY_VALUE;
+    return formatCompactNumber(totalNum * ((100 - successPct) / 100));
   })();
 
   const hasFailureSeries = Boolean(failureSeries?.points?.length);
