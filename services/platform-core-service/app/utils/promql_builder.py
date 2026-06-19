@@ -19,6 +19,9 @@ Lifted from alert-management-service/alert_management.py:638-1012 with:
     ``app.core.exceptions.ValidationError``.
   - ``inject_organization_into_promql`` deleted entirely.
   - service-label injection replaced with endpoint(task) scoping.
+
+Metering-specific helpers (TIME_RANGES, INFERENCE_ENDPOINT_REGEX, apply_time_range)
+live in ``app.utils.metering_promql_builder``.
 """
 
 from __future__ import annotations

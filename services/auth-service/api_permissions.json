@@ -109,6 +109,10 @@
     { "endpoint": "GET:/api/v1/telemetry/traces/search",                   "permissionRequired": 131, "description": "Search traces (traces.read); role 1 (admin) or 2 (moderator) see all traces; role 5 (tenant admin) sees own tenant only" },
     { "endpoint": "GET:/api/v1/telemetry/traces/{trace_id}",               "permissionRequired": 131, "description": "Get trace by ID (traces.read); role 1 (admin) or 2 (moderator) see all traces; role 5 (tenant admin) sees own tenant only" },
 
+    { "endpoint": "GET:/api/v1/metering/overview",                         "permissionRequired": 133, "description": "Metering overview (metering.read); role 1 (admin) or 2 (moderator) platform-wide, role 5 (tenant admin) own tenant only" },
+    { "endpoint": "GET:/api/v1/metering/tenant-consumption",               "permissionRequired": 133, "description": "Metering tenant consumption (metering.read); admin/moderator only (platform-wide)" },
+    { "endpoint": "GET:/api/v1/metering/service-consumption",              "permissionRequired": 133, "description": "Metering service consumption (metering.read); role 1/2 platform-wide, role 5 own tenant only" },
+
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
     { "endpoint": "GET:/api/v1/alerts/definitions/{alert_id}",             "permissionRequired": 116, "description": "Get alert definition (alerts.read)" },

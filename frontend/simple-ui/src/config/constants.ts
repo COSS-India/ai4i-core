@@ -1229,6 +1229,7 @@ export const TABS = {
   tenantManagement: "tenant-management",
   apiKeyManagement: "api-key-management",
   logs: "logs",
+  usageDashboard: "usage-dashboard",
   traces: "traces",
   alertsManagement: "alerts-management",
   piiManagement: "pii-management",
@@ -1722,6 +1723,9 @@ export function formatServicePublishFilterLabel(filter: string): string {
   }
   return filter;
 }
+
+export { METERING } from "./meteringConstants";
+export type { MeteringHeatmapServiceKey } from "./meteringConstants";
 
 /** Password policy — keep in sync with auth-service PASSWORD_MIN/MAX_LENGTH. */
 export const PASSWORD_POLICY = {

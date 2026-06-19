@@ -235,7 +235,7 @@ const OCRPage: React.FC = () => {
         const base64 = (reader.result as string).split(",")[1];
         resolve(base64);
       };
-      reader.onerror = (error) => reject(error);
+      reader.onerror = () => reject(new Error('File read failed'));
     });
   };
 

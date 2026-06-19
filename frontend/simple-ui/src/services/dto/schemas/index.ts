@@ -9,3 +9,4 @@ export * from './pii';
 export * from './observability';
 export * from './alerting';
 export * from './roles';
+export * from './metering';
