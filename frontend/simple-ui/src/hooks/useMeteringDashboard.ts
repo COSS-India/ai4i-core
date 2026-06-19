@@ -10,10 +10,7 @@ import {
   parseMeteringError,
   type MeteringContext,
 } from "../services/meteringService";
-import {
-  getMeteringRoleViewConfig,
-  type MeteringRoleView,
-} from "../utils/rbac";
+import { getMeteringRoleViewConfig } from "../utils/rbac";
 import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery";
 import { resolveMeteringGeneratedAt } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
@@ -29,41 +26,22 @@ interface UseMeteringDashboardOptions {
   tenantId?: string | null;
 }
 
-function resolveEffectiveTenantId(
-  isTenantView: boolean,
-  canSwitchViews: boolean,
-  previewTenantId: string,
-  tenantId: string | null | undefined,
-  scopeTenantId: string,
-): string | null {
-  if (!isTenantView) {
-    return scopeTenantId || null;
-  }
-  if (canSwitchViews) {
-    return previewTenantId || null;
-  }
-  return tenantId?.trim() || getTenantIdFromToken() || null;
-}
-
 export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboardOptions) {
   const roleViewConfig = useMemo(
     () => getMeteringRoleViewConfig(userRoles),
     [userRoles],
   );
 
-  const [roleView, setRoleView] = useState<MeteringRoleView>(roleViewConfig.defaultView);
+  const isAdopterView = roleViewConfig.defaultView === "adopter";
+  const isTenantView = roleViewConfig.defaultView === "tenant";
+
   const [subTab, setSubTab] = useState<MeteringSubTab>(METERING.DEFAULTS.SUB_TAB);
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
-  const [previewTenantId, setPreviewTenantId] = useState("");
   const [tenantHeatmapServices, setTenantHeatmapServices] = useState<string[] | null>(null);
   const [serviceSectionVisible, setServiceSectionVisible] = useState(false);
   const serviceSectionRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setRoleView(roleViewConfig.defaultView);
-  }, [roleViewConfig.defaultView]);
 
   useEffect(() => {
     setTenantHeatmapServices(null);
@@ -71,15 +49,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   useEffect(() => {
     setServiceSectionVisible(false);
-  }, [roleView, previewTenantId, timeWindow, scopeTenantId]);
-
-  const isAdopterView = roleView === "adopter";
-  const isTenantView = roleView === "tenant";
+  }, [timeWindow, scopeTenantId]);
 
   const tenantsQuery = useQuery({
     queryKey: meteringQueryKey(METERING.QUERY.SCOPES.TENANT_DIRECTORY),
     queryFn: () => listTenants(),
-    enabled: isAdopterView || (roleViewConfig.canSwitchViews && isTenantView),
+    enabled: isAdopterView,
     staleTime: METERING.QUERY.TENANT_DIRECTORY_STALE_MS,
   });
 
@@ -102,44 +77,20 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     return map;
   }, [tenantsQuery.data?.tenants]);
 
-  useEffect(() => {
-    if (isTenantView && roleViewConfig.canSwitchViews && previewTenants.length > 0 && !previewTenantId) {
-      setPreviewTenantId(previewTenants[0].id);
-    }
-  }, [isTenantView, roleViewConfig.canSwitchViews, previewTenants, previewTenantId]);
+  const effectiveTenantId = isTenantView
+    ? tenantId?.trim() || getTenantIdFromToken() || null
+    : scopeTenantId || null;
 
-  const previewOrganisation =
-    previewTenants.find((t) => t.id === previewTenantId)?.organisation ?? null;
-
-  const isAdminPreviewingTenant = roleViewConfig.canSwitchViews && isTenantView;
-  const effectiveIsPlatformAdmin = isAdopterView || isAdminPreviewingTenant;
-  const effectiveTenantId = resolveEffectiveTenantId(
-    isTenantView,
-    roleViewConfig.canSwitchViews,
-    previewTenantId,
-    tenantId,
-    scopeTenantId,
-  );
-
-  const tenantOverviewEnabled =
-    isTenantView &&
-    (roleViewConfig.canSwitchViews ? !!previewTenantId : !!effectiveTenantId);
+  const tenantOverviewEnabled = isTenantView && !!effectiveTenantId;
 
   const ctx: MeteringContext = useMemo(
     () => ({
-      isPlatformAdmin: effectiveIsPlatformAdmin,
+      isPlatformAdmin: isAdopterView,
       tenantId: effectiveTenantId,
-      previewTenantId: isAdminPreviewingTenant ? previewTenantId || null : null,
-      organisation: isTenantView ? previewOrganisation : null,
+      previewTenantId: null,
+      organisation: null,
     }),
-    [
-      effectiveIsPlatformAdmin,
-      effectiveTenantId,
-      isAdminPreviewingTenant,
-      previewTenantId,
-      isTenantView,
-      previewOrganisation,
-    ],
+    [isAdopterView, effectiveTenantId],
   );
 
   const queryTenantId = scopeTenantId || (isTenantView ? effectiveTenantId : null);
@@ -149,14 +100,15 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       METERING.QUERY.SCOPES.OVERVIEW,
       timeWindow,
       queryTenantId,
-      previewTenantId,
-      roleView,
-      effectiveIsPlatformAdmin,
+      roleViewConfig.defaultView,
+      isAdopterView,
     ),
     queryFn: () => fetchMeteringOverview(timeWindow, ctx, queryTenantId),
     enabled: isAdopterView || tenantOverviewEnabled,
     ...meteringQueryDefaults,
   });
+
+  const overview = overviewQuery.data;
 
   const tenantQuery = useQuery({
     queryKey: meteringQueryKey(
@@ -179,9 +131,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       METERING.QUERY.SCOPES.SERVICE,
       timeWindow,
       queryTenantId,
-      previewTenantId,
-      roleView,
-      effectiveIsPlatformAdmin,
+      roleViewConfig.defaultView,
+      isAdopterView,
     ),
     queryFn: () => fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId),
     enabled: serviceQueryEnabled,
@@ -205,7 +156,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     return () => observer.disconnect();
   }, [tenantOverviewEnabled]);
 
-  const overview = overviewQuery.data;
   const isDegraded = Boolean(
     overview?.degraded || tenantQuery.data?.degraded || serviceQuery.data?.degraded,
   );
@@ -244,7 +194,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     (k) => k.key === METERING.KPI.KEYS.SUCCESS_RATE,
   )?.value;
 
-  const organisationLabel = overview?.scope.organisation ?? previewOrganisation ?? null;
+  const organisationLabel = overview?.scope.organisation ?? null;
 
   const lastGeneratedAt = useMemo(
     () =>
@@ -271,8 +221,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   return {
     roleViewConfig,
-    roleView,
-    setRoleView,
     subTab,
     setSubTab,
     timeWindow,
@@ -281,8 +229,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setTopN,
     scopeTenantId,
     setScopeTenantId,
-    previewTenantId,
-    setPreviewTenantId,
     setTenantHeatmapServices,
     serviceSectionRef,
     isAdopterView,

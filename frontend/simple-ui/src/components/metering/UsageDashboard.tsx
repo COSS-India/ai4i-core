@@ -3,13 +3,11 @@ import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
-import type { MeteringRoleView } from "../../utils/rbac";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { MeteringAlerts } from "./MeteringAsyncState";
 import MeteringControls from "./MeteringControls";
 import { PlatformAdoptionSection } from "./OverviewSections";
 import RequestVolumeSection from "./RequestVolumeSection";
-import SegmentedTabBar from "./SegmentedTabBar";
 import {
   AdopterDashboardPanels,
   TenantDashboardHeader,
@@ -24,9 +22,6 @@ interface UsageDashboardProps {
 const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
   const dash = useMeteringDashboard(props);
   const {
-    roleViewConfig,
-    roleView,
-    setRoleView,
     subTab,
     setSubTab,
     timeWindow,
@@ -35,8 +30,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     setTopN,
     scopeTenantId,
     setScopeTenantId,
-    previewTenantId,
-    setPreviewTenantId,
     setTenantHeatmapServices,
     serviceSectionRef,
     isTenantView,
@@ -58,19 +51,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     parseQueryError,
   } = dash;
 
-  const roleViewBar = roleViewConfig.canSwitchViews ? (
-    <SegmentedTabBar<MeteringRoleView>
-      options={roleViewConfig.availableViews.map((view) => ({
-        id: view,
-        label: METERING.ROLE_VIEWS[view],
-      }))}
-      activeId={roleView}
-      onChange={setRoleView}
-      justify="flex-end"
-      mb={4}
-    />
-  ) : null;
-
   const requestVolumeSection = overview ? (
     <RequestVolumeSection
       graph={requestVolumeGraph}
@@ -86,27 +66,16 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
 
   if (isLoading) {
     return (
-      <VStack align="stretch" spacing={4}>
-        {roleViewBar}
-        <Box minH={METERING.DEFAULTS.LOADING_MIN_HEIGHT} display="flex" alignItems="center" justifyContent="center">
-          <LoadingSpinner size="xl" />
-        </Box>
-      </VStack>
+      <Box minH={METERING.DEFAULTS.LOADING_MIN_HEIGHT} display="flex" alignItems="center" justifyContent="center">
+        <LoadingSpinner size="xl" />
+      </Box>
     );
   }
 
   return (
     <VStack align="stretch" spacing={isTenantView ? 4 : 5}>
-      {roleViewBar}
-
       {isTenantView ? (
-        <TenantDashboardHeader
-          canSwitchViews={roleViewConfig.canSwitchViews}
-          previewTenants={previewTenants}
-          previewTenantId={previewTenantId}
-          onSelectTenant={setPreviewTenantId}
-          organisationLabel={organisationLabel}
-        />
+        <TenantDashboardHeader organisationLabel={organisationLabel} />
       ) : null}
 
       <MeteringAlerts errorMessage={primaryError} isDegraded={isDegraded} />

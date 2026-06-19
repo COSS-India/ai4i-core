@@ -26,26 +26,7 @@ interface RoleViewBarProps {
   onRoleViewChange: (view: MeteringRoleView) => void;
 }
 
-export const RoleViewBar: React.FC<RoleViewBarProps> = ({
-  roleViewConfig,
-  roleView,
-  onRoleViewChange,
-}) => {
-  if (!roleViewConfig.canSwitchViews) return null;
-
-  return (
-    <SegmentedTabBar<MeteringRoleView>
-      options={roleViewConfig.availableViews.map((view) => ({
-        id: view,
-        label: METERING.ROLE_VIEWS[view],
-      }))}
-      activeId={roleView}
-      onChange={onRoleViewChange}
-      justify="flex-end"
-      mb={4}
-    />
-  );
-};
+export const RoleViewBar: React.FC<RoleViewBarProps> = () => null;
 
 interface LoadingViewProps {
   roleViewBar: React.ReactNode;
@@ -75,10 +56,6 @@ export const TenantUsageView: React.FC<TenantUsageViewProps> = ({
   requestVolumeSection,
 }) => {
   const {
-    roleViewConfig,
-    previewTenants,
-    previewTenantId,
-    setPreviewTenantId,
     organisationLabel,
     primaryError,
     isDegraded,
@@ -96,14 +73,6 @@ export const TenantUsageView: React.FC<TenantUsageViewProps> = ({
 
   return (
     <>
-      {roleViewConfig.canSwitchViews ? (
-        <TenantPreviewSelect
-          tenants={previewTenants}
-          selectedTenantId={previewTenantId}
-          onSelect={setPreviewTenantId}
-        />
-      ) : null}
-
       {organisationLabel ? (
         <Heading size="md" color="gray.700">
           {METERING.TENANT_VIEW.TITLE} · {organisationLabel}
