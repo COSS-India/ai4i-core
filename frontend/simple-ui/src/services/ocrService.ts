@@ -106,6 +106,7 @@ export const performOCRInference = async (
 
     const response = await apiService.post(apiEndpoints.ocr.inference, payload, {
       responseSchema: ocrInferenceResponseSchema,
+      errorService: 'ocr',
     });
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

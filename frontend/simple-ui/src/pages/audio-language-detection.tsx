@@ -17,8 +17,8 @@ import {
   listAudioLanguageDetectionServices,
 } from "../services/audioLanguageDetectionService";
 import { parseAudioLanguageDetectionOutput } from "../types/inference";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("audio-language-detection");
 
@@ -62,15 +62,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "audio-language-detection");
+      const { message: errorMessage } = parseError(err, { service: "audio-language-detection" });
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../../utils/toast";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
 import {

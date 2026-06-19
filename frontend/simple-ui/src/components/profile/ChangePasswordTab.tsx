@@ -20,8 +20,8 @@ import {
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
-import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
-import { PASSWORD_POLICY } from "../../config/constants";
+import { useToastWithDeduplication } from "../../utils/toast";
+import { PASSWORD_POLICY, UI_ERROR_MESSAGES } from "../../config/constants";
 import PasswordRequirements, {
   getPasswordValidationError,
   passwordPasses,
@@ -162,7 +162,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
       });
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : "Failed to change password. Please try again.";
+        err instanceof Error ? err.message : UI_ERROR_MESSAGES.PASSWORD_CHANGE_FAILED;
       const lower = message.toLowerCase();
       if (lower.includes("current password")) {
         setServerErrors((prev) => ({ ...prev, current_password: message }));

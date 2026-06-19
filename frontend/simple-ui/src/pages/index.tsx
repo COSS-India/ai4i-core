@@ -18,7 +18,7 @@ import {
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React from "react";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../utils/toast";
 import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitMergeOutline,
@@ -156,7 +156,7 @@ const HomePage: React.FC = () => {
 
   const handleServiceClick = async (path: string, serviceName: string) => {
     if (isLoading) return;
-    
+
     // Navigate to the service (no auth check needed here, handled by button logic)
     router.push(path);
   };
@@ -222,7 +222,7 @@ const HomePage: React.FC = () => {
               <AlertIcon />
               <AlertDescription fontSize="sm">
                 Try <strong>Neural Machine Translation</strong> without signing in! Please login to access other services{" "}
-                
+
               </AlertDescription>
             </Alert>
           )}
@@ -239,7 +239,7 @@ const HomePage: React.FC = () => {
             {services.map((service) => {
               // Check if service is disabled for anonymous users
               const isDisabledForAnonymous = !isAuthenticated && service.id !== "nmt" && !isLoading;
-              
+
               return (
               <Card
                 key={service.id}

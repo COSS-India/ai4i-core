@@ -15,7 +15,7 @@ import {
 } from '@chakra-ui/react';
 import { FaCopy } from 'react-icons/fa';
 import { TranslationResultsProps } from '../../types/nmt';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { useToastWithDeduplication } from '../../utils/toast';
 
 const TranslationResults: React.FC<TranslationResultsProps> = ({
   sourceText,

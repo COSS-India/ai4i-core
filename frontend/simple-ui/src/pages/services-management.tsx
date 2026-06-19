@@ -48,8 +48,8 @@ import type { ModelDetails } from "../types/platform";
 import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showError } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
@@ -194,14 +194,7 @@ const ServicesManagementPage: React.FC = () => {
       setServices(result.items);
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
       setServices([]);
     } finally {
       setIsLoading(false);
@@ -496,14 +489,7 @@ const ServicesManagementPage: React.FC = () => {
       // Switch to list tab
       setActiveTab(0);
     } catch (error: any) {
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsSubmitting(false);
     }
@@ -546,14 +532,7 @@ const ServicesManagementPage: React.FC = () => {
       }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     }
   };
 
@@ -610,14 +589,7 @@ const ServicesManagementPage: React.FC = () => {
       await fetchServices();
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to update service";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsUpdating(false);
     }
@@ -718,14 +690,7 @@ const ServicesManagementPage: React.FC = () => {
       }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to publish service";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setPublishingServiceUuid(null);
     }
@@ -782,14 +747,7 @@ const ServicesManagementPage: React.FC = () => {
       }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to unpublish service";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setUnpublishingServiceUuid(null);
     }
@@ -842,14 +800,7 @@ const ServicesManagementPage: React.FC = () => {
         setActiveTab(0);
       }
     } catch (error: any) {
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setDeletingServiceUuid(null);
       setServiceToDelete(null);

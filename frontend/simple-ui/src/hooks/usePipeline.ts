@@ -1,7 +1,7 @@
 // Custom hook for pipeline functionality
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import { runPipelineInference } from '../services/pipelineService';
 import { convertWebmToWav, base64ToAudioObjectUrl } from '../utils/helpers';
 import { getAsrTranscriptText } from '../types/inference';
@@ -9,8 +9,8 @@ import {
   PipelineInferenceRequest,
   PipelineResult
 } from '../types/pipeline';
-import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS } from '../config/constants';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { parseError } from '../utils/errorHandler';
 
 export const usePipeline = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -285,7 +285,7 @@ export const usePipeline = () => {
             console.error('WAV conversion failed:', convertErr);
             toast({
               title: 'Audio Conversion Error',
-              description: 'Failed to convert recorded audio. Please try again.',
+              description: UI_ERROR_MESSAGES.AUDIO_CONVERT_FAILED,
               status: 'error',
               duration: 5000,
               isClosable: true,
@@ -573,17 +573,6 @@ export const usePipeline = () => {
       }
     } catch (error: any) {
       console.error('Pipeline error:', error);
-
-      // Use centralized error handler (pipeline context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'pipeline');
-
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setIsLoading(false);
     }

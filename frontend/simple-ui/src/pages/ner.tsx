@@ -15,8 +15,8 @@ import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/cons
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { parseNerEntities } from "../types/inference";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("ner");
 
@@ -100,15 +100,8 @@ const NERPage: React.FC = () => {
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "ner");
+      const { message: errorMessage } = parseError(err, { service: "ner" });
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

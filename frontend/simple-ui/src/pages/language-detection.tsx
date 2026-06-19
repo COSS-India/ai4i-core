@@ -21,8 +21,8 @@ import {
   performLanguageDetectionInference,
 } from "../services/languageDetectionService";
 import { parseLanguagePredictions } from "../types/inference";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("language-detection");
 
@@ -91,15 +91,8 @@ const LanguageDetectionPage: React.FC = () => {
       setResponseTime(response.responseTime / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "language-detection");
+      const { message: errorMessage } = parseError(err, { service: "language-detection" });
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

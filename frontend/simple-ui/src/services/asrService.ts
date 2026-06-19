@@ -50,6 +50,7 @@ export const performASRInference = async (
 
     const response = await apiService.post(apiEndpoints.asr.inference, payload, {
       responseSchema: asrInferenceResponseSchema,
+      errorService: 'asr',
     });
 
     return response.data;
@@ -95,6 +96,7 @@ export const transcribeAudio = async (
 
     const response = await apiService.post(apiEndpoints.asr.inference, payload, {
       responseSchema: asrInferenceResponseSchema,
+      errorService: 'asr',
     });
 
     console.log('=== ASR API Response ===');

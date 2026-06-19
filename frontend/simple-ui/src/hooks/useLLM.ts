@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import {
   performLLMChat,
   isLlmChatService,
@@ -11,7 +11,7 @@ import {
 } from '../services/llmService';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { parseError, showError } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
 
@@ -69,17 +69,10 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     },
     onError: (error: unknown) => {
       console.error('LLM chat error:', error);
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } =
-        extractErrorInfo(error);
+      const { message: errorMessage } = parseError(error);
       setError(errorMessage);
       setFetching(false);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: 'error',
-        duration: 7000,
-        isClosable: true,
-      });
+      showError(error);
     },
   });
 

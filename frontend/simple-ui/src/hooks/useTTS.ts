@@ -2,12 +2,12 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import { performTTSInference } from '../services/ttsService';
 import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_TTS_TEXT_LENGTH, TTS_ERRORS } from '../config/constants';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { parseError } from '../utils/errorHandler';
 
 // Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
 const VALID_TTS_CHAR_REGEX =
@@ -126,17 +126,10 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       console.error('TTS inference error:', error);
 
       // Use centralized error handler (TTS context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'tts');
+      const { message: errorMessage } = parseError(error, { service: 'tts' });
 
       setError(errorMessage);
       setFetching(false);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: 'error',
-        duration: 7000,
-        isClosable: true,
-      });
     },
   });
 

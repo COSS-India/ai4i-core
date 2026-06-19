@@ -24,8 +24,8 @@ import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
-import { PASSWORD_POLICY } from '../../config/constants';
+import { useToastWithDeduplication } from '../../utils/toast';
+import { PASSWORD_POLICY, COMMON_ERRORS, UI_ERROR_MESSAGES } from '../../config/constants';
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
 import authService from '../../services/authService';
 
@@ -208,7 +208,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       console.error('Registration failed:', error);
 
       // Extract error message from response
-      let errorMessage = 'Registration failed. Please try again.';
+      let errorMessage: string = UI_ERROR_MESSAGES.REGISTRATION_FAILED;
       let errorTitle = 'Registration Error';
 
       if (error instanceof ApiValidationError) {
@@ -258,10 +258,10 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
           errorMessage = errorMessage || 'Please check that all fields are filled correctly.';
         } else if (status === 500) {
           errorTitle = 'Server Error';
-          errorMessage = 'An internal server error occurred. Please try again later.';
+          errorMessage = COMMON_ERRORS.INTERNAL_SERVER_ERROR.description;
         } else if (status === 503) {
           errorTitle = 'Service Unavailable';
-          errorMessage = 'The registration service is temporarily unavailable. Please try again later.';
+          errorMessage = COMMON_ERRORS.SERVICE_MAINTENANCE.description;
         }
       } else if (error?.message) {
         // Handle Error objects

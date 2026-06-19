@@ -32,6 +32,7 @@ export type {
 export const listServices = async (): Promise<Service[]> => {
   try {
     const response = await apiService.get(apiEndpoints.platform.services.base, {
+      suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
     return response.data || [];
@@ -85,6 +86,7 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
 
     const response = await apiService.get(apiEndpoints.platform.services.base, {
       params: queryParams,
+      suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
 
@@ -113,6 +115,7 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiService.get(apiEndpoints.platform.services.byId(serviceId), {
+      suppressErrorAlert: true,
       responseSchema: serviceSingleSchema,
     });
     return response.data;
@@ -161,7 +164,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     const response = await apiService.post(
       apiEndpoints.platform.services.base,
       apiPayload,
-      { responseSchema: serviceSingleSchema }
+      { suppressErrorAlert: true, responseSchema: serviceSingleSchema }
     );
     return response.data;
   } catch (error: any) {
@@ -221,7 +224,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     const response = await apiService.patch(
       apiEndpoints.platform.services.base,
       apiPayload,
-      { responseSchema: serviceSingleSchema }
+      { suppressErrorAlert: true, responseSchema: serviceSingleSchema }
     );
     return response.data;
   } catch (error: any) {
@@ -240,6 +243,7 @@ export const deleteService = async (serviceId: string): Promise<DeleteServiceRes
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiService.delete(apiEndpoints.platform.services.byId(serviceId), {
+      suppressErrorAlert: true,
       responseSchema: z.unknown(),
     });
     return response.data;

@@ -1,7 +1,7 @@
 // Clipboard and file-download helpers for service page response actions
 
 import { useCallback } from "react";
-import { useToastWithDeduplication } from "./useToastWithDeduplication";
+import { useToastWithDeduplication } from "../utils/toast";
 
 export function downloadTextFile(
   content: string,

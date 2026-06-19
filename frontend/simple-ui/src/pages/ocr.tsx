@@ -33,12 +33,12 @@ import {
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
-import { extractErrorInfo } from "../utils/errorHandler";
+import { parseError } from "../utils/errorHandler";
 import {
   isSafeUserImageUrl,
   sanitizeImagePreviewUrl,
 } from "../utils/safeImageUrl";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("ocr");
 
@@ -327,16 +327,9 @@ const OCRPage: React.FC = () => {
       setFetched(true);
     } catch (err: any) {
       // Use centralized error handler (ocr context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ocr');
+      const { message: errorMessage } = parseError(err, { service: 'ocr' });
 
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

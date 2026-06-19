@@ -31,7 +31,7 @@ import {
   useDisclosure,
   VStack,
 } from "@chakra-ui/react";
-import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../utils/toast";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";

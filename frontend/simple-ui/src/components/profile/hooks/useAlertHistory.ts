@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../../utils/toast";
 import alertingService from "../../../services/alertingService";
 import type { AlertHistoryItem } from "../../../types/alerting";
 

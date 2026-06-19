@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../../utils/toast";
 import type { User, UserUpdateRequest } from "../../../types/auth";
 
 export interface UseUserDetailsOptions {

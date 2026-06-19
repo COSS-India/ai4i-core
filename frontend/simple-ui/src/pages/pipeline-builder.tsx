@@ -32,7 +32,7 @@ import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
 import { base64ToAudioObjectUrl } from '../utils/helpers';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
-import { useToastWithDeduplication } from '../hooks/useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 
 type BuilderPipelineType = 'translation' | 'translation-tts';
 

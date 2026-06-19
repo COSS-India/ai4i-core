@@ -1,4 +1,4 @@
-import { parseApiError } from '../../src/utils/errorHandling/parseApiError';
+import { parseApiError } from '../../src/utils/errorHandling/parseError';
 import { AxiosError } from 'axios';
 
 describe('parseApiError', () => {

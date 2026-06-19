@@ -12,7 +12,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import UsageDashboard from "../components/metering/UsageDashboard";
 import { useAuth } from "../hooks/useAuth";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../utils/toast";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   canAccessUsageDashboard,

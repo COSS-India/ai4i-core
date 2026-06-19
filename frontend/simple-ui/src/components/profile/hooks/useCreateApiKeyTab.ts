@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
 import { cacheCreatedApiKeyHex } from "../../../utils/apiKeyUtils";

@@ -16,7 +16,7 @@ import {
 import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
 import AccessibleAudio from '../common/AccessibleAudio';
 import { TTSResultsProps } from '../../types/tts';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { useToastWithDeduplication } from '../../utils/toast';
 
 const TTSResults: React.FC<TTSResultsProps> = ({
   audioSrc,

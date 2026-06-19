@@ -19,7 +19,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
 import { AudioRecorderProps } from "../../types/asr";
-import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../utils/toast";
 import { DeleteIcon } from "@chakra-ui/icons";
 import { convertWebmToWav } from "../../utils/helpers";
 

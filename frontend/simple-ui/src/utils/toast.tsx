@@ -1,6 +1,6 @@
 /**
  * Centralized toast notifications — Chakra UI under the hood.
- * Use `useToastWithDeduplication()` in components, `showGlobalToast()` elsewhere.
+ * Use `useAppToast()` in components, `showGlobalToast()` elsewhere.
  */
 import { useEffect, useCallback, useRef } from 'react';
 import { useToast, type UseToastOptions } from '@chakra-ui/react';
@@ -11,10 +11,29 @@ const DEFAULT_OPTIONS: Partial<UseToastOptions> = {
   isClosable: true,
 };
 
+const DEDUPE_MS = 3000;
+let lastDedupeKey = '';
+let lastDedupeAt = 0;
+
 type ToastFn = (options: UseToastOptions) => unknown;
 
 let globalToast: ToastFn | null = null;
 const pendingToasts: UseToastOptions[] = [];
+
+function getToastDedupeKey(options: UseToastOptions): string {
+  if (options.status === 'error' && options.description) {
+    return `error:${options.description}`;
+  }
+  return `${options.status ?? 'info'}:${options.title ?? ''}:${options.description ?? ''}`;
+}
+
+function shouldSkipDuplicateToast(key: string): boolean {
+  const now = Date.now();
+  if (key === lastDedupeKey && now - lastDedupeAt < DEDUPE_MS) return true;
+  lastDedupeKey = key;
+  lastDedupeAt = now;
+  return false;
+}
 
 export function registerGlobalToast(toast: ToastFn | null): void {
   globalToast = toast;
@@ -25,6 +44,9 @@ export function registerGlobalToast(toast: ToastFn | null): void {
 export function showGlobalToast(options: UseToastOptions): void {
   if (typeof window === 'undefined') return;
   const merged = { ...DEFAULT_OPTIONS, ...options };
+  const dedupeKey = getToastDedupeKey(merged);
+  if (shouldSkipDuplicateToast(dedupeKey)) return;
+
   if (globalToast) {
     globalToast(merged);
     return;
@@ -39,8 +61,8 @@ export function useToastWithDeduplication() {
 
   return useCallback(
     (options: UseToastOptions) => {
-      const key = `${options.status ?? 'info'}:${options.title ?? ''}:${options.description ?? ''}`;
-      if (activeKeysRef.current.has(key)) return '';
+      const key = getToastDedupeKey(options);
+      if (activeKeysRef.current.has(key) || shouldSkipDuplicateToast(key)) return '';
 
       activeKeysRef.current.add(key);
       const originalOnCloseComplete = options.onCloseComplete;

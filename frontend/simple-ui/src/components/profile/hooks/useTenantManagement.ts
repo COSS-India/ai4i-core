@@ -2,10 +2,10 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
-import { extractErrorInfo } from "../../../utils/errorHandler";
+import { showError } from "../../../utils/errorHandler";
 import {
   collectTenantContactEmails,
   collectUserEmails,
@@ -249,8 +249,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownTenantEmails(collectTenantContactEmails(rows));
     } catch (err) {
       console.error("Failed to fetch tenants:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err, { duration: 8000 });
       setTenants([]);
     } finally {
       setIsLoadingTenants(false);
@@ -282,8 +281,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownUserEmails(collectUserEmails(users));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err, { duration: 8000 });
       setTenantUsers([]);
     } finally {
       setIsLoadingTenantUsers(false);
@@ -657,8 +655,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(created.tenant_id);
     } catch (err) {
       console.error("Failed to register tenant:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err, { duration: 8000 });
     } finally {
       setIsSubmittingTenant(false);
     }
@@ -744,8 +741,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(tenantId);
     } catch (err) {
       console.error("Failed to register user:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err, { duration: 8000 });
     } finally {
       setIsSubmittingUser(false);
     }
@@ -825,8 +821,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownUserEmails(collectUserEmails(users));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     }
   };
 
@@ -897,8 +892,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(editTenantForm.tenant_id);
     } catch (err) {
       console.error("Failed to update tenant:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     } finally {
       setIsSubmittingEditTenant(false);
     }
@@ -980,8 +974,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
     } catch (err) {
       console.error("Failed to resend tenant verification email:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     } finally {
       setResendVerificationTenantId(null);
     }
@@ -1001,8 +994,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
     } catch (err) {
       console.error("Failed to resend tenant user verification:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     } finally {
       setResendVerificationUserId(null);
     }
@@ -1071,8 +1063,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setStatusUpdateTarget(null);
     } catch (err) {
       console.error("Failed to update status:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     } finally {
       setIsSubmittingStatus(false);
     }
@@ -1135,8 +1126,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(editUserForm.tenant_id);
     } catch (err) {
       console.error("Failed to update user:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     } finally {
       setIsSubmittingEditUser(false);
     }
@@ -1172,8 +1162,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(deleteUserTarget.tenant_id);
     } catch (err) {
       console.error("Failed to delete user:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err, { duration: 6000 });
     } finally {
       setIsDeletingUser(false);
     }

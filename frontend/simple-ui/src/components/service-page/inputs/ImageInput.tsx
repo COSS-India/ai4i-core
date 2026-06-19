@@ -17,7 +17,7 @@ import { AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload } from "react-icons/fa";
 import { MAX_IMAGE_FILE_SIZE } from "../../../config/constants";
 import type { ServiceImageInputProps } from "../../../types/servicePage";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../../utils/toast";
 
 const ImageInput: React.FC<ServiceImageInputProps> = ({
   file,

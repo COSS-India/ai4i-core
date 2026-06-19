@@ -51,8 +51,8 @@ import { listServices as listServicesForModels } from "../services/servicesManag
 import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError, showError } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
@@ -173,14 +173,7 @@ const ModelManagementPage: React.FC = () => {
       setModels(result.items as unknown as Model[]);
     } catch (error: any) {
       console.error("Failed to fetch models:", error);
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
       setModels([]);
     } finally {
       setIsLoading(false);
@@ -454,17 +447,9 @@ const ModelManagementPage: React.FC = () => {
       }
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-
+      const { message: errorMessage } = parseError(error);
       setUploadError(errorMessage);
-
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsUploading(false);
     }
@@ -535,18 +520,10 @@ const ModelManagementPage: React.FC = () => {
       });
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-
+      const { message: errorMessage } = parseError(error);
       setUploadError(errorMessage);
       setValidationErrors([]);
-
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsValidating(false);
     }
@@ -667,14 +644,7 @@ const ModelManagementPage: React.FC = () => {
         setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setUpdatingModelId(null);
     }
@@ -720,14 +690,7 @@ const ModelManagementPage: React.FC = () => {
         setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setUpdatingModelId(null);
     }

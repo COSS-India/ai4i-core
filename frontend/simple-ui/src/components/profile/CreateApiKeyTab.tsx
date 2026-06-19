@@ -27,7 +27,7 @@ import {
 } from "@chakra-ui/react";
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
-import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../utils/toast";
 
 export interface CreateApiKeyTabProps {
   onApiKeyCreated?: () => void;

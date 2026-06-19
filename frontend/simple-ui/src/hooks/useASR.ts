@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
 import { getAsrTranscriptText } from '../types/inference';
-import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from '../config/constants';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { parseError } from '../utils/errorHandler';
 
 // MediaRecorder is a standard Web API, no need to extend Window
 
@@ -194,20 +194,13 @@ export const useASR = (): UseASRReturn => {
         console.log('✓ Error accepted - languages match, showing error');
 
         // Use centralized error handler (asr context so backend message shown as default when no specific mapping)
-        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'asr');
+        const { message: errorMessage } = parseError(error, { service: 'asr' });
 
         setError(errorMessage);
         setFetching(false);
         setFetched(false);
         setAudioText('');
         setResponseWordCount(0);
-        toast({
-          title: showOnlyMessage ? undefined : errorTitle,
-          description: errorMessage,
-          status: 'error',
-          duration: 7000,
-          isClosable: true,
-        });
       } else {
         console.log('✗ Error ignored - language mismatch or cancelled');
         console.log('  Request language:', currentRequestLanguageRef.current);
@@ -400,11 +393,11 @@ export const useASR = (): UseASRReturn => {
             }
           } catch (convertErr) {
             console.error('WAV conversion failed:', convertErr);
-            setError('Failed to convert audio to WAV format. Please try again.');
+            setError(UI_ERROR_MESSAGES.AUDIO_WAV_CONVERT_FAILED);
             setRecording(false);
             toast({
               title: 'Audio Conversion Error',
-              description: 'Failed to convert recorded audio. Please try again.',
+              description: UI_ERROR_MESSAGES.AUDIO_CONVERT_FAILED,
               status: 'error',
               duration: 5000,
               isClosable: true,
@@ -544,7 +537,7 @@ export const useASR = (): UseASRReturn => {
       // State and toast are already handled by the mutation's onError; only update state
       // here in case onError was skipped (e.g. language mismatch). Do not show a second toast.
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
-        const { message: errorMessage } = extractErrorInfo(err, 'asr');
+        const { message: errorMessage } = parseError(err, { service: 'asr' });
         setError(errorMessage);
         setFetching(false);
         setFetched(false);
@@ -782,7 +775,7 @@ export const useASR = (): UseASRReturn => {
               performInference(base64Data);
             } catch (err) {
               console.error('Error processing file result:', err);
-              setError('Failed to process file. Please try again.');
+              setError(UI_ERROR_MESSAGES.FILE_PROCESS_FAILED);
             }
           };
 

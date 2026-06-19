@@ -33,7 +33,7 @@ import {
   useDisclosure,
   VStack,
 } from "@chakra-ui/react";
-import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../../utils/toast";
 
 type ToastFn = ReturnType<typeof useToastWithDeduplication>;
 import {

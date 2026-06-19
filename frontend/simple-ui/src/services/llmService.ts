@@ -100,7 +100,7 @@ export const performLLMChat = async (
     const response = await apiService.post(
       apiEndpoints.llm.chat,
       payload,
-      { responseSchema: chatCompletionResponseSchema }
+      { responseSchema: chatCompletionResponseSchema, suppressErrorAlert: true }
     );
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

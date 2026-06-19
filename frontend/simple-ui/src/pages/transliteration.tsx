@@ -18,8 +18,8 @@ import {
 } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("transliteration");
 
@@ -106,15 +106,8 @@ const TransliterationPage: React.FC = () => {
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "transliteration");
+      const { message: errorMessage } = parseError(err, { service: "transliteration" });
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

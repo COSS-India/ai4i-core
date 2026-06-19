@@ -38,7 +38,7 @@ import {
   resolveTelemetryTenantId,
   TelemetryTraceRecord,
 } from "../services/observabilityService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../utils/toast";
 import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
 import { listTenants } from "../services/tenantService";
 import {

@@ -5,7 +5,7 @@
  */
 import { useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import authService from '../services/authService';
 
 export const useSessionExpiry = () => {
@@ -73,6 +73,3 @@ export const useSessionExpiry = () => {
     getTimeUntilSessionExpiry: authService.getTimeUntilSessionExpiry.bind(authService),
   };
 };
-
-
-

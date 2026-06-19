@@ -2,14 +2,14 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import { performNMTInference } from '../services/nmtService';
 import { getRemainingTryItRequests } from '../services/tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
-import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS } from '../config/constants';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { parseError } from '../utils/errorHandler';
 
 // Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
 const VALID_NMT_CHAR_REGEX =
@@ -79,20 +79,13 @@ export const useNMT = (): UseNMTReturn => {
       console.error('NMT inference error:', error);
 
       // Use centralized error handler (NMT context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'nmt');
+      const { message: errorMessage } = parseError(error, { service: 'nmt' });
 
       setError(errorMessage);
       setFetching(false);
       // Clear previous translation so stale output is not shown alongside the error
       setTranslatedText('');
       setFetched(false);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: 'error',
-        duration: 7000,
-        isClosable: true,
-      });
     },
   });
 
@@ -206,15 +199,12 @@ export const useNMT = (): UseNMTReturn => {
     if (isAnonymousUser() && getRemainingTryItRequests() <= 0) {
       toast({
         title: 'Rate limit reached',
-        description:
-          'You can try up to 5 translations per hour. Please sign in to get access to all services.',
+        description: UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT,
         status: 'warning',
         duration: 6000,
         isClosable: true,
       });
-      setError(
-        'Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.'
-      );
+      setError(UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT);
       return;
     }
 

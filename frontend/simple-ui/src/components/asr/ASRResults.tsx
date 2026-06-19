@@ -16,7 +16,7 @@ import {
 } from '@chakra-ui/react';
 import { FaCopy, FaDownload } from 'react-icons/fa';
 import { ASRResultsProps } from '../../types/asr';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { useToastWithDeduplication } from '../../utils/toast';
 
 const ASRResults: React.FC<ASRResultsProps> = ({
   transcript,
@@ -89,7 +89,7 @@ const ASRResults: React.FC<ASRResultsProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       toast({
         title: 'Download Started',
         description: 'Transcript downloaded successfully.',

@@ -8,7 +8,7 @@ import {
 } from 'axios';
 import type { ZodTypeAny } from 'zod';
 import { parseResponseData } from './dto/parseResponseData';
-import { handleApiError } from '../utils/errorHandler';
+import { handleApiError, type ErrorHandlerService } from '../utils/errorHandler';
 
 const warnOnMissingResponseSchema =
   process.env.NODE_ENV === 'development' &&
@@ -30,6 +30,8 @@ export interface BaseApiRequestConfig<D = any> extends AxiosRequestConfig<D> {
   responseSchema?: ZodTypeAny;
   /** Skip the global browser alert for this request (e.g. silent auth bootstrap). */
   suppressErrorAlert?: boolean;
+  /** Service context for service-aware error toasts. */
+  errorService?: ErrorHandlerService;
 }
 
 /**
@@ -43,7 +45,12 @@ class BaseApiService {
   /** Omit Zod-only options before passing config to axios. */
   private toAxiosConfig<D = any>(config?: BaseApiRequestConfig<D>): AxiosRequestConfig<D> {
     if (!config) return {};
-    const { responseSchema: _omitSchema, suppressErrorAlert: _omitAlert, ...rest } = config;
+    const {
+      responseSchema: _omitSchema,
+      suppressErrorAlert: _omitAlert,
+      errorService: _omitService,
+      ...rest
+    } = config;
     return rest as AxiosRequestConfig<D>;
   }
 
@@ -131,7 +138,7 @@ class BaseApiService {
     } catch (error) {
       const suppressAlert = config?.suppressErrorAlert === true;
       if (typeof window !== 'undefined' && !suppressAlert && !isCancel(error)) {
-        handleApiError(error);
+        handleApiError(error, { service: config?.errorService });
       }
       this.normalizeError(error);
     }

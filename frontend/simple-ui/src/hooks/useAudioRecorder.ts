@@ -1,6 +1,6 @@
 // Custom hook for audio recording functionality
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToastWithDeduplication } from '../utils/toast';
 import { convertWebmToWav } from '../utils/helpers';
 import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS } from '../config/constants';
 
@@ -12,7 +12,7 @@ interface UseAudioRecorderOptions {
 export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
   const { sampleRate = 16000, onRecordingComplete } = options;
   const toast = useToastWithDeduplication();
-  
+
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState<number>(0);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
@@ -67,7 +67,7 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
 
   const startRecording = useCallback(async () => {
     let streamToUse = audioStream;
-    
+
     if (!streamToUse) {
       try {
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -256,4 +256,3 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
     stopRecording,
   };
 };
-

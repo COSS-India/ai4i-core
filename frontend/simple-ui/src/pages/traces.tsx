@@ -38,7 +38,7 @@ import {
   Trace,
   Span,
 } from "../services/observabilityService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { useToastWithDeduplication } from "../utils/toast";
 import { API_V1, INFERENCE_TRACE_PATHS } from "../services/apiEndpoints";
 
 // Utility functions to extract and categorize spans

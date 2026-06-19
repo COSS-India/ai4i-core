@@ -62,6 +62,7 @@ export const performNMTInference = async (
 
     const response = await apiService.post(apiEndpoints.nmt.inference, payload, {
       responseSchema: nmtInferenceResponseSchema,
+      errorService: 'nmt',
     });
 
     // Extract response time from headers

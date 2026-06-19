@@ -16,7 +16,8 @@ import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
 import AccessibleAudio from '../common/AccessibleAudio';
 import { AudioPlayerProps } from '../../types/asr';
 import { formatDuration } from '../../utils/helpers';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { useToastWithDeduplication } from '../../utils/toast';
+import { UI_ERROR_MESSAGES } from '../../config/constants';
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioSrc,
@@ -160,7 +161,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
         console.error('Error playing audio:', error);
         toast({
           title: 'Playback Error',
-          description: 'Failed to play audio. Please try again.',
+          description: UI_ERROR_MESSAGES.AUDIO_PLAYBACK_FAILED,
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -217,7 +218,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
       console.error('Error downloading audio:', error);
       toast({
         title: 'Download Error',
-        description: 'Failed to download audio. Please try again.',
+        description: UI_ERROR_MESSAGES.AUDIO_DOWNLOAD_FAILED,
         status: 'error',
         duration: 3000,
         isClosable: true,
