@@ -48,6 +48,7 @@ _ROLE_MODERATOR = 2
 _ROLE_TENANT_ADMIN = 5
 
 _CACHE_TTL = settings.metering_cache_ttl_seconds
+_REFRESH_INTERVAL = settings.metering_refresh_interval_seconds
 
 _WINDOW_SECONDS: dict = {
     "1h":  3_600,
@@ -110,6 +111,17 @@ async def _cache_set(redis: aioredis.Redis, key: str, data: dict) -> None:
         await redis.set(key, json.dumps(data), ex=_CACHE_TTL)
     except Exception:
         pass
+
+
+def _mark_stale(cached: dict) -> dict:
+    """Set is_stale on a cached response dict based on how old generated_at is."""
+    try:
+        generated_at = datetime.fromisoformat(cached["generated_at"].replace("Z", "+00:00"))
+        age = (datetime.now(tz=timezone.utc) - generated_at).total_seconds()
+        cached["is_stale"] = age > _REFRESH_INTERVAL
+    except Exception:
+        cached["is_stale"] = True
+    return cached
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -251,6 +263,27 @@ def _validate_window(window: str) -> None:
         )
 
 
+async def _compute_data_state(
+    svc: MeteringService,
+    total_requests: int,
+    degraded: bool,
+    tenant: Optional[str],
+) -> str:
+    """Return "ok", "empty_window", or "empty_all_time".
+
+    Only fires an extra Prometheus query when total_requests == 0 and the
+    response is not already degraded — avoids extra I/O on the happy path,
+    and avoids misclassifying a query failure as an empty state.
+    """
+    if total_requests > 0 or degraded:
+        return "ok"
+    try:
+        has_data = await svc.has_any_data(tenant=tenant)
+        return "empty_window" if has_data else "empty_all_time"
+    except Exception:
+        return "ok"
+
+
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
 
 
@@ -283,7 +316,7 @@ async def get_overview(
     cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _mark_stale(cached)
 
     degraded = False
 
@@ -408,6 +441,9 @@ async def get_overview(
             grand_total=conc["grand_total"],
         )
 
+    overview_total = rt["total_requests"]["count"] if rt else 0
+    data_state = await _compute_data_state(svc, overview_total, degraded, scope_tenant)
+
     response = OverviewResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         kpis=kpis,
@@ -423,6 +459,8 @@ async def get_overview(
         ),
         degraded=degraded,
         generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        refresh_interval_seconds=_REFRESH_INTERVAL,
+        data_state=data_state,
     )
 
     if not degraded:
@@ -460,7 +498,7 @@ async def get_tenant_consumption(
     cache_key = f"metering:tenant-consumption:{window}:{limit}:{services or 'all'}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _mark_stale(cached)
 
     degraded = False
 
@@ -496,6 +534,9 @@ async def get_tenant_consumption(
     for r in heatmap_rows:
         r["organisation"] = org_map.get(r["tenant"])
 
+    tenant_total = sum(t["requests"] for t in ranking_tenants)
+    data_state = await _compute_data_state(svc, tenant_total, degraded, tenant=None)
+
     response = TenantConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
         tenant_ranking=[
@@ -518,6 +559,8 @@ async def get_tenant_consumption(
         request_volume=chart,
         degraded=degraded,
         generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        refresh_interval_seconds=_REFRESH_INTERVAL,
+        data_state=data_state,
     )
 
     if not degraded:
@@ -558,7 +601,7 @@ async def get_service_consumption(
     cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _mark_stale(cached)
 
     degraded = False
 
@@ -608,6 +651,8 @@ async def get_service_consumption(
             ),
         )
 
+    data_state = await _compute_data_state(svc, total_reqs, degraded, scope_tenant)
+
     response = ServiceConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         summary=summary,
@@ -634,6 +679,8 @@ async def get_service_consumption(
         request_volume=chart,
         degraded=degraded,
         generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        refresh_interval_seconds=_REFRESH_INTERVAL,
+        data_state=data_state,
     )
 
     if not degraded:

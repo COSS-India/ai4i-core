@@ -101,6 +101,9 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 3600
     metering_cache_ttl_seconds: int = 60
+    # How often the frontend should poll the metering endpoints (seconds).
+    # Set METERING_REFRESH_INTERVAL_SECONDS in the environment to override.
+    metering_refresh_interval_seconds: int = 60
 
     # ── Model management business rules ──
     max_active_versions_per_model: int = 5

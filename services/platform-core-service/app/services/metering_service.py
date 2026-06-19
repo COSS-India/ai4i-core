@@ -136,6 +136,16 @@ class MeteringService:
             },
         }
 
+    async def has_any_data(self, tenant: Optional[str] = None) -> bool:
+        """Returns True if any inference requests exist for this scope across all time.
+
+        Uses a 30d increase window instead of the raw counter so recently-restarted
+        pods (counter reset to 0) still report data correctly within the lookback.
+        """
+        label_str = build_base_selectors(inference_only=True, tenant=tenant)
+        total = await self._client.scalar(f"sum(increase({_METRIC}{label_str}[30d]))")
+        return total > 0
+
     async def active_tenants(self, time_range: Optional[str]) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)

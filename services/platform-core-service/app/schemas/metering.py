@@ -143,6 +143,9 @@ class OverviewResponse(BaseModel):
     throughput: ThroughputData
     degraded: bool = False
     generated_at: str
+    refresh_interval_seconds: int = 60
+    data_state: str = "ok"  # "ok" | "empty_window" | "empty_all_time"
+    is_stale: bool = False
 
 
 class TenantConsumptionResponse(BaseModel):
@@ -153,6 +156,9 @@ class TenantConsumptionResponse(BaseModel):
     request_volume: Optional[Graph] = None           # Throughput & Load: RPS over time
     degraded: bool = False
     generated_at: str
+    refresh_interval_seconds: int = 60
+    data_state: str = "ok"  # "ok" | "empty_window" | "empty_all_time"
+    is_stale: bool = False
 
 
 class ServiceConsumptionResponse(BaseModel):
@@ -163,3 +169,6 @@ class ServiceConsumptionResponse(BaseModel):
     request_volume: Optional[Graph] = None
     degraded: bool = False
     generated_at: str
+    refresh_interval_seconds: int = 60
+    data_state: str = "ok"  # "ok" | "empty_window" | "empty_all_time"
+    is_stale: bool = False
