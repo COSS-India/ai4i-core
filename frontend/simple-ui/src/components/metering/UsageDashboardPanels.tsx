@@ -6,34 +6,18 @@ import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections
 import RequestVolumeSection from "./RequestVolumeSection";
 import ServiceConsumptionTab from "./ServiceConsumptionTab";
 import TenantConsumptionTab from "./TenantConsumptionTab";
-import TenantPreviewSelect from "./TenantPreviewSelect";
 import ThroughputLoadSection from "./ThroughputLoadSection";
 
 type MeteringDashboardState = ReturnType<typeof useMeteringDashboard>;
 
 interface TenantHeaderProps {
-  canSwitchViews: boolean;
-  previewTenants: MeteringDashboardState["previewTenants"];
-  previewTenantId: string;
-  onSelectTenant: (id: string) => void;
   organisationLabel: string | null;
 }
 
 export const TenantDashboardHeader: React.FC<TenantHeaderProps> = ({
-  canSwitchViews,
-  previewTenants,
-  previewTenantId,
-  onSelectTenant,
   organisationLabel,
 }) => (
   <>
-    {canSwitchViews ? (
-      <TenantPreviewSelect
-        tenants={previewTenants}
-        selectedTenantId={previewTenantId}
-        onSelect={onSelectTenant}
-      />
-    ) : null}
     {organisationLabel ? (
       <Heading size="md" color="gray.700">
         {METERING.TENANT_VIEW.TITLE} · {organisationLabel}

@@ -251,6 +251,39 @@ def _validate_window(window: str) -> None:
         )
 
 
+def _compute_dashboard_meta(
+    degraded: bool,
+    total_requests: int,
+    window: str,
+) -> dict:
+    """Compute refresh/stale fields to attach to every dashboard response."""
+    is_stale = degraded
+
+    if degraded:
+        data_state = "error"
+    elif total_requests == 0 and window == "30d":
+        # 30d is the widest available window; zero requests here means no history at all.
+        data_state = "no_history"
+    elif total_requests == 0:
+        data_state = "empty"
+    else:
+        data_state = "ok"
+
+    return {
+        "refresh_interval_seconds": settings.metering_refresh_interval_seconds,
+        "is_stale": is_stale,
+        "data_state": data_state,
+    }
+
+
+def _enrich_cached(cached: dict) -> dict:
+    """Inject current refresh_interval_seconds into a cached response."""
+    return {
+        **cached,
+        "refresh_interval_seconds": settings.metering_refresh_interval_seconds,
+    }
+
+
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
 
 
@@ -283,7 +316,7 @@ async def get_overview(
     cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _enrich_cached(cached)
 
     degraded = False
 
@@ -408,6 +441,10 @@ async def get_overview(
             grand_total=conc["grand_total"],
         )
 
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    total_requests = rt["total_requests"]["count"] if rt else 0
+    meta = _compute_dashboard_meta(degraded, total_requests, window)
+
     response = OverviewResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         kpis=kpis,
@@ -422,7 +459,8 @@ async def get_overview(
             peak_at=tp.get("peak_at") if tp else None,
         ),
         degraded=degraded,
-        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=generated_at,
+        **meta,
     )
 
     if not degraded:
@@ -460,7 +498,7 @@ async def get_tenant_consumption(
     cache_key = f"metering:tenant-consumption:{window}:{limit}:{services or 'all'}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _enrich_cached(cached)
 
     degraded = False
 
@@ -496,6 +534,10 @@ async def get_tenant_consumption(
     for r in heatmap_rows:
         r["organisation"] = org_map.get(r["tenant"])
 
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    total_requests = sum(t["requests"] for t in ranking_tenants)
+    meta = _compute_dashboard_meta(degraded, total_requests, window)
+
     response = TenantConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
         tenant_ranking=[
@@ -517,7 +559,8 @@ async def get_tenant_consumption(
         ),
         request_volume=chart,
         degraded=degraded,
-        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=generated_at,
+        **meta,
     )
 
     if not degraded:
@@ -558,7 +601,7 @@ async def get_service_consumption(
     cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _enrich_cached(cached)
 
     degraded = False
 
@@ -608,6 +651,9 @@ async def get_service_consumption(
             ),
         )
 
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    meta = _compute_dashboard_meta(degraded, total_reqs, window)
+
     response = ServiceConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         summary=summary,
@@ -620,7 +666,10 @@ async def get_service_consumption(
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
                 success_pct=s["success_pct"],
-                failure_rate_pct=round(100 - s["success_pct"], 2),
+                # No traffic → nothing succeeded AND nothing failed. Without this
+                # guard, success_pct=0 for a 0-request service makes 100-0=100%
+                # failure, which is wrong (it should be 0%).
+                failure_rate_pct=round(100 - s["success_pct"], 2) if s["requests"] else 0.0,
                 failed=s["failed"],
                 vs_prev_period_pct=s["vs_prev_period_pct"],
             )
@@ -633,7 +682,8 @@ async def get_service_consumption(
         ),
         request_volume=chart,
         degraded=degraded,
-        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=generated_at,
+        **meta,
     )
 
     if not degraded:

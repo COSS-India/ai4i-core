@@ -209,6 +209,31 @@ export function formatMeteringRefreshTime(iso?: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
+/** Pick the latest `generated_at` among active metering endpoint responses. */
+export function resolveMeteringGeneratedAt(
+  timestamps: (string | undefined | null)[],
+): string | undefined {
+  let latest: string | undefined;
+  let latestMs = Number.NEGATIVE_INFINITY;
+
+  for (const value of timestamps) {
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    const ms = new Date(trimmed).getTime();
+    if (Number.isNaN(ms) || ms <= latestMs) continue;
+    latestMs = ms;
+    latest = trimmed;
+  }
+
+  return latest;
+}
+
+export function formatMeteringLastRefreshed(
+  timestamps: (string | undefined | null)[],
+): string {
+  return formatMeteringRefreshTime(resolveMeteringGeneratedAt(timestamps));
+}
+
 export function parseCompactTotal(total: string | number): number | null {
   if (typeof total === "number") return total;
   if (!total || total === METERING.GRAPH.EMPTY_VALUE) return null;

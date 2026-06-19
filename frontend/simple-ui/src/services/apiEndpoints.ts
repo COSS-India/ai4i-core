@@ -142,7 +142,7 @@ export const apiEndpoints = {
     config: `${API_V1}/nmt/config`,
   },
   llm: {
-    chat: `${API_V1}/chat`,
+    chat: `${API_V1}/chat/completions`,
     inference: `${API_V1}/llm/inference`,
     models: `${API_V1}/llm/models`,
     health: `${API_V1}/llm/health`,

@@ -27,7 +27,7 @@ export function canAccessServicesManagement(roles?: string[]): boolean {
   return !isRegistryReadOnlyUser(roles);
 }
 
-/** Usage Dashboard — platform ADMIN (preview both views) or Tenant Admin only. */
+/** Usage Dashboard — platform ADMIN (adopter view) or Tenant Admin only. */
 export function canAccessUsageDashboard(roles?: string[]): boolean {
   if (!roles?.length) return false;
   return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
@@ -38,7 +38,7 @@ export function canAccessPlatformMetering(roles?: string[]): boolean {
   return isPlatformAdminUser(roles) || userHasRole(roles, "MODERATOR");
 }
 
-/** Default / platform ADMIN — can preview both Adopter and Tenant Admin views. */
+/** Default / platform ADMIN — adopter-wide metering view. */
 export function isDefaultAdminUser(roles?: string[]): boolean {
   return isPlatformAdminUser(roles);
 }
@@ -56,30 +56,20 @@ export function isTenantAdminOnlyUser(roles?: string[]): boolean {
 export type MeteringRoleView = "adopter" | "tenant";
 
 export interface MeteringRoleViewConfig {
-  canSwitchViews: boolean;
   availableViews: MeteringRoleView[];
   defaultView: MeteringRoleView;
 }
 
-/** Resolve which role-view tabs to show on the Usage Dashboard. */
+/** Resolve the single Usage Dashboard view for the signed-in role (no view toggle). */
 export function getMeteringRoleViewConfig(roles?: string[]): MeteringRoleViewConfig {
-  if (isDefaultAdminUser(roles)) {
+  if (isTenantAdminOnlyUser(roles)) {
     return {
-      canSwitchViews: true,
-      availableViews: ["adopter", "tenant"],
-      defaultView: "adopter",
-    };
-  }
-  if (isTenantAdminUser(roles)) {
-    return {
-      canSwitchViews: false,
       availableViews: ["tenant"],
       defaultView: "tenant",
     };
   }
   return {
-    canSwitchViews: false,
-    availableViews: ["tenant"],
-    defaultView: "tenant",
+    availableViews: ["adopter"],
+    defaultView: "adopter",
   };
 }
