@@ -101,6 +101,10 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 3600
     metering_cache_ttl_seconds: int = 60
+    # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
+    # Stale threshold: data older than this is flagged is_stale=True (METERING_STALE_THRESHOLD_SECONDS).
+    metering_refresh_interval_seconds: int = 60
+    metering_stale_threshold_seconds: int = 120
 
     # ── Model management business rules ──
     max_active_versions_per_model: int = 5

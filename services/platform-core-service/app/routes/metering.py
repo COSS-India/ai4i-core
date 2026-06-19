@@ -251,6 +251,66 @@ def _validate_window(window: str) -> None:
         )
 
 
+def _compute_dashboard_meta(
+    generated_at: str,
+    degraded: bool,
+    total_requests: int,
+    window: str,
+) -> dict:
+    """Compute refresh/stale fields to attach to every dashboard response."""
+    now = datetime.now(tz=timezone.utc)
+    try:
+        gen_dt = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+        age_seconds = (now - gen_dt).total_seconds()
+    except Exception:
+        age_seconds = 0
+
+    is_stale = degraded or age_seconds > settings.metering_stale_threshold_seconds
+
+    if degraded:
+        data_state = "error"
+    elif total_requests == 0 and window == "30d":
+        # 30d is the widest available window; zero requests here means no history at all.
+        data_state = "no_history"
+    elif total_requests == 0:
+        data_state = "empty"
+    elif is_stale:
+        data_state = "stale"
+    else:
+        data_state = "ok"
+
+    return {
+        "refresh_interval_seconds": settings.metering_refresh_interval_seconds,
+        "is_stale": is_stale,
+        "data_state": data_state,
+    }
+
+
+def _enrich_cached(cached: dict, window: str) -> dict:
+    """Re-compute time-sensitive staleness fields before returning a cached response."""
+    gen_at = cached.get("generated_at", "")
+    now = datetime.now(tz=timezone.utc)
+    try:
+        gen_dt = datetime.fromisoformat(gen_at.replace("Z", "+00:00"))
+        age_seconds = (now - gen_dt).total_seconds()
+    except Exception:
+        age_seconds = 0
+
+    is_stale = age_seconds > settings.metering_stale_threshold_seconds
+    # Preserve the data_state that was set when the cache entry was written;
+    # promote "ok" → "stale" if the entry has aged past the threshold.
+    data_state = cached.get("data_state", "ok")
+    if is_stale and data_state == "ok":
+        data_state = "stale"
+
+    return {
+        **cached,
+        "refresh_interval_seconds": settings.metering_refresh_interval_seconds,
+        "is_stale": is_stale,
+        "data_state": data_state,
+    }
+
+
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
 
 
@@ -283,7 +343,7 @@ async def get_overview(
     cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _enrich_cached(cached, window)
 
     degraded = False
 
@@ -408,6 +468,10 @@ async def get_overview(
             grand_total=conc["grand_total"],
         )
 
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    total_requests = rt["total_requests"]["count"] if rt else 0
+    meta = _compute_dashboard_meta(generated_at, degraded, total_requests, window)
+
     response = OverviewResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         kpis=kpis,
@@ -422,7 +486,8 @@ async def get_overview(
             peak_at=tp.get("peak_at") if tp else None,
         ),
         degraded=degraded,
-        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=generated_at,
+        **meta,
     )
 
     if not degraded:
@@ -460,7 +525,7 @@ async def get_tenant_consumption(
     cache_key = f"metering:tenant-consumption:{window}:{limit}:{services or 'all'}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _enrich_cached(cached, window)
 
     degraded = False
 
@@ -496,6 +561,10 @@ async def get_tenant_consumption(
     for r in heatmap_rows:
         r["organisation"] = org_map.get(r["tenant"])
 
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    total_requests = sum(t["requests"] for t in ranking_tenants)
+    meta = _compute_dashboard_meta(generated_at, degraded, total_requests, window)
+
     response = TenantConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
         tenant_ranking=[
@@ -517,7 +586,8 @@ async def get_tenant_consumption(
         ),
         request_volume=chart,
         degraded=degraded,
-        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=generated_at,
+        **meta,
     )
 
     if not degraded:
@@ -558,7 +628,7 @@ async def get_service_consumption(
     cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return cached
+        return _enrich_cached(cached, window)
 
     degraded = False
 
@@ -608,6 +678,9 @@ async def get_service_consumption(
             ),
         )
 
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    meta = _compute_dashboard_meta(generated_at, degraded, total_reqs, window)
+
     response = ServiceConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         summary=summary,
@@ -633,7 +706,8 @@ async def get_service_consumption(
         ),
         request_volume=chart,
         degraded=degraded,
-        generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=generated_at,
+        **meta,
     )
 
     if not degraded:
