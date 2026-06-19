@@ -29,7 +29,7 @@ SMALL_SD_TRITON_RESPONSE: dict[str, Any] = {
                     "num_speakers": 1,
                     "speakers": ["SPEAKER_00"],
                     "segments": [
-                        {"start": 0.0, "end": 3.2, "speaker": "SPEAKER_00"},
+                        {"start_time": 0.0, "end_time": 3.2, "duration": 3.2, "speaker": "SPEAKER_00"},
                     ],
                 })
             ],
@@ -51,9 +51,9 @@ MEDIUM_SD_TRITON_RESPONSE: dict[str, Any] = {
                     "num_speakers": 2,
                     "speakers": ["SPEAKER_00", "SPEAKER_01"],
                     "segments": [
-                        {"start": 0.0, "end": 3.2, "speaker": "SPEAKER_00"},
-                        {"start": 3.2, "end": 6.7, "speaker": "SPEAKER_01"},
-                        {"start": 6.7, "end": 9.5, "speaker": "SPEAKER_00"},
+                        {"start_time": 0.0, "end_time": 3.2, "duration": 3.2, "speaker": "SPEAKER_00"},
+                        {"start_time": 3.2, "end_time": 6.7, "duration": 3.5, "speaker": "SPEAKER_01"},
+                        {"start_time": 6.7, "end_time": 9.5, "duration": 2.8, "speaker": "SPEAKER_00"},
                     ],
                 })
             ],
@@ -75,13 +75,13 @@ LARGE_SD_TRITON_RESPONSE: dict[str, Any] = {
                     "num_speakers": 3,
                     "speakers": ["SPEAKER_00", "SPEAKER_01", "SPEAKER_02"],
                     "segments": [
-                        {"start": 0.0,  "end": 3.2,  "speaker": "SPEAKER_00"},
-                        {"start": 3.2,  "end": 6.7,  "speaker": "SPEAKER_01"},
-                        {"start": 6.7,  "end": 9.5,  "speaker": "SPEAKER_00"},
-                        {"start": 9.5,  "end": 13.1, "speaker": "SPEAKER_02"},
-                        {"start": 13.1, "end": 16.4, "speaker": "SPEAKER_01"},
-                        {"start": 16.4, "end": 20.0, "speaker": "SPEAKER_00"},
-                        {"start": 20.0, "end": 23.8, "speaker": "SPEAKER_02"},
+                        {"start_time": 0.0,  "end_time": 3.2,  "duration": 3.2, "speaker": "SPEAKER_00"},
+                        {"start_time": 3.2,  "end_time": 6.7,  "duration": 3.5, "speaker": "SPEAKER_01"},
+                        {"start_time": 6.7,  "end_time": 9.5,  "duration": 2.8, "speaker": "SPEAKER_00"},
+                        {"start_time": 9.5,  "end_time": 13.1, "duration": 3.6, "speaker": "SPEAKER_02"},
+                        {"start_time": 13.1, "end_time": 16.4, "duration": 3.3, "speaker": "SPEAKER_01"},
+                        {"start_time": 16.4, "end_time": 20.0, "duration": 3.6, "speaker": "SPEAKER_00"},
+                        {"start_time": 20.0, "end_time": 23.8, "duration": 3.8, "speaker": "SPEAKER_02"},
                     ],
                 })
             ],
