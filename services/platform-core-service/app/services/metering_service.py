@@ -77,17 +77,21 @@ class MeteringService:
 
         total_v = round(_float(raw[0]))
         success_v = round(_float(raw[1]))
+        failed_v = max(0, total_v - success_v)
         avg_rps_v = round(_float(raw[2]), 2)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
+        failure_rate = round(100 - success_rate, 2) if total_v else 0.0
 
         total_vs_prev: Optional[float] = None
         success_rate_vs_prev: Optional[float] = None
         avg_rps_vs_prev: Optional[float] = None
+        prev_total_v: Optional[int] = None
 
         if window:
             prev_total = max(0, round(_float(raw[3])))
             prev_success = max(0, round(_float(raw[4])))
             prev_avg_rps = _float(raw[5])
+            prev_total_v = prev_total
 
             if prev_total > 0:
                 total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
@@ -103,10 +107,22 @@ class MeteringService:
                 "count": total_v,
                 "formatted": self._format_count(total_v),
                 "vs_previous_pct": total_vs_prev,
+                "previous_count": prev_total_v,
+            },
+            "successful_requests": {
+                "count": success_v,
+                "formatted": self._format_count(success_v),
+            },
+            "failed_requests": {
+                "count": failed_v,
+                "formatted": self._format_count(failed_v),
             },
             "success_rate": {
                 "rate_pct": success_rate,
                 "vs_previous_pct": success_rate_vs_prev,
+            },
+            "failure_rate": {
+                "rate_pct": failure_rate,
             },
             "avg_rps": {
                 "value": avg_rps_v,
@@ -138,6 +154,22 @@ class MeteringService:
             "promql": promql,
         }
 
+    async def active_tenants_count_previous(self, time_range: Optional[str]) -> Optional[int]:
+        """Count of tenants active in the PREVIOUS window (offset by one window).
+
+        Used as the denominator for avg_requests_per_tenant's vs-previous trend.
+        Returns None when there's no bounded window (e.g. time_range='all').
+        """
+        window = TIME_RANGES.get(time_range or "all")
+        if not window:
+            return None
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        promql = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
+        try:
+            return int(round(float(await self._client.scalar(promql))))
+        except Exception:
+            return None
+
     async def tenant_count(self) -> dict:
         if self._auth_db is None:
             return {
@@ -145,17 +177,24 @@ class MeteringService:
                 "new_tenants": None,
                 "auth_db_available": False,
             }
-        total, new_tenants = await asyncio.gather(
-            self._auth_db.execute(text("SELECT COUNT(*) FROM tenants")),
-            self._auth_db.execute(
+        try:
+            # AsyncSession is not concurrency-safe — run sequentially, not via gather.
+            total = await self._auth_db.execute(text("SELECT COUNT(*) FROM tenants"))
+            new_tenants = await self._auth_db.execute(
                 text("SELECT COUNT(*) FROM tenants WHERE created_at >= NOW() - INTERVAL '7 days'")
-            ),
-        )
-        return {
-            "total_tenants": total.scalar(),
-            "new_tenants": new_tenants.scalar(),
-            "auth_db_available": True,
-        }
+            )
+            return {
+                "total_tenants": total.scalar(),
+                "new_tenants": new_tenants.scalar(),
+                "auth_db_available": True,
+            }
+        except Exception:
+            logger.warning("tenant_count: auth DB query failed", exc_info=True)
+            return {
+                "total_tenants": None,
+                "new_tenants": None,
+                "auth_db_available": False,
+            }
 
     async def usage_concentration(self, limit: int, time_range: Optional[str]) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
