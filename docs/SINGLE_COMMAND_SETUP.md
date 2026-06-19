@@ -8,12 +8,8 @@ repo, installs anything that's missing, and brings up the **core** profile
 > [SETUP_GUIDE.md](SETUP_GUIDE.md). For how the automation is designed, see
 > [SETUP_AUTOMATION_PLAN.md](SETUP_AUTOMATION_PLAN.md).
 
-> ⚠️ **Temporary — branch & folder:** these setup scripts currently live only on
-> **`feature/single-command-setup`**, not `master`. For now the bootstrap **defaults to
-> branch `feature/single-command-setup`** and clones into **`ai4i-core-test/`** (so it
-> won't clobber an existing `ai4i-core` checkout) — every command below reflects
-> that. Once merged to `master`, the defaults flip back (`master` + `ai4i-core`)
-> and this note goes away. Override with `AI4I_BRANCH` / `AI4I_DIR` (before `bash`).
+> The bootstrap clones the **`release-2.2`** branch into an **`ai4i-core/`** directory
+> by default. Override with `AI4I_BRANCH` / `AI4I_DIR` (placed before `bash`).
 
 ---
 
@@ -69,8 +65,8 @@ The bootstrap script installs almost everything for you. You only need:
 The equivalent manual steps (what the gist automates) are:
 
 ```bash
-git clone -b feature/single-command-setup https://github.com/COSS-India/ai4i-core.git ai4i-core-test   # temporary: branch + dir
-cd ai4i-core-test
+git clone -b release-2.2 https://github.com/COSS-India/ai4i-core.git
+cd ai4i-core
 ./scripts/dev/up core        # "core" is the default; pass "frontend" to also get the UI
 ```
 
@@ -87,7 +83,7 @@ for the script:
 
 ```bash
 # Clone into a specific directory / target a different branch
-curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_DIR=~/code/ai4i AI4I_BRANCH=feature/single-command-setup bash
+curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_DIR=~/code/ai4i AI4I_BRANCH=release-2.2 bash
 
 # I've already installed docker/python/node myself — skip the installer
 curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b89366887bb288c132199341d81/raw/bootstrap.sh | AI4I_SKIP_PREREQS=1 bash
@@ -96,8 +92,8 @@ curl -fsSL https://gist.githubusercontent.com/bharathi-tarento-7401/fbaa8b893668
 | Variable | Default | Purpose |
 |---|---|---|
 | `AI4I_PROFILE` | `core` | Profile to bring up (or pass it positionally: `bash -s -- frontend`). |
-| `AI4I_DIR` | `ai4i-core-test` | Directory to clone into (temporary default until merged to `master`). |
-| `AI4I_BRANCH` | `feature/single-command-setup` | Branch to check out (temporary default until merged to `master`). |
+| `AI4I_DIR` | `ai4i-core` | Directory to clone into. |
+| `AI4I_BRANCH` | `release-2.2` | Branch to check out. |
 | `AI4I_REPO_URL` | `https://github.com/COSS-India/ai4i-core.git` | Git URL to clone. |
 | `AI4I_SKIP_PREREQS` | _unset_ | Set to `1` to skip the prerequisite installer. |
 
@@ -122,7 +118,7 @@ values (most people don't — random local passwords are fine):
 
    ```bash
    curl -fsSL <gist> | bash -s -- --prepare   # clones, doesn't start
-   cd ai4i-core-test
+   cd ai4i-core
    # edit dev.secrets (set DB/Redis passwords and/or SMTP/SES creds)
    ./scripts/dev/up core
    ```
@@ -188,9 +184,9 @@ All commands live under `scripts/dev/` and act on the clone you set up:
 
 - **"Docker was just installed but its daemon isn't reachable."** Docker's group
   membership only applies to a new login session. Log out and back in (or run
-  `newgrp docker`), then finish with `cd ai4i-core-test && ./scripts/dev/up core`.
+  `newgrp docker`), then finish with `cd ai4i-core && ./scripts/dev/up core`.
 - **Native Windows shell detected.** Open a **WSL2** terminal and run the
-  command there. Keep the repo inside the WSL filesystem (e.g. `~/ai4i-core-test`)
+  command there. Keep the repo inside the WSL filesystem (e.g. `~/ai4i-core`)
   so file-watching / hot-reload works.
 - **A service didn't come up.** Check its log: `./scripts/dev/logs auth`
   (or `platform` / `inference` / `frontend`).

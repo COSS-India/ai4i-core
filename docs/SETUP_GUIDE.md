@@ -4,6 +4,8 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 **Run model**: infrastructure (PostgreSQL, Redis, Kafka, observability stack) runs in Docker; the three application services (`auth-service`, `platform-core-service`, `inference-service`) run natively on the host via `python3 -m uvicorn` so you can iterate quickly and attach a debugger.
 
+> **Just want it running fast?** A one-command bootstrap clones the repo, installs prerequisites, and brings the stack up for you — see [SINGLE_COMMAND_SETUP.md](SINGLE_COMMAND_SETUP.md). This guide is the manual, step-by-step path (useful for understanding each piece or debugging when the automation fails).
+
 > **Windows users:** Docker Desktop runs containers inside WSL2. You must run **all** commands in this guide — Docker, migrations, Python services, and the frontend — from a **WSL2 bash terminal**, not from PowerShell or CMD. See [Windows (WSL)](#windows-wsl) below.
 
 ## Prerequisites
@@ -72,7 +74,7 @@ From this point, follow the rest of this guide in the same WSL terminal. Open ad
 
 ## Step 1: Clone the Repository
 
-Clone the release branch your team uses 
+Clone the release branch your team uses
 
 ```bash
 git clone --branch <release-tag> git@github.com:COSS-India/ai4i-core.git
@@ -81,7 +83,7 @@ cd ai4i-core
 
 Replace `<release-tag>` with the tag from the [ai4i-core releases page](https://github.com/COSS-India/ai4i-core/releases) (for example `release/2.2`). Use the tag that matches your project or internal documentation.
 
-> **Note:** Omitting `--branch <release-tag>` will clone `main`, which may contain latest version. 
+> **Note:** Omitting `--branch <release-tag>` will clone `main`, which may contain latest version.
 
 ## Step 2: Create the Root Environment File
 
