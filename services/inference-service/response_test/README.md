@@ -5,7 +5,7 @@ response size — **no model is invoked**.  The goal is to measure how the
 service handles payloads of different sizes and to provide realistic pre-defined
 responses that mirror the real output contract.
 
-Currently supported services: **NER**, **NMT**, **Transliteration**, **Language Detection**, **ASR**
+Currently supported services: **NER**, **NMT**, **Transliteration**, **Language Detection**, **ASR**, **TTS**, **Audio Language Detection**, **Language Diarization**, **Speaker Diarization**, **OCR**
 
 ---
 
@@ -20,13 +20,23 @@ response_test/
 ├── transliteration_response_test.py      ← Transliteration tests and standalone demo
 ├── language_detection_response_test.py   ← Language Detection tests and standalone demo
 ├── asr_response_test.py                  ← ASR tests and standalone demo
+├── tts_response_test.py                  ← TTS tests and standalone demo
+├── audio_lang_detection_response_test.py ← Audio Language Detection tests and standalone demo
+├── language_diarization_response_test.py ← Language Diarization tests and standalone demo
+├── speaker_diarization_response_test.py  ← Speaker Diarization tests and standalone demo
+├── ocr_response_test.py                  ← OCR tests and standalone demo
 ├── responses/
 │   ├── __init__.py
-│   ├── ner_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NER responses
-│   ├── nmt_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE NMT responses
-│   ├── transliteration_responses.py      ← pre-defined SMALL / MEDIUM / LARGE Transliteration responses
-│   ├── language_detection_responses.py   ← pre-defined SMALL / MEDIUM / LARGE Language Detection responses
-│   └── asr_responses.py                  ← pre-defined SMALL / MEDIUM / LARGE ASR responses
+│   ├── ner_responses.py                     ← pre-defined SMALL / MEDIUM / LARGE NER responses
+│   ├── nmt_responses.py                     ← pre-defined SMALL / MEDIUM / LARGE NMT responses
+│   ├── transliteration_responses.py         ← pre-defined SMALL / MEDIUM / LARGE Transliteration responses
+│   ├── language_detection_responses.py      ← pre-defined SMALL / MEDIUM / LARGE Language Detection responses
+│   ├── asr_responses.py                     ← pre-defined SMALL / MEDIUM / LARGE ASR responses
+│   ├── tts_responses.py                     ← pre-defined SMALL / MEDIUM / LARGE TTS responses
+│   ├── audio_lang_detection_responses.py    ← pre-defined SMALL / MEDIUM / LARGE Audio Lang Detection responses
+│   ├── language_diarization_responses.py    ← pre-defined SMALL / MEDIUM / LARGE Language Diarization responses
+│   ├── speaker_diarization_responses.py    ← pre-defined SMALL / MEDIUM / LARGE Speaker Diarization responses
+│   └── ocr_responses.py                    ← pre-defined SMALL / MEDIUM / LARGE OCR responses
 └── README.md                             ← this file
 ```
 
@@ -55,6 +65,21 @@ pytest response_test/language_detection_response_test.py -v
 # Run ASR response tests:
 pytest response_test/asr_response_test.py -v
 
+# Run TTS response tests:
+pytest response_test/tts_response_test.py -v
+
+# Run Audio Language Detection response tests:
+pytest response_test/audio_lang_detection_response_test.py -v
+
+# Run Language Diarization response tests:
+pytest response_test/language_diarization_response_test.py -v
+
+# Run Speaker Diarization response tests:
+pytest response_test/speaker_diarization_response_test.py -v
+
+# Run OCR response tests:
+pytest response_test/ocr_response_test.py -v
+
 # Run all response tests:
 pytest response_test/ -v
 
@@ -70,6 +95,11 @@ python response_test/nmt_response_test.py
 python response_test/transliteration_response_test.py
 python response_test/language_detection_response_test.py
 python response_test/asr_response_test.py
+python response_test/tts_response_test.py
+python response_test/audio_lang_detection_response_test.py
+python response_test/language_diarization_response_test.py
+python response_test/speaker_diarization_response_test.py
+python response_test/ocr_response_test.py
 ```
 
 Example output (NER):
@@ -344,6 +374,190 @@ size bucket. For integration-style runs, replace them with real base64 audio.
 | `SMALL_ASR_RESPONSE`  | ~80 chars (base64) | Short utterance (Hindi) |
 | `MEDIUM_ASR_RESPONSE` | ~400 chars         | 1–2 sentences (Hindi)   |
 | `LARGE_ASR_RESPONSE`  | ~2136 chars        | Full paragraph (Hindi)  |
+
+### TTS
+
+```json
+{
+  "audio": [
+    {
+      "audioContent": "<base64-encoded MP3>",
+      "audioUri": null,
+      "audioDuration": 2.04
+    }
+  ],
+  "config": {
+    "language": {
+      "sourceLanguage": "hi",
+      "sourceScriptCode": null
+    },
+    "audioFormat": "mp3",
+    "encoding": "base64",
+    "samplingRate": 22050,
+    "audioDuration": 2.04
+  },
+  "smr_response": null
+}
+```
+
+Unlike other services, TTS uses the `audio` key instead of `output`, and
+`config` is fully populated (not null). `audioDuration` appears in both
+`audio[0]` and `config` and they always match. `audioContent` in the test
+constants is a placeholder base64 string — replace with real MP3 base64 for
+integration runs.
+
+| Constant              | Input text (chars) | `audioDuration` |
+|-----------------------|--------------------|-----------------|
+| `SMALL_TTS_RESPONSE`  | 30                 | ~2.04 s         |
+| `MEDIUM_TTS_RESPONSE` | 299                | ~16.53 s        |
+| `LARGE_TTS_RESPONSE`  | 1056               | ~72.30 s        |
+
+---
+
+### Audio Language Detection
+
+```json
+{
+  "taskType": "audio-lang-detection",
+  "output": [
+    {
+      "language_code": "te: Telugu",
+      "confidence": 0.6430,
+      "all_scores": {
+        "predicted_language": "te: Telugu",
+        "confidence": 0.6430,
+        "top_scores": [0.6430, 0.1255, 0.0698, 0.0590, 0.0289]
+      }
+    }
+  ],
+  "config": {
+    "serviceId": "356b2b50747f44aa2abed17cae94327c"
+  }
+}
+```
+
+Input is base64-encoded audio (same as ASR). `smr_response` is **absent entirely** —
+the route does not include it. `config` is populated with `serviceId` (not null).
+`language_code` and `all_scores.predicted_language` always match. `top_scores`
+always has exactly 5 floats.
+
+| Constant                                    | Payload size       | Detected language | Confidence |
+|---------------------------------------------|--------------------|-------------------|------------|
+| `SMALL_AUDIO_LANG_DETECTION_RESPONSE`       | ~80 chars (base64) | `te: Telugu`      | ~0.643     |
+| `MEDIUM_AUDIO_LANG_DETECTION_RESPONSE`      | ~400 chars         | `hi: Hindi`       | ~0.782     |
+| `LARGE_AUDIO_LANG_DETECTION_RESPONSE`       | ~2136 chars        | `hi: Hindi`       | ~0.916     |
+
+### Language Diarization
+
+```json
+{
+  "taskType": "language-diarization",
+  "output": [
+    {
+      "total_segments": 11,
+      "segments": [
+        {
+          "start_time": 0.0,
+          "end_time": 2.0,
+          "duration": 2.0,
+          "language": "ta: Tamil",
+          "confidence": 0.4775
+        }
+      ],
+      "target_language": "all"
+    }
+  ],
+  "config": {
+    "serviceId": "5d30f31a9653572878e91e954d038649"
+  }
+}
+```
+
+Input is base64-encoded audio (same as ASR and Audio Language Detection).
+`total_segments` always equals `len(segments)`. `duration` always equals
+`end_time - start_time`. `smr_response` is **absent entirely**.
+`config` is populated with `serviceId` (not null).
+
+| Constant                                      | Payload size       | Segments | Languages present                        |
+|-----------------------------------------------|--------------------|----------|------------------------------------------|
+| `SMALL_LANGUAGE_DIARIZATION_RESPONSE`         | ~80 chars (base64) | 4        | hi: Hindi, ta: Tamil                     |
+| `MEDIUM_LANGUAGE_DIARIZATION_RESPONSE`        | ~400 chars         | 7        | hi: Hindi, ta: Tamil, ml: Malayalam      |
+| `LARGE_LANGUAGE_DIARIZATION_RESPONSE`         | ~2136 chars        | 11       | ta: Tamil, hi: Hindi, ur: Urdu, ml: Malayalam, nn: Norwegian Nynorsk |
+
+### Speaker Diarization
+
+```json
+{
+  "taskType": "speaker-diarization",
+  "output": [
+    {
+      "total_segments": 4,
+      "num_speakers": 2,
+      "speakers": ["SPEAKER_00", "SPEAKER_01"],
+      "segments": [
+        {
+          "start_time": 0.0,
+          "end_time": 2.5,
+          "duration": 2.5,
+          "speaker": "SPEAKER_00"
+        }
+      ]
+    }
+  ],
+  "config": {
+    "serviceId": "a9efafbfc2021f9a34dd201eab8f5687",
+    "language": null
+  }
+}
+```
+
+Input is base64-encoded audio (same as ASR and diarization services).
+`total_segments` always equals `len(segments)`. `num_speakers` always equals
+`len(speakers)`. Every segment's `speaker` must be a member of the `speakers`
+list. `duration` always equals `end_time - start_time`. Unlike Language
+Diarization, segments have no `confidence` field. `config.language` is always
+`null`. `smr_response` is **absent entirely**.
+
+| Constant                                    | Payload size       | Segments | Speakers |
+|---------------------------------------------|--------------------|----------|----------|
+| `SMALL_SPEAKER_DIARIZATION_RESPONSE`        | ~80 chars (base64) | 4        | 2        |
+| `MEDIUM_SPEAKER_DIARIZATION_RESPONSE`       | ~400 chars         | 8        | 3        |
+| `LARGE_SPEAKER_DIARIZATION_RESPONSE`        | ~2136 chars        | 12       | 3        |
+
+### OCR
+
+```json
+{
+  "output": [
+    {
+      "source": "{\"success\": true, \"text_lines\": [{\"text\": \"Hello World\", \"confidence\": 0.998, \"bbox\": [10.0, 10.0, 150.0, 22.0], \"polygon\": [[10.0, 10.0], [150.0, 10.0], [150.0, 22.0], [10.0, 22.0]]}], \"full_text\": \"Hello World\", \"image_bbox\": [0.0, 0.0, 200.0, 70.0]}",
+      "target": ""
+    }
+  ],
+  "config": {
+    "serviceId": "14e4a9fb949aa86af0b88a5a1879558d",
+    "language": {
+      "sourceLanguage": "en",
+      "sourceScriptCode": ""
+    },
+    "textDetection": true
+  },
+  "smr_response": null
+}
+```
+
+Input is a base64-encoded image (`imageContent`) or image URL (`imageUri`).
+`output[0].source` is a **JSON string** — callers must `json.loads()` it to
+access `text_lines`, `full_text`, and `image_bbox`. `output[0].target` is
+always `""`. `full_text` is always the newline-joined concatenation of all
+`text_lines[*].text`. `smr_response` is present and `null` (unlike
+diarization services). No `taskType` at the top level.
+
+| Constant              | Text lines | Content                               |
+|-----------------------|------------|---------------------------------------|
+| `SMALL_OCR_RESPONSE`  | 3          | Short sample English lines            |
+| `MEDIUM_OCR_RESPONSE` | 7          | Pangram / mixed English sentences     |
+| `LARGE_OCR_RESPONSE`  | 12         | *Little Lord Fauntleroy* excerpt (real dev response) |
 
 ---
 
