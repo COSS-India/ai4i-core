@@ -18,12 +18,11 @@ import {
 } from "../services/audioLanguageDetectionService";
 import { parseAudioLanguageDetectionOutput } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("audio-language-detection");
 
 const AudioLanguageDetectionPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [audioData, setAudioData] = useState<string | null>(null);
   const [audioClearToken, setAudioClearToken] = useState(0);
   const [fetching, setFetching] = useState(false);
@@ -44,11 +43,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
   const handleSubmit = async () => {
     if (!audioData) {
       const err = AUDIO_LANGUAGE_DETECTION_ERRORS.FILE_REQUIRED;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (!selectedServiceId) {
-      toast({ title: "No Service Selected", description: "Please select a service.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a service." });
       return;
     }
 

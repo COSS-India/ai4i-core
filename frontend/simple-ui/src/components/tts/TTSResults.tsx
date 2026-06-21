@@ -16,7 +16,7 @@ import {
 import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
 import AccessibleAudio from '../common/AccessibleAudio';
 import { TTSResultsProps } from '../../types/tts';
-import { useToastWithDeduplication } from '../../utils/toast';
+import { showToast } from '../../utils/toast';
 
 const TTSResults: React.FC<TTSResultsProps> = ({
   audioSrc,
@@ -30,7 +30,6 @@ const TTSResults: React.FC<TTSResultsProps> = ({
   onPause,
   onDownload,
 }) => {
-  const toast = useToastWithDeduplication();
   const downloadExt = audioFormat?.toLowerCase() === "mp3" ? "mp3" : "wav";
 
   const handleDownload = () => {
@@ -44,23 +43,14 @@ const TTSResults: React.FC<TTSResultsProps> = ({
       link.click();
       document.body.removeChild(link);
 
-      toast({
-        title: 'Download Started',
-        description: 'Audio file downloaded successfully.',
-        status: 'success',
-        duration: 2000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Audio file downloaded successfully.",
       });
       onDownload?.();
     } catch (error) {
       console.error('Download error:', error);
-      toast({
-        title: 'Download Failed',
-        description: 'Failed to download audio file.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to download audio file." });
     }
   };
 

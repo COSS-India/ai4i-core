@@ -20,7 +20,7 @@ import {
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
-import { useToastWithDeduplication } from "../../utils/toast";
+import { showToast } from "../../utils/toast";
 import { PASSWORD_POLICY, UI_ERROR_MESSAGES } from "../../config/constants";
 import PasswordRequirements, {
   getPasswordValidationError,
@@ -41,7 +41,6 @@ interface ChangePasswordTabProps {
 
 export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) {
   const { changePassword, isLoading } = useAuth();
-  const toast = useToastWithDeduplication();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
@@ -153,12 +152,9 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
         confirm_password: confirmPassword,
       });
       resetForm();
-      toast({
-        title: "Password updated",
-        description: res?.message || "Your password has been changed successfully.",
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: res?.message || "Your password has been changed successfully.",
       });
     } catch (err: unknown) {
       const message =
@@ -167,13 +163,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
       if (lower.includes("current password")) {
         setServerErrors((prev) => ({ ...prev, current_password: message }));
       }
-      toast({
-        title: "Password change failed",
-        description: message,
-        status: "error",
-        duration: 7000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message });
     }
   };
 

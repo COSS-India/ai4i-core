@@ -1,7 +1,7 @@
 // Custom hook for pipeline functionality
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useToastWithDeduplication } from '../utils/toast';
+import { showToast } from '../utils/toast';
 import { runPipelineInference } from '../services/pipelineService';
 import { convertWebmToWav, base64ToAudioObjectUrl } from '../utils/helpers';
 import { getAsrTranscriptText } from '../types/inference';
@@ -30,7 +30,6 @@ export const usePipeline = () => {
   const microphoneErrorToastShownRef = useRef(false);
   const recordingDurationRef = useRef<number>(0);
   const pipelineAudioUrlRef = useRef<string | null>(null);
-  const toast = useToastWithDeduplication();
 
   // Revoke pipeline result audio blob URL on unmount
   useEffect(() => {
@@ -54,13 +53,7 @@ export const usePipeline = () => {
           microphoneErrorToastShownRef.current = true;
           const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
           const pipelineErr = isNotFoundError ? PIPELINE_ERRORS.MIC_NOT_FOUND : PIPELINE_ERRORS.MIC_ACCESS_DENIED;
-          toast({
-            title: pipelineErr.title,
-            description: pipelineErr.description,
-            status: 'error',
-            duration: 5000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: pipelineErr.description });
         }
       }
     };
@@ -80,7 +73,7 @@ export const usePipeline = () => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]);
+  }, []);
 
   // Timer effect
   useEffect(() => {
@@ -91,13 +84,7 @@ export const usePipeline = () => {
             if (newTimer >= MAX_RECORDING_DURATION && stopRecordingRef.current) {
             stopRecordingRef.current();
             const err = PIPELINE_ERRORS.REC_TOO_LONG;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'warning',
-              duration: 3000,
-              isClosable: true,
-            });
+            showToast({ type: 'warning', message: err.description });
           }
           recordingDurationRef.current = newTimer;
           return newTimer;
@@ -115,7 +102,7 @@ export const usePipeline = () => {
         clearInterval(timerRef.current);
       }
     };
-  }, [isRecording, timer, toast]);
+  }, [isRecording, timer]);
 
   /**
    * Start recording audio
@@ -134,13 +121,7 @@ export const usePipeline = () => {
           microphoneErrorToastShownRef.current = true;
           const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
           const pipelineErr = isNotFoundError ? PIPELINE_ERRORS.MIC_NOT_FOUND : PIPELINE_ERRORS.REC_START_FAILED;
-          toast({
-            title: pipelineErr.title,
-            description: pipelineErr.description,
-            status: 'error',
-            duration: 3000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: pipelineErr.description });
         }
         return;
       }
@@ -164,13 +145,7 @@ export const usePipeline = () => {
           microphoneErrorToastShownRef.current = true;
           const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
           const pipelineErr = isNotFoundError ? PIPELINE_ERRORS.MIC_NOT_FOUND : PIPELINE_ERRORS.MIC_ACCESS_DENIED;
-          toast({
-            title: pipelineErr.title,
-            description: pipelineErr.description,
-            status: 'error',
-            duration: 3000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: pipelineErr.description });
         }
         return;
       }
@@ -179,13 +154,7 @@ export const usePipeline = () => {
     // Check if MediaRecorder is supported
     if (!window.MediaRecorder) {
       const err = RECORDING_ERRORS.BROWSER_NOT_SUPPORTED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
@@ -199,13 +168,7 @@ export const usePipeline = () => {
       if (tracks.length === 0 || tracks.every(track => track.readyState !== 'live')) {
         console.error('No active audio tracks available');
         const err = PIPELINE_ERRORS.REC_START_FAILED;
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
         setIsRecording(false);
         setTimer(0); // Reset timer on error
         return;
@@ -256,13 +219,7 @@ export const usePipeline = () => {
           if (webmBlob.size < 1000) {
             console.error('Recording blob too small, likely contains no audio data');
             const err = PIPELINE_ERRORS.NO_SPEECH_DETECTED;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
             setIsRecording(false);
             setTimer(0); // Reset timer on error
             return;
@@ -283,13 +240,7 @@ export const usePipeline = () => {
             }
           } catch (convertErr) {
             console.error('WAV conversion failed:', convertErr);
-            toast({
-              title: 'Audio Conversion Error',
-              description: UI_ERROR_MESSAGES.AUDIO_CONVERT_FAILED,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: UI_ERROR_MESSAGES.AUDIO_CONVERT_FAILED });
             setIsRecording(false);
             setTimer(0); // Reset timer on error
             return;
@@ -321,13 +272,7 @@ export const usePipeline = () => {
           };
           reader.onerror = (event) => {
             console.error('FileReader error:', event);
-            toast({
-              title: 'Recording Error',
-              description: 'Failed to process recording.',
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: 'Failed to process recording.' });
             setIsRecording(false);
             setTimer(0);
           };
@@ -337,13 +282,7 @@ export const usePipeline = () => {
           setTimer(0); // Reset timer when recording stops
         } catch (err) {
           console.error('Error processing recording:', err);
-          toast({
-            title: 'Recording Error',
-            description: 'Failed to process recording.',
-            status: 'error',
-            duration: 5000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: 'Failed to process recording.' });
           setIsRecording(false);
           setTimer(0); // Reset timer on error
         }
@@ -355,13 +294,7 @@ export const usePipeline = () => {
         const err = PIPELINE_ERRORS.REC_INTERRUPTED;
         setIsRecording(false);
         setTimer(0); // Reset timer on error
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
       };
 
       mediaRecorderRef.current = mediaRecorder;
@@ -372,27 +305,15 @@ export const usePipeline = () => {
       mediaRecorder.start(1000);
       console.log('MediaRecorder started with timeslice: 1000ms');
 
-      toast({
-        title: 'Recording started',
-        description: 'Speak into your microphone',
-        status: 'info',
-        duration: 2000,
-        isClosable: true,
-      });
+      showToast({ type: 'info', message: 'Speak into your microphone' });
     } catch (err) {
       console.error('Error starting recording:', err);
       const recErr = PIPELINE_ERRORS.REC_START_FAILED;
       setIsRecording(false);
       setTimer(0); // Reset timer on error
-      toast({
-        title: recErr.title,
-        description: recErr.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: recErr.description });
     }
-  }, [audioStream, toast]);
+  }, [audioStream]);
 
   /**
    * Stop recording audio
@@ -428,13 +349,7 @@ export const usePipeline = () => {
 
       setIsRecording(false);
 
-      toast({
-        title: 'Recording stopped',
-        description: 'Processing audio...',
-        status: 'info',
-        duration: 2000,
-        isClosable: true,
-      });
+      showToast({ type: 'info', message: 'Processing audio...' });
 
       // Stop audio tracks after a short delay to allow MediaRecorder to finalize
       // The onstop handler will process the blob, then we can safely stop tracks
@@ -460,15 +375,9 @@ export const usePipeline = () => {
         audioStream.getTracks().forEach(track => track.stop());
       }
 
-      toast({
-        title: 'Recording Error',
-        description: 'Failed to stop recording.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: 'Failed to stop recording.' });
     }
-  }, [audioStream, toast]);
+  }, [audioStream]);
 
   // Store refs for timer and processing
   useEffect(() => {
@@ -561,12 +470,9 @@ export const usePipeline = () => {
 
         setResult(pipelineResult);
 
-        toast({
-          title: 'Pipeline Completed',
-          description: 'Speech-to-Speech translation completed successfully!',
-          status: 'success',
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: 'success',
+          message: 'Speech-to-Speech translation completed successfully!',
         });
       } else {
         throw new Error('Invalid pipeline response format');
@@ -576,7 +482,7 @@ export const usePipeline = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   /**
    * Process recorded audio through pipeline (internal version that takes base64)
@@ -612,19 +518,13 @@ export const usePipeline = () => {
     ttsServiceId: string
   ) => {
     if (!audioBlob) {
-      toast({
-        title: 'No Audio',
-        description: 'Please record or upload an audio file first.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please record or upload an audio file first.' });
       return;
     }
 
     const base64Audio = await blobToBase64(audioBlob);
     await processRecordedAudioInternal(base64Audio);
-  }, [audioBlob, processRecordedAudioInternal, toast]);
+  }, [audioBlob, processRecordedAudioInternal]);
 
   /**
    * Process uploaded audio file through pipeline
@@ -640,26 +540,14 @@ export const usePipeline = () => {
     // Validate file exists
     if (!file) {
       const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     // Validate file size
     if (file.size > MAX_AUDIO_FILE_SIZE) {
       const err = UPLOAD_ERRORS.FILE_TOO_LARGE;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
@@ -668,13 +556,7 @@ export const usePipeline = () => {
     const isWAV = file.type === 'audio/wav' || file.type === 'audio/wave' || file.type === 'audio/x-wav' || file.name.toLowerCase().endsWith('.wav');
     if (!isMP3 && !isWAV) {
       const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
@@ -737,13 +619,7 @@ export const usePipeline = () => {
             err = UPLOAD_ERRORS.INVALID_FILE;
             break;
         }
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
         return;
       }
 
@@ -770,15 +646,9 @@ export const usePipeline = () => {
         : error?.message === 'INVALID_FILE'
         ? UPLOAD_ERRORS.INVALID_FILE
         : UPLOAD_ERRORS.UPLOAD_FAILED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
     }
-  }, [toast]);
+  }, []);
 
   const runPipeline = useCallback(async (
     sourceLanguage: string,
@@ -788,12 +658,9 @@ export const usePipeline = () => {
     ttsServiceId: string
   ) => {
     if (!pendingAudio) {
-      toast({
-        title: 'Audio Required',
-        description: 'Please record or upload an audio file before running the pipeline.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: 'warning',
+        message: 'Please record or upload an audio file before running the pipeline.',
       });
       return;
     }
@@ -837,7 +704,7 @@ export const usePipeline = () => {
 
     await executePipeline(request);
     setPendingAudio(null);
-  }, [executePipeline, pendingAudio, pendingAudioFormat, toast]);
+  }, [executePipeline, pendingAudio, pendingAudioFormat]);
 
   /**
    * Clear the uploaded/recorded input (and any pipeline output).

@@ -27,14 +27,13 @@ import {
 } from "@chakra-ui/react";
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
-import { useToastWithDeduplication } from "../../utils/toast";
+import { showToast } from "../../utils/toast";
 
 export interface CreateApiKeyTabProps {
   onApiKeyCreated?: () => void;
 }
 
 export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProps) {
-  const toast = useToastWithDeduplication();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
@@ -80,12 +79,9 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
                           size="xs"
                           onClick={() => {
                             navigator.clipboard.writeText(create.createdApiKeyToken!);
-                            toast({
-                              title: "Copied",
-                              description: "API key copied to clipboard",
-                              status: "success",
-                              duration: 2000,
-                              isClosable: true,
+                            showToast({
+                              type: "success",
+                              message: "API key copied to clipboard",
                             });
                           }}
                         />

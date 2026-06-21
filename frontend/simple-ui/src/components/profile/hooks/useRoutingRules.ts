@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToastWithDeduplication } from "../../../utils/toast";
+import { showToast } from "../../../utils/toast";
 import alertingService from "../../../services/alertingService";
 import type {
   NotificationReceiver,
@@ -39,8 +39,6 @@ type UpdateForm = {
 };
 
 export function useRoutingRules() {
-  const toast = useToastWithDeduplication();
-
   const [rules, setRules] = useState<NotificationReceiver[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState("all");
@@ -73,17 +71,14 @@ export function useRoutingRules() {
       const data = await alertingService.listReceivers();
       setRules(data);
     } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to load routing rules",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load routing rules",
       });
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   // ---- Create ----
   const openCreate = () => {
@@ -99,7 +94,7 @@ export function useRoutingRules() {
     const hasEmail = form.email_to && form.email_to.length > 0;
     const hasRole = !!form.rbac_role;
     if (!hasEmail && !hasRole) {
-      toast({ title: "Validation Error", description: "At least one email address or an RBAC role is required", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "At least one email address or an RBAC role is required" });
       return;
     }
     setIsCreating(true);
@@ -127,16 +122,13 @@ export function useRoutingRules() {
         payload.rbac_role = form.rbac_role;
       }
       await alertingService.createReceiver(payload);
-      toast({ title: "Routing Rule Created", status: "success", duration: 3000, isClosable: true });
+      showToast({ type: "success", message: "Routing Rule Created" });
       closeCreate();
       await fetchRules();
     } catch (error) {
-      toast({
-        title: "Create Failed",
-        description: error instanceof Error ? error.message : "Failed to create routing rule",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to create routing rule",
       });
     } finally {
       setIsCreating(false);
@@ -264,22 +256,19 @@ export function useRoutingRules() {
       }
 
       if (Object.keys(payload).length === 0) {
-        toast({ title: "No changes", description: "Nothing to update.", status: "info", duration: 3000, isClosable: true });
+        showToast({ type: "info", message: "Nothing to update." });
         closeUpdate();
         return;
       }
 
       await alertingService.updateReceiver(updateItem.id, payload);
-      toast({ title: "Routing Rule Updated", status: "success", duration: 3000, isClosable: true });
+      showToast({ type: "success", message: "Routing Rule Updated" });
       closeUpdate();
       await fetchRules();
     } catch (error) {
-      toast({
-        title: "Update Failed",
-        description: error instanceof Error ? error.message : "Failed to update routing rule",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update routing rule",
       });
     } finally {
       setIsUpdating(false);
@@ -300,16 +289,13 @@ export function useRoutingRules() {
     setIsDeleting(true);
     try {
       await alertingService.deleteReceiver(deleteItem.id);
-      toast({ title: "Routing Rule Deleted", status: "success", duration: 3000, isClosable: true });
+      showToast({ type: "success", message: "Routing Rule Deleted" });
       closeDelete();
       await fetchRules();
     } catch (error) {
-      toast({
-        title: "Delete Failed",
-        description: error instanceof Error ? error.message : "Failed to delete routing rule",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to delete routing rule",
       });
     } finally {
       setIsDeleting(false);

@@ -31,7 +31,7 @@ import {
   useDisclosure,
   VStack,
 } from "@chakra-ui/react";
-import { useToastWithDeduplication } from "../../utils/toast";
+import { showToast } from "../../utils/toast";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";
@@ -88,7 +88,6 @@ function actionBadgeColorScheme(action: string): string {
 }
 
 export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
-  const toast = useToastWithDeduplication();
   const { tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
   const pageBg = useColorModeValue("gray.50", "gray.900");
   const mutedText = useColorModeValue("gray.600", "gray.400");
@@ -156,20 +155,10 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const applyActiveDomains = async () => {
     try {
       await piiService.activateDomains(Array.from(checkedDomains));
-      toast({
-        title: "Domain activation updated",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Domain activation updated" });
       await fetchAllDomains();
     } catch {
-      toast({
-        title: "Failed to apply domains",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to apply domains" });
     }
   };
 
@@ -198,30 +187,18 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const handleSaveTenantMapping = async () => {
     const tid = newMapTenantId.trim();
     if (!tid || !newMapDomainId) {
-      toast({
-        title: "Enter tenant ID and choose a domain",
-        status: "warning",
-        duration: 4000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Enter tenant ID and choose a domain" });
       return;
     }
     try {
       await piiService.upsertTenantDomainMapping(tid, newMapDomainId);
       setNewMapTenantId("");
       await fetchTenantMappings();
-      toast({
-        title: "Mapping saved",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Mapping saved" });
     } catch {
-      toast({
-        title: "Failed to save mapping (check domain exists and permissions)",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Failed to save mapping (check domain exists and permissions)",
       });
     }
   };
@@ -234,12 +211,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       await fetchTenantMappings();
       onSuccess?.();
     } catch {
-      toast({
-        title: "Failed to delete mapping",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to delete mapping" });
     }
   };
 
@@ -249,19 +221,9 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       await piiService.createDomain(newDomainId);
       setNewDomainId("");
       await fetchAllDomains();
-      toast({
-        title: "Domain created",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Domain created" });
     } catch {
-      toast({
-        title: "Failed to create domain",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to create domain" });
     }
   };
 
@@ -272,12 +234,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const rules = Array.isArray(res.data.rules) ? (res.data.rules as Rule[]) : [];
       setEditingRules(rules);
     } catch {
-      toast({
-        title: "Failed to load policy",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to load policy" });
     }
   };
 
@@ -286,32 +243,17 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const res = await piiService.generateRegex(newExample);
       setNewRegex(res.data.regex);
     } catch {
-      toast({
-        title: "Regex generation failed",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Regex generation failed" });
     }
   };
 
   const addCustomRule = () => {
     if (!newEntity) {
-      toast({
-        title: "Entity name required",
-        status: "warning",
-        duration: 4000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Entity name required" });
       return;
     }
     if (!newAction) {
-      toast({
-        title: "Action required",
-        status: "warning",
-        duration: 4000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Action required" });
       return;
     }
     const rule: Rule = { entity_type: newEntity.toUpperCase(), action: newAction, config: {} };
@@ -325,30 +267,15 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const saveConfig = async () => {
     if (!editingDomainId) {
-      toast({
-        title: "Select a domain to edit",
-        status: "warning",
-        duration: 4000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Select a domain to edit" });
       return;
     }
     try {
       await piiService.deployRules(editingDomainId, editingRules);
-      toast({
-        title: "Policy rules saved",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Policy rules saved" });
       await fetchAllDomains();
     } catch {
-      toast({
-        title: "Save failed",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Save failed" });
     }
   };
 
@@ -358,12 +285,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const res = await piiService.getAuditLogs(100);
       setAuditLogs(res.data);
     } catch {
-      toast({
-        title: "Failed to load audit logs",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to load audit logs" });
     } finally {
       setAuditLoading(false);
     }

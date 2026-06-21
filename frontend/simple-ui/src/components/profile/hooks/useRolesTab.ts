@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useToastWithDeduplication } from "../../../utils/toast";
+import { showToast } from "../../../utils/toast";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
 import {
@@ -21,7 +21,6 @@ export interface SelectedUserInfo {
 }
 
 export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions) {
-  const toast = useToastWithDeduplication();
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedUser, setSelectedUser] = useState<SelectedUserInfo | null>(null);
   const [selectedUserRoles, setSelectedUserRoles] = useState<string[]>([]);
@@ -41,20 +40,14 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     try {
       const allRoles = await roleService.listRoles();
       setRoles(allRoles);
-      toast({
-        title: "Roles Loaded",
-        description: `Loaded ${allRoles.length} roles`,
-        status: "success",
-        duration: 2000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `Loaded ${allRoles.length} roles`,
       });
     } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to load roles",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load roles",
       });
     } finally {
       setIsLoadingRoles(false);
@@ -75,12 +68,9 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       const userRolesData = await roleService.getUserRoles(u.user_id);
       setSelectedUserRoles(userRolesData.roles);
     } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to load user roles",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load user roles",
       });
       setSelectedUserRoles([]);
     } finally {
@@ -93,23 +83,17 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
 
   const openManageRoles = async () => {
     if (!selectedUser) {
-      toast({
-        title: "Select user",
-        description: "Choose a user before managing roles.",
-        status: "info",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "info",
+        message: "Choose a user before managing roles.",
       });
       return;
     }
     if (!isAdmin || isModeratorOnly) return;
     if (selectedUserRoles.length > 1) {
-      toast({
-        title: "Multiple roles detected",
-        description: "This user currently has multiple roles. Saving will normalize to one role.",
-        status: "info",
-        duration: 4500,
-        isClosable: true,
+      showToast({
+        type: "info",
+        message: "This user currently has multiple roles. Saving will normalize to one role.",
       });
     }
     setDraftRole("");
@@ -132,22 +116,16 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     if (!selectedUser) return;
     if (!isAdmin || isModeratorOnly) return;
     if (!draftRole) {
-      toast({
-        title: "Select role",
-        description: "Select a role to assign to this user.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Select a role to assign to this user.",
       });
       return;
     }
     if (!isDefaultTenantAssignableRole(draftRole)) {
-      toast({
-        title: "Invalid role",
-        description: "Only Admin, Moderator, or User can be assigned from Role Assignment.",
-        status: "warning",
-        duration: 4000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Only Admin, Moderator, or User can be assigned from Role Assignment.",
       });
       return;
     }
@@ -157,12 +135,9 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       draftRole && draftRole !== originalPrimary ? [draftRole] : [];
 
     if (toAdd.length === 0 && toRemove.length === 0 && selectedUserRoles.length <= 1) {
-      toast({
-        title: "No changes",
-        description: "No role updates to save.",
-        status: "info",
-        duration: 2500,
-        isClosable: true,
+      showToast({
+        type: "info",
+        message: "No role updates to save.",
       });
       closeManageRoles();
       return;
@@ -190,30 +165,21 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       setSelectedUserRoles(refreshed.roles);
 
       if (failedOps.length === 0) {
-        toast({
-          title: "Roles updated",
-          description: `Updated roles for ${selectedUser.username}.`,
-          status: "success",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "success",
+          message: `Updated roles for ${selectedUser.username}.`,
         });
       } else {
-        toast({
-          title: "Partially updated",
-          description: `Some role changes failed (${failedOps.length}). Please retry.`,
-          status: "warning",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "warning",
+          message: `Some role changes failed (${failedOps.length}). Please retry.`,
         });
       }
       closeManageRoles();
     } catch (error) {
-      toast({
-        title: "Save failed",
-        description: error instanceof Error ? error.message : "Failed to update roles",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update roles",
       });
     } finally {
       setIsSavingRoles(false);

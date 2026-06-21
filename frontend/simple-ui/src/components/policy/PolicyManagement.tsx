@@ -33,9 +33,7 @@ import {
   useDisclosure,
   VStack,
 } from "@chakra-ui/react";
-import { useToastWithDeduplication } from "../../utils/toast";
-
-type ToastFn = ReturnType<typeof useToastWithDeduplication>;
+import { showToast } from "../../utils/toast";
 import {
   AddIcon,
   DeleteIcon,
@@ -148,7 +146,6 @@ export interface PolicyManagementProps {
 }
 
 export default function PolicyManagement({ canManage }: PolicyManagementProps) {
-  const toast = useToastWithDeduplication();
   const [tab, setTab] = useState<PolicySectionId>("pii");
 
   useEffect(() => {
@@ -215,14 +212,14 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
           </TabList>
           <TabPanels>
             <TabPanel px={0} pt={6}>
-              <PiiTypesPanel toast={toast} />
+              <PiiTypesPanel />
             </TabPanel>
             <TabPanel px={0} pt={6}>
-              <PoliciesPanel toast={toast} />
+              <PoliciesPanel />
             </TabPanel>
             {SHOW_POLICY_AUDIT_TAB ? (
               <TabPanel px={0} pt={6}>
-                <AuditPanel toast={toast} />
+                <AuditPanel />
               </TabPanel>
             ) : null}
           </TabPanels>
@@ -232,7 +229,7 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
   );
 }
 
-function PoliciesPanel({ toast }: { toast: ToastFn }) {
+function PoliciesPanel() {
   const [allPolicies, setAllPolicies] = useState<PolicyOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -271,14 +268,12 @@ function PoliciesPanel({ toast }: { toast: ToastFn }) {
       setPiiOptions(acc);
     } catch (e: unknown) {
       setPiiOptions([]);
-      toast({
-        title: getPolicyApiErrorMessage(e, "Failed to load PII types for the policy form"),
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: getPolicyApiErrorMessage(e, "Failed to load PII types for the policy form"),
       });
     }
-  }, [toast]);
+  }, []);
 
   const reloadPolicies = useCallback(async () => {
     setLoading(true);
@@ -378,7 +373,7 @@ function PoliciesPanel({ toast }: { toast: ToastFn }) {
     setDeleting(true);
     try {
       await policyService.deletePolicy(deleteTarget.policy_id);
-      toast({ title: "Policy deleted", status: "success", duration: 2500 });
+      showToast({ type: "success", message: "Policy deleted" });
       confirmDeleteModal.onClose();
       if (viewPolicyId === deleteTarget.policy_id) {
         closePolicyView();
@@ -390,11 +385,9 @@ function PoliciesPanel({ toast }: { toast: ToastFn }) {
       setDeleteTarget(null);
       await reloadPolicies();
     } catch (e: unknown) {
-      toast({
-        title: getPolicyApiErrorMessage(e, "Could not delete policy"),
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: getPolicyApiErrorMessage(e, "Could not delete policy"),
       });
     } finally {
       setDeleting(false);
@@ -434,13 +427,12 @@ function PoliciesPanel({ toast }: { toast: ToastFn }) {
     setPolicyStatusBusyId(row.policy_id);
     try {
       await policyService.setPolicyStatus(row.policy_id, !row.is_active);
-      toast({ title: "Status updated", status: "success", duration: 2500 });
+      showToast({ type: "success", message: "Status updated" });
       void reloadPolicies();
     } catch (e: unknown) {
-      toast({
-        title: getPolicyApiErrorMessage(e, "Could not update status"),
-        status: "error",
-        duration: 4000,
+      showToast({
+        type: "error",
+        message: getPolicyApiErrorMessage(e, "Could not update status"),
       });
     } finally {
       setPolicyStatusBusyId(null);
@@ -731,7 +723,7 @@ function PoliciesPanel({ toast }: { toast: ToastFn }) {
           requestDelete(policy);
         }}
         onError={(msg) =>
-          toast({ title: msg, status: "error", duration: 5000, isClosable: true })
+          showToast({ type: "error", message: msg })
         }
       />
 
@@ -745,10 +737,10 @@ function PoliciesPanel({ toast }: { toast: ToastFn }) {
           modal.onClose();
           void reloadPolicies();
           void loadPiiOptions();
-          toast({ title: "Saved", status: "success", duration: 2000 });
+          showToast({ type: "success", message: "Saved" });
         }}
         onError={(msg) =>
-          toast({ title: msg, status: "error", duration: 5000, isClosable: true })
+          showToast({ type: "error", message: msg })
         }
       />
 
@@ -1328,7 +1320,7 @@ function PiiTypeDetailModal({
   );
 }
 
-function PiiTypesPanel({ toast }: { toast: ToastFn }) {
+function PiiTypesPanel() {
   const [allTypes, setAllTypes] = useState<PiiTypeOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1452,10 +1444,9 @@ function PiiTypesPanel({ toast }: { toast: ToastFn }) {
         setRegex(p.regex_pattern);
         setMask(p.mask_format as MaskFormat);
       } catch (e: unknown) {
-        toast({
-          title: getPolicyApiErrorMessage(e, "Could not load PII type (GET by id)"),
-          status: "error",
-          duration: 4000,
+        showToast({
+          type: "error",
+          message: getPolicyApiErrorMessage(e, "Could not load PII type (GET by id)"),
         });
         setLabel(row.pii_type_label);
         setRegex(row.regex_pattern);
@@ -1469,14 +1460,14 @@ function PiiTypesPanel({ toast }: { toast: ToastFn }) {
 
   const save = async () => {
     if (!label.trim() || !regex.trim()) {
-      toast({ title: "Label and regex are required", status: "warning" });
+      showToast({ type: "warning", message: "Label and regex are required" });
       return;
     }
     const example_values = parseDelimitedValues(examples);
     if ((!editing || example_values.length > 0) && example_values.length < 3) {
-      toast({
-        title: "Provide at least three example values when using the example field",
-        status: "warning",
+      showToast({
+        type: "warning",
+        message: "Provide at least three example values when using the example field",
       });
       return;
     }
@@ -1497,15 +1488,13 @@ function PiiTypesPanel({ toast }: { toast: ToastFn }) {
           mask_format: mask,
         });
       }
-      toast({ title: "Saved", status: "success", duration: 2000 });
+      showToast({ type: "success", message: "Saved" });
       modal.onClose();
       void reloadPiiTypes();
     } catch (e: unknown) {
-      toast({
-        title: getPolicyApiErrorMessage(e, "Save failed"),
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: getPolicyApiErrorMessage(e, "Save failed"),
       });
     } finally {
       setSaving(false);
@@ -1522,15 +1511,14 @@ function PiiTypesPanel({ toast }: { toast: ToastFn }) {
     setDeleting(true);
     try {
       await policyService.deletePiiType(deleteTarget.pii_type_id);
-      toast({ title: "Deleted", status: "success", duration: 2000 });
+      showToast({ type: "success", message: "Deleted" });
       confirmDel.onClose();
       setDeleteTarget(null);
       void reloadPiiTypes();
     } catch (e: unknown) {
-      toast({
-        title: getPolicyApiErrorMessage(e, "Delete failed (type may be in use)"),
-        status: "error",
-        duration: 5000,
+      showToast({
+        type: "error",
+        message: getPolicyApiErrorMessage(e, "Delete failed (type may be in use)"),
       });
     } finally {
       setDeleting(false);
@@ -1729,7 +1717,7 @@ function PiiTypesPanel({ toast }: { toast: ToastFn }) {
           openEdit(row);
         }}
         onError={(msg) =>
-          toast({ title: msg, status: "error", duration: 5000, isClosable: true })
+          showToast({ type: "error", message: msg })
         }
       />
 
@@ -1816,7 +1804,7 @@ function PiiTypesPanel({ toast }: { toast: ToastFn }) {
   );
 }
 
-function AuditPanel({ toast }: { toast: ToastFn }) {
+function AuditPanel() {
   const [items, setItems] = useState<AuditLogOut[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, limit: 50 });
   const [loading, setLoading] = useState(true);
@@ -1912,9 +1900,9 @@ function AuditPanel({ toast }: { toast: ToastFn }) {
       setDetailJson(JSON.stringify(res.data.trace_json ?? res.data, null, 2));
       detailModal.onOpen();
     } catch (e: unknown) {
-      toast({
-        title: getPolicyApiErrorMessage(e, "Could not load log detail"),
-        status: "error",
+      showToast({
+        type: "error",
+        message: getPolicyApiErrorMessage(e, "Could not load log detail"),
       });
     }
   };

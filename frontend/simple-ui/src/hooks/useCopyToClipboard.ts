@@ -1,7 +1,7 @@
 // Clipboard and file-download helpers for service page response actions
 
 import { useCallback } from "react";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 
 export function downloadTextFile(
   content: string,
@@ -20,18 +20,10 @@ export function downloadTextFile(
 }
 
 export function useCopyToClipboard() {
-  const toast = useToastWithDeduplication();
-
   const copy = useCallback(
     async (text: string, successDescription = "Copied to clipboard.") => {
       const notifySuccess = () => {
-        toast({
-          title: "Copied to Clipboard",
-          description: successDescription,
-          status: "success",
-          duration: 2000,
-          isClosable: true,
-        });
+        showToast({ type: "success", message: successDescription });
       };
 
       const fallbackCopy = () => {
@@ -43,12 +35,9 @@ export function useCopyToClipboard() {
           document.execCommand("copy");
           notifySuccess();
         } catch {
-          toast({
-            title: "Copy Failed",
-            description: "Failed to copy text to clipboard.",
-            status: "error",
-            duration: 3000,
-            isClosable: true,
+          showToast({
+            type: "error",
+            message: "Failed to copy text to clipboard.",
           });
         }
         document.body.removeChild(textArea);
@@ -65,7 +54,7 @@ export function useCopyToClipboard() {
         fallbackCopy();
       }
     },
-    [toast]
+    []
   );
 
   const download = useCallback(
@@ -78,24 +67,15 @@ export function useCopyToClipboard() {
         options ?? {};
       try {
         downloadTextFile(content, filename, mimeType);
-        toast({
-          title: "Download Started",
-          description: successDescription,
-          status: "success",
-          duration: 2000,
-          isClosable: true,
-        });
+        showToast({ type: "success", message: successDescription });
       } catch {
-        toast({
-          title: "Download Failed",
-          description: "Failed to download file.",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "Failed to download file.",
         });
       }
     },
-    [toast]
+    []
   );
 
   return { copy, download };

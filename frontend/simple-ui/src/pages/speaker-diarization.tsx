@@ -17,12 +17,11 @@ import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } fr
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { parseError } from "../utils/errorHandler";
 import { SPEAKER_DIARIZATION_ERRORS } from "../config/constants";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("speaker-diarization");
 
 const SpeakerDiarizationPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
   const [audioClearToken, setAudioClearToken] = useState(0);
@@ -46,11 +45,11 @@ const SpeakerDiarizationPage: React.FC = () => {
   const handleSubmit = async () => {
     if (!audioData) {
       const err = SPEAKER_DIARIZATION_ERRORS.FILE_REQUIRED;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (!serviceId) {
-      toast({ title: "Service Required", description: "Please select a service.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a service." });
       return;
     }
 

@@ -5,12 +5,11 @@
  */
 import { useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { useToastWithDeduplication } from '../utils/toast';
+import { showToast } from '../utils/toast';
 import authService from '../services/authService';
 
 export const useSessionExpiry = () => {
   const router = useRouter();
-  const toast = useToastWithDeduplication();
 
   /**
    * Check if session has expired and handle accordingly.
@@ -21,14 +20,7 @@ export const useSessionExpiry = () => {
     if (!authService.isAuthenticated()) {
       authService.clearAuthTokens();
       authService.clearStoredUser();
-      toast({
-        title: 'Session expired',
-        description: 'Please log in to continue.',
-        status: 'warning',
-        duration: 5000,
-        isClosable: true,
-        position: 'top',
-      });
+      showToast({ type: 'warning', message: 'Please log in to continue.' });
       router.push('/auth');
       return false;
     }
@@ -36,20 +28,16 @@ export const useSessionExpiry = () => {
     if (authService.isSessionExpired()) {
       authService.clearAuthTokens();
       authService.clearStoredUser();
-      toast({
-        title: 'Session expired',
-        description: 'Your session has expired. Please sign in again.',
-        status: 'warning',
-        duration: 5000,
-        isClosable: true,
-        position: 'top',
+      showToast({
+        type: 'warning',
+        message: 'Your session has expired. Please sign in again.',
       });
       router.push('/auth');
       return false;
     }
 
     return true;
-  }, [router, toast]);
+  }, [router]);
 
   /**
    * Check session expiry before executing an action

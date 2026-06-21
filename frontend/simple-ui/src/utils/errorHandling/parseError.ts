@@ -21,8 +21,9 @@ import {
 } from '../../config/constants';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import { combineMessages, extractMessagesFromValue } from './extractMessages';
+import type { ToastType } from '../toast';
 
-export type ToastType = 'success' | 'error' | 'warning' | 'info';
+export type { ToastType };
 
 export type ErrorHandlerService =
   | 'asr'
@@ -57,7 +58,6 @@ export interface HandleApiErrorOptions {
   service?: ErrorHandlerService;
   showOnlyMessage?: boolean;
   silent?: boolean;
-  duration?: number;
   validationDisplay?: 'combined' | 'separate';
 }
 

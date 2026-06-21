@@ -32,7 +32,8 @@ import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
 import { base64ToAudioObjectUrl } from '../utils/helpers';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
-import { useToastWithDeduplication } from '../utils/toast';
+import { showError } from '../utils/errorHandler';
+import { showToast } from '../utils/toast';
 
 type BuilderPipelineType = 'translation' | 'translation-tts';
 
@@ -43,7 +44,6 @@ type BuilderResult = {
 };
 
 const PipelineBuilderPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const router = useRouter();
   const builderAudioUrlRef = useRef<string | null>(null);
 
@@ -171,19 +171,12 @@ const PipelineBuilderPage: React.FC = () => {
       setResult(displayResult);
       setRawResponse(JSON.stringify(response, null, 2));
 
-      toast({
-        title: 'Pipeline Completed',
-        description: 'Pipeline executed successfully!',
-        status: 'success',
-        duration: 3000,
+      showToast({
+        type: 'success',
+        message: 'Pipeline executed successfully!',
       });
     } catch (error: any) {
-      toast({
-        title: 'Pipeline Failed',
-        description: error.message || 'Failed to execute pipeline',
-        status: 'error',
-        duration: 5000,
-      });
+      showError(error);
       setResult(null);
     } finally {
       setIsLoading(false);

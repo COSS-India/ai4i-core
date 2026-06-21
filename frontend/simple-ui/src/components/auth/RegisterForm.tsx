@@ -24,7 +24,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { useToastWithDeduplication } from '../../utils/toast';
+import { showToast } from '../../utils/toast';
 import { PASSWORD_POLICY, COMMON_ERRORS, UI_ERROR_MESSAGES } from '../../config/constants';
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
 import authService from '../../services/authService';
@@ -43,7 +43,6 @@ interface RegisterFormProps {
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess, isActive = true }) => {
   const { register, isLoading, error, clearError } = useAuth();
-  const toast = useToastWithDeduplication();
   const [formData, setFormData] = useState<RegisterRequest>({
     full_name: '',
     email: '',
@@ -187,13 +186,10 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       setShowConfirmPassword(false);
 
       // Show success toast — user must verify email before sign-in works.
-      toast({
-        title: "Check your email",
-        description:
+      showToast({
+        type: "success",
+        message:
           "We sent a verification link to your inbox. Click the link to activate your account, then sign in.",
-        status: "success",
-        duration: 8000,
-        isClosable: true,
       });
 
       // After successful registration, switch to login page
@@ -285,13 +281,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       }
 
       // Show error toast
-      toast({
-        title: errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 7000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: errorMessage });
     }
   };
 

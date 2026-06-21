@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToastWithDeduplication } from "../../../utils/toast";
+import { showToast } from "../../../utils/toast";
 import alertingService from "../../../services/alertingService";
 import type {
   NotificationReceiver,
@@ -22,8 +22,6 @@ const EMPTY_CREATE_FORM: NotificationReceiverCreate = {
 };
 
 export function useNotificationReceivers() {
-  const toast = useToastWithDeduplication();
-
   const [receivers, setReceivers] = useState<NotificationReceiver[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState("all");
@@ -67,20 +65,17 @@ export function useNotificationReceivers() {
       const data = await alertingService.listReceivers();
       setReceivers(data);
     } catch (error) {
-      toast({
-        title: "Error",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error
             ? error.message
             : "Failed to load notification receivers",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   // ---- Create ----
   const openCreate = () => {
@@ -115,46 +110,22 @@ export function useNotificationReceivers() {
 
   const handleCreate = async () => {
     if (!createForm.category) {
-      toast({
-        title: "Validation Error",
-        description: "Please select a category",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select a category" });
       return;
     }
     if (!createForm.severity) {
-      toast({
-        title: "Validation Error",
-        description: "Please select a severity",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select a severity" });
       return;
     }
     if (
       recipientMode === "email" &&
       (!createForm.email_to || createForm.email_to.length === 0)
     ) {
-      toast({
-        title: "Validation Error",
-        description: "At least one email address is required",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "At least one email address is required" });
       return;
     }
     if (recipientMode === "role" && !createForm.rbac_role) {
-      toast({
-        title: "Validation Error",
-        description: "Please select an RBAC role",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select an RBAC role" });
       return;
     }
     setIsCreating(true);
@@ -182,22 +153,14 @@ export function useNotificationReceivers() {
         payload.rbac_role = createForm.rbac_role;
       }
       await alertingService.createReceiver(payload);
-      toast({
-        title: "Notification Receiver Created",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Notification Receiver Created" });
       closeCreate();
       await fetchReceivers();
     } catch (error) {
-      toast({
-        title: "Create Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to create receiver",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsCreating(false);
@@ -348,27 +311,19 @@ export function useNotificationReceivers() {
       }
 
       if (Object.keys(payload).length === 0) {
-        toast({ title: "No changes", description: "Nothing to update.", status: "info", duration: 3000, isClosable: true });
+        showToast({ type: "info", message: "Nothing to update." });
         closeUpdate();
         return;
       }
       await alertingService.updateReceiver(updateItem.id, payload);
-      toast({
-        title: "Receiver Updated",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Receiver Updated" });
       closeUpdate();
       await fetchReceivers();
     } catch (error) {
-      toast({
-        title: "Update Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to update receiver",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsUpdating(false);
@@ -389,22 +344,14 @@ export function useNotificationReceivers() {
     setIsDeleting(true);
     try {
       await alertingService.deleteReceiver(deleteItem.id);
-      toast({
-        title: "Receiver Deleted",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Receiver Deleted" });
       closeDelete();
       await fetchReceivers();
     } catch (error) {
-      toast({
-        title: "Delete Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to delete receiver",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsDeleting(false);

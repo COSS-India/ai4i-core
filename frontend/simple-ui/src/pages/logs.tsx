@@ -38,7 +38,7 @@ import {
   resolveTelemetryTenantId,
   TelemetryTraceRecord,
 } from "../services/observabilityService";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
 import { listTenants } from "../services/tenantService";
 import {
@@ -95,7 +95,6 @@ const convertToISOFormat = (datetimeLocal: string): string => {
 };
 
 const LogsPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
 
@@ -147,55 +146,43 @@ const LogsPage: React.FC = () => {
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view logs.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please log in to view logs.",
       });
       router.push("/auth");
     }
-  }, [isAuthenticated, authLoading, router, toast]);
+  }, [isAuthenticated, authLoading, router]);
 
   // Redirect if user has USER or GUEST role or doesn't have tenant_id (but allow admins)
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
       // Hide logs for users with USER or GUEST role
       if (isUser || isGuest) {
-        toast({
-          title: "Access Denied",
-          description: "You do not have permission to view logs.",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "You do not have permission to view logs.",
         });
         router.push("/");
         return;
       }
       if (isTenantAdmin && !authTenantId) {
-        toast({
-          title: "Access Denied",
-          description: "Your account is not linked to a tenant. Contact an administrator.",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "Your account is not linked to a tenant. Contact an administrator.",
         });
         router.push("/");
         return;
       }
       if (!authTenantId && !isAdmin) {
-        toast({
-          title: "Access Denied",
-          description: "You need to be assigned to a tenant to view logs.",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "You need to be assigned to a tenant to view logs.",
         });
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, isTenantAdmin, authTenantId, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, isTenantAdmin, authTenantId, router]);
 
   // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
@@ -278,15 +265,12 @@ const LogsPage: React.FC = () => {
         forceFrontendSessionEnd();
         return;
       }
-      toast({
-        title: "Error Loading Traces",
-        description: message,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message,
       });
     }
-  }, [tracesError, toast]);
+  }, [tracesError]);
 
   // Set default time range (last 1 hour) on initial load
   useEffect(() => {

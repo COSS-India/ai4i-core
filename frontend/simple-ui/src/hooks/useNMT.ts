@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from '../utils/toast';
+import { showToast } from '../utils/toast';
 import { performNMTInference } from '../services/nmtService';
 import { getRemainingTryItRequests } from '../services/tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
@@ -30,9 +30,6 @@ export const useNMT = (): UseNMTReturn => {
 
   // Only show "text exceeds limit" toast once per exceed (not every keystroke)
   const hasShownTextLimitToastRef = useRef(false);
-
-  // Toast hook
-  const toast = useToastWithDeduplication();
 
   // NMT inference mutation
   const nmtMutation = useMutation({
@@ -66,13 +63,7 @@ export const useNMT = (): UseNMTReturn => {
         const nmtErr = NMT_ERRORS.TRANSLATION_FAILED;
         setError(nmtErr.description);
         setFetching(false);
-        toast({
-          title: nmtErr.title,
-          description: nmtErr.description,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: nmtErr.description });
       }
     },
     onError: (error: any) => {
@@ -94,116 +85,56 @@ export const useNMT = (): UseNMTReturn => {
     const trimmed = text?.trim() ?? '';
 
     if (!selectedServiceId?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a translation service.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a translation service.' });
       return;
     }
     if (!languagePair.sourceLanguage?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a source language.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a source language.' });
       return;
     }
     if (!languagePair.targetLanguage?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a target language.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a target language.' });
       return;
     }
 
     if (!text) {
       const err = NMT_ERRORS.NO_TEXT_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (trimmed === '') {
       const err = NMT_ERRORS.EMPTY_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (trimmed.length < MIN_NMT_TEXT_LENGTH) {
       const err = NMT_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (text.length > MAX_TEXT_LENGTH) {
       const err = NMT_ERRORS.TEXT_TOO_LONG;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (!VALID_NMT_CHAR_REGEX.test(trimmed)) {
       const err = NMT_ERRORS.INVALID_CHARACTERS;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (languagePair.sourceLanguage === languagePair.targetLanguage) {
       const err = NMT_ERRORS.SAME_LANGUAGE_ERROR;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (isAnonymousUser() && getRemainingTryItRequests() <= 0) {
-      toast({
-        title: 'Rate limit reached',
-        description: UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT,
-        status: 'warning',
-        duration: 6000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT });
       setError(UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT);
       return;
     }
@@ -216,7 +147,7 @@ export const useNMT = (): UseNMTReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [nmtMutation, languagePair, toast, selectedServiceId]);
+  }, [nmtMutation, languagePair, selectedServiceId]);
 
   // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
@@ -226,19 +157,12 @@ export const useNMT = (): UseNMTReturn => {
       if (!hasShownTextLimitToastRef.current) {
         hasShownTextLimitToastRef.current = true;
         const err = NMT_ERRORS.TEXT_TOO_LONG;
-        toast({
-          id: 'nmt-text-exceeds-limit',
-          title: err.title,
-          description: err.description,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'warning', message: err.description });
       }
     } else {
       hasShownTextLimitToastRef.current = false;
     }
-  }, [toast]);
+  }, []);
 
   // Set language pair
   const setLanguagePairWithValidation = useCallback((pair: LanguagePair) => {

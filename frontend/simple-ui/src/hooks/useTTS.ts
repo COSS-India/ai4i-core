@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from '../utils/toast';
+import { showToast } from '../utils/toast';
 import { performTTSInference } from '../services/ttsService';
 import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
@@ -50,9 +50,6 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
   const hasShownTextLimitToastRef = useRef(false);
   // Blob URL for current audio (CSP allows blob: for media-src; data: is blocked)
   const audioObjectUrlRef = useRef<string | null>(null);
-
-  // Toast hook
-  const toast = useToastWithDeduplication();
 
   // Revoke blob URL on unmount to avoid leaks
   useEffect(() => {
@@ -113,13 +110,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
         const ttsErr = TTS_ERRORS.AUDIO_GEN_FAILED;
         setError(ttsErr.description);
         setFetching(false);
-        toast({
-          title: ttsErr.title,
-          description: ttsErr.description,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: ttsErr.description });
       }
     },
     onError: (error: any) => {
@@ -139,116 +130,56 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
 
     // Mandatory fields: service, language, voice (gender), audio format, text
     if (!serviceId?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a TTS service.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a TTS service.' });
       return;
     }
     if (!language?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a language.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a language.' });
       return;
     }
     if (!gender || (gender !== 'male' && gender !== 'female')) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a voice.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a voice.' });
       return;
     }
     if (!audioFormat?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select an audio format.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select an audio format.' });
       return;
     }
 
     if (!text) {
       const err = TTS_ERRORS.NO_TEXT_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (trimmed === '') {
       const err = TTS_ERRORS.EMPTY_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (trimmed.length < MIN_TTS_TEXT_LENGTH) {
       const err = TTS_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (text.length > MAX_TEXT_LENGTH) {
       const err = TTS_ERRORS.TEXT_TOO_LONG;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     if (!VALID_TTS_CHAR_REGEX.test(trimmed)) {
       const err = TTS_ERRORS.INVALID_CHARACTERS;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
     // Validate that a service is selected
     const effectiveServiceId = serviceId || getServiceIdForLanguage(language);
     if (!effectiveServiceId) {
-      toast({
-        title: 'Service Required',
-        description: 'Please select a TTS service.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'warning', message: 'Please select a TTS service.' });
       return;
     }
 
@@ -260,7 +191,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [ttsMutation, toast, serviceId, language, gender, audioFormat]);
+  }, [ttsMutation, serviceId, language, gender, audioFormat]);
 
   // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
@@ -270,19 +201,12 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       if (!hasShownTextLimitToastRef.current) {
         hasShownTextLimitToastRef.current = true;
         const err = TTS_ERRORS.TEXT_TOO_LONG;
-        toast({
-          id: 'tts-text-exceeds-limit',
-          title: err.title,
-          description: err.description,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'warning', message: err.description });
       }
     } else {
       hasShownTextLimitToastRef.current = false;
     }
-  }, [toast]);
+  }, []);
 
   // Set language with validation
   const setLanguageWithValidation = useCallback((newLanguage: string) => {
@@ -313,16 +237,10 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
         console.error('Error playing audio:', err);
         const isFormatError = err?.name === 'NotSupportedError' || err?.message?.toLowerCase().includes('format') || err?.message?.toLowerCase().includes('supported');
         const ttsErr = isFormatError ? TTS_ERRORS.AUDIO_FORMAT_ERROR : TTS_ERRORS.PLAYBACK_FAILED;
-        toast({
-          title: ttsErr.title,
-          description: ttsErr.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: ttsErr.description });
       });
     }
-  }, [audio, toast]);
+  }, [audio]);
 
   // Pause audio
   const pauseAudio = useCallback(() => {
@@ -345,16 +263,10 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       } catch (err) {
         console.error('Error downloading audio:', err);
         const ttsErr = TTS_ERRORS.DOWNLOAD_FAILED;
-        toast({
-          title: ttsErr.title,
-          description: ttsErr.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: ttsErr.description });
       }
     }
-  }, [audio, audioFormat, toast]);
+  }, [audio, audioFormat]);
 
   return {
     // State

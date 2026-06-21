@@ -49,7 +49,7 @@ import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { showError } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
@@ -100,7 +100,6 @@ const ServicesManagementPage: React.FC = () => {
   const { isOpen: isUnpublishConfirmOpen, onOpen: onUnpublishConfirmOpen, onClose: onUnpublishConfirmClose } = useDisclosure();
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
   const cancelUnpublishRef = useRef<HTMLButtonElement>(null);
-  const toast = useToastWithDeduplication();
   const { user } = useAuth();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const viewTabIndex = isRegistryReadOnly ? 1 : 2;
@@ -165,16 +164,13 @@ const ServicesManagementPage: React.FC = () => {
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
     if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
-      toast({
-        title: "Access Denied",
-        description: "You do not have access to Services Management.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "You do not have access to Services Management.",
       });
       router.push('/');
     }
-  }, [user, router, toast]);
+  }, [user, router]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
   const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelDetails | null>(null);
 
@@ -199,7 +195,7 @@ const ServicesManagementPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus, toast]);
+  }, [filterTaskType, filterStatus]);
 
   useEffect(() => { fetchServices(); }, [fetchServices]);
 
@@ -397,12 +393,9 @@ const ServicesManagementPage: React.FC = () => {
         }));
       } catch (error: any) {
         console.error("Failed to fetch model details:", error);
-        toast({
-          title: "Failed to Load Model",
-          description: error instanceof Error ? error.message : "Failed to fetch model details",
-          status: "warning",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "warning",
+          message: error instanceof Error ? error.message : "Failed to fetch model details",
         });
       } finally {
         setIsLoadingModels(false);
@@ -461,12 +454,9 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
-      toast({
-        title: "Service created",
-        description: "Service has been created successfully.",
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Service has been created successfully.",
       });
 
       // Reset form
@@ -543,12 +533,9 @@ const ServicesManagementPage: React.FC = () => {
     if (!checkSessionExpiry()) return;
 
     if (!selectedService?.serviceId) {
-      toast({
-        title: "Update Failed",
-        description: "Service ID is required for update",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required for update",
       });
       return;
     }
@@ -574,12 +561,9 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
-      toast({
-        title: "Service Updated",
-        description: "Service has been updated successfully",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Service has been updated successfully",
       });
 
       setSelectedService(updatedService);
@@ -622,13 +606,10 @@ const ServicesManagementPage: React.FC = () => {
           typeof modelDetails.versionStatus === "string" &&
           modelDetails.versionStatus.toLowerCase() === "deprecated";
         if (isDeprecated) {
-          toast({
-            title: "Publish blocked",
-            description:
+          showToast({
+            type: "error",
+            message:
               "This service cannot be published because its associated model version is deprecated. Please restore the model to ACTIVE before publishing the service.",
-            status: "error",
-            duration: 6000,
-            isClosable: true,
           });
           return;
         }
@@ -641,12 +622,9 @@ const ServicesManagementPage: React.FC = () => {
     }
 
     if (!service.serviceId) {
-      toast({
-        title: "Publish Failed",
-        description: "Service ID is required",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required",
       });
       return;
     }
@@ -660,12 +638,9 @@ const ServicesManagementPage: React.FC = () => {
         isPublished: true,
       });
 
-      toast({
-        title: "Service published",
-        description: `${service.name || service.serviceId} has been published successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${service.name || service.serviceId} has been published successfully.`,
       });
 
       // Invalidate all service-related queries to refresh service lists across all pages
@@ -698,12 +673,9 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleUnpublishService = async (service: Service) => {
     if (!service.serviceId) {
-      toast({
-        title: "Unpublish Failed",
-        description: "Service ID is required",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required",
       });
       return;
     }
@@ -717,12 +689,9 @@ const ServicesManagementPage: React.FC = () => {
         isPublished: false,
       });
 
-      toast({
-        title: "Service unpublished",
-        description: `${service.name || service.serviceId} has been unpublished successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${service.name || service.serviceId} has been unpublished successfully.`,
       });
 
       // Invalidate all service-related queries to refresh service lists across all pages
@@ -761,12 +730,9 @@ const ServicesManagementPage: React.FC = () => {
   const handleDeleteConfirm = async () => {
     if (!checkSessionExpiry()) return;
     if (!serviceToDelete?.serviceId) {
-      toast({
-        title: "Delete Failed",
-        description: "Service ID is required for deletion",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required for deletion",
       });
       onClose();
       return;
@@ -774,12 +740,9 @@ const ServicesManagementPage: React.FC = () => {
     setDeletingServiceUuid(serviceToDelete.serviceId);
     try {
       await deleteService(serviceToDelete.serviceId);
-      toast({
-        title: "Service deleted",
-        description: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
       });
       queryClient.invalidateQueries({ queryKey: ["asr-services"] });
       queryClient.invalidateQueries({ queryKey: ["tts-services"] });

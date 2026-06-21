@@ -16,7 +16,7 @@ import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { parseNerEntities } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("ner");
 
@@ -32,7 +32,6 @@ const getEntityColor = (label: string) => {
 };
 
 const NERPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("");
   const [fetching, setFetching] = useState(false);
@@ -65,25 +64,25 @@ const NERPage: React.FC = () => {
     const trimmedText = inputText.trim();
     if (!trimmedText) {
       const err = NER_ERRORS.TEXT_REQUIRED;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_SHORT;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (trimmedText.length > MAX_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_LONG;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (!selectedServiceId) {
-      toast({ title: "No Service Selected", description: "Please select a NER service.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a NER service." });
       return;
     }
     if (!sourceLanguage?.trim()) {
-      toast({ title: "Language Required", description: "Please select a language.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a language." });
       return;
     }
 

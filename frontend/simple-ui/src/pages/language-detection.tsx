@@ -22,7 +22,7 @@ import {
 } from "../services/languageDetectionService";
 import { parseLanguagePredictions } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("language-detection");
 
@@ -32,7 +32,6 @@ const getPredictionColor = (idx: number) => {
 };
 
 const LanguageDetectionPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
   const [fetching, setFetching] = useState(false);
@@ -64,21 +63,21 @@ const LanguageDetectionPage: React.FC = () => {
     const text = trimmedText;
     if (!text) {
       const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (text.length < MIN_LANGUAGE_DETECTION_TEXT_LENGTH) {
       const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_SHORT;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (text.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH) {
       const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (!selectedServiceId) {
-      toast({ title: "No Service Selected", description: "Please select a language detection service.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a language detection service." });
       return;
     }
 

@@ -41,12 +41,11 @@ import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
 import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
-import { useToastWithDeduplication } from "../utils/toast";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("pipeline");
 
 const PipelinePage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated } = useAuth();
   const [sourceLanguage, setSourceLanguage] = useState("");
@@ -109,22 +108,16 @@ const PipelinePage: React.FC = () => {
 
   const ensureConfigOrToast = () => {
     if (!sourceLanguage?.trim() || !targetLanguage?.trim()) {
-      toast({
-        title: "Language Required",
-        description: "Please select both source and target languages before recording or uploading audio.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please select both source and target languages before recording or uploading audio.",
       });
       return false;
     }
     if (!asrServiceId?.trim() || !nmtServiceId?.trim() || !ttsServiceId?.trim()) {
-      toast({
-        title: "Service Selection Required",
-        description: "Please select ASR, NMT, and TTS services before recording or uploading audio.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please select ASR, NMT, and TTS services before recording or uploading audio.",
       });
       return false;
     }
@@ -194,12 +187,9 @@ const PipelinePage: React.FC = () => {
       return;
     }
     if (!pendingAudio) {
-      toast({
-        title: "Audio Required",
-        description: "Please record or upload an audio file before running the pipeline.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please record or upload an audio file before running the pipeline.",
       });
       return;
     }
