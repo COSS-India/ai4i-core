@@ -11,6 +11,7 @@ from pydantic import EmailStr
 
 from app.core.config import settings
 from app.core.responses import success_response
+from app.utils.masking import mask_email
 from app.dependencies.auth import get_current_user, get_current_user_id
 from app.dependencies.services import get_auth_service
 from app.models.user import User
@@ -62,7 +63,7 @@ async def register(
     )
     return success_response(data={
         "user_id": str(user.id),
-        "email": user.email,
+        "email": mask_email(user.email),
         "username": user.username,
         "message": (
             "Account created. Check your inbox for a verification link to "

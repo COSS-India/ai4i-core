@@ -25,8 +25,11 @@ class TenantRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     async def get_by_email(self, email: str) -> Optional[Tenant]:
+        # email is stored as deterministic, lower-normalised ciphertext; the
+        # column bind processor encrypts the parameter so equality matches
+        # case-insensitively without a SQL lower() on the ciphertext.
         result = await self._db.execute(
-            select(Tenant).where(func.lower(Tenant.email) == email.lower().strip())
+            select(Tenant).where(Tenant.email == email)
         )
         return result.scalar_one_or_none()
 

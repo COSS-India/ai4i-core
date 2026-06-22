@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from app.core.permission_checker import PermissionChecker, set_global_endpoint_permission_map
+from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
 from app.core.database import close_database, init_database
@@ -40,6 +41,10 @@ async def lifespan(app: FastAPI):
 
     if settings.environment != ENV_DEVELOPMENT and settings.debug:
         raise RuntimeError(f"FATAL: DEBUG=true is not allowed in {settings.environment}.")
+
+    # Fail fast on a missing/malformed PII encryption key: every email/phone
+    # bind needs it, so a bad config must crash at boot, not on the first login.
+    pii_crypto.validate_key()
 
     await init_database(
         db_url=settings.get_database_url(),
