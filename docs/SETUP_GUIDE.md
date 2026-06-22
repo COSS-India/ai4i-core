@@ -19,9 +19,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 ## Windows (WSL)
 
-On Windows, Docker Desktop runs containers inside WSL2. The `nginx-gateway` container (and every other Docker service) binds to ports inside the WSL network. If you start the frontend or application services from a native Windows terminal (PowerShell, CMD, or Windows Terminal without entering WSL), they cannot reliably reach `nginx-gateway` at `http://localhost:8080` — API calls from the Simple UI will fail even though the containers appear healthy.
-
-`nginx-gateway` also proxies API traffic to the natively-running services via `host.docker.internal` (ports 8081, 8095, 8090). Those processes must run in the same WSL environment as Docker so nginx can reach them.
+On Windows, Docker Desktop runs containers inside WSL2. The infrastructure services (PostgreSQL, Redis) run in Docker, but the three application services and the frontend all run natively. Run **all** commands from a WSL2 terminal so Docker containers and native services share the same `localhost` network.
 
 **Run the entire local setup inside WSL2.** All commands in this guide use bash syntax and apply unchanged on WSL.
 
@@ -131,33 +129,50 @@ Re-run this script any time you change the root `.env`.
 
 ## Step 4: Start Infrastructure Services
 
-> **About the gateway:** this local setup uses **nginx** as the API gateway
-> (`nginx-gateway` in `docker-compose-local.yml`, config at
-> [`infrastructure/nginx/nginx.conf`](../infrastructure/nginx/nginx.conf)).
-> It implements forward-auth via `auth_request → GET /auth/validate`, so
-> every request is authenticated at the gateway before being proxied to
-> `auth-service`, `platform-core-service`, or `inference-service`.
+### Option A: Minimal — without nginx (recommended for frontend dev)
 
-### Option A: Minimal (required services only)
+Only `postgres` and `redis` are required. The Next.js API proxy (`src/pages/api/v1/[...proxy].ts`) handles all `/api/v1/…` routing, forward-auth, and header injection directly — `nginx-gateway` is not needed for the Simple UI:
 
-Only `postgres`, `redis`, and `nginx-gateway` are strictly required for the three application services and the frontend to work:
+```bash
+docker compose -f docker-compose-local.yml up -d postgres redis
+```
+
+### Option B: Minimal — with nginx-gateway
+
+Use this option when you want to test API calls directly via `curl` or any non-Next.js client at `http://localhost:8080`, or when you need production-parity testing with the nginx forward-auth flow:
 
 ```bash
 docker compose -f docker-compose-local.yml up -d postgres redis nginx-gateway
 ```
 
-### Option B: Full observability stack (recommended)
+> **Note:** `nginx-gateway` is **not required** for the Simple UI frontend. The Next.js dev server proxies all browser requests internally. Add `nginx-gateway` only if you need to call the API from outside the Next.js layer.
 
-Adds Kafka (trace transport), OpenSearch (trace/log storage), Prometheus, Grafana, and Alertmanager:
+### Option C: Full observability stack
+
+Adds Kafka (trace transport), OpenSearch (trace/log storage), Prometheus, Grafana, and Alertmanager. These services are profile-gated in the compose file; pass `--profile` flags to activate them:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d \
+docker compose -f docker-compose-local.yml \
+  --profile logging --profile observability \
+  up -d \
   postgres redis \
   zookeeper kafka \
   opensearch opensearch-init \
   prometheus alertmanager grafana node-exporter \
-  fluent-bit opensearch-dashboards \
-  nginx-gateway
+  fluent-bit opensearch-dashboards
+```
+
+To also include `nginx-gateway` with the full observability stack, append it to the command:
+
+```bash
+docker compose -f docker-compose-local.yml \
+  --profile logging --profile observability \
+  up -d \
+  postgres redis nginx-gateway \
+  zookeeper kafka \
+  opensearch opensearch-init \
+  prometheus alertmanager grafana node-exporter \
+  fluent-bit opensearch-dashboards
 ```
 
 Wait for the core services to become healthy:
@@ -304,20 +319,13 @@ The service is ready when you see `Application startup complete`. Verify at **ht
 
 The Simple UI is a Next.js interface for testing ASR, TTS, and NMT services. See [`frontend/simple-ui/README.md`](../frontend/simple-ui/README.md) for full details.
 
-### Step 9.1: Set the API Key
+### Step 9.1: Install Dependencies and Run
 
-The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled. The one value that cannot be auto-generated is the API key — create one via the auth service once it is running, then set it:
+The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled — no manual edits are needed. The Next.js API proxy (`src/pages/api/v1/[...proxy].ts`) handles all `/api/v1/…` routing, forward-auth, and header injection directly; `nginx-gateway` is not required for the frontend.
 
-```bash
-# frontend/simple-ui/.env
-NEXT_PUBLIC_API_KEY=your_api_key_here
-```
+> If you started `nginx-gateway` (Option B above), you can also reach the API directly at `http://localhost:8080` from curl or other non-browser clients — but the Simple UI always uses port 3000.
 
-> **Note:** `nginx-gateway` must be running (`docker compose -f docker-compose-local.yml up -d nginx-gateway`) before the frontend can reach the API. It proxies all `/api/v1/…` requests to the natively-running `auth-service` (port 8081) and `platform-core-service` (port 8095).
->
-> **Windows:** Start `npm run dev` from the same WSL terminal where Docker is running. The frontend talks to `nginx-gateway` at `http://localhost:8080`; mixing a Windows-native terminal with WSL Docker breaks that path.
-
-### Step 9.2: Install Dependencies and Run
+> **Windows:** Start `npm run dev` from the same WSL terminal where the backend services are running so they all share the same `localhost` network.
 
 ```bash
 cd frontend/simple-ui
@@ -340,8 +348,8 @@ Once all services are running, use the table below to find URLs and ports.
 | Auth Service | http://localhost:8081/docs | Runs natively |
 | Platform Core Service | http://localhost:8095/docs | Runs natively |
 | Inference Service | http://localhost:8090/docs | Runs natively |
-| Simple UI | http://localhost:3000 | Runs natively (Next.js) |
-| **Nginx Gateway** | **http://localhost:8080** | **Docker — API gateway for the frontend** |
+| Simple UI | http://localhost:3000 | Runs natively (Next.js) — primary API entry point for browser clients |
+| Nginx Gateway *(optional)* | http://localhost:8080 | Docker — only if started with Option B; not required for the Simple UI |
 | Prometheus | http://localhost:9090 | Docker |
 | Alertmanager | http://localhost:9095 | Docker |
 | Grafana | http://localhost:3001 | Docker |
@@ -357,26 +365,24 @@ Once all services are running, use the table below to find URLs and ports.
 
 ## Troubleshooting
 
-### Frontend cannot reach nginx-gateway (Windows)
+### Frontend API calls fail (Windows)
 
-**Symptom:** Simple UI loads at `http://localhost:3000` but API calls fail; `curl http://localhost:8080` from PowerShell times out or is refused, while `docker compose ps` shows `nginx-gateway` as running.
+**Symptom:** Simple UI loads at `http://localhost:3000` but API calls return errors.
 
-**Cause:** Docker containers run inside WSL2, but the frontend (or application services) were started from a native Windows terminal. WSL2 and Windows maintain separate `localhost` networking in this setup.
+**Cause:** The frontend, backend services, and Docker all need to run from the same WSL2 environment so they share the same `localhost` network.
 
-**Fix:**
+**Fix:** Stop any services started from PowerShell/CMD, open a WSL terminal, and start everything (Docker infra, migrations, Python services, `npm run dev`) from there. Verify services are reachable:
 
-1. Stop any services running in PowerShell/CMD.
-2. Open a WSL terminal (`wsl` or your Ubuntu app).
-3. `cd` to the repo clone inside WSL (not a `/mnt/c/...` path unless you have no alternative).
-4. Start Docker infrastructure, then migrations, Python services, and `npm run dev` — all from WSL.
-5. Verify from the same WSL terminal:
+```bash
+curl http://localhost:8081/health   # auth-service
+curl http://localhost:8095/health   # platform-core-service
+```
 
-   ```bash
-   # nginx-gateway listening (any HTTP response means the port is reachable)
-   curl -I http://localhost:8080
-   # auth-service health (must be running before nginx can proxy auth routes)
-   curl http://localhost:8081/health
-   ```
+If you also started `nginx-gateway` (Option B), verify it is reachable from the same WSL terminal:
+
+```bash
+curl -I http://localhost:8080
+```
 
 ### Database connection errors from migrate.sh
 
@@ -455,7 +461,7 @@ netstat -ano | findstr <port>
 |---|---|---|
 | PostgreSQL, Redis, Kafka, Zookeeper | Docker Compose | `docker compose -f docker-compose-local.yml restart <service>` |
 | Prometheus, Alertmanager, Grafana, OpenSearch, Fluent Bit | Docker Compose | same |
-| `nginx-gateway` | Docker Compose | `docker compose -f docker-compose-local.yml restart nginx-gateway` |
+| `nginx-gateway` *(optional)* | Docker Compose | `docker compose -f docker-compose-local.yml restart nginx-gateway` |
 | `auth-service` | Native — uvicorn | restart the terminal process |
 | `platform-core-service` | Native — uvicorn | restart the terminal process |
 | `inference-service` | Native — python3 main.py / uvicorn | restart the terminal process |

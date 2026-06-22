@@ -55,6 +55,9 @@ services:
 
   # ── Gateway ───────────────────────────────────────────────────────────────────
 
+  # Not required for frontend dev — Next.js src/pages/api/v1/[...proxy].ts
+  # replaces it (handles routing, forward-auth, and header injection).
+  # Only needed for non-Next.js clients or production-parity testing.
   nginx-gateway:
     # Frontend-only: the gateway is what the simple-ui browser app calls into,
     # so it only needs to run when the UI is up.
