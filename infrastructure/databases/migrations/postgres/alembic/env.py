@@ -176,25 +176,39 @@ def _skip_tenants_status_enum_compare(inspected_column) -> bool:
 
 
 def _tenants_status_autogenerate_compare_result(inspected_column):
-    """Return True to suppress diff, None to defer to Alembic defaults."""
+    """Suppress the spurious tenants.status diff, else defer to Alembic defaults.
+
+    Alembic's compare_type / compare_server_default contract:
+        True  -> types/defaults DIFFER  -> emit an ALTER
+        False -> equivalent             -> no change
+        None  -> use the default comparison
+
+    To treat tenants.status as unchanged we must return ``False`` (equivalent).
+    Returning ``True`` here would do the opposite — it would FORCE the no-op
+    ALTER to be generated on every run, which is the bug this previously caused
+    (each autogenerate produced a disconnected-head migration -> "Multiple head
+    revisions are present"). The native PostgreSQL ENUM vs SQLAlchemy sa.Enum
+    mismatch is a structural Alembic false-positive, so this stays.
+    """
     if is_autogenerate and _skip_tenants_status_enum_compare(inspected_column):
-        return True
+        return False
     return None
 
 
-# Temporary autogenerate overrides for ai4iplatform_auth.tenants.status (remove after
-# revision c4e8f1a2b3d0 is applied on every environment).
+# Autogenerate overrides for ai4iplatform_auth.tenants.status.
 #
-# Why: During the tenant_status_enum migration, reflected DB metadata (legacy enum
-# labels and/or PostgreSQL default syntax) often disagrees with SQLAlchemy models
-# even when the live schema is correct. Returning True tells Alembic "treat as equal"
-# so autogenerate does not emit duplicate ALTERs; the hand-written revision
-# c4e8f1a2b3d0 owns the enum transition.
+# Why (structural, NOT transitional): tenants.status is a native PostgreSQL ENUM in
+# the database, modelled as SQLAlchemy ``sa.Enum`` in auth-service. Alembic's default
+# type/server-default comparison cannot recognise these as equivalent and so proposes
+# a redundant ``ALTER COLUMN`` on EVERY autogenerate run — even when the live schema
+# is correct. Returning False from the hooks below tells Alembic "treat as equal", so
+# autogenerate produces no spurious revision for this column.
 #
-# Removal: Delete compare_type / compare_server_default below (and their entries in
-# get_context_config_kwargs) once all DBs are on the new enum and `alembic revision
-# --autogenerate -x db=ai4iplatform_auth` no longer proposes tenants.status changes.
-# Do not keep these permanently—they would hide real drift on tenants.status later.
+# These must return False to suppress (see _tenants_status_autogenerate_compare_result).
+# Do NOT remove them: the ENUM/sa.Enum mismatch is inherent, so deleting the hooks
+# reintroduces the false-positive (which lands as a disconnected head and breaks
+# `migrate.sh upgrade` with "Multiple head revisions are present"). Scope is limited to
+# tenants.status, so real drift on other columns is still detected normally.
 
 
 def compare_server_default(
@@ -221,10 +235,8 @@ def compare_server_default(
         when ``is_autogenerate`` is true and the column is ``tenants.status``.
 
         Returns:
-            ``True``  — treat inspected and metadata defaults as equal (skip diff).
+            ``False`` — treat inspected and metadata defaults as equal (skip diff).
             ``None``  — defer to Alembic's built-in default comparison.
-
-    Temporary: remove once c4e8f1a2b3d0 is applied everywhere (see block comment above).
     """
     return _tenants_status_autogenerate_compare_result(inspected_column)
 
@@ -246,10 +258,8 @@ def compare_type(context, inspected_column, metadata_column, inspected_type, met
         ``is_autogenerate`` is true and the column is ``tenants.status``.
 
         Returns:
-            ``True``  — treat inspected and metadata types as equal (skip diff).
+            ``False`` — treat inspected and metadata types as equal (skip diff).
             ``None``  — defer to Alembic's built-in type comparison.
-
-    Temporary: remove once c4e8f1a2b3d0 is applied everywhere (see block comment above).
     """
     return _tenants_status_autogenerate_compare_result(inspected_column)
 
