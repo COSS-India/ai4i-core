@@ -73,10 +73,14 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                 value={
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="green.400" />
-                    <Text as="span">{insights.mostUsed.service}</Text>
+                    <Text as="span">{insights.mostUsed?.service ?? "—"}</Text>
                   </HStack>
                 }
-                helper={`${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`}
+                helper={
+                  insights.mostUsed
+                    ? `${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`
+                    : "—"
+                }
                 accent="gray"
               />
               <KpiCard
@@ -85,11 +89,15 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="pink.300" />
                     <Text as="span" color="orange.600">
-                      {insights.highestFailureService}
+                      {insights.highestFailureService ?? "—"}
                     </Text>
                   </HStack>
                 }
-                helper={`${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`}
+                helper={
+                  insights.highestFailureRate != null
+                    ? `${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`
+                    : "—"
+                }
                 accent="gray"
               />
             </SimpleGrid>
