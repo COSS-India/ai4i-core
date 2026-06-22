@@ -16,7 +16,7 @@ the migration has no dependency on ``pii_crypto`` and the Alembic environment
 does NOT need ``PII_ENCRYPTION_KEY`` configured.
 
 Revision ID: b7e1c9a4f2d0
-Revises: 1c2d3e4f5a6b
+Revises: d3e4f5a6b7c8
 Create Date: 2026-06-17 00:00:00.000000
 
 """
@@ -27,7 +27,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b7e1c9a4f2d0"
-down_revision: Union[str, None] = "1c2d3e4f5a6b"
+down_revision: Union[str, None] = "d3e4f5a6b7c8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
