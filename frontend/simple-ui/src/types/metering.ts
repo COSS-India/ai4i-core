@@ -122,8 +122,9 @@ export interface TenantConsumptionResponse {
 
 export interface ServiceConsumptionSummary {
   active_services: number;
-  most_used: { service: string; requests: number };
-  highest_failure_rate: { service: string; failure_rate_pct: number };
+  // null in the empty-state (no service has traffic in the window).
+  most_used: { service: string; requests: number } | null;
+  highest_failure_rate: { service: string; failure_rate_pct: number } | null;
 }
 
 export interface ServiceRow {

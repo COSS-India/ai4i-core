@@ -119,14 +119,21 @@ export const tenantConsumptionResponseSchema = z.object({
 
 export const serviceConsumptionSummarySchema = z.object({
   active_services: z.number(),
-  most_used: z.object({
-    service: z.string(),
-    requests: z.number(),
-  }),
-  highest_failure_rate: z.object({
-    service: z.string(),
-    failure_rate_pct: z.number(),
-  }),
+  // Null in the empty-state: when no service has traffic in the window there is
+  // no "most used" / "highest failure" service. The backend returns null for
+  // these (summary itself is still present), so they must be nullable here.
+  most_used: z
+    .object({
+      service: z.string(),
+      requests: z.number(),
+    })
+    .nullable(),
+  highest_failure_rate: z
+    .object({
+      service: z.string(),
+      failure_rate_pct: z.number(),
+    })
+    .nullable(),
 });
 
 export const serviceRowSchema = z.object({

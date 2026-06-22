@@ -289,9 +289,10 @@ export function buildServiceBreakdownChart(breakdown: ServiceRow[]): {
 
 export interface ServiceInsights {
   activeCount: number;
-  mostUsed: { service: string; requests: number };
-  highestFailureRate: number;
-  highestFailureService: string;
+  // null in the empty-state (no service had traffic in the window).
+  mostUsed: { service: string; requests: number } | null;
+  highestFailureRate: number | null;
+  highestFailureService: string | null;
 }
 
 /** Service tab KPI row — prefers API summary, derives from breakdown when absent. */
@@ -303,8 +304,8 @@ export function deriveServiceInsights(
     return {
       activeCount: summary.active_services,
       mostUsed: summary.most_used,
-      highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
-      highestFailureService: summary.highest_failure_rate.service,
+      highestFailureRate: summary.highest_failure_rate?.failure_rate_pct ?? null,
+      highestFailureService: summary.highest_failure_rate?.service ?? null,
     };
   }
   if (!breakdown.length) return null;
