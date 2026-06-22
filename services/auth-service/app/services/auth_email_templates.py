@@ -139,3 +139,17 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
             "when": when.strftime("%Y-%m-%d %H:%M:%S"),
         },
     )
+
+
+def render_account_deleted(user: User) -> EmailMessage:
+    """Deletion confirmation sent to the user's original email address before
+    the account is anonymised. ``user.email`` must still hold the real address
+    when this is called."""
+    return _render(
+        "account_deleted",
+        to=user.email,
+        subject="Your AI4I Platform account has been deleted",
+        ctx={
+            "display_name": _display_name(user),
+        },
+    )

@@ -3,7 +3,7 @@ Tenant ORM model.
 """
 
 import enum
-from sqlalchemy import Column, DateTime, Enum, Index, Integer, String
+from sqlalchemy import Column, DateTime, Enum, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -34,7 +34,7 @@ class Tenant(Base):
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,
-        server_default=TenantStatus.PENDING.value,
+        server_default=text("'PENDING'::tenant_status_enum"),
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)

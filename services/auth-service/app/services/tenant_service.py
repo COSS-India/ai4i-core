@@ -6,6 +6,7 @@ then shape the ORM result through a Pydantic schema. All scope enforcement,
 repository access and provisioning lives in this file.
 """
 
+import hashlib
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ import httpx
 from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
+from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
@@ -50,7 +52,7 @@ from app.schemas.tenant import (
 )
 from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
-from app.services.auth_email_templates import render_setup_link, render_verify_email
+from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
@@ -757,18 +759,36 @@ class TenantService:
         return target
 
     async def delete_tenant_user(
-        self, current_user: User, tenant_id: int, user_id: UUID
+        self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+
+        # Send deletion confirmation before masking so the email still reaches
+        # the real address. enqueue_email renders immediately, so target.email
+        # is still the original value at this point.
+        enqueue_email(
+            background_tasks,
+            self._email,
+            lambda: render_account_deleted(target),
+        )
+
+        prev_email_cipher = pii_crypto.encrypt(target.email, pii_crypto.EMAIL_CONTEXT) if target.email else None
+        prev_phone_cipher = pii_crypto.encrypt(target.phone_number, pii_crypto.PHONE_CONTEXT) if target.phone_number else None
         await self._users.update(
             target,
             {
                 "is_delete": True,
                 "is_active": False,
                 "is_tenant_active": False,
+                "full_name": f"del_{target.id}",
+                "username": f"del_{target.id}",
+                "prev_email": prev_email_cipher,
+                "email": f"del_{target.id}",
+                "prev_phone_number": prev_phone_cipher,
+                "phone_number": None,
                 "updated_by": current_user.id,
             },
         )

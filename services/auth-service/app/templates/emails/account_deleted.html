@@ -1,0 +1,24 @@
+{% extends "_base.html" %}
+{% block title %}Your AI4I Platform account has been deleted{% endblock %}
+{% block preheader %}Your AI4I Platform account has been permanently deleted.{% endblock %}
+{% block heading %}Account deleted{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px 0;">
+    Hi {{ display_name }}, your AI4I Platform account has been permanently deleted.
+  </p>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 24px 0; border-left:3px solid #ef4444; background:#fef2f2; border-radius:4px;">
+    <tr>
+      <td style="padding: 12px 14px; font-size:13px; line-height:20px; color:#7f1d1d;">
+        <strong>Wasn&rsquo;t you?</strong> Contact your administrator immediately if you did not request this deletion.
+      </td>
+    </tr>
+  </table>
+
+  <p style="margin:0; font-size:14px; color:#6b7280;">
+    All your data associated with this account has been removed. If you believe this was done in error, please reach out to your administrator.
+  </p>
+{% endblock %}
+{% block footer_extra %}
+  This is a confirmation of your AI4I Platform account deletion. If you have questions, contact your administrator.
+{% endblock %}
