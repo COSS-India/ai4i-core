@@ -18,9 +18,13 @@ Running the frontend locally required Docker to be running just for `nginx-gatew
 
 A single Next.js API route — `src/pages/api/v1/[...proxy].ts` — now does all three. It is a catch-all route on the same port 3000 the browser is already talking to. The browser sends every `/api/v1/*` request to the Next.js dev server, and the route forwards it to the right backend service — with auth if required — and streams the response back.
 
-nginx-gateway is **not deleted**. It remains in `docker-compose-local.yml` for:
-- Non-Next.js clients (curl, Postman) that need to hit the API directly at port 8080
-- Production-parity testing of the nginx forward-auth flow
+nginx-gateway has been **fully removed** from the local-dev setup:
+- The `nginx-gateway` service is **deleted** from `docker-compose-local.yml`.
+- The nginx config is **deleted** — the entire `infrastructure/nginx/` directory is gone.
+- The dev scripts no longer reference it (no `WAIT_NGINX`, no `wait_for_nginx`, no `--profile frontend` nginx arg).
+- Port **8080 is no longer used** locally; there is no gateway container anymore.
+
+Clients that previously hit the API at `:8080` (curl, Postman) should now call the backend services directly: auth-service `:8081`, platform-core `:8095`, inference `:8090`.
 
 ---
 
@@ -123,17 +127,17 @@ The three new `*_SERVICE_URL` vars are server-side only (no `NEXT_PUBLIC_` prefi
 
 ### 4. `docker-compose-local.yml` — MODIFIED
 
-Added a comment block above the `nginx-gateway:` service definition:
+The entire `nginx-gateway:` service definition has been **deleted**. There is no nginx container in the local stack anymore. The associated nginx config — `infrastructure/nginx/nginx.conf`, and the whole `infrastructure/nginx/` directory — has also been **deleted**.
 
-```yaml
-# Not required for frontend dev — Next.js src/pages/api/v1/[...proxy].ts
-# replaces it (handles routing, forward-auth, and header injection).
-# Only needed for non-Next.js clients or production-parity testing.
-nginx-gateway:
-  ...
-```
+---
 
-No structural changes to the service itself.
+### 4b. Dev scripts — MODIFIED
+
+The `scripts/dev/` helpers no longer reference nginx:
+- `scripts/dev/lib/profiles.sh` — removed `WAIT_NGINX` and the `--profile frontend` compose argument; the `frontend` profile now just runs simple-ui natively.
+- `scripts/dev/lib/health.sh` — removed `wait_for_nginx`.
+- `scripts/dev/up` — profile description and banner no longer mention a Gateway / `:8080`.
+- `scripts/dev/lib/infra.sh` — comment updated.
 
 ---
 
@@ -141,29 +145,31 @@ No structural changes to the service itself.
 
 **Windows (WSL) section** — rewritten to remove the nginx-specific warning. The old text said API calls from the Simple UI would fail if nginx-gateway was not reachable from a native Windows terminal. The new text explains that Docker containers and native services just need to share the same WSL2 `localhost` network — there is no nginx dependency.
 
-**Step 4 (Start Infrastructure Services)** — restructured from 2 options to 3:
+**Step 4 (Start Infrastructure Services)** — minimal infra is now `postgres` + `redis` only (`docker compose … up -d postgres redis`). The optional full observability stack adds the Kafka/OpenSearch/Prometheus/Grafana services. No nginx option anymore.
 
-- **Option A (new name):** Minimal without nginx — `docker compose … up -d postgres redis` — recommended for frontend development
-- **Option B (new):** With nginx-gateway — `docker compose … up -d postgres redis nginx-gateway` — for non-Next.js API clients or production-parity testing. Includes a note that nginx is not required for the Simple UI.
-- **Option C (was Option B):** Full observability stack — unchanged, with an addendum showing how to include `nginx-gateway` if wanted
+**Step 9.1 (Frontend)** — the Next.js API proxy handles all routing and forward-auth directly; nginx is not required.
 
-**Step 9.1 (Frontend)** — removed the note that said "nginx-gateway must be running before the frontend can reach the API." New text: the Next.js API proxy handles all routing and forward-auth directly; nginx is not required. Added a note that if Option B was started, the API is also reachable at `:8080` for curl testing.
+**Step 10 port table** — the `nginx-gateway` / `:8080` row has been removed.
 
-**Step 10 port table** — `nginx-gateway` row restored but marked `(optional)` with a note it is only present if started with Option B.
+**Architecture Notes table** — the `nginx-gateway` row has been removed.
 
-**Architecture Notes table** — `nginx-gateway` row restored with `(optional)` label and its own restart command.
-
-**Troubleshooting** — "Frontend cannot reach nginx-gateway (Windows)" section replaced with a generic "Frontend API calls fail (Windows)" section. The nginx-specific curl check is now a conditional addendum rather than the main fix.
+**Troubleshooting** — "Frontend cannot reach nginx-gateway (Windows)" replaced with a generic "Frontend API calls fail (Windows)" section that checks the backend services directly.
 
 ---
 
-### 6. `docs/END-TO-END-SETUP-GUIDE.md` — MODIFIED (partial)
+### 6. `docs/END-TO-END-SETUP-GUIDE.md` — MODIFIED
+
+**Architecture diagram** — the `nginx-gateway :8080` layer has been removed. The Simple UI on `:3000` now sits directly above the backend services.
+
+**Part B3 (Start Docker infrastructure)** — `nginx-gateway` removed from the `up` command; minimal infra is `postgres` + `redis`.
+
+**Part D (curl verification)** — the login (`D3`) and translate (`D4`) curls previously hit the gateway at `:8080`. They now call the services directly: auth-service `:8081` for login, inference `:8090` for the NMT call.
 
 **Part E (Frontend) — updated:**
-- Step E1 now confirms `NEXT_PUBLIC_API_URL=http://localhost:3000` is the correct expected value (not `:8080`) and explains that the Next.js dev server acts as the proxy.
-- Added a prominent note: "`nginx-gateway` is not required for the frontend. All browser API calls go to the Next.js dev server on port 3000."
+- Step E1 confirms `NEXT_PUBLIC_API_URL=http://localhost:3000` is the correct expected value (not `:8080`) and explains that the Next.js dev server acts as the proxy.
+- Removed the "Why nginx-gateway must be running" block — nginx is not required for the frontend. All browser API calls go to the Next.js dev server on port 3000.
 
-**Parts A–D and the architecture diagram** retain the original nginx-gateway references because this guide covers the full end-to-end path including curl-based verification via nginx. These sections are intentionally left unchanged as nginx is still valid for those steps.
+**Port reference / restart / troubleshooting** — `nginx-gateway` / `:8080` rows removed; references updated to the direct service ports.
 
 ---
 
@@ -176,4 +182,4 @@ docker compose -f docker-compose-local.yml up -d postgres redis
 # Then start the three services natively and npm run dev
 ```
 
-nginx-gateway is no longer in the minimum required set.
+nginx-gateway no longer exists in the local-dev setup — postgres and redis are the entire minimum required infrastructure.

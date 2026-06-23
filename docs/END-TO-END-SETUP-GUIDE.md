@@ -18,13 +18,13 @@ It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md` (al
 | Component | Location | What it does |
 |-----------|----------|----------------|
 | **NMT (Triton)** | `model-hosting/nmt-triton/` | IndicTrans2 in Docker for English ↔ Indic translation |
-| **AI4I Core** | `ai4i-core/` | Gateway, auth, platform-core, inference, Postgres, Redis |
+| **AI4I Core** | `ai4i-core/` | auth, platform-core, inference, Postgres, Redis, Simple UI |
 
 When setup is complete, you can send *“Hello, how are you?”* through the platform API and receive a Hindi translation — entirely on `localhost`.
 
 ### How it runs locally
 
-- **Docker** — PostgreSQL, Redis, nginx gateway, and the NMT Triton container
+- **Docker** — PostgreSQL, Redis, and the NMT Triton container
 - **Native Python (uvicorn)** — auth, platform-core, and inference on the Linux host
 
 > **OS support:** This setup is **Linux only** (Ubuntu tested).
@@ -157,13 +157,11 @@ node --version       # optional unless running the frontend
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  UI LAYER                                                        │
+│  UI LAYER  (native Next.js dev server)                           │
 │  Simple UI  :3000                                                │
-└───────────────────────────────┬──────────────────────────────────┘
-                                │
-┌───────────────────────────────▼──────────────────────────────────┐
-│  GATEWAY                                                         │
-│  nginx-gateway  :8080  (Docker)                                  │
+│    └─ /api/v1/* → src/pages/api/v1/[...proxy].ts                 │
+│         path routing + forward-auth (/api/v1/auth/validate)      │
+│         injects X-User-ID / X-Tenant-ID / X-Permission-IDs       │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼──────────────────────────────────┐
@@ -400,10 +398,10 @@ Creates `.env` files for auth, platform-core, inference, frontend, and Alembic.
 
 ### B3. Start Docker infrastructure (minimal)
 
-Only PostgreSQL, Redis, and nginx-gateway are required:
+Only PostgreSQL and Redis are required:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d postgres redis nginx-gateway
+docker compose -f docker-compose-local.yml up -d postgres redis
 ```
 
 Wait until healthy:
@@ -418,7 +416,6 @@ docker compose -f docker-compose-local.yml ps
 |---------|--------|
 | `ai4v-postgres` | Up **(healthy)** |
 | `ai4v-redis` | Up **(healthy)** |
-| `ai4v-nginx-gateway` | Up |
 
 ### B4. Install migration dependencies
 
@@ -558,10 +555,10 @@ curl -s -X POST http://localhost:8090/api/v1/nmt/inference \
 
 ### D3. Obtain an access token (Bearer)
 
-Gateway and UI requests use a **JWT access token** in the `Authorization: Bearer` header — not an API key. Log in through the gateway (same path as the Simple UI):
+UI requests use a **JWT access token** in the `Authorization: Bearer` header — not an API key. Log in directly against auth-service (the same endpoint the Simple UI proxy calls):
 
 ```bash
-LOGIN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+LOGIN=$(curl -s -X POST http://localhost:8081/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD","remember_me":false}')
 
@@ -572,16 +569,16 @@ export TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.
 
 **Expected:** `LOGIN` JSON includes `"access_token"` and `"refresh_token"`. `echo ${#TOKEN}` should print a large number (hundreds of characters).
 
-If login via `:8080` fails, confirm `nginx-gateway` is running and auth-service is up on `:8081` (see [Part E](#part-e--frontend-optional)).
+If login fails, confirm auth-service is up on `:8081` (see [Part E](#part-e--frontend-optional)).
 
-### D4. Translate via nginx gateway
+### D4. Translate with a Bearer token
 
-Uses the token from [D3](#d3-obtain-an-access-token-bearer).
+Uses the token from [D3](#d3-obtain-an-access-token-bearer). Calls inference-service directly on `:8090`.
 
 > **The first inference request may take 1–3 minutes** while the model loads or downloads weights.
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/nmt/inference \
+curl -s -X POST http://localhost:8090/api/v1/nmt/inference \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -601,17 +598,17 @@ curl -s -X POST http://localhost:8080/api/v1/nmt/inference \
 
 ### E1. Configure and run Simple UI
 
-The file `frontend/simple-ui/.env` was created in [B2](#b2-generate-per-service-environment-files) by `./scripts/setup-env.sh`. Confirm the gateway URL is set (no API key is required — the UI uses **Bearer JWT** after sign-in):
+The file `frontend/simple-ui/.env` was created in [B2](#b2-generate-per-service-environment-files) by `./scripts/setup-env.sh`. Confirm the API URL points at the Next.js dev server (no API key is required — the UI uses **Bearer JWT** after sign-in):
 
 ```bash
 export AI4I_LOCAL=~/ai4i-local-setup
 cd "$AI4I_LOCAL/ai4i-core/frontend/simple-ui"
 
 grep NEXT_PUBLIC_API_URL .env
-# Expected: NEXT_PUBLIC_API_URL=http://localhost:8080
+# Expected: NEXT_PUBLIC_API_URL=http://localhost:3000
 ```
 
-If needed, open `.env` in an editor (`nano .env` or `vi .env`) and set `NEXT_PUBLIC_API_URL=http://localhost:8080`. Leave other lines at their defaults.
+If needed, open `.env` in an editor (`nano .env` or `vi .env`) and set `NEXT_PUBLIC_API_URL=http://localhost:3000`. Leave other lines at their defaults.
 
 Install dependencies and start the UI:
 
@@ -623,11 +620,7 @@ npm run dev
 
 Open **http://localhost:3000** in your browser.
 
-**Why `nginx-gateway` must be running:** The UI is configured with `NEXT_PUBLIC_API_URL=http://localhost:8080`. Every API call from the browser (sign-in, NMT, etc.) goes to the **gateway on port 8080**, not directly to the Python services. If `nginx-gateway` is stopped, the UI loads but requests fail. Confirm it is up:
-
-```bash
-docker compose -f "$AI4I_LOCAL/ai4i-core/docker-compose-local.yml" ps nginx-gateway
-```
+**How browser API calls are routed:** The UI is configured with `NEXT_PUBLIC_API_URL=http://localhost:3000`. Every API call from the browser (sign-in, NMT, etc.) goes to the Next.js dev server on port 3000, where the catch-all API route `src/pages/api/v1/[...proxy].ts` does path routing, forward-auth (calling auth-service `/api/v1/auth/validate`), and proxies to the backend services (auth `:8081`, platform-core `:8095`, inference `:8090`). There is no separate gateway to run — the backend services and the Next.js dev server just need to be up.
 
 ### E2. Sign in on the UI
 
@@ -644,7 +637,7 @@ Use the default admin account created by migrations ([B5](#b5-run-database-migra
 2. Click **Sign in**.
 3. On success, you are redirected to the home page and can open **NMT** (or other services) from the menu.
 
-If sign-in fails, confirm auth-service (`:8081`), `nginx-gateway` (`:8080`), and migrations ([B5](#b5-run-database-migrations)) are complete before changing credentials.
+If sign-in fails, confirm auth-service (`:8081`), the Next.js dev server (`:3000`), and migrations ([B5](#b5-run-database-migrations)) are complete before changing credentials.
 
 ---
 
@@ -653,7 +646,6 @@ If sign-in fails, confirm auth-service (`:8081`), `nginx-gateway` (`:8080`), and
 | Service | URL | Where it runs |
 |---------|-----|---------------|
 | NMT Triton (`indictrans`) | http://localhost:8000 | Docker |
-| Nginx gateway | http://localhost:8080 | Docker |
 | Auth service | http://localhost:8081/docs | Native (uvicorn) |
 | Inference service | http://localhost:8090/docs | Native (uvicorn) |
 | Platform core | http://localhost:8095/docs | Native (uvicorn) |
@@ -699,7 +691,7 @@ docker start indictrans
 
 # Infra
 cd "$AI4I_LOCAL/ai4i-core"
-docker compose -f docker-compose-local.yml up -d postgres redis nginx-gateway
+docker compose -f docker-compose-local.yml up -d postgres redis
 
 # Then start auth :8081, platform-core :8095, inference :8090 (Part C)
 ```
@@ -731,7 +723,7 @@ docker compose -f docker-compose-local.yml down -v
 | Symptom | Fix |
 |---------|-----|
 | `cd: .../ai4i-core/services/auth-service: No such file or directory` | `AI4I_LOCAL` is unset or wrong. Run `export AI4I_LOCAL=~/ai4i-local-setup` (adjust path), then `cd "$AI4I_LOCAL/ai4i-core/services/auth-service"`. Remove a mistaken root venv: `rm -rf ~/ai4i-local-setup/ai4i-core/.venv` |
-| Gateway NMT returns `401` / unauthorized | Run [D3](#d3-obtain-an-access-token-bearer) to get a fresh `TOKEN`; pass `Authorization: Bearer $TOKEN` as in [D4](#d4-translate-via-nginx-gateway) |
+| Authenticated NMT returns `401` / unauthorized | Run [D3](#d3-obtain-an-access-token-bearer) to get a fresh `TOKEN`; pass `Authorization: Bearer $TOKEN` as in [D4](#d4-translate-with-a-bearer-token) |
 | Cloned `ai4i-core` from `master` / `main` by mistake | Re-clone with `--branch <release-tag>` from [ai4i-core releases](https://github.com/COSS-India/ai4i-core/releases), or `git fetch --tags && git checkout <release-tag>` |
 | `alembic/.env: line 6: syntax error near unexpected token 'newline'` | Root `.env` was overwritten with only a few lines, so `setup-env.sh` left placeholders like `<ALEMBIC_DB_HOST>` in `infrastructure/databases/migrations/postgres/alembic/.env`. Fix: `cp env.template .env`, edit placeholders (see B1), run `./scripts/setup-env.sh` again, then `./scripts/migrate.sh all upgrade` |
 | Migration: `password authentication failed for user postgres` / `Role postgres does not exist` | Stale Postgres volume from old install. Run `docker compose -f docker-compose-local.yml down -v`, restart infra (B3), re-run migrations (B5) |
@@ -757,7 +749,7 @@ Short codes: `en`, `hi`, `bn`, `ta`, `te`, `mr`, `gu`, `kn`, `ml`, `pa`, `or`, `
 - [ ] `./scripts/migrate.sh all upgrade` completed
 - [ ] Auth, platform-core, inference show `Application startup complete`
 - [ ] Part D2 curl returns translated `target` field
-- [ ] Part D3 login returns `access_token`; Part D4 gateway curl returns translated `target` field
+- [ ] Part D3 login returns `access_token`; Part D4 authenticated curl returns translated `target` field
 
 When all boxes are checked, your local AI4I Core + NMT stack is fully operational.
 

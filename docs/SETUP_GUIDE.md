@@ -129,25 +129,15 @@ Re-run this script any time you change the root `.env`.
 
 ## Step 4: Start Infrastructure Services
 
-### Option A: Minimal — without nginx (recommended for frontend dev)
+### Option A: Minimal (recommended)
 
-Only `postgres` and `redis` are required. The Next.js API proxy (`src/pages/api/v1/[...proxy].ts`) handles all `/api/v1/…` routing, forward-auth, and header injection directly — `nginx-gateway` is not needed for the Simple UI:
+Only `postgres` and `redis` are required. The Next.js API proxy (`src/pages/api/v1/[...proxy].ts`) handles all `/api/v1/…` routing, forward-auth, and header injection directly — the three FastAPI services and the Simple UI run natively:
 
 ```bash
 docker compose -f docker-compose-local.yml up -d postgres redis
 ```
 
-### Option B: Minimal — with nginx-gateway
-
-Use this option when you want to test API calls directly via `curl` or any non-Next.js client at `http://localhost:8080`, or when you need production-parity testing with the nginx forward-auth flow:
-
-```bash
-docker compose -f docker-compose-local.yml up -d postgres redis nginx-gateway
-```
-
-> **Note:** `nginx-gateway` is **not required** for the Simple UI frontend. The Next.js dev server proxies all browser requests internally. Add `nginx-gateway` only if you need to call the API from outside the Next.js layer.
-
-### Option C: Full observability stack
+### Option B: Full observability stack
 
 Adds Kafka (trace transport), OpenSearch (trace/log storage), Prometheus, Grafana, and Alertmanager. These services are profile-gated in the compose file; pass `--profile` flags to activate them:
 
@@ -156,19 +146,6 @@ docker compose -f docker-compose-local.yml \
   --profile logging --profile observability \
   up -d \
   postgres redis \
-  zookeeper kafka \
-  opensearch opensearch-init \
-  prometheus alertmanager grafana node-exporter \
-  fluent-bit opensearch-dashboards
-```
-
-To also include `nginx-gateway` with the full observability stack, append it to the command:
-
-```bash
-docker compose -f docker-compose-local.yml \
-  --profile logging --profile observability \
-  up -d \
-  postgres redis nginx-gateway \
   zookeeper kafka \
   opensearch opensearch-init \
   prometheus alertmanager grafana node-exporter \
@@ -321,9 +298,9 @@ The Simple UI is a Next.js interface for testing ASR, TTS, and NMT services. See
 
 ### Step 9.1: Install Dependencies and Run
 
-The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled — no manual edits are needed. The Next.js API proxy (`src/pages/api/v1/[...proxy].ts`) handles all `/api/v1/…` routing, forward-auth, and header injection directly; `nginx-gateway` is not required for the frontend.
+The `setup-env.sh` script generated `frontend/simple-ui/.env` with all defaults pre-filled — no manual edits are needed. The Next.js API proxy (`src/pages/api/v1/[...proxy].ts`) handles all `/api/v1/…` routing, forward-auth, and header injection directly, proxying to the backend services (auth `:8081`, platform-core `:8095`, inference `:8090`).
 
-> If you started `nginx-gateway` (Option B above), you can also reach the API directly at `http://localhost:8080` from curl or other non-browser clients — but the Simple UI always uses port 3000.
+> The browser only ever talks to the Next.js dev server on port 3000. To call the backend directly from curl or other non-browser clients, hit the service ports (auth `:8081`, platform-core `:8095`, inference `:8090`).
 
 > **Windows:** Start `npm run dev` from the same WSL terminal where the backend services are running so they all share the same `localhost` network.
 
@@ -349,7 +326,6 @@ Once all services are running, use the table below to find URLs and ports.
 | Platform Core Service | http://localhost:8095/docs | Runs natively |
 | Inference Service | http://localhost:8090/docs | Runs natively |
 | Simple UI | http://localhost:3000 | Runs natively (Next.js) — primary API entry point for browser clients |
-| Nginx Gateway *(optional)* | http://localhost:8080 | Docker — only if started with Option B; not required for the Simple UI |
 | Prometheus | http://localhost:9090 | Docker |
 | Alertmanager | http://localhost:9095 | Docker |
 | Grafana | http://localhost:3001 | Docker |
@@ -376,12 +352,7 @@ Once all services are running, use the table below to find URLs and ports.
 ```bash
 curl http://localhost:8081/health   # auth-service
 curl http://localhost:8095/health   # platform-core-service
-```
-
-If you also started `nginx-gateway` (Option B), verify it is reachable from the same WSL terminal:
-
-```bash
-curl -I http://localhost:8080
+curl http://localhost:8090/health   # inference-service
 ```
 
 ### Database connection errors from migrate.sh
@@ -461,7 +432,6 @@ netstat -ano | findstr <port>
 |---|---|---|
 | PostgreSQL, Redis, Kafka, Zookeeper | Docker Compose | `docker compose -f docker-compose-local.yml restart <service>` |
 | Prometheus, Alertmanager, Grafana, OpenSearch, Fluent Bit | Docker Compose | same |
-| `nginx-gateway` *(optional)* | Docker Compose | `docker compose -f docker-compose-local.yml restart nginx-gateway` |
 | `auth-service` | Native — uvicorn | restart the terminal process |
 | `platform-core-service` | Native — uvicorn | restart the terminal process |
 | `inference-service` | Native — python3 main.py / uvicorn | restart the terminal process |

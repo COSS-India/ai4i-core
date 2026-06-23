@@ -33,8 +33,7 @@ docker compose -f docker-compose-local.yml up -d \
   zookeeper kafka \
   opensearch opensearch-init \
   prometheus alertmanager grafana node-exporter \
-  fluent-bit opensearch-dashboards \
-  nginx-gateway
+  fluent-bit opensearch-dashboards
 ```
 
 Wait until core services are healthy:

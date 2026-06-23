@@ -43,11 +43,13 @@ lane** (dotted) so they never touch the business-data path.
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
 > **Note on gateways:** the production infrastructure uses
-> **APISIX** (external to this repo). The **local development setup**
-> defined by `docker-compose-local.yml` uses an **nginx** stand-in
-> (`nginx-gateway`, image `nginx:alpine`, config at
-> `infrastructure/nginx/nginx.conf`) so the same forward-auth contract can
-> be exercised without standing up APISIX. See
+> **APISIX** (external to this repo) for path routing and forward-auth.
+> In the **local development setup** defined by `docker-compose-local.yml`
+> there is no gateway container — the Simple UI's Next.js dev server proxies
+> every `/api/v1/*` request through a catch-all API route
+> (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) that performs the same
+> path routing and forward-auth (calling auth-service `/api/v1/auth/validate`)
+> and forwards to the backend services directly. See
 > [`docs/SETUP_GUIDE.md`](./docs/SETUP_GUIDE.md) for local-setup specifics.
 
 ## 🎯 Core Services
@@ -116,7 +118,7 @@ PII inference requests fail loudly instead of falling through.
 - **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
 ### Gateway & Infrastructure
-- **APISIX** — API gateway in production / staging / dev (forward-auth via `/auth/validate`; external to this repo). For local development, `docker-compose-local.yml` provides an **nginx** stand-in (`nginx-gateway`, config at `infrastructure/nginx/nginx.conf`).
+- **APISIX** — API gateway in production / staging / dev (forward-auth via `/auth/validate`; external to this repo). For local development there is no gateway container — the Simple UI's Next.js dev server proxies `/api/v1/*` through `frontend/simple-ui/src/pages/api/v1/[...proxy].ts`, which handles path routing and forward-auth.
 - **Docker Compose** — local infrastructure (`docker-compose-local.yml`)
 - **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
 - **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting
