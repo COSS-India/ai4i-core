@@ -55,6 +55,11 @@ function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
     return { target: AUTH_SERVICE, requiresAuth: !PUBLIC_AUTH_PATH.test(path) };
   }
   if (path.startsWith("/api/v1/platform-core/")) {
+    // Public by design: this prefix is platform-core's health namespace only
+    // (the health_router is mounted at /api/v1/platform-core). Business
+    // endpoints live under /api/v1/{services,metering,alerts,…} and fall
+    // through to the authenticated catch-all below. Mirrors the old nginx
+    // "Public platform-core health route" block (no auth_request).
     return { target: PLATFORM_CORE_SERVICE, requiresAuth: false };
   }
   const segment = path.split("/")[3]; // /api/v1/{segment}/...
@@ -88,7 +93,14 @@ async function callAuthValidate(
   }
 
   try {
-    const res = await fetch(validateUrl, { method: "GET", headers: reqHeaders });
+    const res = await fetch(validateUrl, {
+      method: "GET",
+      headers: reqHeaders,
+      // Don't let a hung auth-service block indefinitely (proxyTimeout only
+      // covers the upstream backend hop, not this validation fetch). The catch
+      // below maps AbortError — like any error — to { ok: false, status: 502 }.
+      signal: AbortSignal.timeout(3_000),
+    });
     if (!res.ok) {
       return { ok: false, status: res.status };
     }
@@ -129,6 +141,16 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
+  // LOCAL-DEV ONLY. next.config.js uses `output: 'standalone'`, which bundles
+  // every API route into the deployed server — so without this guard, a
+  // production client could reach /api/v1/* here and be forwarded straight to
+  // AUTH_SERVICE_URL / INFERENCE_SERVICE_URL / PLATFORM_CORE_SERVICE_URL,
+  // bypassing APISIX's rate-limiting, TLS, and IP filtering. In production
+  // APISIX owns routing; this route must never forward traffic.
+  if (process.env.NODE_ENV !== "development") {
+    return res.status(404).end();
+  }
+
   const segments = (req.query.proxy as string[]) ?? [];
   const basePath = "/api/v1/" + segments.join("/");
   // Full original request line (path + query) — faithful to nginx's $request_uri.
