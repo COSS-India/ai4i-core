@@ -1,5 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import httpProxy from "http-proxy";
+import type HttpProxy from "http-proxy";
+
+// http-proxy is a CommonJS module (module.exports = …) with `export = Server`
+// types. A default ESM import type-checks, but under Next/webpack the runtime
+// interop does NOT unwrap it ("createProxyServer is not a function"). Require it
+// directly to bypass the interop, and re-apply the types via the cast below.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const httpProxy = require("http-proxy") as {
+  createProxyServer(options?: HttpProxy.ServerOptions): HttpProxy;
+};
 
 const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || "http://localhost:8081";
 const INFERENCE_SERVICE =
@@ -56,6 +65,8 @@ function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
 }
 
 interface UserHeaders {
+  // Index signature so this is assignable to the proxy's `headers` (Record<string,string>).
+  [key: string]: string;
   "X-User-ID": string;
   "X-Tenant-ID": string;
   "X-Permission-IDs": string;
