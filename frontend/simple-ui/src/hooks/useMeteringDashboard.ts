@@ -169,8 +169,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     (isAdopterView && overviewQuery.isLoading) ||
     (isTenantView && overviewQuery.isLoading && tenantOverviewEnabled);
 
-  const requestVolumeGraph =
-    overview?.request_volume ?? serviceQuery.data?.request_volume ?? null;
+  // Request Volume chart is an Overview-only section now.
+  const requestVolumeGraph = overview?.request_volume ?? null;
 
   const isRefreshing =
     overviewQuery.isFetching ||

@@ -1,8 +1,6 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
-import time as _time
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -11,21 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
-    DOUBLE_TIME_RANGES,
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
-    WINDOW_STEP,
     build_base_selectors,
     sum_over_window,
 )
-
-_WINDOW_SECONDS: dict = {
-    "1h":  3_600,
-    "24h": 86_400,
-    "7d":  604_800,
-    "30d": 2_592_000,
-}
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +66,8 @@ class MeteringService:
 
         total_v = round(_float(raw[0]))
         success_v = round(_float(raw[1]))
-        failed_v = max(0, total_v - success_v)
         avg_rps_v = round(_float(raw[2]), 2)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
-        failure_rate = round(100 - success_rate, 2) if total_v else 0.0
 
         total_vs_prev: Optional[float] = None
         success_rate_vs_prev: Optional[float] = None
@@ -109,20 +96,9 @@ class MeteringService:
                 "vs_previous_pct": total_vs_prev,
                 "previous_count": prev_total_v,
             },
-            "successful_requests": {
-                "count": success_v,
-                "formatted": self._format_count(success_v),
-            },
-            "failed_requests": {
-                "count": failed_v,
-                "formatted": self._format_count(failed_v),
-            },
             "success_rate": {
                 "rate_pct": success_rate,
                 "vs_previous_pct": success_rate_vs_prev,
-            },
-            "failure_rate": {
-                "rate_pct": failure_rate,
             },
             "avg_rps": {
                 "value": avg_rps_v,
@@ -254,7 +230,6 @@ class MeteringService:
         _base = _ep + ',tenant!="unknown"' + (f',tenant="{tenant}"' if tenant else "")
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
-        failed_sel  = "{" + _base + ',status_code=~"[45].."' + "}"
 
         window = TIME_RANGES.get(time_range or "all")
 
@@ -269,19 +244,11 @@ class MeteringService:
                 f")"
             )
 
-        # ── Fixed-index queries (0-3, optional 4) ───────────────────────────
+        # ── Fixed-index queries ──────────────────────────────────────────────
         fixed_queries = [
             self._client.query(_by_ep(base_sel)),     # 0 total
             self._client.query(_by_ep(success_sel)),  # 1 success
-            self._client.query(_by_ep(failed_sel)),   # 2 failed
         ]
-        # prev_period = requests during the window BEFORE the current window.
-        double_window = DOUBLE_TIME_RANGES.get(time_range or "all") if window else None
-        if window and double_window:
-            prev_q = (
-                f"sum by(endpoint) (increase({_METRIC}{base_sel} offset {window}[{window}]))"
-            )
-            fixed_queries.append(self._client.query(prev_q))  # 3 prev (optional)
 
         # ── Per-service native-unit scalar queries ───────────────────────────
         # Only for tasks that have a real Prometheus Histogram _sum metric.
@@ -316,8 +283,6 @@ class MeteringService:
         # Unpack fixed results
         totals = self._endpoint_dict(_safe_list(raw[0]))
         successes = self._endpoint_dict(_safe_list(raw[1]))
-        faileds = self._endpoint_dict(_safe_list(raw[2]))
-        prevs = self._endpoint_dict(_safe_list(raw[3])) if (window and double_window) else {}
 
         # Unpack native results (start after fixed queries).
         # Only store when > 0: a 0.0 result means the metric doesn't exist yet
@@ -334,8 +299,6 @@ class MeteringService:
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
-            failed_v = faileds.get(task, 0)
-            prev_v = prevs.get(task)
 
             if cfg.get("use_success_as_native"):
                 native_v = success_v or None
@@ -346,20 +309,12 @@ class MeteringService:
                 else:
                     native_v = raw_native
 
-            vs_prev_pct = None
-            if prev_v is not None and prev_v > 0:
-                vs_prev_pct = round((total_v - prev_v) / prev_v * 100, 1)
-
             services.append({
                 "service": cfg["display_name"],
-                "metering_unit": cfg["metering_unit"],
                 "requests": total_v,
                 "native_units": native_v,
                 "native_unit_suffix": cfg["native_unit_suffix"],
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
-                "failed": failed_v,
-                "vs_prev_period_pct": vs_prev_pct,
-                "prev_requests": prev_v,
             })
 
         services.sort(key=lambda s: s["requests"], reverse=True)
@@ -412,54 +367,6 @@ class MeteringService:
             "formatted_grand_total": self._format_count(grand_total),
             "total_tenant_count": len(all_tenants),
             "filters": {"limit": limit, "time_range": time_range or "all"},
-        }
-
-    async def throughput(
-        self,
-        inference_only: bool,
-        tenant: Optional[str],
-        service_id: Optional[str],
-        time_range: Optional[str],
-    ) -> dict:
-        label_str = build_base_selectors(inference_only, tenant, service_id)
-        metric = f"{_METRIC}{label_str}"
-        window = TIME_RANGES.get(time_range or "all")
-
-        # Avg RPS: rate() already returns per-second rate averaged over the window.
-        avg_q = f"sum(rate({metric}[{window}]))" if window else f"sum(rate({metric}[5m]))"
-        avg_rps = round(await self._client.scalar(avg_q), 4)
-
-        # Peak RPS: one range query over the window, find the max point.
-        peak_rps: Optional[float] = None
-        peak_at: Optional[str] = None
-
-        if window and time_range in WINDOW_STEP:
-            now = _time.time()
-            w_secs = _WINDOW_SECONDS[time_range]
-            step = WINDOW_STEP[time_range]
-            range_results = await self._client.query_range(
-                f"sum(rate({metric}[1m]))",
-                start=now - w_secs,
-                end=now,
-                step=step,
-            )
-            if range_results:
-                points = range_results[0].get("values", [])
-                if points:
-                    ts, val = max(points, key=lambda p: float(p[1]))
-                    peak_rps = round(float(val), 4)
-                    peak_at = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        return {
-            "avg_rps": avg_rps,
-            "peak_rps": peak_rps,
-            "peak_at": peak_at,
-            "filters": {
-                "inference_only": inference_only,
-                "tenant": tenant,
-                "service_id": service_id,
-                "time_range": time_range or "all",
-            },
         }
 
     async def usage_by_tenant_service(

@@ -46,7 +46,6 @@ export interface TenantRow {
   rank: number;
   tenant: string;
   organisation?: string | null;
-  plan?: string | null;
   requests: number;
   formatted_requests: string;
   percentage: number;
@@ -65,34 +64,17 @@ export interface UsageConcentration {
   grand_total: number;
 }
 
-export interface ThroughputData {
-  avg_rps: number;
-  peak_rps?: number | null;
-  peak_at?: string | null;
-}
-
-export interface RequestHealth {
-  total: number;
-  successful: number;
-  failed: number;
-  total_formatted: string;
-  successful_formatted: string;
-  failed_formatted: string;
-  success_rate_pct: number;
-  failure_rate_pct: number;
-}
-
 export interface OverviewResponse {
   scope: MeteringScope;
   kpis: MeteringCell[];
-  active_tenants: MeteringCell[];
   platform_adoption?: PlatformAdoption | null;
   usage_concentration?: UsageConcentration | null;
-  request_health?: RequestHealth | null;
   request_volume?: MeteringGraph | null;
-  throughput: ThroughputData;
   degraded?: boolean;
   generated_at: string;
+  refresh_interval_seconds?: number;
+  data_state?: string;
+  is_stale?: boolean;
 }
 
 export interface ServiceEntry {
@@ -114,14 +96,14 @@ export interface TenantConsumptionResponse {
   scope: MeteringScope;
   tenant_ranking: TenantRow[];
   usage_by_service: TenantServiceRow[];
-  throughput?: ThroughputData;
-  request_volume?: MeteringGraph | null;
   degraded?: boolean;
   generated_at: string;
+  refresh_interval_seconds?: number;
+  data_state?: string;
+  is_stale?: boolean;
 }
 
 export interface ServiceConsumptionSummary {
-  active_services: number;
   // null in the empty-state (no service has traffic in the window).
   most_used: { service: string; requests: number } | null;
   highest_failure_rate: { service: string; failure_rate_pct: number } | null;
@@ -129,23 +111,20 @@ export interface ServiceConsumptionSummary {
 
 export interface ServiceRow {
   service: string;
-  metering_unit: string;
   requests: number;
-  percentage?: number;
   native_units?: number | null;
   native_unit_suffix: string;
   success_pct: number;
   failure_rate_pct?: number;
-  failed: number;
-  vs_prev_period_pct?: number | null;
 }
 
 export interface ServiceConsumptionResponse {
   scope: MeteringScope;
   summary?: ServiceConsumptionSummary | null;
   service_breakdown: ServiceRow[];
-  throughput: ThroughputData;
-  request_volume?: MeteringGraph | null;
   degraded?: boolean;
   generated_at: string;
+  refresh_interval_seconds?: number;
+  data_state?: string;
+  is_stale?: boolean;
 }

@@ -26,14 +26,12 @@ from app.schemas.metering import (
     MostUsedService,
     OverviewResponse,
     PlatformAdoption,
-    RequestHealth,
     Scope,
     ServiceConsumptionResponse,
     ServiceRow,
     ServiceSummary,
     TenantConsumptionResponse,
     TenantRow,
-    ThroughputData,
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
@@ -144,84 +142,53 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
     return out
 
 
-async def _request_health_chart(
+async def _request_volume_chart(
     svc: MeteringService,
     window: str,
     tenant: Optional[str],
 ) -> Optional[Graph]:
-    """OVERVIEW "Request Volume & Health" chart — two series:
-      - "requests"     : request COUNT per bucket (left axis)
-      - "failure_rate" : failure rate % per bucket (right axis)
+    """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
+      - "successful" : 2xx request count per bucket
+      - "failed"     : 4xx/5xx request count per bucket
     """
     if window not in WINDOW_STEP:
         return None
     from app.utils.metering_promql_builder import build_base_selectors
 
-    sel = build_base_selectors(inference_only=True, tenant=tenant)
+    success_sel = build_base_selectors(
+        inference_only=True, tenant=tenant, extra=['status_code=~"2.."']
+    )
     failed_sel = build_base_selectors(
         inference_only=True, tenant=tenant, extra=['status_code=~"[45].."']
     )
-    metric = f"telemetry_obsv_requests_total{sel}"
+    success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
     step = WINDOW_STEP[window]
     w_secs = _WINDOW_SECONDS[window]
     now = _time.time()
     start = now - w_secs
 
-    count_q = f"sum(increase({metric}[{step}]))"
-    failure_rate_q = f"100 * sum(rate({failed_metric}[{step}])) / sum(rate({metric}[{step}]))"
+    success_q = f"sum(increase({success_metric}[{step}]))"
+    failed_q = f"sum(increase({failed_metric}[{step}]))"
 
-    count_res, fr_res = await asyncio.gather(
-        svc._client.query_range(count_q, start=start, end=now, step=step),
-        svc._client.query_range(failure_rate_q, start=start, end=now, step=step),
+    succ_res, fail_res = await asyncio.gather(
+        svc._client.query_range(success_q, start=start, end=now, step=step),
+        svc._client.query_range(failed_q, start=start, end=now, step=step),
         return_exceptions=True,
     )
 
-    req_points = _series_points(count_res, 0)        # counts
-    fr_points = _series_points(fr_res, 2)            # percent
+    succ_points = _series_points(succ_res, 0)        # counts
+    fail_points = _series_points(fail_res, 0)        # counts
 
-    if not req_points and not fr_points:
+    if not succ_points and not fail_points:
         return None
 
-    series = [GraphSeries(key="requests", label="Requests", points=req_points)]
-    if fr_points:
-        series.append(GraphSeries(key="failure_rate", label="Failure Rate %", points=fr_points))
+    series = []
+    if succ_points:
+        series.append(GraphSeries(key="successful", label="Successful", points=succ_points))
+    if fail_points:
+        series.append(GraphSeries(key="failed", label="Failed", points=fail_points))
     return Graph(step=step, series=series)
-
-
-async def _throughput_chart(
-    svc: MeteringService,
-    window: str,
-    tenant: Optional[str],
-) -> Optional[Graph]:
-    """TENANT/SERVICE CONSUMPTION "Throughput & Load" chart — RPS over time.
-
-    Single "requests" series in requests/second (the avg/peak reference values
-    come from the separate throughput() block).
-    """
-    if window not in WINDOW_STEP:
-        return None
-    from app.utils.metering_promql_builder import build_base_selectors
-
-    sel = build_base_selectors(inference_only=True, tenant=tenant)
-    metric = f"telemetry_obsv_requests_total{sel}"
-    step = WINDOW_STEP[window]
-    w_secs = _WINDOW_SECONDS[window]
-    now = _time.time()
-
-    res = await svc._client.query_range(
-        f"sum(rate({metric}[{step}]))",
-        start=now - w_secs,
-        end=now,
-        step=step,
-    )
-    points = _series_points(res, 4)
-    if not points:
-        return None
-    return Graph(
-        step=step,
-        series=[GraphSeries(key="requests", label="Request Rate (RPS)", points=points)],
-    )
 
 
 async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
@@ -330,10 +297,9 @@ async def get_overview(
         svc.active_tenants("30d"),
         svc.active_tenants(window),   # window-scoped, used as avg_requests_per_tenant denominator
         svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
-        svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
-        _request_health_chart(svc, window, scope_tenant),
-        svc.usage_concentration(limit=5, time_range=window) if is_admin else _noop(),
-        svc.tenant_ranking(limit=5, time_range=window) if is_admin else _noop(),
+        _request_volume_chart(svc, window, scope_tenant),
+        # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
+        svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else _noop(),
         svc.active_tenants_count_previous(window),  # prev-window denominator for avg/tenant trend
         return_exceptions=True,
     )
@@ -346,7 +312,7 @@ async def get_overview(
             return None
         return r
 
-    tc, at24, at7, at30, at_window, rt, tp, chart, conc, ranking, prev_active = [_ok(r) for r in results]
+    tc, at24, at7, at30, at_window, rt, chart, conc, prev_active = [_ok(r) for r in results]
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
@@ -389,12 +355,6 @@ async def get_overview(
             pct_change=avg_pct_change,
         ))
 
-    active_cells: list[Cell] = [
-        Cell(key="active_24h", label="Active Tenants (24h)", value=at24["count"] if at24 else None),
-        Cell(key="active_7d",  label="Active Tenants (7d)",  value=at7["count"]  if at7  else None),
-        Cell(key="active_30d", label="Active Tenants (30d)", value=at30["count"] if at30 else None),
-    ]
-
     # Platform adoption block (admin only)
     platform_adoption: Optional[PlatformAdoption] = None
     if is_admin and tc:
@@ -404,20 +364,6 @@ async def get_overview(
             active_24h=at24["count"] if at24 else None,
             active_7d=at7["count"] if at7 else None,
             active_30d=at30["count"] if at30 else None,
-        )
-
-    # Request Volume & Health — total / successful / failed counts + rates
-    request_health: Optional[RequestHealth] = None
-    if rt:
-        request_health = RequestHealth(
-            total=rt["total_requests"]["count"],
-            successful=rt["successful_requests"]["count"],
-            failed=rt["failed_requests"]["count"],
-            total_formatted=rt["total_requests"]["formatted"],
-            successful_formatted=rt["successful_requests"]["formatted"],
-            failed_formatted=rt["failed_requests"]["formatted"],
-            success_rate_pct=rt["success_rate"]["rate_pct"],
-            failure_rate_pct=rt["failure_rate"]["rate_pct"],
         )
 
     # Usage concentration block (admin only) — resolve org names in one batched query
@@ -448,16 +394,9 @@ async def get_overview(
     response = OverviewResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         kpis=kpis,
-        active_tenants=active_cells,
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
-        request_health=request_health,
         request_volume=chart,
-        throughput=ThroughputData(
-            avg_rps=tp["avg_rps"] if tp else 0.0,
-            peak_rps=tp.get("peak_rps") if tp else None,
-            peak_at=tp.get("peak_at") if tp else None,
-        ),
         degraded=degraded,
         generated_at=generated_at,
         **meta,
@@ -503,11 +442,9 @@ async def get_tenant_consumption(
     degraded = False
 
     # Platform-wide (admin-only endpoint): tenant=None throughout.
-    ranking_result, heatmap_result, tp_result, chart_result = await asyncio.gather(
+    ranking_result, heatmap_result = await asyncio.gather(
         svc.tenant_ranking(limit=limit, time_range=window),
         svc.usage_by_tenant_service(limit=limit, time_range=window, services=service_filter),
-        svc.throughput(inference_only=True, tenant=None, service_id=None, time_range=window),
-        _throughput_chart(svc, window, None),
         return_exceptions=True,
     )
 
@@ -521,13 +458,11 @@ async def get_tenant_consumption(
 
     ranking = _ok(ranking_result)
     heatmap = _ok(heatmap_result)
-    tp = _ok(tp_result)
-    chart = _ok(chart_result)
 
     ranking_tenants = ranking["tenants"] if ranking else []
     heatmap_rows = heatmap["tenants"] if heatmap else []
 
-    # Batched auth-DB lookups: organisation names (both lists) + plan tier (ranking).
+    # Batched auth-DB lookup: organisation names for both lists.
     all_ids = list({t["tenant"] for t in ranking_tenants} | {r["tenant"] for r in heatmap_rows})
     org_map = await _resolve_orgs(svc, all_ids)
 
@@ -552,12 +487,6 @@ async def get_tenant_consumption(
             for t in ranking_tenants
         ],
         usage_by_service=heatmap_rows,
-        throughput=ThroughputData(
-            avg_rps=tp["avg_rps"] if tp else 0.0,
-            peak_rps=tp.get("peak_rps") if tp else None,
-            peak_at=tp.get("peak_at") if tp else None,
-        ),
-        request_volume=chart,
         degraded=degraded,
         generated_at=generated_at,
         **meta,
@@ -605,10 +534,8 @@ async def get_service_consumption(
 
     degraded = False
 
-    breakdown_result, tp_result, chart_result = await asyncio.gather(
+    breakdown_result, = await asyncio.gather(
         svc.service_breakdown(tenant=scope_tenant, time_range=window),
-        svc.throughput(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
-        _throughput_chart(svc, window, scope_tenant),
         return_exceptions=True,
     )
 
@@ -621,8 +548,6 @@ async def get_service_consumption(
         return r
 
     breakdown = _ok(breakdown_result)
-    tp = _ok(tp_result)
-    chart = _ok(chart_result)
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
@@ -637,7 +562,6 @@ async def get_service_consumption(
         most_used = max(active, key=lambda s: s["requests"]) if active else None
         worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
         summary = ServiceSummary(
-            active_services=len(active),
             most_used=(
                 MostUsedService(service=most_used["service"], requests=most_used["requests"])
                 if most_used else None
@@ -660,9 +584,7 @@ async def get_service_consumption(
         service_breakdown=[
             ServiceRow(
                 service=s["service"],
-                metering_unit=s["metering_unit"],
                 requests=s["requests"],
-                percentage=round(s["requests"] / total_reqs * 100, 2) if total_reqs else 0.0,
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
                 success_pct=s["success_pct"],
@@ -670,17 +592,9 @@ async def get_service_consumption(
                 # guard, success_pct=0 for a 0-request service makes 100-0=100%
                 # failure, which is wrong (it should be 0%).
                 failure_rate_pct=round(100 - s["success_pct"], 2) if s["requests"] else 0.0,
-                failed=s["failed"],
-                vs_prev_period_pct=s["vs_prev_period_pct"],
             )
             for s in services
         ],
-        throughput=ThroughputData(
-            avg_rps=tp["avg_rps"] if tp else 0.0,
-            peak_rps=tp.get("peak_rps") if tp else None,
-            peak_at=tp.get("peak_at") if tp else None,
-        ),
-        request_volume=chart,
         degraded=degraded,
         generated_at=generated_at,
         **meta,
