@@ -16,6 +16,14 @@ const INFERENCE_SERVICE =
 const PLATFORM_CORE_SERVICE =
   process.env.PLATFORM_CORE_SERVICE_URL || "http://localhost:8095";
 
+// PASSTHROUGH mode. When set (e.g. DEV_BACKEND_ORIGIN=https://dev.ai4inclusion.org),
+// every /api/v1/* request is relayed verbatim to this origin — a REAL gateway that
+// owns auth + routing + identity-header injection itself. The proxy does NOT
+// forward-auth or inject identity headers in this mode (the gateway rejects
+// client-supplied identity headers). Unset (default) → the local per-service
+// routing + forward-auth mode below, for headerless backends running on localhost.
+const GATEWAY_ORIGIN = process.env.DEV_BACKEND_ORIGIN || "";
+
 // Upstream response timeout. Inference can be slow, so default high (matches the
 // old nginx default). Override with PROXY_UPSTREAM_TIMEOUT_MS.
 const UPSTREAM_TIMEOUT_MS = Number(
@@ -149,6 +157,36 @@ export default async function handler(
   // APISIX owns routing; this route must never forward traffic.
   if (process.env.NODE_ENV !== "development") {
     return res.status(404).end();
+  }
+
+  // ── Passthrough mode (DEV_BACKEND_ORIGIN set) ───────────────────────────────
+  // Relay /api/v1/* untouched to a REAL gateway (e.g. the deployed dev portal),
+  // which owns auth + routing + identity injection. We do NOT forward-auth or
+  // inject identity headers here — that gateway rejects client-supplied identity
+  // headers — so we strip any inbound ones and relay the request (Authorization
+  // included) and let the gateway do the work. The browser still talks to the
+  // Next dev server same-origin, so there is no CORS. Mirrors the pre-refactor
+  // next.config.js rewrite that let a local UI hit a deployed backend.
+  if (GATEWAY_ORIGIN) {
+    for (const h of IDENTITY_HEADERS) {
+      delete req.headers[h];
+    }
+    const passRemoteIp =
+      (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+      req.socket?.remoteAddress ||
+      "";
+    const passHeaders: Record<string, string> = {};
+    if (passRemoteIp) passHeaders["X-Real-IP"] = passRemoteIp;
+    proxy.web(req, res, { target: GATEWAY_ORIGIN, headers: passHeaders }, () => {
+      if (res.writableEnded) return;
+      if (!res.headersSent) {
+        res.setHeader("Content-Type", "application/json");
+        res.status(502).json({ detail: "Bad gateway" });
+      } else {
+        res.end();
+      }
+    });
+    return;
   }
 
   const segments = (req.query.proxy as string[]) ?? [];
