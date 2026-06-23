@@ -64,6 +64,7 @@ from app.services.email_helpers import (
 )
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
+from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
@@ -219,7 +220,9 @@ class TenantService:
         roles = await self._roles.get_user_roles(user.id)
         role = self.resolve_tenant_user_role(roles)
         base = to_response(user, UserListResponse)
-        return TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+        return mask_pii_in_dict(
+            TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+        )
 
     async def build_tenant_user_responses(self, users: list[User]) -> list[dict]:
         """Build list responses with a single batched role lookup."""
@@ -231,7 +234,9 @@ class TenantService:
             role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
             base = to_response(user, UserListResponse)
             responses.append(
-                TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+                mask_pii_in_dict(
+                    TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+                )
             )
         return responses
 
@@ -479,6 +484,10 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         data = body.model_dump(exclude_unset=True)
+        # Responses return masked PII; drop a masked email/phone a client echoed
+        # back unchanged so it can't overwrite the stored plaintext. Scoped to
+        # PII keys so other fields containing ``*`` are not silently dropped.
+        data = drop_masked_pii(data)
         # Status changes go through PATCH /status to keep authorization split clean.
         data.pop("status", None)
         # Schema uses `contact_name` (frontend-aligned); model column is `name`.
@@ -715,6 +724,9 @@ class TenantService:
         await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
+        # Drop masked email/phone a client echoed back unchanged (responses are
+        # masked); scoped to PII keys so other ``*``-bearing fields survive.
+        payload = drop_masked_pii(payload)
         role_update = payload.pop("role", None)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)

@@ -22,6 +22,7 @@ from app.schemas.api_key import (
 )
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
+from app.utils.masking import mask_email
 
 router = APIRouter(prefix="/auth", tags=["API Keys"])
 
@@ -128,7 +129,9 @@ async def list_all_api_keys(
     items = [
         {
             **_key_dict(api_key),
-            "user_email": user.email,
+            # Email is decrypted transparently by the column type; mask it so this
+            # admin/moderator endpoint never returns plaintext PII.
+            "user_email": mask_email(user.email),
             "username": user.username,
         }
         for api_key, user in results

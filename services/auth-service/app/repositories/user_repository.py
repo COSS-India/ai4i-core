@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import USERNAME_MAX_LENGTH
@@ -34,9 +34,20 @@ class UserRepository(BaseRepository):
         return is_active is True
 
     async def get_by_email(self, email: str) -> Optional[User]:
+        # Match either storage form so seeded/legacy plaintext rows (e.g. the
+        # default admin/guest accounts inserted without encryption) keep working
+        # alongside encrypted rows:
+        #   * ``User.email == email`` encrypts the parameter via the column's
+        #     bind processor, matching deterministic-ciphertext rows.
+        #   * ``cast(User.email, Text) == <normalised>`` compares the raw stored
+        #     value as plain text (bypassing the encrypting bind processor),
+        #     matching un-encrypted rows exactly as before.
         result = await self._db.execute(
             select(User).where(
-                func.lower(User.email) == email.lower().strip(),
+                or_(
+                    User.email == email,
+                    cast(User.email, Text) == email.strip().lower(),
+                ),
                 User.is_delete.isnot(True),
             )
         )
@@ -46,7 +57,10 @@ class UserRepository(BaseRepository):
         """Return True if any user (including soft-deleted) has this email."""
         result = await self._db.execute(
             select(User.id).where(
-                func.lower(User.email) == email.lower().strip()
+                or_(
+                    User.email == email,
+                    cast(User.email, Text) == email.strip().lower(),
+                )
             )
         )
         return result.scalar_one_or_none() is not None
