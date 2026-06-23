@@ -72,15 +72,20 @@ forgot-password | reset-password | set-password | resend-setup-link | validate |
 ```
 
 **Forward-auth** (`callAuthValidate()`):
-- Calls `GET {AUTH_SERVICE}/api/v1/auth/validate` with the browser's `Authorization` header and `X-Original-URI`
+- Calls `GET {AUTH_SERVICE}/api/v1/auth/validate` with the browser's `Authorization` header and `X-Original-URI` (the full request line incl. query string, matching nginx's `$request_uri`)
 - Reads `x-user-id`, `x-tenant-id`, `x-permission-ids`, `x-user-plan` from the response
 - Injects them as headers on the upstream request to the backend service
-- Returns 401 or 403 to the browser if validation fails
+- Inbound copies of those identity headers are **stripped first** so a client cannot spoof them
+- Returns **401** (no/invalid token) or **403** (forbidden) to the browser; if auth-service is unreachable/errored it surfaces a **502** ("auth validation unavailable") rather than masking it as a 401
 
-**Body and response handling**:
-- `bodyParser: false` — disables Next.js body parsing so file uploads and streaming payloads pass through untouched
-- Hop-by-hop headers (`connection`, `keep-alive`, `transfer-encoding`, `upgrade`, etc.) stripped in both directions
-- `upstream.pipe(res)` — streams the upstream response directly to the client
+**Transport — uses the `http-proxy` library** (proven `node-http-proxy`, the same engine webpack-dev-server uses) instead of a hand-rolled forwarder:
+- `bodyParser: false` + `proxy.web(req, res, …)` — the raw request body is **streamed** straight to the upstream (no in-memory buffering); large inference uploads no longer sit in the Node heap
+- The upstream response is streamed back; hop-by-hop headers are handled by the library
+- `proxyTimeout` (default 60s, `PROXY_UPSTREAM_TIMEOUT_MS`) guards against a hung backend; on connect-refused/timeout the browser gets a clean **502**
+- A `proxyRes` hook strips the inference service's own `Access-Control-*` headers (mirrors nginx `proxy_hide_header`)
+- `externalResolver: true` — http-proxy owns the response lifecycle, so Next.js doesn't warn about a dangling response
+
+> **New dependency:** `http-proxy` (+ `@types/http-proxy`) — run `npm install` in `frontend/simple-ui` after pulling this change.
 
 ---
 

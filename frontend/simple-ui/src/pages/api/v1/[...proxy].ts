@@ -1,13 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import http from "http";
-import https from "https";
-import { IncomingMessage } from "http";
+import httpProxy from "http-proxy";
 
 const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || "http://localhost:8081";
 const INFERENCE_SERVICE =
   process.env.INFERENCE_SERVICE_URL || "http://localhost:8090";
 const PLATFORM_CORE_SERVICE =
   process.env.PLATFORM_CORE_SERVICE_URL || "http://localhost:8095";
+
+// Upstream response timeout. Inference can be slow, so default high (matches the
+// old nginx default). Override with PROXY_UPSTREAM_TIMEOUT_MS.
+const UPSTREAM_TIMEOUT_MS = Number(
+  process.env.PROXY_UPSTREAM_TIMEOUT_MS || 60_000
+);
 
 const INFERENCE_TASKS = new Set([
   "inference",
@@ -27,6 +31,15 @@ const INFERENCE_TASKS = new Set([
 // Mirrors nginx public-auth-routes regex — no token required for these.
 const PUBLIC_AUTH_PATH =
   /^\/api\/v1\/auth\/(login|register|refresh|guest|verify-email|resend-verification|forgot-password|reset-password|set-password|resend-setup-link|validate|oauth)(\/|$|\?)/;
+
+// Identity headers the gateway/forward-auth owns. We strip any inbound copies
+// (so a client cannot spoof them) and re-inject the validated values.
+const IDENTITY_HEADERS = [
+  "x-user-id",
+  "x-tenant-id",
+  "x-permission-ids",
+  "x-user-plan",
+] as const;
 
 function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
   if (path.startsWith("/api/v1/auth/")) {
@@ -49,28 +62,25 @@ interface UserHeaders {
   "X-User-Plan": string;
 }
 
+type AuthResult =
+  | { ok: true; headers: UserHeaders }
+  | { ok: false; status: number };
+
 async function callAuthValidate(
   authHeader: string | undefined,
   originalUri: string
-): Promise<{ ok: true; headers: UserHeaders } | { ok: false; status: number }> {
+): Promise<AuthResult> {
   const validateUrl = `${AUTH_SERVICE}/api/v1/auth/validate`;
-  const reqHeaders: Record<string, string> = {
-    "X-Original-URI": originalUri,
-  };
+  const reqHeaders: Record<string, string> = { "X-Original-URI": originalUri };
   if (authHeader) {
     reqHeaders["Authorization"] = authHeader;
   }
 
   try {
-    const res = await fetch(validateUrl, {
-      method: "GET",
-      headers: reqHeaders,
-    });
-
+    const res = await fetch(validateUrl, { method: "GET", headers: reqHeaders });
     if (!res.ok) {
       return { ok: false, status: res.status };
     }
-
     return {
       ok: true,
       headers: {
@@ -81,46 +91,28 @@ async function callAuthValidate(
       },
     };
   } catch {
+    // auth-service unreachable — distinct from a 401/403 auth decision.
     return { ok: false, status: 502 };
   }
 }
 
-// Headers that must not be forwarded to the upstream or back to the client.
-const HOP_BY_HOP = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailers",
-  "transfer-encoding",
-  "upgrade",
-]);
+// Single shared proxy instance. http-proxy streams the raw request body straight
+// to the upstream (no buffering) and pipes the response back, and enforces
+// `proxyTimeout` on a hung upstream.
+const proxy = httpProxy.createProxyServer({
+  proxyTimeout: UPSTREAM_TIMEOUT_MS,
+  changeOrigin: true,
+});
 
-function proxyRequest(
-  method: string,
-  targetUrl: string,
-  headers: Record<string, string | string[]>,
-  body: Buffer | null
-): Promise<IncomingMessage> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(targetUrl);
-    const lib = parsed.protocol === "https:" ? https : http;
-    const options: http.RequestOptions = {
-      hostname: parsed.hostname,
-      port: parsed.port,
-      path: parsed.pathname + parsed.search,
-      method,
-      headers,
-    };
-    const req = lib.request(options, resolve);
-    req.on("error", reject);
-    if (body && body.length > 0) {
-      req.write(body);
-    }
-    req.end();
-  });
-}
+// The inference service emits its own CORS headers. Browser calls now hit the
+// Next.js dev server same-origin so CORS is moot, but strip them anyway to mirror
+// the old nginx `proxy_hide_header` and avoid leaking stray/`*` ACAO headers.
+proxy.on("proxyRes", (proxyRes) => {
+  delete proxyRes.headers["access-control-allow-origin"];
+  delete proxyRes.headers["access-control-allow-credentials"];
+  delete proxyRes.headers["access-control-allow-methods"];
+  delete proxyRes.headers["access-control-allow-headers"];
+});
 
 export default async function handler(
   req: NextApiRequest,
@@ -128,43 +120,39 @@ export default async function handler(
 ) {
   const segments = (req.query.proxy as string[]) ?? [];
   const basePath = "/api/v1/" + segments.join("/");
-  const queryString = req.url?.includes("?")
-    ? req.url.slice(req.url.indexOf("?"))
-    : "";
-  const fullPath = basePath + queryString;
+  // Full original request line (path + query) — faithful to nginx's $request_uri.
+  const originalUri = req.url || basePath;
 
   const { target, requiresAuth } = resolveRoute(basePath);
 
+  // Never trust inbound identity headers — strip them before they reach a backend.
+  for (const h of IDENTITY_HEADERS) {
+    delete req.headers[h];
+  }
+
   // ── Forward-auth ────────────────────────────────────────────────────────────
-  let injectedHeaders: UserHeaders | null = null;
+  let injectedHeaders: Record<string, string> = {};
   if (requiresAuth) {
     const authResult = await callAuthValidate(
       req.headers["authorization"] as string | undefined,
-      basePath
+      originalUri
     );
     if (!authResult.ok) {
-      const status = authResult.status === 403 ? 403 : 401;
-      const detail =
-        status === 403 ? "Forbidden" : "Authentication required";
       res.setHeader("Content-Type", "application/json");
-      return res.status(status).json({ detail });
+      if (authResult.status === 403) {
+        return res.status(403).json({ detail: "Forbidden" });
+      }
+      if (authResult.status === 401) {
+        return res.status(401).json({ detail: "Authentication required" });
+      }
+      // Auth-service errored or was unreachable — surface the real failure
+      // instead of masking it as a 401 (avoids "please log in" when the
+      // gateway simply can't reach auth-service).
+      return res
+        .status(authResult.status)
+        .json({ detail: "Auth validation failed (auth-service unavailable)" });
     }
     injectedHeaders = authResult.headers;
-  }
-
-  // ── Build upstream headers ───────────────────────────────────────────────────
-  const upstreamHeaders: Record<string, string | string[]> = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (key === "host") continue;
-    if (HOP_BY_HOP.has(key.toLowerCase())) continue;
-    if (value !== undefined) {
-      upstreamHeaders[key] = value as string | string[];
-    }
-  }
-
-  // Inject forwarded-auth identity headers.
-  if (injectedHeaders) {
-    Object.assign(upstreamHeaders, injectedHeaders);
   }
 
   const remoteIp =
@@ -172,53 +160,28 @@ export default async function handler(
     req.socket?.remoteAddress ||
     "";
   if (remoteIp) {
-    upstreamHeaders["X-Real-IP"] = remoteIp;
+    injectedHeaders["X-Real-IP"] = remoteIp;
   }
 
-  // ── Collect raw body (bodyParser is disabled) ───────────────────────────────
-  const body = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-
-  // Keep Content-Length accurate if body was read.
-  if (body.length > 0) {
-    upstreamHeaders["content-length"] = String(body.length);
-  } else {
-    delete upstreamHeaders["content-length"];
-  }
-
-  // ── Proxy to upstream ────────────────────────────────────────────────────────
-  let upstream: IncomingMessage;
-  try {
-    upstream = await proxyRequest(
-      req.method ?? "GET",
-      target + fullPath,
-      upstreamHeaders,
-      body.length > 0 ? body : null
-    );
-  } catch {
-    res.setHeader("Content-Type", "application/json");
-    return res.status(502).json({ detail: "Bad gateway" });
-  }
-
-  // ── Stream response back ─────────────────────────────────────────────────────
-  res.status(upstream.statusCode ?? 200);
-  for (const [key, value] of Object.entries(upstream.headers)) {
-    if (HOP_BY_HOP.has(key.toLowerCase())) continue;
-    if (value !== undefined) {
-      res.setHeader(key, value);
+  // ── Proxy (streams request + response, hop-by-hop handled by http-proxy) ─────
+  proxy.web(req, res, { target, headers: injectedHeaders }, (err) => {
+    if (res.writableEnded) return;
+    if (!res.headersSent) {
+      // Connection refused / timeout / reset all surface as a gateway error.
+      res.setHeader("Content-Type", "application/json");
+      res.status(502).json({ detail: "Bad gateway" });
+    } else {
+      res.end();
     }
-  }
-
-  upstream.pipe(res);
+  });
 }
 
 export const config = {
   api: {
     bodyParser: false,
     responseLimit: false,
+    // http-proxy owns the response lifecycle; tell Next not to expect us to
+    // resolve/return and not to warn about a dangling response.
+    externalResolver: true,
   },
 };

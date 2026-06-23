@@ -20,6 +20,7 @@
     "axios": "1.16.0",
     "crypto-js": "^4.2.0",
     "framer-motion": "^8.1.4",
+    "http-proxy": "^1.18.1",
     "next": "15.5.19",
     "react": "18.2.0",
     "react-dom": "18.2.0",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
+    "@types/http-proxy": "^1.17.15",
     "@types/jest": "^29.5.14",
     "@types/node": "18.11.18",
     "@types/react": "18.0.27",
