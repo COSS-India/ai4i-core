@@ -3,7 +3,6 @@ import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ServiceConsumptionResponse } from "../../types/metering";
 import {
-  buildServiceBreakdownChart,
   deriveServiceInsights,
   formatCompactNumber,
   formatNativeConsumption,
@@ -13,9 +12,7 @@ import {
 import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
-import MeteringDonutChart from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
-import ThroughputLoadSection from "./ThroughputLoadSection";
 
 interface ServiceConsumptionTabProps {
   data?: ServiceConsumptionResponse;
@@ -31,24 +28,9 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   const section = METERING.SECTIONS.SERVICE;
   const breakdown = data?.service_breakdown ?? [];
 
-  const { slices } = useMemo(
-    () => buildServiceBreakdownChart(breakdown),
-    [breakdown],
-  );
-
   const insights = useMemo(
     () => deriveServiceInsights(data?.summary, breakdown),
     [data?.summary, breakdown],
-  );
-
-  const pieData = useMemo(
-    () => slices.map(({ name, value, color }) => ({ name, value, color })),
-    [slices],
-  );
-
-  const legendItems = useMemo(
-    () => slices.map(({ name, color, pct }) => ({ name, color, pct })),
-    [slices],
   );
 
   return (
@@ -61,13 +43,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-              <KpiCard
-                label={section.ACTIVE_SERVICES}
-                value={insights.activeCount}
-                helper={section.ACTIVE_SERVICES_HELPER}
-                accent="gray"
-              />
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               <KpiCard
                 label={section.MOST_USED}
                 value={
@@ -102,24 +78,6 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
               />
             </SimpleGrid>
           ) : null}
-
-          <ThroughputLoadSection
-            throughput={data.throughput}
-            timeWindow={data.scope.window}
-            requestVolumeGraph={data.request_volume}
-          />
-
-          <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
-            <MeteringDonutChart
-              data={pieData}
-              legendItems={legendItems}
-              height={300}
-              innerRadius={70}
-              outerRadius={110}
-              centerPrimary={section.DONUT_PRIMARY}
-              centerSecondary={section.DONUT_SECONDARY}
-            />
-          </MeteringSectionCard>
 
           <MeteringSectionCard
             title={section.BREAKDOWN_TITLE}

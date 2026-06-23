@@ -9,7 +9,6 @@ import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import TenantServiceHeatmapSection from "./TenantServiceHeatmapSection";
-import ThroughputLoadSection from "./ThroughputLoadSection";
 
 interface TenantConsumptionTabProps {
   data?: TenantConsumptionResponse;
@@ -32,7 +31,6 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
 }) => {
   const section = METERING.SECTIONS.TENANT_RANKING;
   const windowLabel = data ? getWindowLabel(data.scope.window) : "";
-  const totalRankedRequests = data?.tenant_ranking.reduce((sum, row) => sum + row.requests, 0) ?? 0;
 
   return (
     <MeteringAsyncState
@@ -89,16 +87,6 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
                         <MeteringTableText>
                           {formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById)}
                         </MeteringTableText>
-                        {row.plan ? (
-                          <Badge
-                            colorScheme="gray"
-                            variant="subtle"
-                            fontSize="xs"
-                            flexShrink={0}
-                          >
-                            {row.plan}
-                          </Badge>
-                        ) : null}
                       </HStack>
                     </Td>
                     <Td isNumeric fontSize="sm" fontWeight="semibold">
@@ -121,17 +109,6 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
               </Tbody>
             </MeteringDataTable>
           </MeteringSectionCard>
-
-          <ThroughputLoadSection
-            throughput={data.throughput}
-            timeWindow={data.scope.window}
-            requestVolumeGraph={data.request_volume}
-            fourthMetric={{
-              label: section.RANKED_REQUESTS_LABEL,
-              value: `${(totalRankedRequests / 1000).toFixed(1)}K`,
-              helper: section.RANKED_REQUESTS_HELPER,
-            }}
-          />
 
           <TenantServiceHeatmapSection
             rows={data.usage_by_service}

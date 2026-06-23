@@ -1,21 +1,15 @@
 import type { MeteringGraph, MeteringWindow, ServiceConsumptionSummary, ServiceRow } from "../types/metering";
 import { METERING } from "../config/meteringConstants";
-import { meteringServiceColor } from "./meteringColors";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
 
 export type MeteringKpiInput = string | number | null | undefined;
 
-export interface MeteringRatePoint {
-  label: string;
-  rps: number;
-}
-
 export interface RequestVolumeChartPoint {
   label: string;
-  requests: number;
-  failureRate?: number | null;
+  successful: number;
+  failed: number;
 }
 
 /** Map graph series points by timestamp for aligned multi-series charts. */
@@ -34,49 +28,33 @@ export function findMeteringSeries(
   return graph?.series?.find((s) => s.key === key) ?? null;
 }
 
-/** Build request volume chart rows; joins failure_rate to requests by timestamp. */
+/** Build request volume chart rows from the successful / failed count series. */
 export function buildRequestVolumeChartData(
   graph?: MeteringGraph | null,
 ): RequestVolumeChartPoint[] {
-  const requestsSeries = extractMeteringRequestsSeries(graph);
-  if (!requestsSeries?.points?.length || !graph) return [];
+  if (!graph?.series?.length) return [];
 
-  const failureByTs = indexMeteringSeriesByTs(
-    findMeteringSeries(graph, METERING.GRAPH.SERIES_KEYS.FAILURE_RATE),
+  const successfulSeries = findMeteringSeries(
+    graph,
+    METERING.GRAPH.SERIES_KEYS.SUCCESSFUL,
+  );
+  const failedSeries = findMeteringSeries(
+    graph,
+    METERING.GRAPH.SERIES_KEYS.FAILED,
   );
 
-  return requestsSeries.points.map((p) => ({
+  const failedByTs = indexMeteringSeriesByTs(failedSeries);
+
+  // Build the timeline from whichever series has points (they share timestamps).
+  const baseSeries = successfulSeries ?? failedSeries;
+  if (!baseSeries?.points?.length) return [];
+
+  const successfulByTs = indexMeteringSeriesByTs(successfulSeries);
+
+  return baseSeries.points.map((p) => ({
     label: formatMeteringTimestamp(p.ts, graph.step),
-    requests: p.value,
-    failureRate: failureByTs.get(p.ts) ?? null,
-  }));
-}
-
-/** Resolve the primary requests / RPS series from a metering graph payload. */
-export function extractMeteringRequestsSeries(
-  graph?: MeteringGraph | null,
-): MeteringGraph["series"][number] | null {
-  if (!graph?.series?.length) return null;
-  const { REQUESTS, REQUEST_RATE } = METERING.GRAPH.SERIES_KEYS;
-  return (
-    graph.series.find((s) => s.key === REQUESTS) ??
-    graph.series.find((s) => s.key === REQUEST_RATE) ??
-    graph.series.find((s) => /request/i.test(s.key)) ??
-    graph.series[0] ??
-    null
-  );
-}
-
-export function extractMeteringRateChartData(
-  graph?: MeteringGraph | null,
-  stepFallback: string = METERING.GRAPH.STEP.ONE_HOUR,
-): MeteringRatePoint[] {
-  const series = extractMeteringRequestsSeries(graph);
-  if (!series?.points?.length) return [];
-  const step = graph?.step ?? stepFallback;
-  return series.points.map((p) => ({
-    label: formatMeteringTimestamp(p.ts, step),
-    rps: p.value,
+    successful: successfulByTs.get(p.ts) ?? 0,
+    failed: failedByTs.get(p.ts) ?? 0,
   }));
 }
 
@@ -107,26 +85,6 @@ export function formatMeteringRps(value?: number | null): string | number {
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-}
-
-export function formatMeteringPeakAt(peakAt?: string | null): string {
-  if (!peakAt) return METERING.GRAPH.EMPTY_VALUE;
-  // API returns bucket labels (e.g. H-3, D-2, M-5), not timestamps.
-  if (/^[HDM]-\d+$/i.test(peakAt.trim())) {
-    return peakAt.trim();
-  }
-  try {
-    const d = new Date(peakAt);
-    if (Number.isNaN(d.getTime())) return peakAt;
-    return d.toLocaleString([], {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return peakAt;
-  }
 }
 
 /** Prefer organisation name; fall back to tenant id/slug or lookup table. */
@@ -160,20 +118,6 @@ export function formatSuccessRateDisplay(rate: MeteringKpiInput): string {
   const pct = parseSuccessRatePct(rate);
   if (pct == null) return METERING.GRAPH.EMPTY_VALUE;
   return `${pct}%`;
-}
-
-/** Failure rate label for request health summary cards. */
-export function formatFailureRateDisplay(
-  requestHealth?: { failure_rate_pct: number } | null,
-  successPct?: number | null,
-): string {
-  if (requestHealth) {
-    return `${requestHealth.failure_rate_pct.toFixed(2)}%`;
-  }
-  if (successPct != null) {
-    return `${(100 - successPct).toFixed(2)}%`;
-  }
-  return METERING.GRAPH.EMPTY_VALUE;
 }
 
 /** Format KPI Cell.value for display (mixed types per key). */
@@ -234,16 +178,6 @@ export function formatMeteringLastRefreshed(
   return formatMeteringRefreshTime(resolveMeteringGeneratedAt(timestamps));
 }
 
-export function parseCompactTotal(total: string | number): number | null {
-  if (typeof total === "number") return total;
-  if (!total || total === METERING.GRAPH.EMPTY_VALUE) return null;
-  const s = String(total).trim();
-  if (s.endsWith("M")) return Number.parseFloat(s) * 1_000_000;
-  if (s.endsWith("K")) return Number.parseFloat(s) * 1_000;
-  const n = Number.parseFloat(s);
-  return Number.isNaN(n) ? null : n;
-}
-
 /** Compact number display — `indian` uses Cr/L suffixes for service metrics. */
 export function formatCompactNumber(
   n: number,
@@ -260,35 +194,7 @@ export function formatCompactNumber(
   return n.toLocaleString();
 }
 
-export interface ServiceChartSlice {
-  name: string;
-  value: number;
-  color: string;
-  pct: number;
-}
-
-/** Donut + legend data for service breakdown charts. */
-export function buildServiceBreakdownChart(breakdown: ServiceRow[]): {
-  slices: ServiceChartSlice[];
-  totalRequests: number;
-} {
-  const totalRequests = breakdown.reduce((sum, s) => sum + s.requests, 0);
-  const slices = breakdown.map((s, i) => {
-    const value = s.requests;
-    const pct =
-      s.percentage ?? (totalRequests > 0 ? (value / totalRequests) * 100 : 0);
-    return {
-      name: s.service,
-      value,
-      color: meteringServiceColor(s.service, i),
-      pct,
-    };
-  });
-  return { slices, totalRequests };
-}
-
 export interface ServiceInsights {
-  activeCount: number;
   // null in the empty-state (no service had traffic in the window).
   mostUsed: { service: string; requests: number } | null;
   highestFailureRate: number | null;
@@ -302,7 +208,6 @@ export function deriveServiceInsights(
 ): ServiceInsights | null {
   if (summary) {
     return {
-      activeCount: summary.active_services,
       mostUsed: summary.most_used,
       highestFailureRate: summary.highest_failure_rate?.failure_rate_pct ?? null,
       highestFailureService: summary.highest_failure_rate?.service ?? null,
@@ -310,7 +215,6 @@ export function deriveServiceInsights(
   }
   if (!breakdown.length) return null;
 
-  const active = breakdown.filter((s) => s.requests > 0);
   const mostUsed = [...breakdown].sort((a, b) => b.requests - a.requests)[0];
   const highestFailure = [...breakdown].sort(
     (a, b) =>
@@ -321,7 +225,6 @@ export function deriveServiceInsights(
   if (!mostUsed || !highestFailure) return null;
 
   return {
-    activeCount: active.length,
     mostUsed: { service: mostUsed.service, requests: mostUsed.requests },
     highestFailureRate: highestFailure.failure_rate_pct ?? 100 - highestFailure.success_pct,
     highestFailureService: highestFailure.service,

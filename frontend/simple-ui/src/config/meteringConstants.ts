@@ -53,9 +53,8 @@ export const METERING = {
   },
   GRAPH: {
     SERIES_KEYS: {
-      REQUESTS: "requests",
-      REQUEST_RATE: "request_rate",
-      FAILURE_RATE: "failure_rate",
+      SUCCESSFUL: "successful",
+      FAILED: "failed",
     },
     STEP: {
       FIVE_MINUTES: "5m",
@@ -99,8 +98,6 @@ export const METERING = {
   },
   TENANT_VIEW: {
     TITLE: "My Usage",
-    TOTAL_REQUESTS_LABEL: "Total requests",
-    TOTAL_REQUESTS_HELPER: "across selected window",
   },
   COLORS: {
     RANK: [
@@ -188,7 +185,6 @@ export const METERING = {
     TENANT_CONSUMPTION: "No tenant consumption data available.",
     SERVICE_CONSUMPTION: "No service consumption data available.",
     CHART: "No chart data available for the selected window.",
-    REQUEST_RATE: "Request rate trend is not available for the selected window.",
   },
   REFRESH: {
     JUST_NOW: "just now",
@@ -217,45 +213,18 @@ export const METERING = {
     TENANT_RANKING: {
       TITLE: "Tenant ranking",
       SUBTITLE_PREFIX: "By request volume ·",
-      RANKED_REQUESTS_LABEL: "Ranked tenant requests",
-      RANKED_REQUESTS_HELPER: "across listed tenants",
-    },
-    THROUGHPUT: {
-      TITLE: "Throughput & load",
-      SUBTITLE_PREFIX: "Request rate over the selected window ·",
-      AVG_RPS: "Avg RPS",
-      AVG_RPS_HELPER: "requests per second",
-      PEAK_RPS: "Peak RPS",
-      PEAK_RPS_HELPER: "highest in window",
-      PEAK_AT: "Peak at",
-      PEAK_AT_HELPER: "time bucket of peak load",
-      CHART_TITLE: "Request rate trend",
     },
     REQUEST_VOLUME: {
-      TITLE: "Request volume & health",
-      SUBTITLE_WITH_FAILURE: "Total requests and failure rate over the selected period",
-      SUBTITLE_RPS: "Request rate (RPS) over the selected period",
-      TOTAL: "Total requests",
-      SUCCESSFUL: "Successful",
-      FAILED: "Failed",
-      SUCCESS_RATE_SUFFIX: "success rate",
+      TITLE: "Request volume",
+      SUBTITLE: "Successful and failed requests per interval over the selected period",
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
-      Y_AXIS_RPS: "RPS",
-      Y_AXIS_FAILURE: "FAILURE RATE %",
-      SERIES_RPS: "RPS",
-      SERIES_REQUESTS: "Requests",
-      SERIES_FAILURE: "Failure rate %",
+      SERIES_SUCCESSFUL: "Successful",
+      SERIES_FAILED: "Failed",
     },
     SERVICE: {
-      TITLE: "Service consumption",
-      SUBTITLE: "Platform-wide request distribution · reflects selected time window",
       BREAKDOWN_TITLE: "Service breakdown",
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
-      DONUT_PRIMARY: "All",
-      DONUT_SECONDARY: "Services",
-      ACTIVE_SERVICES: "Active services",
-      ACTIVE_SERVICES_HELPER: "with requests in selected window",
       MOST_USED: "Most used service",
       HIGHEST_FAILURE: "Highest failure rate",
       REQUESTS_SUFFIX: "requests",
