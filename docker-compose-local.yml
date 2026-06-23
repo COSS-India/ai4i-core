@@ -53,24 +53,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # ── Gateway ───────────────────────────────────────────────────────────────────
-
-  nginx-gateway:
-    # Frontend-only: the gateway is what the simple-ui browser app calls into,
-    # so it only needs to run when the UI is up.
-    profiles: ["frontend"]
-    image: nginx:alpine
-    container_name: ai4v-nginx-gateway
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - microservices-network
-    restart: unless-stopped
-
   # ── Messaging ─────────────────────────────────────────────────────────────────
 
   zookeeper:
@@ -336,15 +318,14 @@ services:
   # ── Application Services (run natively on the host — not in docker) ─────────
   # auth-service, platform-core-service, inference-service, and simple-ui are
   # run natively (uvicorn / npm run dev) so developers can iterate with
-  # debuggers, breakpoints, and instant hot-reload. The nginx-gateway above is
-  # already configured (via `host.docker.internal:<port>`) to proxy to these
-  # native processes.
+  # debuggers, breakpoints, and instant hot-reload. The simple-ui Next.js dev
+  # server proxies /api/v1/* to these native processes
+  # (frontend/simple-ui/src/pages/api/v1/[...proxy].ts).
   #
   # The service blocks below are kept as a reference in case the team ever
-  # wants to switch to running them in docker. Uncomment them, restore
+  # wants to switch to running them in docker. Uncomment them and restore
   # docker-network hostnames in each service's .env (POSTGRES_HOST=postgres,
-  # REDIS_HOST=redis, etc.), and point the nginx upstreams at the service
-  # names instead of host.docker.internal.
+  # REDIS_HOST=redis, etc.).
 
   # auth-service:
   #   build:

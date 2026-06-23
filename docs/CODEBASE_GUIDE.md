@@ -17,7 +17,7 @@ ai4i-core/
 ├── services/               ← three FastAPI microservices
 ├── frontend/               ← Next.js web portal
 ├── libs/                   ← shared Python library used by all services
-├── infrastructure/         ← database migrations, observability, gateway configs
+├── infrastructure/         ← database migrations and observability configs
 ├── tests/                  ← cross-service integration and E2E tests
 ├── scripts/                ← setup and migration helper scripts
 ├── docs/                   ← architecture docs, setup guide, this file
@@ -46,7 +46,6 @@ those if you want the big picture before diving into code.
 | `infrastructure/opensearch/` | OpenSearch config and index templates |
 | `infrastructure/fluent-bit/` | Fluent Bit log-shipping config |
 | `infrastructure/alertmanager/` | Alertmanager notification routing |
-| `infrastructure/nginx/` | Nginx config (local dev substitute for APISIX gateway) |
 | `tests/` | Cross-service integration tests and E2E browser tests |
 | `scripts/` | `setup-env.sh`, `migrate.sh`, `validate-migrations.py` |
 | `docs/` | Architecture docs, setup guide, images |
@@ -284,7 +283,6 @@ databases/
 | Alertmanager | `infrastructure/alertmanager/` | Alert routing and notification |
 | OpenSearch | `infrastructure/opensearch/` | Trace spans + container logs |
 | Fluent Bit | `infrastructure/fluent-bit/` | Ships logs and spans to OpenSearch |
-| Nginx | `infrastructure/nginx/` | Local dev API gateway (replaces APISIX) |
 
 Full observability architecture diagram: [`docs/images/observability.mmd`](images/observability.mmd).
 

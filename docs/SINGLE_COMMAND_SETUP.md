@@ -175,7 +175,7 @@ All commands live under `scripts/dev/` and act on the clone you set up:
   services without bouncing Docker or re-running migrations. A bare `up` won't
   pick it up because it skips already-running services.
 - **Add the UI later:** `./scripts/dev/up frontend` starts only the missing
-  `nginx-gateway` + `simple-ui`.
+  `simple-ui` (run natively).
 - Re-running `up` on an already-up environment is safe — every step is idempotent.
 
 ---

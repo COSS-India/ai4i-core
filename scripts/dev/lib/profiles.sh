@@ -12,7 +12,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 #   COMPOSE_PROFILE_ARGS  array of "--profile X" passed to docker compose
 #   START_FRONTEND        "true"/"false" — start simple-ui natively
 #   ENABLE_KAFKA          "true"/"false" — flip KAFKA_ENABLED in inference .env
-#   WAIT_NGINX            "true"/"false" — health-wait on the gateway
 #   WAIT_KAFKA            "true"/"false"
 #   WAIT_OPENSEARCH       "true"/"false"
 resolve_profile() {
@@ -22,7 +21,6 @@ resolve_profile() {
     COMPOSE_PROFILE_ARGS=()
     START_FRONTEND="false"
     ENABLE_KAFKA="false"
-    WAIT_NGINX="false"
     WAIT_KAFKA="false"
     WAIT_OPENSEARCH="false"
 
@@ -32,9 +30,8 @@ resolve_profile() {
             ;;
 
         frontend)
-            COMPOSE_PROFILE_ARGS=(--profile frontend)
+            # simple-ui runs natively (npm run dev); no compose services to add.
             START_FRONTEND="true"
-            WAIT_NGINX="true"
             ;;
 
         observability)
@@ -49,10 +46,9 @@ resolve_profile() {
             ;;
 
         all)
-            COMPOSE_PROFILE_ARGS=(--profile frontend --profile observability --profile logging)
+            COMPOSE_PROFILE_ARGS=(--profile observability --profile logging)
             START_FRONTEND="true"
             ENABLE_KAFKA="true"
-            WAIT_NGINX="true"
             WAIT_KAFKA="true"
             WAIT_OPENSEARCH="true"
             ;;
@@ -65,4 +61,4 @@ resolve_profile() {
 
 # Every docker-compose profile we know about — used by `down` to stop
 # whatever might be running regardless of which profile started it.
-ALL_COMPOSE_PROFILE_ARGS=(--profile frontend --profile observability --profile logging)
+ALL_COMPOSE_PROFILE_ARGS=(--profile observability --profile logging)

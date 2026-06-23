@@ -24,7 +24,7 @@ _compose() {
 
 # Bring up infra for the resolved profile. postgres + redis carry no compose
 # `profiles:` key, so they always start; the COMPOSE_PROFILE_ARGS add the
-# profile-specific services (nginx-gateway, prometheus stack, opensearch …).
+# profile-specific services (prometheus stack, opensearch, kafka …).
 #
 # Pull policy: we rely on docker compose's default ("missing") — cached images
 # are NEVER re-pulled, only absent ones are fetched. `up --pull` (PULL_IMAGES)
