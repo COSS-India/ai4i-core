@@ -5,7 +5,7 @@ User ORM model.
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -43,8 +43,8 @@ class User(Base):
     phone_number = Column(EncryptedPhone(), nullable=True)
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
-    prev_email = Column(Text, nullable=True)
-    prev_phone_number = Column(Text, nullable=True)
+    prev_email = Column(EncryptedEmail(), nullable=True)
+    prev_phone_number = Column(EncryptedPhone(), nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
     creation_type = Column(
         Enum(

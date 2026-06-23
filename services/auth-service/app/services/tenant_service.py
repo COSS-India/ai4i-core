@@ -6,10 +6,9 @@ then shape the ORM result through a Pydantic schema. All scope enforcement,
 repository access and provisioning lives in this file.
 """
 
-import hashlib
+
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
@@ -19,7 +18,6 @@ import httpx
 from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
-from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
@@ -36,6 +34,7 @@ from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
+from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
@@ -139,6 +138,7 @@ class TenantService:
         token_service: TokenService,
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
+        refresh_token_repo: Optional[RefreshTokenRepository] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -148,6 +148,7 @@ class TenantService:
         self._tokens = token_service
         self._email = email_client
         self._api_keys = api_key_service
+        self._refresh_tokens = refresh_token_repo
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -766,17 +767,11 @@ class TenantService:
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
 
-        # Send deletion confirmation before masking so the email still reaches
-        # the real address. enqueue_email renders immediately, so target.email
-        # is still the original value at this point.
-        enqueue_email(
-            background_tasks,
-            self._email,
-            lambda: render_account_deleted(target),
-        )
+        # Capture PII before anonymisation — enqueue_email is called after commit
+        # so a failed update/commit cannot leak a deletion email.
+        deleted_email = target.email
+        deleted_full_name = target.full_name
 
-        prev_email_cipher = pii_crypto.encrypt(target.email, pii_crypto.EMAIL_CONTEXT) if target.email else None
-        prev_phone_cipher = pii_crypto.encrypt(target.phone_number, pii_crypto.PHONE_CONTEXT) if target.phone_number else None
         await self._users.update(
             target,
             {
@@ -785,13 +780,22 @@ class TenantService:
                 "is_tenant_active": False,
                 "full_name": f"del_{target.id}",
                 "username": f"del_{target.id}",
-                "prev_email": prev_email_cipher,
+                "prev_email": target.email,
                 "email": f"del_{target.id}",
-                "prev_phone_number": prev_phone_cipher,
+                "prev_phone_number": target.phone_number,
                 "phone_number": None,
                 "updated_by": current_user.id,
             },
         )
+        if self._refresh_tokens is not None:
+            await self._refresh_tokens.delete_by_user_id(target.id)
         await self._users.commit()
+
+        enqueue_email(
+            background_tasks,
+            self._email,
+            lambda: render_account_deleted(target, deleted_email, deleted_full_name),
+        )
+
         if self._api_keys is not None:
             await self._api_keys.evict_keys_for_user(target.id)

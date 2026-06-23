@@ -119,6 +119,7 @@ def get_tenant_service(
         token_service=token_service,
         email_client=email_client,
         api_key_service=api_key_service,
+        refresh_token_repo=RefreshTokenRepository(db),
     )
 
 

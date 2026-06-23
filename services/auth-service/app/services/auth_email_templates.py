@@ -141,15 +141,18 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
     )
 
 
-def render_account_deleted(user: User) -> EmailMessage:
-    """Deletion confirmation sent to the user's original email address before
-    the account is anonymised. ``user.email`` must still hold the real address
-    when this is called."""
+def render_account_deleted(user: User, email: str, full_name: Optional[str] = None) -> EmailMessage:
+    """Deletion confirmation sent to the user's original address.
+
+    ``email`` and ``full_name`` must be captured before the account is
+    anonymised and passed explicitly so this function is safe to call after
+    the DB commit that overwrites those fields.
+    """
     return _render(
         "account_deleted",
-        to=user.email,
+        to=email,
         subject="Your AI4I Platform account has been deleted",
         ctx={
-            "display_name": _display_name(user),
+            "display_name": full_name or "there",
         },
     )
