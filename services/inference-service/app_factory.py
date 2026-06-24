@@ -9,8 +9,8 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai4icore_core.observability import setup_observability
-from ai4icore_core.logging import RequestMiddleware
+from ai4i_core.observability import setup_observability
+from ai4i_core.logging import RequestMiddleware
 from routes import router
 from config import settings
 from trace.setup import setup_tracing

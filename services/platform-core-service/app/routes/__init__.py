@@ -7,7 +7,7 @@ The /api/v1 prefix is managed here — route files contain domain prefixes only.
 
 from fastapi import APIRouter
 
-from ai4icore_core.bootstrap.versioning import APIVersioning, VersionInfo
+from ai4i_core.bootstrap.versioning import APIVersioning, VersionInfo
 
 from app.core.config import settings
 from app.routes.alert import router as alert_router

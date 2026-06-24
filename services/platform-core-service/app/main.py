@@ -32,8 +32,8 @@ EndpointValidationFailedError = _importlib.import_module(
     "app.services.model-management.service_service"
 ).EndpointValidationFailedError
 
-from ai4icore_core.logging import configure_logging, RequestMiddleware
-from ai4icore_core.exceptions import ErrorDetail
+from ai4i_core.logging import configure_logging, RequestMiddleware
+from ai4i_core.exceptions import ErrorDetail
 
 logger = logging.getLogger(__name__)
 

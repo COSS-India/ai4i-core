@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 import redis.asyncio as aioredis
-from ai4icore_core.bootstrap.cache import CacheService as _BaseCacheService
+from ai4i_core.bootstrap.cache import CacheService as _BaseCacheService
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 OpenTelemetry span helpers for the inference pipeline.
 
 Provides a shared tracer instance and utilities for creating named spans
-with context attributes (userId, tenantId) from ai4icore_core.context.
+with context attributes (userId, tenantId) from ai4i_core.context.
 """
 
 import time
@@ -20,9 +20,9 @@ tracer = trace.get_tracer("inference-service")
 
 def get_context_attributes() -> dict:
     """
-    Resolve userId and tenantId for span attributes from ai4icore_core ContextVars.
+    Resolve userId and tenantId for span attributes from ai4i_core ContextVars.
 
-    RequestMiddleware (ai4icore_core.logging) populates these contextvars from
+    RequestMiddleware (ai4i_core.logging) populates these contextvars from
     the gateway-injected X-Tenant-Id / X-User-ID headers before handlers run;
     contextvars set in middleware propagate into the handler task, so they are
     the single source of truth here — no header re-reading.
@@ -31,7 +31,7 @@ def get_context_attributes() -> dict:
     """
     attrs = {}
     try:
-        from ai4icore_core.context import get_user_id, get_tenant_id
+        from ai4i_core.context import get_user_id, get_tenant_id
         user_id = get_user_id()
         tenant_id = get_tenant_id()
         if user_id:
@@ -44,9 +44,9 @@ def get_context_attributes() -> dict:
 
 
 def get_endpoint_path() -> str:
-    """Read endpoint_path from ai4icore_core ContextVars."""
+    """Read endpoint_path from ai4i_core ContextVars."""
     try:
-        from ai4icore_core.context import get_endpoint_path as _get_ep
+        from ai4i_core.context import get_endpoint_path as _get_ep
         return _get_ep() or ""
     except Exception:
         return ""

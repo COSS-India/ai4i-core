@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
 
-from ai4icore_core.email import EmailMessage, TemplateRenderer
+from ai4i_core.email import EmailMessage, TemplateRenderer
 
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT

@@ -55,7 +55,7 @@ artifact is the shared Python library published to PyPI.
 | Artifact | File to update | Notes |
 |---|---|---|
 | **Platform (overall)** | Git tag (e.g. `v2.2.0`) | Canonical version reference for the whole project |
-| **Shared library (`ai4icore-core`)** | [libs/ai4icore_core/pyproject.toml](./libs/ai4icore_core/pyproject.toml) — `version` | Published independently to PyPI; bump only when the library changes |
+| **Shared library (`ai4i-core`)** | [libs/ai4i_core/pyproject.toml](./libs/ai4i_core/pyproject.toml) — `version` | Published independently to PyPI; bump only when the library changes |
 
 > All future Git tags must follow the `vMAJOR.MINOR.PATCH` format.
 
@@ -192,17 +192,17 @@ pre-release suffixes (`v0.4-dev`).
 
 ### 8. Publish the shared library to PyPI
 
-Only needed if `libs/ai4icore_core` has changed. Before building, ensure the `version`
-field in [libs/ai4icore_core/pyproject.toml](./libs/ai4icore_core/pyproject.toml) is
+Only needed if `libs/ai4i_core` has changed. Before building, ensure the `version`
+field in [libs/ai4i_core/pyproject.toml](./libs/ai4i_core/pyproject.toml) is
 updated to the new version.
 
 ```bash
-cd libs/ai4icore_core
+cd libs/ai4i_core
 python -m build
 twine upload dist/*
 ```
 
-Verify the new version appears on [PyPI](https://pypi.org/project/ai4icore-core/).
+Verify the new version appears on [PyPI](https://pypi.org/project/ai4i-core/).
 
 ### 9. Create a GitHub Release
 
@@ -232,7 +232,7 @@ git push origin staging
 
 | Artifact | Location | Published by |
 |---|---|---|
-| Python shared library (`ai4icore-core`) | [PyPI: ai4icore-core](https://pypi.org/project/ai4icore-core/) | Release manager via `twine upload` |
+| Python shared library (`ai4i-core`) | [PyPI: ai4i-core](https://pypi.org/project/ai4i-core/) | Release manager via `twine upload` |
 | Source tarball / release notes | [GitHub Releases](https://github.com/COSS-India/ai4i-core/releases) | Auto-generated on tag; release notes added manually |
 
 > The application services (auth, platform-core, inference, frontend) are not published to
@@ -275,6 +275,6 @@ Use this checklist when cutting every release:
 - [ ] `dev` promoted to `staging`; smoke tests pass on staging environment
 - [ ] `staging` promoted to `master` via reviewed PR
 - [ ] Annotated Git tag `vX.Y.Z` pushed to origin
-- [ ] `ai4icore-core` published to PyPI (if the shared library changed)
+- [ ] `ai4i-core` published to PyPI (if the shared library changed)
 - [ ] GitHub Release created with release notes
 - [ ] `staging` synced with `master`
