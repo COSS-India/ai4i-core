@@ -27,7 +27,7 @@ This document lists all open source third-party libraries used across the servic
 
 | Library | Version Constraint | License |
 |---|---|---|
-| ai4i-core | >=1.0.1 | - |
+| ai4i-core | >=1.0.2 | - |
 | fastapi | >=0.104.0 | MIT |
 | uvicorn[standard] | >=0.24.0 | BSD-3-Clause |
 | pydantic | >=2.5.0 | MIT |
@@ -48,7 +48,7 @@ This document lists all open source third-party libraries used across the servic
 | opentelemetry-instrumentation-redis | >=0.41b0 | Apache-2.0 |
 | mako | >=1.3.12 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 | pytest | >=7.4.0 | MIT |
 | pytest-asyncio | >=0.21.0 | Apache-2.0 |
 
@@ -58,7 +58,7 @@ This document lists all open source third-party libraries used across the servic
 
 | Library | Version Constraint | License |
 |---|---|---|
-| ai4i-core | ==1.0.1 | MIT |
+| ai4i-core | ==1.0.2 | MIT |
 | fastapi | ==0.136.3 | MIT |
 | uvicorn[standard] | ==0.49.0 | BSD-3-Clause |
 | pydantic | ==2.13.4 | MIT |
@@ -72,7 +72,7 @@ This document lists all open source third-party libraries used across the servic
 | kafka-python | ==2.3.2 | Apache-2.0 |
 | pydub | ==0.25.1 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 
 ---
 
@@ -80,7 +80,7 @@ This document lists all open source third-party libraries used across the servic
 
 | Library | Version Constraint | License |
 |---|---|---|
-| ai4i-core | >=1.0.1 | MIT |
+| ai4i-core | >=1.0.2 | MIT |
 | fastapi | >=0.104.0 | MIT |
 | uvicorn[standard] | >=0.24.0 | BSD-3-Clause |
 | pydantic | >=2.5.0 | MIT |
@@ -102,7 +102,7 @@ This document lists all open source third-party libraries used across the servic
 | opensearch-py | >=2.0.0 | Apache-2.0 |
 | mako | >=1.3.12 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 | pytest | >=7.4.0 | MIT |
 | pytest-asyncio | >=0.21.0 | Apache-2.0 |
 
@@ -116,7 +116,7 @@ This document lists all open source third-party libraries used across the servic
 | starlette | >=0.27.0 | BSD-3-Clause |
 | pydantic | >=2.5.0 | MIT |
 | pydantic-settings | >=2.0.0 | MIT |
-| python-dotenv | >=1.0.1 | BSD-3-Clause |
+| python-dotenv | >=1.0.2 | BSD-3-Clause |
 | httpx | >=0.25.0 | BSD-3-Clause |
 | redis | >=5.0.0 | MIT |
 | sqlalchemy[asyncio] | >=2.0.0 | MIT |
@@ -142,7 +142,7 @@ This document lists all open source third-party libraries used across the servic
 | pytest-asyncio | >=0.21.0 | Apache-2.0 |
 | black | >=23.0.0 | MIT |
 | flake8 | >=6.0.0 | MIT |
-| build | >=1.0.1 | MIT |
+| build | >=1.0.2 | MIT |
 | twine | >=4.0.0 | Apache-2.0 |
 
 ---
@@ -157,7 +157,7 @@ This document lists all open source third-party libraries used across the servic
 | redis | >=5.0.0 | MIT |
 | elasticsearch | >=8.10.0 | Apache-2.0 |
 | kafka-python | >=2.0.2 | Apache-2.0 |
-| python-dotenv | >=1.0.1 | BSD-3-Clause |
+| python-dotenv | >=1.0.2 | BSD-3-Clause |
 | pydantic[email] | >=2.4.0 | MIT |
 | pydantic-settings | >=2.0.0 | MIT |
 | alembic | >=1.12.0 | MIT |
@@ -166,7 +166,7 @@ This document lists all open source third-party libraries used across the servic
 | argon2-cffi | >=25.1.0 | MIT |
 | mako | >=1.3.12 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 
 ---
 
@@ -254,7 +254,7 @@ Deduplicated across all services. Where a library appears in multiple components
 | axios | 1.16.0 | MIT | simple-ui |
 | bcrypt | >=4.0.0 | Apache-2.0 | databases |
 | black | >=23.0.0 | MIT | ai4i_core (dev) |
-| build | >=1.0.1 | MIT | ai4i_core (dev) |
+| build | >=1.0.2 | MIT | ai4i_core (dev) |
 | crypto-js | ^4.2.0 | MIT | simple-ui |
 | cryptography | >=41.0.0 | Apache-2.0 OR BSD-3-Clause | auth-service |
 | elasticsearch | >=8.10.0 | Apache-2.0 | databases |
@@ -292,7 +292,7 @@ Deduplicated across all services. Where a library appears in multiple components
 | pydantic-settings | >=2.0.0 | MIT | auth-service, inference-service, platform-core-service, ai4i_core, databases |
 | pydub | ==0.25.1 | MIT | inference-service |
 | PyJWT | >=2.8.0 | MIT | auth-service, ai4i_core |
-| python-dotenv | >=1.0.1 | BSD-3-Clause | inference-service, ai4i_core, databases |
+| python-dotenv | >=1.0.2 | BSD-3-Clause | inference-service, ai4i_core, databases |
 | python-json-logger | >=2.0.7 | BSD-2-Clause | ai4i_core |
 | python-multipart | >=0.0.6 | Apache-2.0 | inference-service |
 | python-socketio | >=5.10.0 | MIT | tests |

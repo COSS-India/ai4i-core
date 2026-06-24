@@ -198,7 +198,7 @@ exposes a Prometheus metrics endpoint (`/enterprise/metrics`).
 > **Docstring:** *"ai4i\_core — Consolidated AI4I utility libraries."*
 > — `libs/ai4i_core/ai4i_core/__init__.py`
 
-A Python package (`ai4i_core==1.0.1`) installed into every service. Contains all
+A Python package (`ai4i_core==1.0.2`) installed into every service. Contains all
 cross-cutting concerns so each service does not reinvent them.
 
 | Subpackage | Purpose |
