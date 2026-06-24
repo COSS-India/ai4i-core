@@ -141,7 +141,7 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
     )
 
 
-def render_account_deleted(user: User, email: str, full_name: Optional[str] = None) -> EmailMessage:
+def render_account_deleted(email: str, full_name: Optional[str] = None) -> EmailMessage:
     """Deletion confirmation sent to the user's original address.
 
     ``email`` and ``full_name`` must be captured before the account is
