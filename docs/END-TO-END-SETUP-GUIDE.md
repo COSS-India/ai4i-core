@@ -4,7 +4,7 @@
 
 This guide documents how to run **AI4I Core** and a local **NMT** model together on **Linux** — auth, inference APIs, optional web UI, and CPU-based translation via Triton. You do **not** need a GPU for the NMT path described here.
 
-It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md` (alongside `docs/SETUP_GUIDE.md`).
+It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md`.
 
 ### Two repositories
 
@@ -94,7 +94,7 @@ npm --version
 
 #### Python commands in this guide
 
-AI4I Core requires **Python >= 3.11** (`ai4i-core` declares `requires-python >= 3.11`).
+AI4I Core requires **Python >= 3.11** (`ai4icore-core` declares `requires-python >= 3.11`).
 
 Throughout this guide, **`python3`** means the Python 3.11+ executable on your machine (on many systems that is literally the `python3` command; on others it may be `python3.12`, etc.). Before continuing, confirm:
 
@@ -379,6 +379,7 @@ sed -i \
   -e 's/POSTGRES_PASSWORD=<YOUR_POSTGRES_PASSWORD>/POSTGRES_PASSWORD=postgres/' \
   -e 's/REDIS_PASSWORD=<YOUR_REDIS_PASSWORD>/REDIS_PASSWORD=changeme/' \
   .env
+echo 'TRITON_ENDPOINT_NMT=http://localhost:8000' >> .env
 grep -E '^(POSTGRES_|REDIS_|TRITON_|ALEMBIC_)' .env
 ```
 
@@ -458,7 +459,7 @@ source .venv/bin/activate    # if not already active
 
 Open **three separate terminals**. Each service needs its own virtualenv.
 
-> **Important:** `ai4i-core` is published on public PyPI — see [ai4i-core on Libraries.io](https://libraries.io/pypi/ai4i-core). Each service’s `requirements.txt` installs it automatically via `python3 -m pip install -r requirements.txt`.
+> **Important:** `ai4icore-core` is published on public PyPI — see [ai4icore-core on Libraries.io](https://libraries.io/pypi/ai4icore-core). Each service’s `requirements.txt` installs it automatically via `python3 -m pip install -r requirements.txt`.
 
 > The repo-root `.venv` from [B4](#b4-install-migration-dependencies) is for migrations only. Part C still needs a **separate** `.venv` inside each `services/*` folder (do not reuse the migration venv for uvicorn).
 
@@ -727,7 +728,7 @@ docker compose -f docker-compose-local.yml down -v
 | Cloned `ai4i-core` from `master` / `main` by mistake | Re-clone with `--branch <release-tag>` from [ai4i-core releases](https://github.com/COSS-India/ai4i-core/releases), or `git fetch --tags && git checkout <release-tag>` |
 | `alembic/.env: line 6: syntax error near unexpected token 'newline'` | Root `.env` was overwritten with only a few lines, so `setup-env.sh` left placeholders like `<ALEMBIC_DB_HOST>` in `infrastructure/databases/migrations/postgres/alembic/.env`. Fix: `cp env.template .env`, edit placeholders (see B1), run `./scripts/setup-env.sh` again, then `./scripts/migrate.sh all upgrade` |
 | Migration: `password authentication failed for user postgres` / `Role postgres does not exist` | Stale Postgres volume from old install. Run `docker compose -f docker-compose-local.yml down -v`, restart infra (B3), re-run migrations (B5) |
-| `No matching distribution found for ai4i-core` | Install from PyPI: `python3 -m pip install ai4i-core` — see [libraries.io/pypi/ai4i-core](https://libraries.io/pypi/ai4i-core) |
+| `No matching distribution found for ai4icore-core` | Install from PyPI: `python3 -m pip install ai4icore-core` — see [libraries.io/pypi/ai4icore-core](https://libraries.io/pypi/ai4icore-core) |
 | `python3: command not found` or version below 3.11 | Install Python >= 3.11 (see [§1](#1-system-prerequisites)); confirm with `python3 --version` |
 | Inference: `KafkaConnectionError` | Expected without Kafka; NMT unaffected |
 | NMT via inference returns 502 / upstream failed | Ensure `indictrans` is running; verify Part A5 curl works |
@@ -769,10 +770,10 @@ Optional full stack (Kafka, OpenSearch, Prometheus, Grafana): **`docs/TRACING-OB
 
 ## Related documents
 
-| Document | Location |
-|----------|----------|
-| This guide | `docs/END-TO-END-SETUP-GUIDE.md` |
-| Tracing and observability (local) | `docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md` |
-| Platform setup reference | `docs/SETUP_GUIDE.md` |
-| model-hosting | https://github.com/COSS-India/model-hosting (`feat/nmt-local-setup`) |
-| ai4i-core (PyPI) | https://libraries.io/pypi/ai4i-core |
+| Document | Link |
+|----------|------|
+| This guide | [END-TO-END-SETUP-GUIDE.md](END-TO-END-SETUP-GUIDE.md) |
+| Tracing and observability (local) | [TRACING-OBSERVABILITY-LOCAL-SETUP.md](TRACING-OBSERVABILITY-LOCAL-SETUP.md) |
+| Docker Compose local reference | [DOCKER-COMPOSE-LOCAL-REFERENCE.md](DOCKER-COMPOSE-LOCAL-REFERENCE.md) |
+| model-hosting | [github.com/COSS-India/model-hosting](https://github.com/COSS-India/model-hosting) (`feat/nmt-local-setup`) |
+| ai4icore-core (PyPI) | [libraries.io/pypi/ai4icore-core](https://libraries.io/pypi/ai4icore-core) |
