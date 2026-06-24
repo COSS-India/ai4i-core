@@ -36,7 +36,7 @@ trace.set_tracer_provider(tracer_provider)
 tracer = trace.get_tracer(__name__)
 
 # Mock the context getters
-import ai4icore_core.context as ctx_module
+import ai4i_core.context as ctx_module
 ctx_module.set_tenant_id("tenant_12345")
 
 # Import after setting context

@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai4icore_core.exceptions import success_response, error_response  # noqa: F401
+from ai4i_core.exceptions import success_response, error_response  # noqa: F401
 
 
 def to_response(obj: Any, schema: type[BaseModel], *, json_mode: bool = True) -> dict:

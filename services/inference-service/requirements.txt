@@ -4,7 +4,7 @@
 # To upgrade: bump the pin, rebuild, run the test suite.
 
 # ── Shared platform library (consolidated) ──
-ai4icore-core==1.1.9
+ai4i-core==1.0.2
 
 # FastAPI and ASGI server
 fastapi==0.136.3

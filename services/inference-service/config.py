@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
-        # Allow other libs (e.g. ai4icore_core.observability with OBSERVE_UTIL_*)
+        # Allow other libs (e.g. ai4i_core.observability with OBSERVE_UTIL_*)
         # to read their own vars from the same .env without tripping validation.
         extra = "ignore"
 

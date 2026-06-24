@@ -38,7 +38,7 @@ def _conftest_stub(name: str, **attrs) -> types.ModuleType:
 
 
 # Stub app.schemas.base with a real Pydantic BaseModel subclass.
-# This prevents test modules from pulling in ai4icore_core.bootstrap (which
+# This prevents test modules from pulling in ai4i_core.bootstrap (which
 # needs a live sqlalchemy engine) just to get BaseSchema.
 class _BaseSchema(_PydanticBaseModel):
     model_config = _ConfigDict(from_attributes=True, populate_by_name=True)

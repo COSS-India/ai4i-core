@@ -37,7 +37,7 @@ lane** (dotted) so they never touch the business-data path.
 - ✅ **Source code** for all backend services and the frontend
 - ✅ **Docker Compose** (`docker-compose-local.yml`) for local infrastructure
 - ✅ **Alembic migrations** for the PostgreSQL schemas
-- ✅ **Shared Python library** (`libs/ai4icore_core`): logging + request middleware,
+- ✅ **Shared Python library** (`libs/ai4i_core`): logging + request middleware,
   observability (OpenTelemetry + Prometheus ASGI), bootstrap (API versioning, async DB),
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
@@ -199,7 +199,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for full contribution guidelines.
 
 ## 🚀 Releases
 
-New versions are published as a PyPI package (`ai4icore-core`). Release notes are on the
+New versions are published as a PyPI package (`ai4i-core`). Release notes are on the
 [GitHub Releases](https://github.com/COSS-India/ai4i-core/releases) page.
 
 - **[RELEASE.md](./RELEASE.md)** — branching model, versioning scheme, and step-by-step
@@ -210,7 +210,7 @@ New versions are published as a PyPI package (`ai4icore-core`). Release notes ar
 
 - **Metrics** — services expose Prometheus metrics (scraped by **Prometheus**,
   visualized in **Grafana**, alerted via **Alertmanager**).
-- **Logs** — structured JSON logs (`ai4icore_core.logging`) shipped by **Fluent Bit** to
+- **Logs** — structured JSON logs (`ai4i_core.logging`) shipped by **Fluent Bit** to
   **OpenSearch**.
 - **Traces** — only **inference-service** emits OpenTelemetry spans; they flow
   **Kafka (`kafka-topic-otel-trace`) → Fluent Bit → OpenSearch `traces-*`**, queried via

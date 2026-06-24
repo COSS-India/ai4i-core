@@ -64,7 +64,7 @@ flowchart TB
     end
     PG[("PostgreSQL<br/>ai4iplatform_auth")]
     REDIS[("Redis")]
-    EMAIL["ai4icore_core.email<br/>(BackgroundTasks)"]
+    EMAIL["ai4i_core.email<br/>(BackgroundTasks)"]
     PCORE["platform-core-service<br/>(tenant-plan, HTTP)"]
 
     routes --> services --> repos --> PG
@@ -165,7 +165,7 @@ Source: `services/auth-service/app/models/`.
   request (see [overview sequence](./00-overview.md#request-path-sequence)).
 - **platform-core-service** is called over **direct request/response HTTP** (httpx async
   client) for tenant-plan assignment (`PLATFORM_CORE_URL`); the tenant service drives this.
-- **Email** is sent via Starlette `BackgroundTasks` + `ai4icore_core.email` (SMTP / SES /
+- **Email** is sent via Starlette `BackgroundTasks` + `ai4i_core.email` (SMTP / SES /
   SendGrid; console fallback in dev). **No Kafka.**
 
 ## Key environment variables

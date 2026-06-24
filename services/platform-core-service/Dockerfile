@@ -9,7 +9,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# ── Install service dependencies (ai4icore-core pulled from PyPI via requirements.txt) ──
+# ── Install service dependencies (ai4i-core pulled from PyPI via requirements.txt) ──
 COPY services/platform-core-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

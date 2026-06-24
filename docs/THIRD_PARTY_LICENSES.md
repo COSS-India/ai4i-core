@@ -10,7 +10,7 @@ This document lists all open source third-party libraries used across the servic
   - [auth-service](#auth-service)
   - [inference-service](#inference-service)
   - [platform-core-service](#platform-core-service)
-  - [libs/ai4icore_core](#libsai4icore_core)
+  - [libs/ai4i_core](#libsai4i_core)
   - [infrastructure/databases](#infrastructuredatabases)
   - [tests](#tests)
 - [Frontend](#frontend)
@@ -27,7 +27,7 @@ This document lists all open source third-party libraries used across the servic
 
 | Library | Version Constraint | License |
 |---|---|---|
-| ai4icore-core | >=1.1.9 | - |
+| ai4i-core | >=1.0.2 | - |
 | fastapi | >=0.104.0 | MIT |
 | uvicorn[standard] | >=0.24.0 | BSD-3-Clause |
 | pydantic | >=2.5.0 | MIT |
@@ -48,7 +48,7 @@ This document lists all open source third-party libraries used across the servic
 | opentelemetry-instrumentation-redis | >=0.41b0 | Apache-2.0 |
 | mako | >=1.3.12 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 | pytest | >=7.4.0 | MIT |
 | pytest-asyncio | >=0.21.0 | Apache-2.0 |
 
@@ -58,7 +58,7 @@ This document lists all open source third-party libraries used across the servic
 
 | Library | Version Constraint | License |
 |---|---|---|
-| ai4icore-core | ==1.1.9 | MIT |
+| ai4i-core | ==1.0.2 | MIT |
 | fastapi | ==0.136.3 | MIT |
 | uvicorn[standard] | ==0.49.0 | BSD-3-Clause |
 | pydantic | ==2.13.4 | MIT |
@@ -72,7 +72,7 @@ This document lists all open source third-party libraries used across the servic
 | kafka-python | ==2.3.2 | Apache-2.0 |
 | pydub | ==0.25.1 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 
 ---
 
@@ -80,7 +80,7 @@ This document lists all open source third-party libraries used across the servic
 
 | Library | Version Constraint | License |
 |---|---|---|
-| ai4icore-core | >=1.1.9 | MIT |
+| ai4i-core | >=1.0.2 | MIT |
 | fastapi | >=0.104.0 | MIT |
 | uvicorn[standard] | >=0.24.0 | BSD-3-Clause |
 | pydantic | >=2.5.0 | MIT |
@@ -102,13 +102,13 @@ This document lists all open source third-party libraries used across the servic
 | opensearch-py | >=2.0.0 | Apache-2.0 |
 | mako | >=1.3.12 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 | pytest | >=7.4.0 | MIT |
 | pytest-asyncio | >=0.21.0 | Apache-2.0 |
 
 ---
 
-### libs/ai4icore_core
+### libs/ai4i_core
 
 | Library | Version Constraint | License |
 |---|---|---|
@@ -116,7 +116,7 @@ This document lists all open source third-party libraries used across the servic
 | starlette | >=0.27.0 | BSD-3-Clause |
 | pydantic | >=2.5.0 | MIT |
 | pydantic-settings | >=2.0.0 | MIT |
-| python-dotenv | >=1.0.0 | BSD-3-Clause |
+| python-dotenv | >=1.0.2 | BSD-3-Clause |
 | httpx | >=0.25.0 | BSD-3-Clause |
 | redis | >=5.0.0 | MIT |
 | sqlalchemy[asyncio] | >=2.0.0 | MIT |
@@ -142,7 +142,7 @@ This document lists all open source third-party libraries used across the servic
 | pytest-asyncio | >=0.21.0 | Apache-2.0 |
 | black | >=23.0.0 | MIT |
 | flake8 | >=6.0.0 | MIT |
-| build | >=1.0.0 | MIT |
+| build | >=1.0.2 | MIT |
 | twine | >=4.0.0 | Apache-2.0 |
 
 ---
@@ -157,7 +157,7 @@ This document lists all open source third-party libraries used across the servic
 | redis | >=5.0.0 | MIT |
 | elasticsearch | >=8.10.0 | Apache-2.0 |
 | kafka-python | >=2.0.2 | Apache-2.0 |
-| python-dotenv | >=1.0.0 | BSD-3-Clause |
+| python-dotenv | >=1.0.2 | BSD-3-Clause |
 | pydantic[email] | >=2.4.0 | MIT |
 | pydantic-settings | >=2.0.0 | MIT |
 | alembic | >=1.12.0 | MIT |
@@ -166,7 +166,7 @@ This document lists all open source third-party libraries used across the servic
 | argon2-cffi | >=25.1.0 | MIT |
 | mako | >=1.3.12 | MIT |
 | idna | >=3.15 | BSD-3-Clause |
-| starlette | >=1.0.1 | BSD-3-Clause |
+| starlette | >=1.0.2 | BSD-3-Clause |
 
 ---
 
@@ -244,8 +244,8 @@ Deduplicated across all services. Where a library appears in multiple components
 | Library | Min Version | License | Used In |
 |---|---|---|---|
 | aiofiles | >=23.0.0 | Apache-2.0 | platform-core-service |
-| aiokafka | >=0.8.0 | Apache-2.0 | ai4icore_core |
-| aiosmtplib | >=3.0.0 | MIT | ai4icore_core |
+| aiokafka | >=0.8.0 | Apache-2.0 | ai4i_core |
+| aiosmtplib | >=3.0.0 | MIT | ai4i_core |
 | alembic | >=1.12.0 | MIT | auth-service, platform-core-service, databases |
 | argon2-cffi | >=25.1.0 | MIT | databases |
 | asyncpg | >=0.29.0 | Apache-2.0 | auth-service, platform-core-service, databases, tests |
@@ -253,8 +253,8 @@ Deduplicated across all services. Where a library appears in multiple components
 | @chakra-ui/react | ^2.4.6 | MIT | simple-ui |
 | axios | 1.16.0 | MIT | simple-ui |
 | bcrypt | >=4.0.0 | Apache-2.0 | databases |
-| black | >=23.0.0 | MIT | ai4icore_core (dev) |
-| build | >=1.0.0 | MIT | ai4icore_core (dev) |
+| black | >=23.0.0 | MIT | ai4i_core (dev) |
+| build | >=1.0.2 | MIT | ai4i_core (dev) |
 | crypto-js | ^4.2.0 | MIT | simple-ui |
 | cryptography | >=41.0.0 | Apache-2.0 OR BSD-3-Clause | auth-service |
 | elasticsearch | >=8.10.0 | Apache-2.0 | databases |
@@ -264,40 +264,40 @@ Deduplicated across all services. Where a library appears in multiple components
 | eslint-config-next | 15.5.19 | MIT | simple-ui (dev) |
 | factory-boy | >=3.3.0 | MIT | tests |
 | faker | >=20.0.0 | MIT | tests |
-| fastapi | >=0.104.0 | MIT | auth-service, inference-service, platform-core-service, ai4icore_core |
-| flake8 | >=6.0.0 | MIT | ai4icore_core (dev) |
+| fastapi | >=0.104.0 | MIT | auth-service, inference-service, platform-core-service, ai4i_core |
+| flake8 | >=6.0.0 | MIT | ai4i_core (dev) |
 | framer-motion | ^8.1.4 | MIT | simple-ui |
-| httpx | >=0.25.0 | BSD-3-Clause | auth-service, inference-service, platform-core-service, ai4icore_core, tests |
+| httpx | >=0.25.0 | BSD-3-Clause | auth-service, inference-service, platform-core-service, ai4i_core, tests |
 | idna | >=3.15 | BSD-3-Clause | auth-service, inference-service, platform-core-service, databases |
-| jinja2 | >=3.1.0 | BSD-3-Clause | ai4icore_core |
-| kafka-python | >=2.0.2 | Apache-2.0 | inference-service, ai4icore_core, databases |
+| jinja2 | >=3.1.0 | BSD-3-Clause | ai4i_core |
+| kafka-python | >=2.0.2 | Apache-2.0 | inference-service, ai4i_core, databases |
 | mako | >=1.3.12 | MIT | auth-service, platform-core-service, databases |
 | next | 15.5.19 | MIT | simple-ui |
-| numpy | >=1.24.0 | BSD-3-Clause | ai4icore_core, inference-service |
-| opentelemetry-api | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4icore_core |
-| opentelemetry-exporter-otlp-proto-grpc | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4icore_core |
-| opentelemetry-instrumentation-fastapi | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service, ai4icore_core |
+| numpy | >=1.24.0 | BSD-3-Clause | ai4i_core, inference-service |
+| opentelemetry-api | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
+| opentelemetry-exporter-otlp-proto-grpc | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
+| opentelemetry-instrumentation-fastapi | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
 | opentelemetry-instrumentation-redis | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service |
 | opentelemetry-instrumentation-sqlalchemy | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service |
-| opentelemetry-sdk | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4icore_core |
+| opentelemetry-sdk | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
 | opensearch-py | >=2.0.0 | Apache-2.0 | platform-core-service |
-| packaging | >=21.0 | Apache-2.0 OR BSD-2-Clause | ai4icore_core |
+| packaging | >=21.0 | Apache-2.0 OR BSD-2-Clause | ai4i_core |
 | passlib[argon2] | >=1.7.4 | BSD | auth-service, databases |
 | playwright | >=1.40.0 | Apache-2.0 | tests |
 | postcss | 8.5.10 | MIT | simple-ui (override) |
-| prometheus-client | >=0.19.0 | Apache-2.0 AND BSD-2-Clause | platform-core-service, ai4icore_core |
-| psutil | >=5.9.0 | BSD-3-Clause | ai4icore_core |
+| prometheus-client | >=0.19.0 | Apache-2.0 AND BSD-2-Clause | platform-core-service, ai4i_core |
+| psutil | >=5.9.0 | BSD-3-Clause | ai4i_core |
 | psycopg2-binary | >=2.9.0 | LGPL | databases |
-| pydantic | >=2.4.0 | MIT | auth-service, inference-service, platform-core-service, ai4icore_core, databases |
-| pydantic-settings | >=2.0.0 | MIT | auth-service, inference-service, platform-core-service, ai4icore_core, databases |
+| pydantic | >=2.4.0 | MIT | auth-service, inference-service, platform-core-service, ai4i_core, databases |
+| pydantic-settings | >=2.0.0 | MIT | auth-service, inference-service, platform-core-service, ai4i_core, databases |
 | pydub | ==0.25.1 | MIT | inference-service |
-| PyJWT | >=2.8.0 | MIT | auth-service, ai4icore_core |
-| python-dotenv | >=1.0.0 | BSD-3-Clause | inference-service, ai4icore_core, databases |
-| python-json-logger | >=2.0.7 | BSD-2-Clause | ai4icore_core |
+| PyJWT | >=2.8.0 | MIT | auth-service, ai4i_core |
+| python-dotenv | >=1.0.2 | BSD-3-Clause | inference-service, ai4i_core, databases |
+| python-json-logger | >=2.0.7 | BSD-2-Clause | ai4i_core |
 | python-multipart | >=0.0.6 | Apache-2.0 | inference-service |
 | python-socketio | >=5.10.0 | MIT | tests |
-| pytest | >=7.4.0 | MIT | auth-service, platform-core-service, ai4icore_core, tests |
-| pytest-asyncio | >=0.21.0 | Apache-2.0 | auth-service, platform-core-service, ai4icore_core, tests |
+| pytest | >=7.4.0 | MIT | auth-service, platform-core-service, ai4i_core, tests |
+| pytest-asyncio | >=0.21.0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core, tests |
 | pytest-cov | >=4.1.0 | MIT | tests |
 | pytest-mock | >=3.11.0 | MIT | tests |
 | pytest-timeout | >=2.1.0 | MIT | tests |
@@ -307,20 +307,20 @@ Deduplicated across all services. Where a library appears in multiple components
 | react-icons | ^4.7.1 | MIT | simple-ui |
 | @tanstack/react-query | ^5.0.0 | MIT | simple-ui |
 | @tanstack/react-query-devtools | ^5.0.0 | MIT | simple-ui |
-| redis | >=5.0.0 | MIT | auth-service, platform-core-service, ai4icore_core, databases, tests |
+| redis | >=5.0.0 | MIT | auth-service, platform-core-service, ai4i_core, databases, tests |
 | scipy | ==1.17.1 | BSD-3-Clause | inference-service |
-| setuptools | >=68.0 | MIT | ai4icore_core (build) |
-| slowapi | >=0.1.9 | MIT | ai4icore_core |
+| setuptools | >=68.0 | MIT | ai4i_core (build) |
+| slowapi | >=0.1.9 | MIT | ai4i_core |
 | socket.io-client | 4.8.3 | MIT | simple-ui |
 | socket.io-parser | 4.2.6 | MIT | simple-ui (override) |
 | soundfile | ==0.13.1 | BSD-3-Clause | inference-service |
-| sqlalchemy | >=2.0.0 | MIT | auth-service, platform-core-service, ai4icore_core, databases, tests |
-| starlette | >=0.27.0 | BSD-3-Clause | auth-service, inference-service, platform-core-service, databases, ai4icore_core |
-| tritonclient[http] | >=2.40.0 | BSD-3-Clause | ai4icore_core |
-| twine | >=4.0.0 | Apache-2.0 | ai4icore_core (dev) |
+| sqlalchemy | >=2.0.0 | MIT | auth-service, platform-core-service, ai4i_core, databases, tests |
+| starlette | >=0.27.0 | BSD-3-Clause | auth-service, inference-service, platform-core-service, databases, ai4i_core |
+| tritonclient[http] | >=2.40.0 | BSD-3-Clause | ai4i_core |
+| twine | >=4.0.0 | Apache-2.0 | ai4i_core (dev) |
 | typescript | 4.9.4 | Apache-2.0 | simple-ui (dev) |
 | uvicorn[standard] | >=0.24.0 | BSD-3-Clause | auth-service, inference-service, platform-core-service |
-| wheel | — | MIT | ai4icore_core (build) |
+| wheel | — | MIT | ai4i_core (build) |
 | ws | 8.20.1 | MIT | simple-ui (override) |
 | zod | ^3.23.8 | MIT | simple-ui |
 
@@ -330,7 +330,7 @@ Deduplicated across all services. Where a library appears in multiple components
 
 | License | Libraries |
 |---|---|
-| MIT | fastapi, pydantic, pydantic-settings, sqlalchemy, alembic, redis, PyJWT, mako, aiosmtplib, jinja2, argon2-cffi, pydub, setuptools, wheel, slowapi, black, flake8, build, pyyaml, faker, factory-boy, python-socketio, pytest, pytest-cov, pytest-mock, pytest-timeout, @chakra-ui/icons, @chakra-ui/react, @emotion/react, @emotion/styled, @tanstack/react-query, @tanstack/react-query-devtools, axios, crypto-js, framer-motion, next, react, react-dom, react-icons, socket.io-client, socket.io-parser, zod, postcss, ws, eslint, ai4icore-core |
+| MIT | fastapi, pydantic, pydantic-settings, sqlalchemy, alembic, redis, PyJWT, mako, aiosmtplib, jinja2, argon2-cffi, pydub, setuptools, wheel, slowapi, black, flake8, build, pyyaml, faker, factory-boy, python-socketio, pytest, pytest-cov, pytest-mock, pytest-timeout, @chakra-ui/icons, @chakra-ui/react, @emotion/react, @emotion/styled, @tanstack/react-query, @tanstack/react-query-devtools, axios, crypto-js, framer-motion, next, react, react-dom, react-icons, socket.io-client, socket.io-parser, zod, postcss, ws, eslint, ai4i-core |
 | Apache-2.0 | asyncpg, aiokafka, kafka-python, opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-instrumentation-fastapi, opentelemetry-instrumentation-sqlalchemy, opentelemetry-instrumentation-redis, opensearch-py, elasticsearch, aiofiles, python-multipart, bcrypt, playwright, twine, pytest-asyncio, typescript |
 | Apache-2.0 AND BSD-2-Clause | prometheus-client |
 | Apache-2.0 OR BSD-3-Clause | cryptography |
