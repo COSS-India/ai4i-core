@@ -154,8 +154,9 @@ async def update_tenant_user(
 async def delete_tenant_user(
     tenant_id: int,
     user_id: UUID,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    await svc.delete_tenant_user(current_user, tenant_id, user_id)
+    await svc.delete_tenant_user(current_user, tenant_id, user_id, background_tasks)
     return success_response(data={"user_id": str(user_id), "deleted": True})

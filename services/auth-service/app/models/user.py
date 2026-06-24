@@ -43,6 +43,8 @@ class User(Base):
     phone_number = Column(EncryptedPhone(), nullable=True)
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
+    prev_email = Column(EncryptedEmail(), nullable=True)
+    prev_phone_number = Column(EncryptedPhone(), nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
     creation_type = Column(
         Enum(
