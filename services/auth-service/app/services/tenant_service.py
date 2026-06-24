@@ -212,8 +212,7 @@ class TenantService:
                 detail={
                     "code": "LAST_TENANT_ADMIN",
                     "message": (
-                        f"You are the only administrator for {tenant.name}. "
-                        "Please promote another user to Tenant Admin before deleting your account."
+                        f"Cannot delete user: {tenant.name} must retain at least one active Tenant Admin."
                     ),
                 },
             )
@@ -788,6 +787,10 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        # MODERATORs may delete USER-role accounts but not higher-privileged roles.
+        target_roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value in target_roles:
+            await self._deny_moderator(current_user)
         await self._assert_not_last_tenant_admin(target, tenant)
 
         # Capture PII before anonymisation — enqueue_email is called after commit

@@ -71,39 +71,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-
-    # Restore tenant.users.delete to ADMIN
-    conn.execute(sa.text(f"""
-        INSERT INTO role_permission (role_id, permission_id, created_by)
-        SELECT r.id, p.id, '{SEEDER_ID}'
-        FROM roles r
-        JOIN permissions p ON p.name = 'tenant.users.delete'
-        WHERE r.name = 'ADMIN'
-          AND NOT EXISTS (
-              SELECT 1 FROM role_permission rp
-              WHERE rp.role_id = r.id AND rp.permission_id = p.id
-          )
-    """))
-
-    # Revoke tenant.users.delete from USER
-    conn.execute(sa.text("""
-        DELETE FROM role_permission
-        WHERE role_id      = (SELECT id FROM roles       WHERE name = 'USER')
-          AND permission_id = (SELECT id FROM permissions WHERE name = 'tenant.users.delete')
-    """))
-
-    # Revoke tenant.users.delete from MODERATOR
-    conn.execute(sa.text("""
-        DELETE FROM role_permission
-        WHERE role_id      = (SELECT id FROM roles       WHERE name = 'MODERATOR')
-          AND permission_id = (SELECT id FROM permissions WHERE name = 'tenant.users.delete')
-    """))
-
-    # Revoke tenant.users.delete from TENANT_ADMIN
-    conn.execute(sa.text("""
-        DELETE FROM role_permission
-        WHERE role_id      = (SELECT id FROM roles       WHERE name = 'TENANT ADMIN')
-          AND permission_id = (SELECT id FROM permissions WHERE name = 'tenant.users.delete')
-    """))
+    pass
 

@@ -5,13 +5,12 @@ Role, Permission, UserRole, RolePermission queries.
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select , func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Permission, Role, RolePermission, UserRole
 from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.base import BaseRepository
-from sqlalchemy import func as sa_func
 from app.models.user import User
 
 
@@ -69,6 +68,7 @@ class RoleRepository(BaseRepository):
                 User.is_delete.isnot(True),
                 User.is_active.is_(True),
             )
+            .with_for_update(read=True)
         )
         return result.scalar_one()
 
