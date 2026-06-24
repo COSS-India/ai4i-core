@@ -159,8 +159,14 @@ def upgrade() -> None:
         FROM roles r CROSS JOIN permissions p
         WHERE r.name = 'ADMIN'
     """))
+    # ADMIN must not be able to delete accounts — strip tenant.users.delete after the bulk grant.
+    conn.execute(sa.text("""
+        DELETE FROM role_permission
+        WHERE role_id = (SELECT id FROM roles WHERE name = 'ADMIN')
+          AND permission_id = (SELECT id FROM permissions WHERE name = 'tenant.users.delete')
+    """))
 
-    # USER: profile + inference
+    # USER: profile + inference + self-deletion
     conn.execute(sa.text(f"""
         INSERT INTO role_permission (role_id, permission_id, created_by)
         SELECT r.id, p.id, '{SEEDER_ID}'
@@ -187,7 +193,8 @@ def upgrade() -> None:
           'pii_guard.inference',
           'speaker-diarization.inference',
           'transliteration.inference',
-          'tts.inference'
+          'tts.inference',
+          'tenant.users.delete'
         )
         WHERE r.name = 'USER'
     """))
@@ -228,7 +235,8 @@ def upgrade() -> None:
           'configs.read', 'configs.create', 'configs.update', 'configs.delete',
           'metrics.read', 'metrics.export',
           'alerts.read', 'alerts.create', 'alerts.update', 'alerts.delete',
-          'dashboards.read', 'dashboards.create', 'dashboards.update', 'dashboards.delete'
+          'dashboards.read', 'dashboards.create', 'dashboards.update', 'dashboards.delete',
+          'tenant.users.delete'
         )
         WHERE r.name = 'MODERATOR'
     """))

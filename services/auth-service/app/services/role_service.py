@@ -89,6 +89,9 @@ class RoleService:
     async def get_roles_for_users(self, user_ids: list[UUID]) -> dict[UUID, list[str]]:
         return await self._roles.get_roles_for_users(user_ids)
 
+    async def count_tenant_admins_in_tenant(self, tenant_id: int) -> int:
+        return await self._roles.count_tenant_admins_in_tenant(tenant_id)
+
     async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
         """
         Union of permission IDs across all roles assigned to a user.

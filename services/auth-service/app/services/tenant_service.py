@@ -195,6 +195,29 @@ class TenantService:
                 },
             )
 
+    async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
+        """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
+
+        Prevents a tenant from becoming unmanageable by blocking deletion of
+        the last admin. The check is on the target (not the caller) so it covers
+        both self-deletion and an admin deleting another tenant admin.
+        """
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value not in roles:
+            return
+        count = await self._roles.count_tenant_admins_in_tenant(tenant.id)
+        if count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "LAST_TENANT_ADMIN",
+                    "message": (
+                        f"You are the only administrator for {tenant.name}. "
+                        "Please promote another user to Tenant Admin before deleting your account."
+                    ),
+                },
+            )
+
     @staticmethod
     def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
         if RoleName.TENANT_ADMIN.value in roles:
@@ -763,9 +786,9 @@ class TenantService:
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
-        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        await self._assert_not_last_tenant_admin(target, tenant)
 
         # Capture PII before anonymisation — enqueue_email is called after commit
         # so a failed update/commit cannot leak a deletion email.
