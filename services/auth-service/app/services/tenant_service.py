@@ -15,7 +15,7 @@ from uuid import UUID
 
 import httpx
 
-from ai4icore_core.email import EmailClient, EmailMessage
+from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings

@@ -20,7 +20,7 @@ import jwt
 from jwt.exceptions import PyJWTError, ExpiredSignatureError
 import httpx
 
-from ai4icore_core.exceptions import (
+from ai4i_core.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
 )

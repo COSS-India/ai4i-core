@@ -28,7 +28,7 @@ from app.dependencies.auth import init_jwt_verifier
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 
-from ai4icore_core.logging import configure_logging, RequestMiddleware
+from ai4i_core.logging import configure_logging, RequestMiddleware
 
 logger = logging.getLogger(__name__)
 

@@ -84,8 +84,8 @@ Tenant/user context is automatically populated by middleware from JWT claims:
 2. **ObservabilityMiddleware** sets tenant_id and user_id from JWT
 
 The span functions read these via:
-- `get_tenant_id()` from ai4icore_core.context
-- `get_user_id()` from ai4icore_core.context
+- `get_tenant_id()` from ai4i_core.context
+- `get_user_id()` from ai4i_core.context
 
 No additional setup needed—middleware automatically handles context propagation.
 
@@ -124,7 +124,7 @@ request (span)
 ## Dependencies
 
 - opentelemetry-api (for `trace.get_current_span()`)
-- ai4icore_core.context (for tenant/user context vars)
+- ai4i_core.context (for tenant/user context vars)
 
 No additional external dependencies.
 

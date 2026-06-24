@@ -39,7 +39,7 @@ those if you want the big picture before diving into code.
 | `services/platform-core-service/` | Model registry, alerts, PII policies, billing |
 | `services/inference-service/` | Unified inference endpoint for all AI task types |
 | `frontend/simple-ui/` | Next.js 14 web portal (TypeScript, React) |
-| `libs/ai4icore_core/` | Shared utilities: logging, observability, email, telemetry |
+| `libs/ai4i_core/` | Shared utilities: logging, observability, email, telemetry |
 | `infrastructure/databases/` | Alembic migrations for all PostgreSQL schemas |
 | `infrastructure/prometheus/` | Prometheus config and alert rules |
 | `infrastructure/grafana/` | Grafana dashboard JSON and datasource provisioning |
@@ -193,12 +193,12 @@ exposes a Prometheus metrics endpoint (`/enterprise/metrics`).
 
 ---
 
-## Shared library — `libs/ai4icore_core/`
+## Shared library — `libs/ai4i_core/`
 
-> **Docstring:** *"ai4icore\_core — Consolidated AI4ICore utility libraries."*
-> — `libs/ai4icore_core/ai4icore_core/__init__.py`
+> **Docstring:** *"ai4i\_core — Consolidated AI4I utility libraries."*
+> — `libs/ai4i_core/ai4i_core/__init__.py`
 
-A Python package (`ai4icore_core==1.1.5`) installed into every service. Contains all
+A Python package (`ai4i_core==1.0.2`) installed into every service. Contains all
 cross-cutting concerns so each service does not reinvent them.
 
 | Subpackage | Purpose |
@@ -211,12 +211,12 @@ cross-cutting concerns so each service does not reinvent them.
 | `telemetry/` | OpenTelemetry tracing, W3C context propagation, OpenSearch query clients |
 
 **Key files to read first:**
-- `ai4icore_core/__init__.py` — package-level docstring lists all subpackages
+- `ai4i_core/__init__.py` — package-level docstring lists all subpackages
 - `logging/middleware.py` — `RequestMiddleware` (adds correlation IDs to every request)
 - `observability/middleware.py` — Prometheus metrics ASGI middleware
 - `telemetry/traceability.py` — trace-ID propagation across service boundaries
 
-All services install this library via `pip install -e ../../libs/ai4icore_core` (see each
+All services install this library via `pip install -e ../../libs/ai4i_core` (see each
 service's `requirements.txt`).
 
 ---
@@ -347,7 +347,7 @@ Each service also has its own unit and integration test suite:
    - `app/services/` — business logic
    - `app/repositories/` — data access
 
-6. **Shared utilities** — if a function looks like general infrastructure (logging, metrics, email), it is probably in `libs/ai4icore_core/`. Check the subpackage docstrings in `libs/ai4icore_core/ai4icore_core/__init__.py`.
+6. **Shared utilities** — if a function looks like general infrastructure (logging, metrics, email), it is probably in `libs/ai4i_core/`. Check the subpackage docstrings in `libs/ai4i_core/ai4i_core/__init__.py`.
 
 7. **Add a migration** — if your change touches the database schema, follow the instructions in `infrastructure/databases/MIGRATIONS.md`.
 

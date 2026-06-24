@@ -3,7 +3,7 @@ Database — re-exports from shared ai4icore_bootstrap.
 Auth-service uses the same DB infra as every other service.
 """
 
-from ai4icore_core.bootstrap.database import (  # noqa: F401
+from ai4i_core.bootstrap.database import (  # noqa: F401
     init_database,
     close_database,
     get_db,
