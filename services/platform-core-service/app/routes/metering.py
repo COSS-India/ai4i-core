@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import time as _time
 from datetime import datetime, timezone
@@ -136,7 +137,7 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
             f = float(val)
         except (TypeError, ValueError):
             continue
-        if f != f or f in (float("inf"), float("-inf")):  # NaN / ±Inf
+        if math.isnan(f) or math.isinf(f):  # NaN / ±Inf
             continue
         out.append(GraphPoint(ts=int(ts), value=round(f, ndigits)))
     return out
