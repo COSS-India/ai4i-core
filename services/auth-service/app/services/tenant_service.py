@@ -794,7 +794,7 @@ class TenantService:
         enqueue_email(
             background_tasks,
             self._email,
-            lambda: render_account_deleted(target, deleted_email, deleted_full_name),
+            lambda: render_account_deleted(deleted_email, deleted_full_name),
         )
 
         if self._api_keys is not None:
