@@ -19,10 +19,25 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _column_exists(table: str, column: str) -> bool:
+    bind = op.get_bind()
+    result = bind.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = :table AND column_name = :column"
+        ),
+        {"table": table, "column": column},
+    )
+    return result.fetchone() is not None
+
+
 def upgrade() -> None:
-    op.add_column('mm_services', sa.Column('cost_per_unit', sa.Numeric(10, 4), nullable=True))
-    op.add_column('mm_services', sa.Column('billing_unit_type', sa.String(length=32), nullable=True))
-    op.add_column('mm_services', sa.Column('tier', sa.String(length=20), nullable=True))
+    if not _column_exists('mm_services', 'cost_per_unit'):
+        op.add_column('mm_services', sa.Column('cost_per_unit', sa.Numeric(10, 4), nullable=True))
+    if not _column_exists('mm_services', 'billing_unit_type'):
+        op.add_column('mm_services', sa.Column('billing_unit_type', sa.String(length=32), nullable=True))
+    if not _column_exists('mm_services', 'tier'):
+        op.add_column('mm_services', sa.Column('tier', sa.String(length=20), nullable=True))
 
 
 def downgrade() -> None:
