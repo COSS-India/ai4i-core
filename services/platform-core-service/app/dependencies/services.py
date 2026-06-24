@@ -65,7 +65,7 @@ def get_prometheus_client(request: Request) -> PrometheusClient:
     )
 
 
-async def get_metering_service(
+def get_metering_service(
     client: PrometheusClient = Depends(get_prometheus_client),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ) -> "MeteringService":

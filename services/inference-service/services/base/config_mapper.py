@@ -259,7 +259,7 @@ class GenericTritonMapper:
     # BaseTaskService interface — run_inference calls these
     # ------------------------------------------------------------------
 
-    async def convert_payload_to_triton_format(
+    def convert_payload_to_triton_format(
         self,
         input_data: List[Dict[str, Any]],
         config: Dict[str, Any],
@@ -267,7 +267,7 @@ class GenericTritonMapper:
         """Convert task input + config into KServe v2 Triton payload."""
         return self.compose_triton_kserve_v2_payload(input_data, config)
 
-    async def convert_triton_output_to_task_format(
+    def convert_triton_output_to_task_format(
         self,
         triton_output: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
