@@ -10,6 +10,9 @@ from app.models import Base
 
 class PPUTier(Base):
     __tablename__ = "ppu_tiers"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_ppu_tiers_name"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
@@ -29,7 +32,6 @@ class PPUTier(Base):
         "PPUTierQuota",
         back_populates="tier",
         cascade="all, delete-orphan",
-        lazy="selectin",
     )
     tenant_assignments = relationship("PPUTenantTierAssignment", back_populates="tier")
 

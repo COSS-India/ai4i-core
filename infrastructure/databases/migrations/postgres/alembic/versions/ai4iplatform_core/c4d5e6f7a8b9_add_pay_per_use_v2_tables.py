@@ -39,6 +39,7 @@ def upgrade() -> None:
         sa.Column('updated_by', sa.String(255), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.UniqueConstraint('name', name='uq_ppu_tiers_name'),
     )
 
     op.create_table(
@@ -54,18 +55,8 @@ def upgrade() -> None:
         sa.Column('monthly_quota', sa.BigInteger(), nullable=False),
         sa.Column('created_by', sa.String(255), nullable=True),
         sa.Column('updated_by', sa.String(255), nullable=True),
-        sa.Column(
-            'created_at',
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text('now()'),
-        ),
-        sa.Column(
-            'updated_at',
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text('now()'),
-        ),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.UniqueConstraint('tier_id', 'inference_name', name='uq_ppu_tier_quotas_tier_inference'),
     )
     op.create_index('ix_ppu_tier_quotas_tier_id', 'ppu_tier_quotas', ['tier_id'])
@@ -73,7 +64,7 @@ def upgrade() -> None:
     op.create_table(
         'ppu_tenant_tier_assignments',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
-        sa.Column('tenant_id', sa.String(64), nullable=False),
+        sa.Column('tenant_id', sa.String(255), nullable=False),
         sa.Column(
             'tier_id',
             postgresql.UUID(as_uuid=True),
@@ -86,21 +77,8 @@ def upgrade() -> None:
         sa.Column('effective_to', sa.DateTime(timezone=True), nullable=False),
         sa.Column('created_by', sa.String(255), nullable=True),
         sa.Column('updated_by', sa.String(255), nullable=True),
-        sa.Column(
-            'created_at',
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text('now()'),
-        ),
-        sa.Column(
-            'updated_at',
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text('now()'),
-        ),
-        sa.UniqueConstraint(
-            'tenant_id', 'tier_id', name='uq_ppu_tenant_tier_assignments_tenant_tier'
-        ),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
     )
     op.create_index('ix_ppu_tenant_tier_assignments_tenant_id', 'ppu_tenant_tier_assignments', ['tenant_id'])
     op.create_index('ix_ppu_tenant_tier_assignments_tier_id', 'ppu_tenant_tier_assignments', ['tier_id'])
@@ -108,30 +86,15 @@ def upgrade() -> None:
     op.create_table(
         'ppu_quota_usage',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
-        sa.Column('tenant_id', sa.String(64), nullable=False),
+        sa.Column('tenant_id', sa.String(255), nullable=False),
         sa.Column('inference_name', sa.String(64), nullable=False),
         sa.Column('billing_month', sa.String(7), nullable=False),
         sa.Column('monthly_quota_snap', sa.BigInteger(), nullable=True),
-        sa.Column(
-            'units_used',
-            sa.BigInteger(),
-            nullable=False,
-            server_default=sa.text('0'),
-        ),
+        sa.Column('units_used', sa.BigInteger(), nullable=False, server_default=sa.text('0')),
         sa.Column('created_by', sa.String(255), nullable=True),
         sa.Column('updated_by', sa.String(255), nullable=True),
-        sa.Column(
-            'created_at',
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text('now()'),
-        ),
-        sa.Column(
-            'updated_at',
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text('now()'),
-        ),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.UniqueConstraint(
             'tenant_id',
             'inference_name',

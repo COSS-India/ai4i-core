@@ -19,7 +19,7 @@ class PPUQuotaUsage(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(String(64), nullable=False, index=True)
+    tenant_id = Column(String(255), nullable=False, index=True)
     inference_name = Column(String(64), nullable=False, index=True)
     billing_month = Column(String(7), nullable=False)
     monthly_quota_snap = Column(BigInteger, nullable=True)
