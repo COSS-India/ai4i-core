@@ -25,7 +25,6 @@ from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
-
 # Service types whose request bodies carry payload-size metrics worth
 # extracting. Membership check is O(1). LLM is handled separately because its
 # token counts come from the response (vLLM `usage` block), not the request.

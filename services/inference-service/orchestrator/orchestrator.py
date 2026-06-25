@@ -7,11 +7,8 @@ from typing import Any, Dict, Optional
 from fastapi import Request
 import logging
 
-from trace.request_span import (
-    get_context_attributes,
-    get_endpoint_path,
-    traced_span,
-)
+from ai4i_core.context import get_context_attributes, get_endpoint_path
+from trace.request_span import traced_span
 
 from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
@@ -67,7 +64,7 @@ class Orchestrator:
         """
         # Root span (parentID=null); traced_span owns timing + status.
         with traced_span("request", root=True, classify_status=True) as attrs:
-            attrs["url"] = str(request.url.path) if request else get_endpoint_path()
+            attrs["url"] = str(request.url.path) if request else (get_endpoint_path() or "")
             attrs["method"] = request.method if request else ""
             attrs.update(get_context_attributes())
 
@@ -75,7 +72,7 @@ class Orchestrator:
             self._validate_task_type(task_type)
 
             # Resolve service and model BEFORE creating task service
-            service_info = await self._resolve_service_and_model(payload)
+            service_info = await self._resolve_service_and_model(payload, attrs)
 
             # Instantiate and run the task service with the raw payload
             task_service = self._get_task_service(service_info)
@@ -121,7 +118,7 @@ class Orchestrator:
         )
         return service_class(service_info=service_info)  # type: ignore
 
-    async def _resolve_service_and_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _resolve_service_and_model(self, payload: Dict[str, Any], prev_attrs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Resolve the model service details from the raw request payload.
         Extracted here so the Orchestrator can route to the correct model-specific
@@ -140,7 +137,7 @@ class Orchestrator:
         """
         with traced_span("model") as attrs:
             attrs["task_type"] = payload.get("task_type", "").upper()
-            attrs.update(get_context_attributes())
+            attrs.update(get_context_attributes() if prev_attrs is None else prev_attrs)
 
             # Extract serviceId: check config block first, then top-level
             config_block = payload.get("config") or {}

@@ -65,3 +65,16 @@ def get_user_id() -> Optional[str]:
 
 def reset_user_id(token: contextvars.Token) -> None:
     _user_id_var.reset(token)
+
+
+def get_context_attributes() -> dict:
+    """
+    Skips keys whose value is None so callers can do span.set_attribute()
+    without filtering themselves.
+    """
+    attrs = {}
+    if user_id := get_user_id():
+        attrs["userId"] = user_id
+    if tenant_id := get_tenant_id():
+        attrs["tenantId"] = tenant_id
+    return attrs

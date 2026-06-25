@@ -160,3 +160,5 @@ skills/
 
 # Architecture docs (local ADRs, designs, diagrams), not committed
 arch-docs/
+
+rough/

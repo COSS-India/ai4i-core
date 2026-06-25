@@ -1,60 +1,25 @@
 """
 OpenTelemetry span helpers for the inference pipeline.
 
-Provides a shared tracer instance and utilities for creating named spans
-with context attributes (userId, tenantId) from ai4i_core.context.
+Provides a shared tracer instance and utilities for creating named spans.
+Context attributes (userId, tenantId, endpoint_path) are read via
+ai4i_core.context — import get_context_attributes / get_endpoint_path from
+there rather than from this module.
 """
 
-import time
 import logging
+import time
 from contextlib import asynccontextmanager, contextmanager
 
 from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import StatusCode
 
+from ai4i_core.observability.utils import compute_total_time_ms
+
 logger = logging.getLogger(__name__)
 
 # Shared tracer for the inference service
 tracer = trace.get_tracer("inference-service")
-
-
-def get_context_attributes() -> dict:
-    """
-    Resolve userId and tenantId for span attributes from ai4i_core ContextVars.
-
-    RequestMiddleware (ai4i_core.logging) populates these contextvars from
-    the gateway-injected X-Tenant-Id / X-User-ID headers before handlers run;
-    contextvars set in middleware propagate into the handler task, so they are
-    the single source of truth here — no header re-reading.
-
-    Returns dict with available values (skips None).
-    """
-    attrs = {}
-    try:
-        from ai4i_core.context import get_user_id, get_tenant_id
-        user_id = get_user_id()
-        tenant_id = get_tenant_id()
-        if user_id:
-            attrs["userId"] = user_id
-        if tenant_id:
-            attrs["tenantId"] = tenant_id
-    except Exception as e:
-        logger.debug(f"Could not read context attributes: {e}")
-    return attrs
-
-
-def get_endpoint_path() -> str:
-    """Read endpoint_path from ai4i_core ContextVars."""
-    try:
-        from ai4i_core.context import get_endpoint_path as _get_ep
-        return _get_ep() or ""
-    except Exception:
-        return ""
-
-
-def compute_total_time_ms(start_time: float) -> float:
-    """Compute elapsed time in milliseconds from a time.time() start."""
-    return round((time.time() - start_time) * 1000, 2)
 
 
 def log_span_attributes(span_name: str, span, attributes: dict) -> None:

@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-from trace.request_span import traced_span, get_context_attributes
+from ai4i_core.context import get_context_attributes
+from trace.request_span import traced_span
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])

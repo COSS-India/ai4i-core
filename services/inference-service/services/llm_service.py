@@ -5,8 +5,9 @@ from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
+from ai4i_core.observability.request_span import traced_span, traced_inference
 from config import settings
-from trace.request_span import traced_span, traced_inference, get_context_attributes
+from ai4i_core.context import get_context_attributes
 
 
 logger = logging.getLogger(__name__)
