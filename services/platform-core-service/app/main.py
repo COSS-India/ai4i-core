@@ -24,8 +24,6 @@ from app.core.exceptions import register_exception_handlers
 from app.core.database import get_primary_session_factory as _get_pii_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
-from app.services.pay_per_use.pay_per_use_service import warm_pricing_cache
-
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
 EndpointValidationFailedError = _importlib.import_module(
@@ -58,8 +56,6 @@ async def lifespan(app: FastAPI):
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
-    await warm_pricing_cache()
-
     # ── Telemetry / OpenSearch ────────────────────────────────────────────
     if settings.opensearch_url and settings.opensearch_username and settings.opensearch_password:
         from app.utils.opensearch_client import OpenSearchTraceClient
