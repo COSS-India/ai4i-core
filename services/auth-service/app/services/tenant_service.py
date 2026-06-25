@@ -25,7 +25,7 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role_name import RoleName, role_name_to_str
@@ -192,6 +192,32 @@ class TenantService:
                 detail={
                     "code": "INSUFFICIENT_PERMISSIONS",
                     "message": "Moderators cannot perform this action.",
+                },
+            )
+
+    async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
+        """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
+
+        Prevents a tenant from becoming unmanageable by blocking deletion of
+        the last admin. The check is on the target (not the caller) so it covers
+        both self-deletion and an admin deleting another tenant admin.
+        """
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value not in roles:
+            return
+        # Serialize concurrent last-admin checks within the same tenant.
+        await self._tenants._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
+        count = await self._roles.count_tenant_admins_in_tenant(tenant.id)
+        if count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "LAST_TENANT_ADMIN",
+                    "message": (
+                        f"Cannot delete user: {tenant.name} must retain at least one active Tenant Admin."
+                    ),
                 },
             )
 
@@ -763,9 +789,13 @@ class TenantService:
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
-        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        # MODERATORs may delete USER-role accounts but not higher-privileged roles.
+        target_roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value in target_roles:
+            await self._deny_moderator(current_user)
+        await self._assert_not_last_tenant_admin(target, tenant)
 
         # Capture PII before anonymisation — enqueue_email is called after commit
         # so a failed update/commit cannot leak a deletion email.

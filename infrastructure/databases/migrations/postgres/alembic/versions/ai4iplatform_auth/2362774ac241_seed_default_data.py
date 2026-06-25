@@ -28,6 +28,9 @@ def upgrade() -> None:
 
     conn = op.get_bind()
 
+    if conn.execute(sa.text("SELECT COUNT(*) FROM permissions")).scalar():
+        return
+
     roles = [
         ("ADMIN",        "Administrator with full system access"),
         ("USER",         "Regular user with standard permissions"),
@@ -160,7 +163,7 @@ def upgrade() -> None:
         WHERE r.name = 'ADMIN'
     """))
 
-    # USER: profile + inference
+    # USER: profile + inference + self-deletion
     conn.execute(sa.text(f"""
         INSERT INTO role_permission (role_id, permission_id, created_by)
         SELECT r.id, p.id, '{SEEDER_ID}'
