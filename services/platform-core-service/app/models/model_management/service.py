@@ -14,11 +14,13 @@ services are excluded from active queries and do not permit state transitions.
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
     ForeignKeyConstraint,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -63,6 +65,10 @@ class Service(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
+    billing_unit_type = Column(String(32), nullable=True)
+    cost_per_unit = Column(Numeric(15, 8), nullable=True)
+    unit_size = Column(BigInteger, nullable=True)
+    unit_rate = Column(Numeric(15, 8), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
