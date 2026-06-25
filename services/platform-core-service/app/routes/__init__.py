@@ -15,7 +15,6 @@ from app.routes.health import router as health_router
 from app.routes.model import router as model_router
 from app.routes.pii import router as pii_router
 from app.routes.service import router as service_router
-from app.routes.pay_per_use import router as pay_per_use_router, billing_router
 from app.routes.telemetry import router as telemetry_router
 from app.routes.metering import router as metering_router
 
@@ -33,8 +32,6 @@ versioning = APIVersioning(
 v1_router = versioning.create_router("v1")
 v1_router.include_router(model_router)
 v1_router.include_router(service_router)
-v1_router.include_router(pay_per_use_router)
-v1_router.include_router(billing_router)
 v1_router.include_router(alert_router)
 v1_router.include_router(pii_router)
 v1_router.include_router(telemetry_router)

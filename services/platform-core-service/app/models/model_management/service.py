@@ -21,7 +21,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
-    UniqueConstraint, Numeric,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -63,9 +63,6 @@ class Service(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
-    cost_per_unit = Column(Numeric(10, 4), nullable=True)
-    billing_unit_type = Column(String(32), nullable=True)
-    tier = Column(String(20), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
