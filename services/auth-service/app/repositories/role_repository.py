@@ -68,7 +68,6 @@ class RoleRepository(BaseRepository):
                 User.is_delete.isnot(True),
                 User.is_active.is_(True),
             )
-            .with_for_update(read=True)
         )
         return result.scalar_one()
 

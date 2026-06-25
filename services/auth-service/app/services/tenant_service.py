@@ -25,7 +25,7 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role_name import RoleName, role_name_to_str
@@ -205,6 +205,10 @@ class TenantService:
         roles = await self._roles.get_user_roles(target.id)
         if RoleName.TENANT_ADMIN.value not in roles:
             return
+        # Serialize concurrent last-admin checks within the same tenant.
+        await self._tenants._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
         count = await self._roles.count_tenant_admins_in_tenant(tenant.id)
         if count <= 1:
             raise HTTPException(
