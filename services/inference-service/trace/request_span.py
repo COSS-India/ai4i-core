@@ -106,6 +106,12 @@ def traced_span(
         error_attrs: optional fn(attrs, exc) -> attrs to reshape the
             collected attrs on failure (e.g. zero token counts)
     """
+    # Per-block phase timings ride the root span only — child spans (model,
+    # ai-inference) carry their own total_time_ms and must not duplicate them.
+    if root:
+        from trace.phase_timer import start_root_phases
+        start_root_phases()
+
     start_time = time.time()
     context = otel_context.Context() if root else None
     with tracer.start_as_current_span(span_name, context=context) as span:
@@ -115,18 +121,38 @@ def traced_span(
         except Exception as e:
             if error_attrs is not None:
                 attrs = error_attrs(attrs, e)
-            attrs["total_time_ms"] = compute_total_time_ms(start_time)
-            if classify_status:
-                attrs["status"] = "failure"
-                attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
-            finalize_span(span, span_name, attrs, error=e)
+            _finalize_traced(
+                span, span_name, attrs, start_time,
+                classify_status=classify_status, root=root, error=e,
+            )
             raise
         else:
-            attrs["total_time_ms"] = compute_total_time_ms(start_time)
-            if classify_status:
-                attrs.setdefault("status", "success")
-                attrs.setdefault("status_code", 200)
-            finalize_span(span, span_name, attrs, ok=mark_ok)
+            _finalize_traced(
+                span, span_name, attrs, start_time,
+                classify_status=classify_status, root=root, mark_ok=mark_ok,
+            )
+
+
+def _finalize_traced(
+    span, span_name, attrs, start_time, *,
+    classify_status, root, mark_ok=False, error=None,
+):
+    """Stamp total_time_ms + status, merge root phase timings, finalize.
+
+    Shared success/error tail of traced_span — keeps the context manager's
+    branching flat (one call per path).
+    """
+    attrs["total_time_ms"] = compute_total_time_ms(start_time)
+    if classify_status and error is not None:
+        attrs["status"] = "failure"
+        attrs["status_code"] = 400 if isinstance(error, ValueError) else 500
+    elif classify_status:
+        attrs.setdefault("status", "success")
+        attrs.setdefault("status_code", 200)
+    if root:
+        from trace.phase_timer import collect_phases
+        attrs.update(collect_phases())
+    finalize_span(span, span_name, attrs, error=error, ok=(mark_ok and error is None))
 
 
 def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: bool = False) -> None:
