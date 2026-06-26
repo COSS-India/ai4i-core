@@ -112,8 +112,9 @@ class PPUUsageService:
             remaining_budget = float(row.available_balance)
             total_units = int(row.total_units or 0)
             total_quota = int(row.total_quota or 0)
-            consumption = round(total_units / _DEFAULT_UNIT_SIZE, 1)
-            quota_display = round(total_quota / _DEFAULT_UNIT_SIZE, 1)
+            unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
+            consumption = round(total_units / unit_size, 1)
+            quota_display = round(total_quota / unit_size, 1)
 
             items.append(TenantUsageItem(
                 tenantId=row.tenant_id,

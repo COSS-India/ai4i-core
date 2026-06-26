@@ -1,5 +1,5 @@
 """PPU usage repository — reads usage and pricing data."""
-from sqlalchemy import func, select
+from sqlalchemy import func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_management.service import Service
@@ -96,6 +96,24 @@ class PPUUsageRepository:
             quota_sq = quota_sq.where(PPUTierQuota.inference_name == model_task_type)
         quota_sq = quota_sq.group_by(PPUTierQuota.tier_id).subquery()
 
+        # Fetch the correct unit_size for the filtered inference type so the
+        # service layer can apply the right divisor (e.g. 60 for ASR minutes,
+        # not the default 1M).  NULL when no type filter — units are mixed.
+        if model_task_type:
+            unit_size_col = (
+                select(Service.unit_size)
+                .where(
+                    Service.billing_unit_type == model_task_type,
+                    Service.deleted_at.is_(None),
+                )
+                .order_by(Service.created_at.desc())
+                .limit(1)
+                .scalar_subquery()
+                .label("unit_size")
+            )
+        else:
+            unit_size_col = null().label("unit_size")
+
         stmt = (
             select(
                 PPUTenantTierAssignment.tenant_id,
@@ -104,6 +122,7 @@ class PPUUsageRepository:
                 PPUTenantTierAssignment.available_balance,
                 func.coalesce(usage_sq.c.total_units, 0).label("total_units"),
                 func.coalesce(quota_sq.c.total_quota, 0).label("total_quota"),
+                unit_size_col,
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
             .outerjoin(usage_sq, usage_sq.c.tenant_id == PPUTenantTierAssignment.tenant_id)
