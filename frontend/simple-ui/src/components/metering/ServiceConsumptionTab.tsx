@@ -12,18 +12,22 @@ import {
 import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
+import MeteringDonutChart from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 
 interface ServiceConsumptionTabProps {
   data?: ServiceConsumptionResponse;
   isLoading?: boolean;
   errorMessage?: string | null;
+  /** Render the service-distribution donut above the breakdown. Defaults to true. */
+  showDonut?: boolean;
 }
 
 const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   data,
   isLoading,
   errorMessage,
+  showDonut = true,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
   const breakdown = data?.service_breakdown ?? [];
@@ -32,6 +36,23 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
     () => deriveServiceInsights(data?.summary, breakdown),
     [data?.summary, breakdown],
   );
+
+  // Donut shows the share of total requests per service (services with traffic only).
+  const { donutData, donutLegend } = useMemo(() => {
+    const active = breakdown.filter((row) => row.requests > 0);
+    const total = active.reduce((sum, row) => sum + row.requests, 0);
+    const donutData = active.map((row, i) => ({
+      name: row.service,
+      value: row.requests,
+      color: meteringServiceColor(row.service, i),
+    }));
+    const donutLegend = donutData.map((d) => ({
+      name: d.name,
+      color: d.color,
+      pct: total > 0 ? (d.value / total) * 100 : 0,
+    }));
+    return { donutData, donutLegend };
+  }, [breakdown]);
 
   return (
     <MeteringAsyncState
@@ -77,6 +98,21 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                 accent="gray"
               />
             </SimpleGrid>
+          ) : null}
+
+          {showDonut && donutData.length ? (
+            <MeteringSectionCard
+              title={section.CONSUMPTION_TITLE}
+              subtitle={`${section.CONSUMPTION_SUBTITLE_PREFIX} ${getWindowLabel(data.scope.window)}`}
+              sectionLabel
+            >
+              <MeteringDonutChart
+                data={donutData}
+                legendItems={donutLegend}
+                centerPrimary={section.DONUT_CENTER_PRIMARY}
+                centerSecondary={section.DONUT_CENTER_SECONDARY}
+              />
+            </MeteringSectionCard>
           ) : null}
 
           <MeteringSectionCard
