@@ -25,25 +25,28 @@ class CacheService(_BaseCacheService):
         super().__init__(redis)
 
     async def set_api_key_cache(self, api_key: str, ttl_seconds: int, data: dict) -> None:
-        """Store api_key metadata in Redis. TTL matches key expiry."""
-        try:
-            serialized = json.dumps(data)
-        except (TypeError, ValueError) as exc:
-            logger.error("Cannot serialize API key cache data: %s", exc)
-            return
-        await self._redis.setex(f"{REDIS_API_KEY_PREFIX}{api_key}", ttl_seconds, serialized)
+        """Store api_key metadata as a Redis hash. TTL set atomically via pipeline."""
+        mapping = dict(data)
+        if "permissions" in mapping and not isinstance(mapping["permissions"], str):
+            mapping["permissions"] = json.dumps(mapping["permissions"])
+        mapping = {k: str(v) if v is not None else "" for k, v in mapping.items()}
+        key = f"{REDIS_API_KEY_PREFIX}{api_key}"
+        async with self._redis.pipeline(transaction=True) as pipe:
+            await pipe.hset(key, mapping=mapping)
+            await pipe.expire(key, ttl_seconds)
+            await pipe.execute()
 
     async def get_api_key_cache(self, api_key: str) -> Optional[dict]:
         """Return cached metadata dict, or None on miss/expiry."""
-        raw = await self._redis.get(f"{REDIS_API_KEY_PREFIX}{api_key}")
-        if raw is None:
+        data = await self._redis.hgetall(f"{REDIS_API_KEY_PREFIX}{api_key}")
+        if not data:
             return None
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Corrupt API key cache entry; evicting key prefix %s", api_key[:8])
-            await self.delete_api_key_cache(api_key)
-            return None
+        if "permissions" in data:
+            try:
+                data["permissions"] = json.loads(data["permissions"])
+            except (json.JSONDecodeError, ValueError):
+                data["permissions"] = []
+        return data
 
     async def delete_api_key_cache(self, api_key: str) -> None:
         """Immediately invalidate an API key — used on revocation."""

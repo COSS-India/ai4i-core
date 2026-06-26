@@ -126,6 +126,9 @@ async def _validate_api_key(
     if user_id:
         response.headers["X-User-ID"] = str(user_id)
     response.headers["X-User-Plan"] = USER_PLAN_APIKEY
+    response.headers["X-Tier-ID"] = result.get("tier_id")
+    response.headers["X-Budget-Exhausted"] = result.get("budget_exhausted")
+    response.headers["X-Quota-Exhausted"] = result.get("quota_exhausted")
     response.headers["X-Auth-Type"] = "api_key"
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
     if tenant_id:
@@ -158,6 +161,9 @@ async def _validate_jwt(
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
     response.headers["X-User-Plan"] = USER_PLAN_JWT
+    response.headers["X-Tier-ID"] = ""
+    response.headers["X-Budget-Exhausted"] = "false"
+    response.headers["X-Quota-Exhausted"] = ""
     response.headers["X-Auth-Type"] = claims.token_type
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in claims.permission_ids) + "]"
     if claims.tenant_id:
