@@ -73,18 +73,24 @@ class MeteringService:
         success_rate_vs_prev: Optional[float] = None
         avg_rps_vs_prev: Optional[float] = None
         prev_total_v: Optional[int] = None
+        prev_success_rate_v: Optional[float] = None
+        prev_avg_rps_v: Optional[float] = None
 
         if window:
             prev_total = max(0, round(_float(raw[3])))
             prev_success = max(0, round(_float(raw[4])))
             prev_avg_rps = _float(raw[5])
             prev_total_v = prev_total
+            prev_avg_rps_v = round(prev_avg_rps, 2)
+            # Previous success rate is undefined without prior traffic → report 0.
+            prev_success_rate_v = (
+                round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
+            )
 
             if prev_total > 0:
                 total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
-                prev_success_rate = round(prev_success / prev_total * 100, 2)
                 # pp change so that "97.35 → 97.45" reports as +0.1
-                success_rate_vs_prev = round(success_rate - prev_success_rate, 2)
+                success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
 
             if prev_avg_rps > 0:
                 avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
@@ -95,14 +101,19 @@ class MeteringService:
                 "formatted": self._format_count(total_v),
                 "vs_previous_pct": total_vs_prev,
                 "previous_count": prev_total_v,
+                "previous_formatted": (
+                    self._format_count(prev_total_v) if prev_total_v is not None else None
+                ),
             },
             "success_rate": {
                 "rate_pct": success_rate,
                 "vs_previous_pct": success_rate_vs_prev,
+                "previous_rate_pct": prev_success_rate_v,
             },
             "avg_rps": {
                 "value": avg_rps_v,
                 "vs_previous_pct": avg_rps_vs_prev,
+                "previous_value": prev_avg_rps_v,
             },
             "filters": {
                 "inference_only": inference_only,
