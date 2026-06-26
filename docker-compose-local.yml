@@ -97,18 +97,28 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     ports:
-      - "9093:9092"
+      - "9093:9093"
     volumes:
       - kafka-data:/var/lib/kafka/data
-      - ./infrastructure/kafka:/docker-entrypoint-initdb.d
+      - ./infrastructure/kafka/init-kafka.sh:/init-kafka.sh:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /etc/confluent/docker/run &
+        KAFKA_PID=$$!
+        until kafka-broker-api-versions --bootstrap-server localhost:9093 >/dev/null 2>&1; do
+          sleep 2
+        done
+        bash /init-kafka.sh
+        wait $$KAFKA_PID
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
       interval: 10s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 20s
     restart: unless-stopped
 
   # ── Metrics ───────────────────────────────────────────────────────────────────
