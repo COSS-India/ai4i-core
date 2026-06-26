@@ -46,6 +46,35 @@ class _BaseSchema(_PydanticBaseModel):
 
 _conftest_stub("app.schemas.base", BaseSchema=_BaseSchema)
 
+# Stub ai4i_core so services that re-export shared exceptions can be imported
+# without installing the full ai4i-core package.
+class _AppError(Exception): pass
+class _EntityNotFoundError(_AppError): pass
+class _DuplicateEntityError(_AppError): pass
+class _ValidationError(_AppError): pass
+class _InsufficientPermissionsError(_AppError): pass
+class _ServiceError(_AppError): pass
+class _ModelNotFoundError(_AppError): pass
+class _ServiceUnavailableError(_AppError): pass
+class _UnpublishedServiceError(_AppError): pass
+class _RateLimitExceededError(_AppError): pass
+
+_ai4i_exc = _conftest_stub(
+    "ai4i_core.exceptions",
+    AppError=_AppError,
+    EntityNotFoundError=_EntityNotFoundError,
+    DuplicateEntityError=_DuplicateEntityError,
+    ValidationError=_ValidationError,
+    InsufficientPermissionsError=_InsufficientPermissionsError,
+    ServiceError=_ServiceError,
+    ModelNotFoundError=_ModelNotFoundError,
+    ServiceUnavailableError=_ServiceUnavailableError,
+    UnpublishedServiceError=_UnpublishedServiceError,
+    RateLimitExceededError=_RateLimitExceededError,
+    register_exception_handlers=MagicMock(),
+)
+_conftest_stub("ai4i_core", exceptions=_ai4i_exc)
+
 # Stub app.core.database so background-task helpers (e.g. audit_service) can
 # be loaded without requiring a live SQLAlchemy engine.  Tests mock the session
 # factory at the service level and never call these functions directly.

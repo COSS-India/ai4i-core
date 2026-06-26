@@ -1,7 +1,10 @@
 """PPU usage service — computes spend summary from DB rows."""
 from __future__ import annotations
 
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +51,8 @@ async def _resolve_tenant_names(
             {"ids": numeric},
         )
         return {str(r[0]): r[1] for r in rows.all()}
-    except Exception:
+    except Exception as exc:
+        logger.warning("Auth DB lookup failed — tenant names will show as IDs: %s", exc)
         return {}
 
 
