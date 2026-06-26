@@ -108,6 +108,10 @@ class PPUUsageRepository:
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
             .outerjoin(usage_sq, usage_sq.c.tenant_id == PPUTenantTierAssignment.tenant_id)
             .outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
+            .where(
+                PPUTenantTierAssignment.effective_from <= func.now(),
+                PPUTenantTierAssignment.effective_to > func.now(),
+            )
         )
         if tier:
             stmt = stmt.where(PPUTier.name == tier)
@@ -134,7 +138,12 @@ class PPUUsageRepository:
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
             .outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
-            .where(PPUTenantTierAssignment.tenant_id == tenant_id)
+            .where(
+                PPUTenantTierAssignment.tenant_id == tenant_id,
+                PPUTenantTierAssignment.effective_from <= func.now(),
+                PPUTenantTierAssignment.effective_to > func.now(),
+            )
+            .order_by(PPUTenantTierAssignment.effective_from.desc())
         )
         result = await self._db.execute(stmt)
         return result.first()
