@@ -53,6 +53,7 @@ class QuotaRolloverService:
         """Background loop — sleeps until the 1st of each month, then rolls over."""
         while True:
             delay = _seconds_until_next_month_start()
+
             logger.info(
                 "PPU quota rollover: next run in %.0f seconds (%.1f hours)",
                 delay,
