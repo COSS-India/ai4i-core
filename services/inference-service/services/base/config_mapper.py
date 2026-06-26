@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -169,7 +170,12 @@ class GenericTritonMapper:
                     context.update(context_builder(item, index, config) or {})
 
                 resolved = self._resolve_value(tensor_cfg=tensor_cfg, context=context)
-                rendered_values.append(self._cast_dtype(resolved, tensor_cfg.dtype))
+                # Numeric ndarrays are cast once in _materialize_tensor — avoid
+                # per-element Python loops here (ASR float PCM can be 240k+ samples).
+                if isinstance(resolved, np.ndarray):
+                    rendered_values.append(resolved)
+                else:
+                    rendered_values.append(self._cast_dtype(resolved, tensor_cfg.dtype))
 
             # Keep Triton payload shape explicit per declaration.
             shape, data = self._materialize_tensor(rendered_values, tensor_cfg.shape, tensor_cfg.dtype)
@@ -338,6 +344,8 @@ class GenericTritonMapper:
         return current
 
     def _cast_dtype(self, value: Any, dtype: str) -> Any:
+        if isinstance(value, np.ndarray):
+            return self._cast_ndarray(value, dtype)
         if isinstance(value, list):
             return [self._cast_dtype(item, dtype) for item in value]
         if dtype.startswith("FP"):
@@ -352,6 +360,27 @@ class GenericTritonMapper:
             return str(value)
         return value
 
+    @staticmethod
+    def _cast_ndarray(value: np.ndarray, dtype: str) -> np.ndarray:
+        target = {
+            "FP32": np.float32,
+            "FP64": np.float64,
+            "FP16": np.float16,
+            "INT8": np.int8,
+            "INT16": np.int16,
+            "INT32": np.int32,
+            "INT64": np.int64,
+            "UINT8": np.uint8,
+            "UINT16": np.uint16,
+            "UINT32": np.uint32,
+            "UINT64": np.uint64,
+        }.get(dtype)
+        if target is None:
+            return value
+        if value.dtype == target:
+            return value
+        return value.astype(target, copy=False)
+
     def _materialize_tensor(
         self,
         rendered_values: List[Any],
@@ -361,14 +390,43 @@ class GenericTritonMapper:
         # Normalize per-item values into a single declared tensor payload.
         normalized: Any = rendered_values
         if len(declared_shape) > 1:
-            normalized = [value if isinstance(value, list) else [value] for value in rendered_values]
+            normalized = [
+                value
+                if isinstance(value, (list, np.ndarray))
+                else [value]
+                for value in rendered_values
+            ]
         inferred_shape = self._infer_shape(normalized)
         final_shape = self._apply_declared_shape(inferred_shape, list(declared_shape))
+
+        flat_numeric = self._flatten_numeric(normalized, dtype)
+        if flat_numeric is not None:
+            # Single vectorized cast + one tolist() for the Triton JSON wire format.
+            return final_shape, flat_numeric.tolist()
+
         flattened = self._flatten(normalized)
         casted = [self._cast_dtype(item, dtype) for item in flattened]
         return final_shape, casted
 
+    def _flatten_numeric(
+        self, normalized: Any, dtype: str
+    ) -> Optional[np.ndarray]:
+        """Fast path: flatten numeric ndarrays without Python-level per-sample loops."""
+        if isinstance(normalized, np.ndarray):
+            return self._cast_ndarray(normalized.ravel(), dtype)
+        if not isinstance(normalized, list) or not normalized:
+            return None
+        if len(normalized) == 1 and isinstance(normalized[0], np.ndarray):
+            return self._cast_ndarray(normalized[0].ravel(), dtype)
+        if all(isinstance(item, np.ndarray) for item in normalized):
+            if len(normalized) == 1:
+                return self._cast_ndarray(normalized[0].ravel(), dtype)
+            return self._cast_ndarray(np.concatenate(normalized).ravel(), dtype)
+        return None
+
     def _infer_shape(self, value: Any) -> List[int]:
+        if isinstance(value, np.ndarray):
+            return list(value.shape)
         if not isinstance(value, list):
             return []
         if not value:
@@ -396,11 +454,16 @@ class GenericTritonMapper:
         return resolved
 
     def _flatten(self, value: Any) -> List[Any]:
+        if isinstance(value, np.ndarray):
+            return value.ravel().tolist()
         if not isinstance(value, list):
             return [value]
         flattened: List[Any] = []
         for item in value:
-            flattened.extend(self._flatten(item))
+            if isinstance(item, np.ndarray):
+                flattened.extend(item.ravel().tolist())
+            else:
+                flattened.extend(self._flatten(item))
         return flattened
 
     def _extract_output_tensor(self, triton_output: Dict[str, Any], tensor_name: str) -> Any:
