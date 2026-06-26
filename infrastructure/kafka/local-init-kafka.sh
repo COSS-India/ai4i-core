@@ -9,7 +9,7 @@ echo "Starting Kafka initialization..."
 
 # Wait for Kafka to be ready
 echo "Waiting for Kafka to be ready..."
-until kafka-broker-api-versions --bootstrap-server kafka:9092; do
+until kafka-broker-api-versions --bootstrap-server localhost:9093; do
     echo "Kafka is not ready yet, waiting..."
     sleep 5
 done
@@ -17,7 +17,7 @@ done
 echo "Kafka is ready, starting initialization..."
 
 # Set environment variables
-KAFKA_BOOTSTRAP_SERVERS="kafka:9092"
+KAFKA_BOOTSTRAP_SERVERS="localhost:9093"
 REPLICATION_FACTOR=1
 
 # Create topics with appropriate settings
