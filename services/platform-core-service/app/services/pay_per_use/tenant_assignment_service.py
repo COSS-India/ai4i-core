@@ -1,6 +1,6 @@
 """Tenant tier assignment service."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -12,8 +12,6 @@ from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssig
 from app.models.pay_per_use.ppu_tier import PPUTier
 from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse
 from app.utils.tenant_validator import require_active_tenant
-
-_DEFAULT_ASSIGNMENT_DAYS = 365
 
 
 async def assign_tier(
@@ -45,6 +43,12 @@ async def assign_tier(
             detail=f"Tier '{body.tier_id}' not found or is inactive",
         )
 
+    if body.effective_to <= body.effective_from:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="effective_to must be after effective_from",
+        )
+
     now = datetime.now(timezone.utc)
 
     # 4. Reject if tenant already has an active tier assignment.
@@ -66,8 +70,8 @@ async def assign_tier(
         tier_id=tier.id,
         budget_limit=body.budget,
         available_balance=body.budget,
-        effective_from=now,
-        effective_to=now + timedelta(days=_DEFAULT_ASSIGNMENT_DAYS),
+        effective_from=body.effective_from,
+        effective_to=body.effective_to,
         created_by=user_id,
         updated_by=user_id,
     )

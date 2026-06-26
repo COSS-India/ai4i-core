@@ -8,6 +8,8 @@ class TierAssignRequest(BaseModel):
     tenant_id: str = Field(..., description="ID of the tenant to assign the tier to")
     tier_id: str = Field(..., description="UUID of the PPU tier to assign")
     budget: Decimal = Field(..., ge=0, description="Budget limit in INR (paise precision)")
+    effective_from: datetime = Field(..., description="Assignment start date (UTC)")
+    effective_to: datetime = Field(..., description="Assignment end date (UTC)")
 
 
 class TierAssignResponse(BaseModel):
