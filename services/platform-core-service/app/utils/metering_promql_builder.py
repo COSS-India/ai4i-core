@@ -58,13 +58,13 @@ ENDPOINT_TO_TASK: dict = {
 #   1h  → 10m buckets (~6 bars, time labels)
 #   24h → 4h  buckets (~6 bars, time labels)
 #   7d  → 1d  buckets (7 bars, daily date labels)
-#   30d → 6h  buckets (date+time labels)
+#   30d → 7d  buckets (date+time labels)
 # The frontend label format keys off this step (see formatMeteringTimestamp).
 WINDOW_STEP: dict = {
     "1h":  "10m",
     "24h": "4h",
     "7d":  "1d",
-    "30d": "6h",
+    "30d": "7d",
 }
 
 
