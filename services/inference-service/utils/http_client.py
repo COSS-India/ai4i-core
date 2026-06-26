@@ -7,6 +7,16 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_shared_async_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_shared_async_client(timeout: int) -> httpx.AsyncClient:
+    """Reuse one AsyncClient per process for connection pooling to Triton/MMS."""
+    global _shared_async_client
+    if _shared_async_client is None:
+        _shared_async_client = httpx.AsyncClient(timeout=timeout)
+    return _shared_async_client
+
 
 class HTTPServiceClient:
     """Reusable HTTP client for calling external services."""
@@ -40,19 +50,18 @@ class HTTPServiceClient:
             ConnectionError: If request fails or returns error status
         """
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    url,
-                    headers=headers or {},
-                    timeout=self.timeout,
-                )
+            client = _get_shared_async_client(self.timeout)
+            response = await client.get(
+                url,
+                headers=headers or {},
+            )
 
-                if response.status_code == 404:
-                    logger.warning(f"Service endpoint not found: {url}")
-                    raise LookupError(f"Endpoint not found: {url}")
+            if response.status_code == 404:
+                logger.warning(f"Service endpoint not found: {url}")
+                raise LookupError(f"Endpoint not found: {url}")
 
-                response.raise_for_status()
-                return response.json()
+            response.raise_for_status()
+            return response.json()
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error calling {url}: {e.response.status_code}")
@@ -83,20 +92,19 @@ class HTTPServiceClient:
             ConnectionError: If request fails or returns error status
         """
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    json=data,
-                    headers=headers or {},
-                    timeout=self.timeout,
-                )
+            client = _get_shared_async_client(self.timeout)
+            response = await client.post(
+                url,
+                json=data,
+                headers=headers or {},
+            )
 
-                if response.status_code == 404:
-                    logger.warning(f"Service endpoint not found: {url}")
-                    raise LookupError(f"Endpoint not found: {url}")
+            if response.status_code == 404:
+                logger.warning(f"Service endpoint not found: {url}")
+                raise LookupError(f"Endpoint not found: {url}")
 
-                response.raise_for_status()
-                return response.json()
+            response.raise_for_status()
+            return response.json()
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error calling {url}: {e.response.status_code}")
