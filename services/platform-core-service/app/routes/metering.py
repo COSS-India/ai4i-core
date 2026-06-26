@@ -142,6 +142,15 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
     return out
 
 
+_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _step_seconds(step: str) -> int:
+    """Parse a Prometheus duration step (e.g. '10m', '4h', '1d') to seconds."""
+    m = re.fullmatch(r"(\d+)([smhd])", step.strip())
+    return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
+
+
 async def _request_volume_chart(
     svc: MeteringService,
     window: str,
@@ -164,12 +173,22 @@ async def _request_volume_chart(
     success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
     step = WINDOW_STEP[window]
+    step_secs = _step_seconds(step)
     w_secs = _WINDOW_SECONDS[window]
     now = _time.time()
-    start = now - w_secs
+    # Align the range so the LAST bucket ends at `now`. query_range places eval
+    # points at start + i*step, so an unaligned start (e.g. a 30d window with a 7d
+    # step — 30 isn't divisible by 7) leaves the final point short of now and the
+    # most recent bucket (today's requests) is never evaluated. Snap start to a
+    # whole number of buckets ending at now.
+    n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
+    start = now - n_buckets * step_secs
 
-    success_q = f"sum(increase({success_metric}[{step}]))"
-    failed_q = f"sum(increase({failed_metric}[{step}]))"
+    # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
+    # Without it increase() emits no sample for a zero-traffic bucket, the chart
+    # drops it, and the axis shows gaps (missing days / jumping intervals).
+    success_q = f"sum(increase({success_metric}[{step}])) or vector(0)"
+    failed_q = f"sum(increase({failed_metric}[{step}])) or vector(0)"
 
     succ_res, fail_res = await asyncio.gather(
         svc._client.query_range(success_q, start=start, end=now, step=step),
@@ -177,18 +196,22 @@ async def _request_volume_chart(
         return_exceptions=True,
     )
 
-    succ_points = _series_points(succ_res, 0)        # counts
-    fail_points = _series_points(fail_res, 0)        # counts
+    succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
+    fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
 
-    if not succ_points and not fail_points:
+    # Series are now dense, so emptiness can't be inferred from point count —
+    # only suppress the chart when there's no real activity anywhere in the window.
+    has_data = any(p.value > 0 for p in succ_points) or any(p.value > 0 for p in fail_points)
+    if not has_data:
         return None
 
-    series = []
-    if succ_points:
-        series.append(GraphSeries(key="successful", label="Successful", points=succ_points))
-    if fail_points:
-        series.append(GraphSeries(key="failed", label="Failed", points=fail_points))
-    return Graph(step=step, series=series)
+    return Graph(
+        step=step,
+        series=[
+            GraphSeries(key="successful", label="Successful", points=succ_points),
+            GraphSeries(key="failed", label="Failed", points=fail_points),
+        ],
+    )
 
 
 async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
