@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class TierAssignRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant to assign the tier to")
     tier_id: str = Field(..., description="UUID of the PPU tier to assign")
     budget: Decimal = Field(..., ge=0, description="Budget limit in INR (paise precision)")
 

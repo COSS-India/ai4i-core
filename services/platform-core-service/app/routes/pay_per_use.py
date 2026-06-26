@@ -1,7 +1,7 @@
 """Tier Management and Tenant Assignment endpoints for Pay-Per-Use."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db, get_db
@@ -65,7 +65,6 @@ async def delete_tier(
 async def assign_tenant_tier(
     request: Request,
     body: TierAssignRequest,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id", description="Tenant ID"),
     db: AsyncSession = Depends(get_db),
     auth_db: AsyncSession = Depends(get_auth_db),
 ):
@@ -76,4 +75,4 @@ async def assign_tenant_tier(
     replaced by the new one.
     """
     user_id = request.headers.get("X-User-Id")
-    return await tenant_assignment_service.assign_tier(x_tenant_id, body, db, auth_db, user_id)
+    return await tenant_assignment_service.assign_tier(body, db, auth_db, user_id)

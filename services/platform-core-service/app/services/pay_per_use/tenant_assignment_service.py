@@ -17,14 +17,13 @@ _DEFAULT_ASSIGNMENT_DAYS = 365
 
 
 async def assign_tier(
-    tenant_id: str,
     body: TierAssignRequest,
     db: AsyncSession,
     auth_db: AsyncSession,
     user_id: Optional[str] = None,
 ) -> TierAssignResponse:
     # 1. Confirm tenant exists and is ACTIVE via auth DB.
-    # tenant = await require_active_tenant(tenant_id, auth_db)
+    # await require_active_tenant(body.tenant_id, auth_db)
 
     # 2. Validate tier UUID format.
     try:
@@ -51,19 +50,19 @@ async def assign_tier(
     # 4. Reject if tenant already has an active tier assignment.
     existing = await db.execute(
         select(PPUTenantTierAssignment).where(
-            PPUTenantTierAssignment.tenant_id == tenant_id,
+            PPUTenantTierAssignment.tenant_id == body.tenant_id,
             PPUTenantTierAssignment.effective_to > now,
         )
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Tenant '{tenant_id}' already has an active tier assignment",
+            detail=f"Tenant '{body.tenant_id}' already has an active tier assignment",
         )
 
     # 5. Create the new assignment.
     assignment = PPUTenantTierAssignment(
-        tenant_id=tenant_id,
+        tenant_id=body.tenant_id,
         tier_id=tier.id,
         budget_limit=body.budget,
         available_balance=body.budget,
@@ -77,7 +76,7 @@ async def assign_tier(
     await db.refresh(assignment)
 
     return TierAssignResponse(
-        tenant_id=tenant_id,
+        tenant_id=body.tenant_id,
         tier_id=str(tier.id),
         tier_name=tier.name,
         budget_limit=assignment.budget_limit,
