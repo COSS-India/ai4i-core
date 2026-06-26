@@ -53,12 +53,14 @@ ENDPOINT_TO_TASK: dict = {
     "/api/v1/chat/completions": "llm",
 }
 
-# Resolution step for range queries (charts, peak RPS). Target ~300 points per window.
+# Resolution step for the Request Volume range chart. Target ~300 points per window,
+# except 30d which is bucketed weekly (7d) so the chart shows ~5 weekly bars with date
+# labels per the dashboard design, rather than ~120 dense 6h bars.
 WINDOW_STEP: dict = {
     "1h":  "30s",
     "24h": "5m",
     "7d":  "1h",
-    "30d": "6h",
+    "30d": "7d",
 }
 
 
