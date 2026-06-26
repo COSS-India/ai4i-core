@@ -12,6 +12,7 @@ from ai4i_core.bootstrap.versioning import APIVersioning, VersionInfo
 from app.core.config import settings
 from app.routes.alert import router as alert_router
 from app.routes.health import router as health_router
+from app.routes.inference_types import router as inference_types_router
 from app.routes.model import router as model_router
 from app.routes.pii import router as pii_router
 from app.routes.service import router as service_router
@@ -36,6 +37,7 @@ v1_router.include_router(alert_router)
 v1_router.include_router(pii_router)
 v1_router.include_router(telemetry_router)
 v1_router.include_router(metering_router)
+v1_router.include_router(inference_types_router)
 
 # ── Top-level router ──
 api_router = APIRouter()

@@ -1,0 +1,40 @@
+inference_types:
+  - name: llm
+    endpoint_pattern: /v1/chat/completions
+    unit: tokens
+  - name: asr
+    endpoint_pattern: /v1/asr/transcribe
+    unit: minutes
+  - name: nmt
+    endpoint_pattern: /v1/nmt/translate
+    unit: characters
+  - name: tts
+    endpoint_pattern: /v1/tts/synthesize
+    unit: characters
+  - name: ner
+    endpoint_pattern: /api/v1/ner/inference
+    unit: characters
+  - name: ocr
+    endpoint_pattern: /api/v1/ocr/inference
+    unit: characters
+  - name: transliteration
+    endpoint_pattern: /api/v1/transliteration/inference
+    unit: characters
+  - name: language-detection
+    endpoint_pattern: /api/v1/language-detection/inference
+    unit: characters
+  - name: language-diarization
+    endpoint_pattern: /api/v1/language-diarization/inference
+    unit: minutes
+  - name: speaker-diarization
+    endpoint_pattern: /api/v1/speaker-diarization/inference
+    unit: minutes
+  - name: audio-lang-detection
+    endpoint_pattern: /api/v1/audio-lang-detection/inference
+    unit: minutes
+  - name: pipeline
+    endpoint_pattern: /api/v1/pipeline/inference
+    unit: requests
+  - name: pii
+    endpoint_pattern: /api/v1/pii/redact
+    unit: characters
