@@ -1,10 +1,22 @@
 """PPU usage service — computes spend summary from DB rows."""
 from __future__ import annotations
 
-from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
-from app.schemas.pay_per_use.usage import SpendItem, UsageSummaryResponse
+from typing import Optional
 
-# Display label per inference type; unit_size from mm_services drives the divisor.
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import EntityNotFoundError
+from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
+from app.schemas.pay_per_use.usage import (
+    SpendItem,
+    TenantUsageBreakdown,
+    TenantUsageDetailResponse,
+    TenantUsageItem,
+    TenantUsageListResponse,
+    UsageSummaryResponse,
+)
+
 _UNIT_LABELS: dict[str, str] = {
     "LLM": "M Tokens",
     "ASR": "Minutes",
@@ -12,6 +24,24 @@ _UNIT_LABELS: dict[str, str] = {
 }
 _CURRENCY = "INR"
 _DEFAULT_UNIT_SIZE = 1_000_000
+
+
+async def _resolve_tenant_names(
+    tenant_ids: list[str], auth_db: Optional[AsyncSession]
+) -> dict[str, str]:
+    if not auth_db or not tenant_ids:
+        return {}
+    numeric = [int(t) for t in tenant_ids if t and t.isdigit()]
+    if not numeric:
+        return {}
+    try:
+        rows = await auth_db.execute(
+            text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"),
+            {"ids": numeric},
+        )
+        return {str(r[0]): r[1] for r in rows.all()}
+    except Exception:
+        return {}
 
 
 class PPUUsageService:
@@ -55,4 +85,95 @@ class PPUUsageService:
             totalSpend=round(total_spend, 2),
             currency=_CURRENCY,
             spendByModelTaskType=spend_items,
+        )
+
+    async def get_tenant_list(
+        self,
+        billing_month: str,
+        tier: str | None,
+        model_task_type: str | None,
+        auth_db: Optional[AsyncSession],
+    ) -> TenantUsageListResponse:
+        rows = await self._repo.get_tenant_usages(billing_month, tier, model_task_type)
+        org_map = await _resolve_tenant_names([row.tenant_id for row in rows], auth_db)
+        unit_label = _UNIT_LABELS.get(model_task_type, "M Tokens") if model_task_type else "M Tokens"
+
+        items = []
+        for row in rows:
+            budget_limit = float(row.budget_limit)
+            remaining_budget = float(row.available_balance)
+            total_units = int(row.total_units or 0)
+            total_quota = int(row.total_quota or 0)
+            consumption = round(total_units / _DEFAULT_UNIT_SIZE, 1)
+            quota_display = round(total_quota / _DEFAULT_UNIT_SIZE, 1)
+
+            items.append(TenantUsageItem(
+                tenantId=row.tenant_id,
+                tenantName=org_map.get(row.tenant_id, row.tenant_id),
+                tier=row.tier_name,
+                budgetLimit=round(budget_limit, 2),
+                spendToDate=round(budget_limit - remaining_budget, 2),
+                remainingBudget=round(remaining_budget, 2),
+                quotaLimit=quota_display,
+                quotaUnit=unit_label,
+                consumptionToDate=consumption,
+                remainingQuota=round(max(0.0, quota_display - consumption), 1),
+                currency=_CURRENCY,
+            ))
+
+        return TenantUsageListResponse(data=items, total=len(items))
+
+    async def get_tenant_detail(
+        self,
+        tenant_id: str,
+        billing_month: str,
+        auth_db: Optional[AsyncSession],
+    ) -> TenantUsageDetailResponse:
+        assignment = await self._repo.get_tenant_assignment(tenant_id)
+        if not assignment:
+            raise EntityNotFoundError(f"Tenant {tenant_id}")
+
+        breakdown_rows = await self._repo.get_tenant_period_breakdown(tenant_id, billing_month)
+        org_map = await _resolve_tenant_names([tenant_id], auth_db)
+
+        breakdown: list[TenantUsageBreakdown] = []
+        total_consumption = 0.0
+
+        for row in breakdown_rows:
+            units = int(row.total_units or 0)
+            unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
+            consumption = round(units / unit_size, 1)
+            total_consumption += consumption
+
+            if row.unit_rate:
+                spend = round(float(units) * float(row.unit_rate), 2)
+            elif row.cost_per_unit:
+                spend = round(float(consumption) * float(row.cost_per_unit), 2)
+            else:
+                spend = 0.0
+
+            breakdown.append(TenantUsageBreakdown(
+                modelTaskType=row.inference_name,
+                consumptionToDate=consumption,
+                unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
+                spend=spend,
+            ))
+
+        budget_limit = float(assignment.budget_limit)
+        remaining_budget = float(assignment.available_balance)
+        quota_display = round(int(assignment.total_quota or 0) / _DEFAULT_UNIT_SIZE, 1)
+
+        return TenantUsageDetailResponse(
+            tenantId=tenant_id,
+            tenantName=org_map.get(tenant_id, tenant_id),
+            tier=assignment.tier_name,
+            budgetLimit=round(budget_limit, 2),
+            spendToDate=round(budget_limit - remaining_budget, 2),
+            remainingBudget=round(remaining_budget, 2),
+            quotaLimit=quota_display,
+            quotaUnit="M Tokens",
+            consumptionToDate=round(total_consumption, 1),
+            remainingQuota=round(max(0.0, quota_display - total_consumption), 1),
+            currency=_CURRENCY,
+            breakdown=breakdown,
         )

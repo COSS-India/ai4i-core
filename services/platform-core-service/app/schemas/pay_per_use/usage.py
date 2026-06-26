@@ -15,3 +15,33 @@ class UsageSummaryResponse(BaseModel):
     totalSpend: float
     currency: str
     spendByModelTaskType: list[SpendItem]
+
+
+class TenantUsageBreakdown(BaseModel):
+    modelTaskType: str
+    consumptionToDate: float
+    unit: str
+    spend: float
+
+
+class TenantUsageItem(BaseModel):
+    tenantId: str
+    tenantName: str
+    tier: str
+    budgetLimit: float
+    spendToDate: float
+    remainingBudget: float
+    quotaLimit: float
+    quotaUnit: str
+    consumptionToDate: float
+    remainingQuota: float
+    currency: str
+
+
+class TenantUsageListResponse(BaseModel):
+    data: list[TenantUsageItem]
+    total: int
+
+
+class TenantUsageDetailResponse(TenantUsageItem):
+    breakdown: list[TenantUsageBreakdown]
