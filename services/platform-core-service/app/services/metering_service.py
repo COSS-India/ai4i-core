@@ -262,13 +262,13 @@ class MeteringService:
             parts = [f'tenant="{tenant}"'] if tenant else []
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
-            if window:
-                q = (
-                    f"(sum({native_metric}{sel}) or vector(0))"
-                    f" - (sum({native_metric}{sel} offset {window}) or vector(0))"
-                )
-            else:
-                q = f"sum({native_metric}{sel})"
+            # Use increase()-based counting (via sum_over_window), NOT a raw
+            # `sum(now) - sum(offset)` delta. The histogram _sum is a counter that
+            # resets on pod restart; a raw delta goes negative across a restart and
+            # gets dropped by the `v > 0` guard, so native units flicker in and out
+            # ("sometimes shows, sometimes not"). increase() is reset-aware and also
+            # handles brand-new series — matching how request counts are computed.
+            q = sum_over_window(f"{native_metric}{sel}", time_range)
             native_tasks.append(task)
             native_coros.append(self._client.scalar(q))
 
