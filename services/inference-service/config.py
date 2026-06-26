@@ -68,7 +68,9 @@ class Settings(BaseSettings):
     # Per-block phase timing — off by default. When true, each request's root
     # span gains per-stage *_ms fields (resolve, preprocess, build_payload,
     # triton, output_convert, postprocess, pre_handler) for load-test analysis.
-    # No extra log lines or spans: the fields ride the existing request span.
+    # The stage fields ride the existing request span (no extra spans). One
+    # extra line per request carries response_ms (serialization + send), which
+    # is measured after the span closes; it joins back via trace_id.
     PHASE_TIMING_ENABLED: bool = Field(
         False, description="Emit per-stage *_ms timings on the request span"
     )

@@ -23,11 +23,15 @@ contextvars set on entry propagate into the handler task — the same approach
 ai4icore_core.RequestMiddleware relies on.
 """
 
+import json
+import logging
 import time
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 # Per-request accumulator: {"build_payload_ms": 1.2, "cache_hit": True, ...}.
 # Default None so a missing reset (e.g. a direct unit call) is detectable.
@@ -37,6 +41,11 @@ _phases: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
 # perf_counter stamped by the middleware at the very top of the request.
 _entry_time: ContextVar[Optional[float]] = ContextVar(
     "inference_entry_time", default=None
+)
+# perf_counter stamped when the root request span finishes, so the middleware
+# can isolate response_ms (serialization + send) from the handler's own time.
+_handler_done: ContextVar[Optional[float]] = ContextVar(
+    "inference_handler_done", default=None
 )
 
 
@@ -96,13 +105,10 @@ class _PhaseTimer:
         return False
 
     async def __aenter__(self) -> "_PhaseTimer":
-        if _enabled():
-            self._start = time.perf_counter()
-        return self
+        return self.__enter__()
 
     async def __aexit__(self, *exc: Any) -> bool:
-        self._stop()
-        return False
+        return self.__exit__(*exc)
 
     def _stop(self) -> None:
         if self._start is not None:
@@ -122,6 +128,42 @@ def mark_request_entry() -> None:
     """Stamp request entry time (called by the outermost middleware)."""
     if _enabled():
         _entry_time.set(time.perf_counter())
+
+
+def mark_handler_done() -> None:
+    """Stamp handler completion (called as the root request span finalizes).
+
+    The middleware reads this to derive response_ms (response serialization +
+    send), the slice of the request that happens after the span has closed.
+    """
+    if _enabled():
+        _handler_done.set(time.perf_counter())
+
+
+def _response_record(entry: Optional[float], now: float) -> Optional[Dict[str, Any]]:
+    """Build the response-timing record, or None when it cannot be computed.
+
+    response_ms covers the post-handler slice (FastAPI response_model
+    serialization + send); wall_total_ms is the full server-side request time.
+    Returns None for requests with no root span (no handler_done stamp), e.g.
+    health checks.
+    """
+    handler_done = _handler_done.get()
+    if handler_done is None or entry is None:
+        return None
+    record: Dict[str, Any] = {
+        "name": "request_timing",
+        "response_ms": _round_ms(now - handler_done),
+        "wall_total_ms": _round_ms(now - entry),
+    }
+    try:
+        from ai4icore_core.context import get_trace_id
+        trace_id = get_trace_id()
+        if trace_id:
+            record["trace_id"] = trace_id
+    except Exception:  # pragma: no cover - correlation is best-effort
+        pass
+    return record
 
 
 def start_root_phases() -> None:
@@ -148,16 +190,30 @@ def collect_phases() -> Dict[str, Any]:
 
 
 class PhaseTimingMiddleware:
-    """Outermost ASGI middleware: stamps request entry for pre_handler_ms.
+    """ASGI middleware: stamps request entry for pre_handler_ms and emits
+    response_ms once the response has been fully sent.
 
-    Pure ASGI (not BaseHTTPMiddleware) so the contextvar reaches the handler.
+    Pure ASGI (not BaseHTTPMiddleware) so the contextvars reach the handler.
     Never short-circuits, so inner middleware (CORS, etc.) keep their behaviour.
+
+    response_ms rides its own structured line (not the request span), because
+    the span has already closed and logged by the time FastAPI serializes the
+    response. The line carries trace_id so it joins back to the request span.
     """
 
     def __init__(self, app: Any) -> None:
         self.app = app
 
     async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") == "http" and _enabled():
-            mark_request_entry()
-        await self.app(scope, receive, send)
+        if scope.get("type") != "http" or not _enabled():
+            await self.app(scope, receive, send)
+            return
+
+        mark_request_entry()
+        entry = _entry_time.get()
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            record = _response_record(entry, time.perf_counter())
+            if record is not None:
+                logger.info(json.dumps(record, default=str))

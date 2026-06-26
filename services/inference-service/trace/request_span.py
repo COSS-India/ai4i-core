@@ -150,8 +150,11 @@ def _finalize_traced(
         attrs.setdefault("status", "success")
         attrs.setdefault("status_code", 200)
     if root:
-        from trace.phase_timer import collect_phases
+        from trace.phase_timer import collect_phases, mark_handler_done
         attrs.update(collect_phases())
+        # Stamp handler completion so the middleware can derive response_ms
+        # for the serialization + send slice that happens after this point.
+        mark_handler_done()
     finalize_span(span, span_name, attrs, error=error, ok=(mark_ok and error is None))
 
 
