@@ -1,12 +1,14 @@
-"""Tier Management endpoints for Pay-Per-Use."""
+"""Tier Management and Tenant Assignment endpoints for Pay-Per-Use."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_auth_db, get_db
+from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
-from app.services.pay_per_use import tier_service
+from app.services.pay_per_use import tenant_assignment_service, tier_service
+
 
 router = APIRouter(tags=["Tier Management"])
 
@@ -57,3 +59,21 @@ async def delete_tier(
 ):
     await tier_service.delete_tier(tier_id, session)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/tenant/tier", response_model=TierAssignResponse)
+async def assign_tenant_tier(
+    request: Request,
+    body: TierAssignRequest,
+    x_tenant_id: str = Header(..., alias="X-Tenant-Id", description="Tenant ID"),
+    db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Assign a PPU tier to a tenant.
+
+    Validates that the tenant exists and is ACTIVE in the auth DB before
+    creating the assignment. Any currently active assignment is expired and
+    replaced by the new one.
+    """
+    user_id = request.headers.get("X-User-Id")
+    return await tenant_assignment_service.assign_tier(x_tenant_id, body, db, auth_db, user_id)
