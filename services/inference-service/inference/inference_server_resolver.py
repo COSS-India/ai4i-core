@@ -37,14 +37,19 @@ class InferenceServerResolver:
             LookupError: If the service does not exist in MMS
             ConnectionError: If MMS is unreachable/unhealthy
         """
-        cached = self._memory_cache.get(service_id)
-        if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
-            logger.debug(f"Cache hit for service {service_id}")
-            return cached[0]
+        from trace.phase_timer import record_attr, timed_phase
 
-        service_info = await self._query_model_management_service(service_id)
-        self._memory_cache[service_id] = (service_info, time.time())
-        return service_info
+        async with timed_phase("resolve_ms"):
+            cached = self._memory_cache.get(service_id)
+            if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
+                logger.debug(f"Cache hit for service {service_id}")
+                record_attr("cache_hit", True)
+                return cached[0]
+
+            record_attr("cache_hit", False)
+            service_info = await self._query_model_management_service(service_id)
+            self._memory_cache[service_id] = (service_info, time.time())
+            return service_info
 
     async def resolve_smr_service(self, payload: Dict[str, Any]) -> str:
         """
@@ -72,10 +77,13 @@ class InferenceServerResolver:
             logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
             raise RuntimeError("Model management service not configured")
 
+        from trace.phase_timer import timed_phase
+
         try:
             http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
             url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
-            raw = await http_client.get_json(url)
+            async with timed_phase("mms_http_ms"):
+                raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
             # Never log the full service_info dict — it contains the resolved
             # Triton endpoint URL and api_key. Log only the safe identifiers
