@@ -4,6 +4,8 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from app.core.responses import success_response
+from app.schemas.common import SuccessResponse
+from app.schemas.inference_types import InferenceTypesResponse
 
 router = APIRouter(
     prefix="/inference-types",
@@ -16,6 +18,6 @@ with _CONFIG_PATH.open() as _f:
     _INFERENCE_TYPES: list = yaml.safe_load(_f)["inference_types"]
 
 
-@router.get("")
+@router.get("", response_model=SuccessResponse[InferenceTypesResponse])
 async def list_inference_types():
     return success_response({"inference_types": _INFERENCE_TYPES})

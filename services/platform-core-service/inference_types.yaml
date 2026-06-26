@@ -1,15 +1,15 @@
 inference_types:
   - name: llm
-    endpoint_pattern: /v1/chat/completions
+    endpoint_pattern: /api/v1/chat/completions
     unit: tokens
   - name: asr
-    endpoint_pattern: /v1/asr/transcribe
+    endpoint_pattern: /api/v1/asr/inference
     unit: minutes
   - name: nmt
-    endpoint_pattern: /v1/nmt/translate
+    endpoint_pattern: /api/v1/nmt/inference
     unit: characters
   - name: tts
-    endpoint_pattern: /v1/tts/synthesize
+    endpoint_pattern: /api/v1/tts/inference
     unit: characters
   - name: ner
     endpoint_pattern: /api/v1/ner/inference
