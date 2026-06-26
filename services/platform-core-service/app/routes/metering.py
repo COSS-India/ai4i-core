@@ -416,6 +416,7 @@ async def get_tenant_consumption(
     request: Request,
     window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
+    tenant_id: Optional[str] = Query(None, description="Scope to a single tenant (admin only)"),
     services: Optional[str] = Query(
         None, description="Comma-separated service keys for the heatmap columns (default: all)"
     ),
@@ -432,19 +433,26 @@ async def get_tenant_consumption(
 
     _validate_window(window)
 
+    # Admin-only endpoint: scope to the selected tenant when one is chosen,
+    # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
+    scope_tenant = _validate_scope_tenant(tenant_id or None)
+
     service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
 
-    cache_key = f"metering:tenant-consumption:{window}:{limit}:{services or 'all'}"
+    cache_key = (
+        f"metering:tenant-consumption:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
+    )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return _enrich_cached(cached)
 
     degraded = False
 
-    # Platform-wide (admin-only endpoint): tenant=None throughout.
     ranking_result, heatmap_result = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window),
-        svc.usage_by_tenant_service(limit=limit, time_range=window, services=service_filter),
+        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant),
+        svc.usage_by_tenant_service(
+            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant
+        ),
         return_exceptions=True,
     )
 
@@ -474,7 +482,12 @@ async def get_tenant_consumption(
     meta = _compute_dashboard_meta(degraded, total_requests, window)
 
     response = TenantConsumptionResponse(
-        scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
+        scope=Scope(
+            role=_caller_role_label(request),
+            tenant_id=scope_tenant,
+            organisation=org_map.get(scope_tenant) if scope_tenant else None,
+            window=window,
+        ),
         tenant_ranking=[
             TenantRow(
                 rank=t["rank"],
