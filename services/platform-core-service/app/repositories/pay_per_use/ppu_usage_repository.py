@@ -8,6 +8,41 @@ from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssig
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 
 
+def _pricing_subquery():
+    """
+    One pricing row per billing_unit_type, choosing the most recently created
+    non-deleted Service row.  Prevents double-counting when multiple Service
+    rows share the same billing_unit_type (e.g. several LLM services all
+    billed as 'llm').
+    """
+    inner = (
+        select(
+            Service.billing_unit_type,
+            Service.cost_per_unit,
+            Service.unit_size,
+            Service.unit_rate,
+            func.row_number()
+            .over(
+                partition_by=Service.billing_unit_type,
+                order_by=Service.created_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(Service.deleted_at.is_(None))
+        .subquery()
+    )
+    return (
+        select(
+            inner.c.billing_unit_type,
+            inner.c.cost_per_unit,
+            inner.c.unit_size,
+            inner.c.unit_rate,
+        )
+        .where(inner.c.rn == 1)
+        .subquery()
+    )
+
+
 class PPUUsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -17,25 +52,25 @@ class PPUUsageRepository:
         Aggregates units_used per inference_name for the billing month,
         left-joined with mm_services pricing via billing_unit_type.
         """
+        pricing_sq = _pricing_subquery()
         stmt = (
             select(
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
-                Service.cost_per_unit,
-                Service.unit_size,
-                Service.unit_rate,
+                pricing_sq.c.cost_per_unit,
+                pricing_sq.c.unit_size,
+                pricing_sq.c.unit_rate,
             )
             .outerjoin(
-                Service,
-                (Service.billing_unit_type == PPUQuotaUsage.inference_name)
-                & Service.deleted_at.is_(None),
+                pricing_sq,
+                pricing_sq.c.billing_unit_type == PPUQuotaUsage.inference_name,
             )
             .where(PPUQuotaUsage.billing_month == billing_month)
             .group_by(
                 PPUQuotaUsage.inference_name,
-                Service.cost_per_unit,
-                Service.unit_size,
-                Service.unit_rate,
+                pricing_sq.c.cost_per_unit,
+                pricing_sq.c.unit_size,
+                pricing_sq.c.unit_rate,
             )
         )
         result = await self._db.execute(stmt)
@@ -106,18 +141,18 @@ class PPUUsageRepository:
 
     async def get_tenant_period_breakdown(self, tenant_id: str, billing_month: str):
         """Per-inference-name usage with pricing for a single tenant and billing month."""
+        pricing_sq = _pricing_subquery()
         stmt = (
             select(
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
-                Service.unit_size,
-                Service.unit_rate,
-                Service.cost_per_unit,
+                pricing_sq.c.unit_size,
+                pricing_sq.c.unit_rate,
+                pricing_sq.c.cost_per_unit,
             )
             .outerjoin(
-                Service,
-                (Service.billing_unit_type == PPUQuotaUsage.inference_name)
-                & Service.deleted_at.is_(None),
+                pricing_sq,
+                pricing_sq.c.billing_unit_type == PPUQuotaUsage.inference_name,
             )
             .where(
                 PPUQuotaUsage.tenant_id == tenant_id,
@@ -125,9 +160,9 @@ class PPUUsageRepository:
             )
             .group_by(
                 PPUQuotaUsage.inference_name,
-                Service.unit_size,
-                Service.unit_rate,
-                Service.cost_per_unit,
+                pricing_sq.c.unit_size,
+                pricing_sq.c.unit_rate,
+                pricing_sq.c.cost_per_unit,
             )
         )
         result = await self._db.execute(stmt)
