@@ -324,8 +324,10 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
-    async def tenant_ranking(self, limit: int, time_range: Optional[str]) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+    async def tenant_ranking(
+        self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
+    ) -> dict:
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
         # Offset subtraction avoids increase() extrapolation errors on short-lived series.
         # increase() scales down the raw counter by (observed_duration / window_duration),
         # so a series that's only a few hours old in a 7d query returns ~0 instead of its
@@ -374,16 +376,19 @@ class MeteringService:
         limit: int,
         time_range: Optional[str],
         services: Optional[list[str]],
+        tenant: Optional[str] = None,
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
         Uses a single sum by(tenant, endpoint) query with offset subtraction
         (same approach as service_breakdown) to avoid increase() extrapolation errors.
+        When ``tenant`` is given, the matrix is scoped to that single tenant.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        base_sel = '{' + _ep + ',tenant!="unknown"}'
+        _tenant_sel = f',tenant="{tenant}"' if tenant else ''
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
