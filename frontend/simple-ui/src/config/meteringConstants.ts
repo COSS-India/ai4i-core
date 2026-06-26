@@ -223,6 +223,10 @@ export const METERING = {
       SERIES_FAILED: "Failed",
     },
     SERVICE: {
+      CONSUMPTION_TITLE: "Service consumption",
+      CONSUMPTION_SUBTITLE_PREFIX: "Your service consumption ·",
+      DONUT_CENTER_PRIMARY: "All",
+      DONUT_CENTER_SECONDARY: "Services",
       BREAKDOWN_TITLE: "Service breakdown",
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
       MOST_USED: "Most used service",
