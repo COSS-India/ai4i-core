@@ -52,7 +52,7 @@ class QuotaRolloverService:
     async def run_loop(self) -> None:
         """Background loop — sleeps until the 1st of each month, then rolls over."""
         while True:
-            delay = 15.0  # TEST ONLY
+            delay = _seconds_until_next_month_start()
             logger.info(
                 "PPU quota rollover: next run in %.0f seconds (%.1f hours)",
                 delay,
