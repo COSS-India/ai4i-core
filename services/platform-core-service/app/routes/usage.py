@@ -74,7 +74,7 @@ async def get_tenant_usage_list(
     _require_admin(request)
     month = billing_period or date.today().strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_tenant_list(month, tier, modelTaskType, auth_db)
+    return await svc.get_tenant_list(month, tier, modelTaskType.lower() if modelTaskType else None, auth_db)
 
 
 @router.get("/tenant", response_model=TenantUsageDetailResponse)

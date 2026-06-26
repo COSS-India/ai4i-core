@@ -18,9 +18,17 @@ from app.schemas.pay_per_use.usage import (
 )
 
 _UNIT_LABELS: dict[str, str] = {
-    "LLM": "M Tokens",
-    "ASR": "Minutes",
-    "NMT": "M Characters",
+    "llm": "M Tokens",
+    "asr": "Minutes",
+    "nmt": "M Characters",
+    "ocr": "KB",
+    "tts": "Characters",
+    "ner": "Tokens",
+    "transliteration": "Characters",
+    "language-detection": "Characters",
+    "speaker-diarization": "Minutes",
+    "audio-lang-detection": "Minutes",
+    "language-diarization": "Minutes",
 }
 _CURRENCY = "INR"
 _DEFAULT_UNIT_SIZE = 1_000_000
@@ -138,12 +146,14 @@ class PPUUsageService:
 
         breakdown: list[TenantUsageBreakdown] = []
         total_consumption = 0.0
+        inference_types: set[str] = set()
 
         for row in breakdown_rows:
             units = int(row.total_units or 0)
             unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
             consumption = round(units / unit_size, 1)
             total_consumption += consumption
+            inference_types.add(row.inference_name)
 
             if row.unit_rate:
                 spend = round(float(units) * float(row.unit_rate), 2)
@@ -159,6 +169,13 @@ class PPUUsageService:
                 spend=spend,
             ))
 
+        # Use the specific unit label only when all usage is from one inference type;
+        # fall back to "Units" when the tenant uses multiple service types.
+        if len(inference_types) == 1:
+            quota_unit = _UNIT_LABELS.get(next(iter(inference_types)), "Units")
+        else:
+            quota_unit = "Units"
+
         budget_limit = float(assignment.budget_limit)
         remaining_budget = float(assignment.available_balance)
         quota_display = round(int(assignment.total_quota or 0) / _DEFAULT_UNIT_SIZE, 1)
@@ -171,7 +188,7 @@ class PPUUsageService:
             spendToDate=round(budget_limit - remaining_budget, 2),
             remainingBudget=round(remaining_budget, 2),
             quotaLimit=quota_display,
-            quotaUnit="M Tokens",
+            quotaUnit=quota_unit,
             consumptionToDate=round(total_consumption, 1),
             remainingQuota=round(max(0.0, quota_display - total_consumption), 1),
             currency=_CURRENCY,
