@@ -74,6 +74,19 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("OpenSearch not configured (OPENSEARCH_URL, OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD required)")
 
+    # PPU monthly quota rollover cron — clears quota-* Redis flags at midnight
+    # on the 1st of each month. Disabled by default; enable via PPU_QUOTA_ROLLOVER_ENABLED=true.
+    app.state.quota_rollover_task = None
+    if settings.ppu_quota_rollover_enabled:
+        from app.services.pay_per_use.ppu_quota_rollover import QuotaRolloverService
+        app.state.quota_rollover_task = asyncio.create_task(QuotaRolloverService().run_loop())
+        logger.info(
+            "PPU quota rollover cron started (inference_types=%s)",
+            settings.ppu_inference_types,
+        )
+    else:
+        logger.info("PPU quota rollover disabled (PPU_QUOTA_ROLLOVER_ENABLED=false)")
+
     # Alert config sync background loop — only when explicitly enabled, so the
     # service can run without alerting wired up (and to avoid double-writes
     # during the side-by-side rollout window).
@@ -126,6 +139,11 @@ async def lifespan(app: FastAPI):
     logger.info("PII guard ready (kb=%s, policy_sync=%s)", kb_svc.ready, policy_sync.ready)
 
     yield
+
+    rollover_task = getattr(app.state, "quota_rollover_task", None)
+    if rollover_task is not None:
+        rollover_task.cancel()
+        await asyncio.gather(rollover_task, return_exceptions=True)
 
     sync_task = getattr(app.state, "alert_sync_task", None)
     if sync_task is not None:

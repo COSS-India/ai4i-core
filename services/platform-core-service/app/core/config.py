@@ -123,6 +123,13 @@ class CoreSettings(BaseSettings):
     auth_service_url: str = ""
     model_management_url: str = ""
 
+    # ── Pay-per-use ──
+    # Comma-separated inference type names that have monthly quotas.
+    # Used by the quota rollover cron to know which quota-* Redis fields to clear.
+    ppu_inference_types: str = "llm,asr,nmt"
+    # Set to true to enable the monthly quota rollover background task.
+    ppu_quota_rollover_enabled: bool = True
+
     # ── Logging / Observability ──
     log_level: str = "INFO"
     jaeger_endpoint: Optional[str] = None
