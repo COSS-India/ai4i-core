@@ -362,6 +362,12 @@ class GenericTritonMapper:
 
     @staticmethod
     def _cast_ndarray(value: np.ndarray, dtype: str) -> np.ndarray:
+        """Coerce a numpy buffer to the Triton tensor dtype in one vectorized step.
+
+        Maps Triton names (FP32, INT32, …) to numpy dtypes and uses astype()
+        instead of per-element float()/int() loops — critical for ASR PCM tensors
+        that can contain hundreds of thousands of samples.
+        """
         target = {
             "FP32": np.float32,
             "FP64": np.float64,
