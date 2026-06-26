@@ -10,7 +10,7 @@ from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
 
 
-router = APIRouter(tags=["Tier Management"])
+router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
 
 
 @router.get("/tiers")
@@ -70,9 +70,8 @@ async def assign_tenant_tier(
 ):
     """Assign a PPU tier to a tenant.
 
-    Validates that the tenant exists and is ACTIVE in the auth DB before
-    creating the assignment. Any currently active assignment is expired and
-    replaced by the new one.
+    Validates that the tenant exists and is ACTIVE in the auth DB.
+    Returns 409 if the tenant already has an active tier assignment.
     """
     user_id = request.headers.get("X-User-Id")
     return await tenant_assignment_service.assign_tier(body, db, auth_db, user_id)

@@ -21,7 +21,7 @@ async def assign_tier(
     user_id: Optional[str] = None,
 ) -> TierAssignResponse:
     # 1. Confirm tenant exists and is ACTIVE via auth DB.
-    # await require_active_tenant(body.tenant_id, auth_db)
+    await require_active_tenant(body.tenant_id, auth_db)
 
     # 2. Validate tier UUID format.
     try:

@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
@@ -30,21 +31,21 @@ def _build_out(tier: PPUTier, quotas: List[PPUTierQuota]) -> TierOut:
 async def list_tiers(
     session: AsyncSession, model_task_type: Optional[str] = None
 ) -> dict:
-    result = await session.execute(select(PPUTier).where(PPUTier.is_active == True))
+    stmt = (
+        select(PPUTier)
+        .where(PPUTier.is_active.is_(True))
+        .options(selectinload(PPUTier.tier_quotas))
+    )
+    result = await session.execute(stmt)
     tiers = result.scalars().all()
 
     out = []
     for tier in tiers:
-        q_result = await session.execute(
-            select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id)
-        )
-        quotas = q_result.scalars().all()
-
+        quotas = tier.tier_quotas
         if model_task_type:
             quotas = [q for q in quotas if q.inference_name == model_task_type]
             if not quotas:
                 continue
-
         out.append(_build_out(tier, quotas))
 
     return {"data": out, "total": len(out)}
@@ -56,14 +57,16 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
-    result = await session.execute(select(PPUTier).where(PPUTier.id == uid))
+    result = await session.execute(
+        select(PPUTier)
+        .where(PPUTier.id == uid, PPUTier.is_active.is_(True))
+        .options(selectinload(PPUTier.tier_quotas))
+    )
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
 
-    q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
-    quotas = q_result.scalars().all()
-    return _build_out(tier, quotas)
+    return _build_out(tier, tier.tier_quotas)
 
 
 async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optional[str] = None) -> TierOut:
@@ -96,11 +99,18 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
 
 
 async def update_tier(body: TierUpdate, session: AsyncSession, updated_by: Optional[str] = None) -> TierOut:
-    result = await session.execute(select(PPUTier).where(PPUTier.name == body.name))
+    try:
+        uid = UUID(body.tier_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
+
+    result = await session.execute(select(PPUTier).where(PPUTier.id == uid, PPUTier.is_active.is_(True)))
     tier = result.scalar_one_or_none()
     if not tier:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{body.name}' not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{body.tier_id}' not found")
 
+    if body.name is not None:
+        tier.name = body.name
     if body.description is not None:
         tier.description = body.description
     tier.updated_by = updated_by
@@ -133,7 +143,9 @@ async def delete_tier(tier_id: str, session: AsyncSession) -> None:
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
-    result = await session.execute(select(PPUTier).where(PPUTier.id == uid))
+    result = await session.execute(
+        select(PPUTier).where(PPUTier.id == uid, PPUTier.is_active.is_(True))
+    )
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
@@ -147,5 +159,5 @@ async def delete_tier(tier_id: str, session: AsyncSession) -> None:
             detail="Tier is assigned to one or more tenants and cannot be deleted",
         )
 
-    await session.delete(tier)
+    tier.is_active = False
     await session.commit()

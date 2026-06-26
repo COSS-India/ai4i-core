@@ -38,7 +38,8 @@ class TierCreate(BaseModel):
 
 
 class TierUpdate(BaseModel):
-    name: str = Field(..., min_length=1, description="Identifies the tier to update")
+    tier_id: str = Field(..., description="UUID of the tier to update")
+    name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     quotas: Optional[List[TierQuotaIn]] = None
 
