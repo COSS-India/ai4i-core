@@ -50,9 +50,7 @@ export function useServicesManagementPage() {
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
     const [isViewingService, setIsViewingService] = useState(false);
-    const [isEditingService, setIsEditingService] = useState(false);
     const [formData, setFormData] = useState<Partial<Service>>({ ...EMPTY_CREATE_SERVICE_FORM });
-    const [updateFormData, setUpdateFormData] = useState<Partial<Service>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(null);
     const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
@@ -336,7 +334,6 @@ export function useServicesManagementPage() {
       try {
         const service = await getServiceById(serviceId);
         setSelectedService(service);
-        setUpdateFormData(service);
         setIsViewingService(true);
         setActiveTab(viewTabIndex);
         router.replace({ pathname: "/services-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
@@ -739,7 +736,6 @@ export function useServicesManagementPage() {
     canCreateService,
     isSubmitting,
     setPreselectedModelFromQuery,
-    isEditingService,
     selectedServiceModelDeprecated,
     isServiceModelDeprecated,
     unpublishingServiceUuid,

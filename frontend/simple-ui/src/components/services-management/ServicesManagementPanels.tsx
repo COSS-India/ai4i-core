@@ -349,7 +349,6 @@ export function ViewServicePanel(props: Readonly<PageState>) {
     cardBg,
     cardBorder,
     isRegistryReadOnly,
-    isEditingService,
     selectedService,
     selectedServiceModelDeprecated,
     isServiceModelDeprecated,
@@ -378,8 +377,7 @@ export function ViewServicePanel(props: Readonly<PageState>) {
           </Heading>
         </CardHeader>
         <CardBody>
-          {!isEditingService && (
-            <VStack spacing={6} align="stretch">
+          <VStack spacing={6} align="stretch">
               {isRegistryReadOnly && (
                 <Badge colorScheme="gray" alignSelf="flex-start" fontSize="sm" px={2} py={1}>
                   Read-only
@@ -547,7 +545,6 @@ export function ViewServicePanel(props: Readonly<PageState>) {
                 </Box>
               )}
             </VStack>
-          )}
         </CardBody>
       </Card>
     </TabPanel>
