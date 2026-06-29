@@ -49,11 +49,11 @@ function AnonymousTryItAlertDescription({
   rateLimitReached,
   showWarning,
   remainingRequests,
-}: {
+}: Readonly<{
   rateLimitReached: boolean;
   showWarning: boolean;
   remainingRequests: number;
-}) {
+}>) {
   if (rateLimitReached) {
     return (
       <>

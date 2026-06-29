@@ -29,7 +29,6 @@ import { showError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import type { AdminTableColumn } from "../components/common/AdminDataTable";
-import { SERVICE_PUBLISH } from "../constants";
 import {
   buildModelsForDropdown,
   EMPTY_CREATE_SERVICE_FORM,
@@ -39,7 +38,9 @@ import {
   invalidateInferenceServiceQueries,
   isModelVersionDeprecated,
   isServiceModelDeprecated,
+  preselectModelFromUrlQuery,
   resolvePublishedFilter,
+  shallowReplaceServicesRoutePreservingTab,
 } from "../utils/servicesManagementPage";
 
 export function useServicesManagementPage() {
@@ -53,7 +54,6 @@ export function useServicesManagementPage() {
     const [formData, setFormData] = useState<Partial<Service>>({ ...EMPTY_CREATE_SERVICE_FORM });
     const [updateFormData, setUpdateFormData] = useState<Partial<Service>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [isUpdating, setIsUpdating] = useState(false);
     const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(null);
     const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
     const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
@@ -180,63 +180,20 @@ export function useServicesManagementPage() {
     useEffect(() => {
       if (isRegistryReadOnly) return;
       const { modelId, tab } = router.query;
-      if (!modelId || typeof modelId !== "string") return;
+      if (!modelId || typeof modelId !== "string" || models.length === 0) return;
 
-      const runPreselect = async () => {
-        // Switch to Create Service tab if specified
-        if (tab === "create") {
-          setActiveTab(1);
-        }
-
-        const inActiveList = models.some(
-          (m) => (m.modelId || m.model_id) === modelId
-        );
-        if (inActiveList && formData.modelId !== modelId) {
-          handleModelNameChange(modelId);
-          // Preserve current tab (e.g. ?tab=create) while clearing modelId from URL
-          const { tab: currentTab } = router.query;
-          const nextQuery: Record<string, string> = {};
-          if (typeof currentTab === "string") {
-            nextQuery.tab = currentTab;
-          }
-          router.replace(
-            { pathname: "/services-management", query: nextQuery },
-            undefined,
-            { shallow: true }
-          );
-          return;
-        }
-
-        // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
-        if (!inActiveList) {
-          try {
-            const modelDetails = await getModelById(modelId);
-            const isDeprecated = isModelVersionDeprecated(modelDetails?.versionStatus);
-            if (modelDetails && !isDeprecated) {
-              setPreselectedModelFromQuery(modelDetails);
-              if (formData.modelId !== modelId) {
-                handleModelNameChange(modelId);
-              }
-            }
-          } catch (e) {
-            console.error("Failed to load preselected model:", e);
-          }
-          const { tab: currentTab } = router.query;
-          const nextQuery: Record<string, string> = {};
-          if (typeof currentTab === "string") {
-            nextQuery.tab = currentTab;
-          }
-          router.replace(
-            { pathname: "/services-management", query: nextQuery },
-            undefined,
-            { shallow: true }
-          );
-        }
-      };
-
-      if (models.length > 0) {
-        runPreselect();
-      }
+      void preselectModelFromUrlQuery(
+        modelId,
+        models,
+        formData.modelId,
+        {
+          setActiveTab,
+          setPreselectedModelFromQuery,
+          handleModelNameChange,
+          clearModelIdFromUrl: () => shallowReplaceServicesRoutePreservingTab(router),
+        },
+        { switchToCreateTab: tab === "create" },
+      );
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [router.query, models]);
 
@@ -339,20 +296,9 @@ export function useServicesManagementPage() {
           status: 'active', // Default status
         };
 
-        const createdService = await createService(serviceData);
+        await createService(serviceData);
 
-        // Invalidate all service-related queries to refresh service lists across all pages
-        queryClient.invalidateQueries({ queryKey: ["asr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["tts-services"] });
-        queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nerServices"] });
-        queryClient.invalidateQueries({ queryKey: ["llm-services"] });
-        queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-        queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+        invalidateInferenceServiceQueries(queryClient);
 
         showToast({
           type: "success",
@@ -413,59 +359,6 @@ export function useServicesManagementPage() {
       } catch (error: any) {
         const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
         showError(error);
-      }
-    };
-
-    const handleUpdateService = async (e: React.FormEvent) => {
-      e.preventDefault();
-
-      // Check session expiry before updating
-      if (!checkSessionExpiry()) return;
-
-      if (!selectedService?.serviceId) {
-        showToast({
-          type: "error",
-          message: "Service ID is required for update",
-        });
-        return;
-      }
-
-      setIsUpdating(true);
-
-      try {
-        const updatedService = await updateService({
-          ...updateFormData,
-          serviceId: selectedService.serviceId,
-        });
-
-        // Invalidate all service-related queries to refresh service lists across all pages
-        queryClient.invalidateQueries({ queryKey: ["asr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["tts-services"] });
-        queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nerServices"] });
-        queryClient.invalidateQueries({ queryKey: ["llm-services"] });
-        queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-        queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
-
-        showToast({
-          type: "success",
-          message: "Service has been updated successfully",
-        });
-
-        setSelectedService(updatedService);
-        setIsEditingService(false);
-
-        // Refresh services list
-        await fetchServices();
-      } catch (error: any) {
-        const errorMessage = error instanceof Error ? error.message : "Failed to update service";
-        showError(error);
-      } finally {
-        setIsUpdating(false);
       }
     };
 
@@ -531,17 +424,7 @@ export function useServicesManagementPage() {
         });
 
         // Invalidate all service-related queries to refresh service lists across all pages
-        queryClient.invalidateQueries({ queryKey: ["asr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["tts-services"] });
-        queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nerServices"] });
-        queryClient.invalidateQueries({ queryKey: ["llm-services"] });
-        queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-        queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+        invalidateInferenceServiceQueries(queryClient);
 
         // Refresh services list
         await fetchServices();
@@ -582,17 +465,7 @@ export function useServicesManagementPage() {
         });
 
         // Invalidate all service-related queries to refresh service lists across all pages
-        queryClient.invalidateQueries({ queryKey: ["asr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["tts-services"] });
-        queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nerServices"] });
-        queryClient.invalidateQueries({ queryKey: ["llm-services"] });
-        queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-        queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+        invalidateInferenceServiceQueries(queryClient);
 
         // Refresh services list
         await fetchServices();
@@ -631,17 +504,7 @@ export function useServicesManagementPage() {
           type: "success",
           message: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
         });
-        queryClient.invalidateQueries({ queryKey: ["asr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["tts-services"] });
-        queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
-        queryClient.invalidateQueries({ queryKey: ["nerServices"] });
-        queryClient.invalidateQueries({ queryKey: ["llm-services"] });
-        queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-        queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-        queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-        queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+        invalidateInferenceServiceQueries(queryClient);
         await fetchServices();
         if (selectedService?.serviceId === serviceToDelete.serviceId) {
           setIsViewingService(false);
@@ -820,12 +683,30 @@ export function useServicesManagementPage() {
       isRegistryReadOnly,
     ]);
 
+    const handleMainTabChange = useCallback(
+      (index: number) => {
+        if (isRegistryReadOnly && index === 1) return;
+        setActiveTab(index);
+        if (index !== viewTabIndex) {
+          setIsViewingService(false);
+          setSelectedService(null);
+          setSelectedServiceModelDeprecated(null);
+        }
+        const q = { ...router.query } as Record<string, string>;
+        if (index === 0) delete q.tab;
+        else q.tab = String(index);
+        router.replace({ pathname: "/services-management", query: q }, undefined, { shallow: true });
+      },
+      [isRegistryReadOnly, viewTabIndex, router],
+    );
+
   return {
     cardBg,
     cardBorder,
     isRegistryReadOnly,
     activeTab,
     setActiveTab,
+    handleMainTabChange,
     viewTabIndex,
     isViewingService,
     setIsViewingService,

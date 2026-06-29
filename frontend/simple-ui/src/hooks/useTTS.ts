@@ -7,7 +7,7 @@ import { performTTSInference } from '../services/ttsService';
 import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_INFERENCE_TEXT_LENGTH, TTS_ERRORS } from '../constants';
-import { INDIC_TEXT_CHAR_REGEX } from '../constants/validation';
+import { isIndicTextInputValid } from '../constants/validation';
 import { parseError } from '../utils/errorHandler';
 
 // Helper function to get the correct service ID based on language
@@ -167,7 +167,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       return;
     }
 
-    if (!INDIC_TEXT_CHAR_REGEX.test(trimmed)) {
+    if (!isIndicTextInputValid(trimmed)) {
       const err = TTS_ERRORS.INVALID_CHARACTERS;
       showToast({ type: 'error', message: err.description });
       return;

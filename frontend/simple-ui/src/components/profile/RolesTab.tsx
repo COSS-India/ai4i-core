@@ -37,10 +37,10 @@ function getUserSelectPlaceholder(isLoadingUsers: boolean, defaultTenantId?: str
 function SelectedUserRolesContent({
   isLoading,
   roles,
-}: {
+}: Readonly<{
   isLoading: boolean;
   roles: string[];
-}) {
+}>) {
   if (isLoading) {
     return (
       <Center py={4}>

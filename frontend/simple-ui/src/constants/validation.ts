@@ -39,11 +39,12 @@ const INDIC_CODEPOINT_MIN = 0x0900;
 const INDIC_CODEPOINT_MAX = 0x0dff;
 
 const ALLOWED_SPECIAL_CHARS = new Set(
-  ' .,!?;:\'"\-–—()[]{}@#$%&*+=/\\<>~`'.split(""),
+  ' .,!?;:\'"-–—()[]{}@#$%&*+=/\\<>~`'.split(""),
 );
 
 function isAllowedLatinChar(char: string): boolean {
-  const code = char.charCodeAt(0);
+  const code = char.codePointAt(0);
+  if (code === undefined) return false;
   if (code >= 0x41 && code <= 0x5a) return true;
   if (code >= 0x61 && code <= 0x7a) return true;
   if (code >= 0x30 && code <= 0x39) return true;
@@ -62,6 +63,3 @@ export function isIndicTextInputValid(text: string): boolean {
   }
   return true;
 }
-
-/** @deprecated Use isIndicTextInputValid — kept for call sites using .test(). */
-export const INDIC_TEXT_CHAR_REGEX = { test: isIndicTextInputValid };

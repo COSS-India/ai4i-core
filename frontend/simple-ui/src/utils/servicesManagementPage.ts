@@ -1,6 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { NextRouter } from "next/router";
 import type { ModelDetails } from "../types/platform";
 import type { Service } from "../services/servicesManagementService";
+import { getModelById } from "../services/modelManagementService";
 import { SERVICE_PUBLISH } from "../constants";
 
 const INFERENCE_SERVICE_QUERY_KEYS = [
@@ -125,3 +127,51 @@ export const EMPTY_CREATE_SERVICE_FORM: Partial<Service> = {
   modelSubmissionDate: "",
   modelVersion: "1.0",
 };
+
+export function shallowReplaceServicesRoutePreservingTab(router: NextRouter): void {
+  const { tab: currentTab } = router.query;
+  const nextQuery: Record<string, string> = {};
+  if (typeof currentTab === "string") nextQuery.tab = currentTab;
+  router.replace({ pathname: "/services-management", query: nextQuery }, undefined, { shallow: true });
+}
+
+function modelIdInActiveList(models: ModelDetails[], modelId: string): boolean {
+  return models.some((m) => (m.modelId || m.model_id) === modelId);
+}
+
+export async function preselectModelFromUrlQuery(
+  modelId: string,
+  models: ModelDetails[],
+  currentFormModelId: string | undefined,
+  handlers: {
+    setActiveTab: (tab: number) => void;
+    setPreselectedModelFromQuery: (model: ModelDetails | null) => void;
+    handleModelNameChange: (modelId: string) => void;
+    clearModelIdFromUrl: () => void;
+  },
+  options: { switchToCreateTab: boolean },
+): Promise<void> {
+  if (options.switchToCreateTab) handlers.setActiveTab(1);
+
+  const inActiveList = modelIdInActiveList(models, modelId);
+  if (inActiveList && currentFormModelId !== modelId) {
+    handlers.handleModelNameChange(modelId);
+    handlers.clearModelIdFromUrl();
+    return;
+  }
+
+  if (!inActiveList) {
+    try {
+      const modelDetails = await getModelById(modelId);
+      if (modelDetails && !isModelVersionDeprecated(modelDetails.versionStatus)) {
+        handlers.setPreselectedModelFromQuery(modelDetails);
+        if (currentFormModelId !== modelId) {
+          handlers.handleModelNameChange(modelId);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load preselected model:", e);
+    }
+    handlers.clearModelIdFromUrl();
+  }
+}

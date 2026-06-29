@@ -9,7 +9,7 @@ import { isAnonymousUser } from '../utils/anonymousSession';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
 import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_INFERENCE_TEXT_LENGTH, NMT_ERRORS, UI_ERROR_MESSAGES } from '../constants';
-import { INDIC_TEXT_CHAR_REGEX } from '../constants/validation';
+import { isIndicTextInputValid } from '../constants/validation';
 import { parseError } from '../utils/errorHandler';
 
 export const useNMT = (): UseNMTReturn => {
@@ -118,7 +118,7 @@ export const useNMT = (): UseNMTReturn => {
       return;
     }
 
-    if (!INDIC_TEXT_CHAR_REGEX.test(trimmed)) {
+    if (!isIndicTextInputValid(trimmed)) {
       const err = NMT_ERRORS.INVALID_CHARACTERS;
       showToast({ type: 'error', message: err.description });
       return;
