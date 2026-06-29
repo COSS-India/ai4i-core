@@ -25,13 +25,15 @@ _UNIT_LABELS: dict[str, str] = {
     "asr": "Minutes",
     "nmt": "M Characters",
     "ocr": "KB",
-    "tts": "Characters",
-    "ner": "Tokens",
-    "transliteration": "Characters",
-    "language-detection": "Characters",
+    "tts": "M Characters",    # PRD: Characters / Per million characters
+    "ner": "M Characters",    # PRD: Characters / Per million characters
+    "transliteration": "M Characters",    # PRD: Characters / Per million characters
+    "language-detection": "M Characters", # PRD: Characters / Per million characters
     "speaker-diarization": "Minutes",
     "audio-lang-detection": "Minutes",
     "language-diarization": "Minutes",
+    "pipeline": "Requests",   # PRD: pipeline type billed per request
+    "pii": "M Characters",    # PRD: Characters / Per million characters
 }
 _CURRENCY = "INR"
 _DEFAULT_UNIT_SIZE = 1_000_000
