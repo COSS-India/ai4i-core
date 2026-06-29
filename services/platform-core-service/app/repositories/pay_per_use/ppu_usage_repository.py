@@ -88,17 +88,24 @@ class PPUUsageRepository:
             usage_sq = usage_sq.where(PPUQuotaUsage.inference_name == model_task_type)
         usage_sq = usage_sq.group_by(PPUQuotaUsage.tenant_id).subquery()
 
-        quota_sq = select(
-            PPUTierQuota.tier_id,
-            func.sum(PPUTierQuota.monthly_quota).label("total_quota"),
-        )
+        # quota_sq and unit_size_col are only meaningful when filtering by a single
+        # inference type — mixing quotas across types (e.g. ASR minutes + LLM tokens)
+        # produces a dimensionally incoherent sum that cannot be displayed.
         if model_task_type:
-            quota_sq = quota_sq.where(PPUTierQuota.inference_name == model_task_type)
-        quota_sq = quota_sq.group_by(PPUTierQuota.tier_id).subquery()
+            quota_sq = (
+                select(
+                    PPUTierQuota.tier_id,
+                    func.sum(PPUTierQuota.monthly_quota).label("total_quota"),
+                )
+                .where(PPUTierQuota.inference_name == model_task_type)
+                .group_by(PPUTierQuota.tier_id)
+                .subquery()
+            )
+            quota_col = quota_sq.c.total_quota.label("total_quota")
+        else:
+            quota_sq = None
+            quota_col = null().label("total_quota")
 
-        # Fetch the correct unit_size for the filtered inference type so the
-        # service layer can apply the right divisor (e.g. 60 for ASR minutes,
-        # not the default 1M).  NULL when no type filter — units are mixed.
         if model_task_type:
             unit_size_col = (
                 select(Service.unit_size)
@@ -121,17 +128,18 @@ class PPUUsageRepository:
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 func.coalesce(usage_sq.c.total_units, 0).label("total_units"),
-                quota_sq.c.total_quota.label("total_quota"),
+                quota_col,
                 unit_size_col,
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
             .outerjoin(usage_sq, usage_sq.c.tenant_id == PPUTenantTierAssignment.tenant_id)
-            .outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
             .where(
                 PPUTenantTierAssignment.effective_from <= func.now(),
                 PPUTenantTierAssignment.effective_to > func.now(),
             )
         )
+        if quota_sq is not None:
+            stmt = stmt.outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
         if tier:
             stmt = stmt.where(PPUTier.name == tier)
 
@@ -139,7 +147,13 @@ class PPUUsageRepository:
         return result.all()
 
     async def get_tenant_assignment(self, tenant_id: str):
-        """Budget, balance, tier name, total monthly quota, and unit_size for a single tenant."""
+        """Budget, balance, and tier name for a single tenant.
+
+        unit_size is intentionally omitted — callers derive it from breakdown rows
+        (get_tenant_period_breakdown) which already carry the correct per-type unit_size
+        via _pricing_subquery(). A single unit_size here would be arbitrary for
+        multi-quota tiers and redundant for single-type tenants.
+        """
         quota_sq = (
             select(
                 PPUTierQuota.tier_id,
@@ -148,33 +162,12 @@ class PPUUsageRepository:
             .group_by(PPUTierQuota.tier_id)
             .subquery()
         )
-        # Correlated scalar subquery: fetches unit_size from mm_services for the
-        # tenant's tier inference type(s).  Mirrors the same pattern used in
-        # get_tenant_usages so the detail page applies the correct divisor (e.g.
-        # unit_size=60 for ASR minutes) instead of always falling back to 1 000 000.
-        unit_size_sq = (
-            select(Service.unit_size)
-            .where(
-                Service.billing_unit_type.in_(
-                    select(PPUTierQuota.inference_name).where(
-                        PPUTierQuota.tier_id == PPUTenantTierAssignment.tier_id
-                    )
-                ),
-                Service.deleted_at.is_(None),
-            )
-            .order_by(Service.created_at.desc())
-            .limit(1)
-            .correlate(PPUTenantTierAssignment)
-            .scalar_subquery()
-            .label("unit_size")
-        )
         stmt = (
             select(
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 PPUTier.name.label("tier_name"),
                 quota_sq.c.total_quota.label("total_quota"),
-                unit_size_sq,
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
             .outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)

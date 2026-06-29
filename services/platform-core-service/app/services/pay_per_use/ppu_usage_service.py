@@ -144,6 +144,7 @@ class PPUUsageService:
         breakdown: list[TenantUsageBreakdown] = []
         total_consumption = 0.0
         inference_types: set[str] = set()
+        type_unit_sizes: dict[str, int] = {}
 
         for row in breakdown_rows:
             units = int(row.total_units or 0)
@@ -151,6 +152,7 @@ class PPUUsageService:
             consumption = round(units / unit_size, 1)
             total_consumption += consumption
             inference_types.add(row.inference_name)
+            type_unit_sizes[row.inference_name] = unit_size
 
             if row.unit_rate:
                 spend = round(float(units) * float(row.unit_rate), 2)
@@ -185,9 +187,14 @@ class PPUUsageService:
 
         budget_limit = float(assignment.budget_limit)
         remaining_budget = float(assignment.available_balance)
-        unit_size = int(assignment.unit_size or _DEFAULT_UNIT_SIZE)
         raw_quota = assignment.total_quota  # None means unlimited (no quota rows for this tier)
-        quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
+        # Use the unit_size from the single breakdown type — it's the correct divisor from
+        # _pricing_subquery(). For multi-type tenants quota_display is nulled out below.
+        if len(inference_types) == 1 and raw_quota is not None:
+            single_type = next(iter(inference_types))
+            quota_display = round(int(raw_quota) / type_unit_sizes[single_type], 1)
+        else:
+            quota_display = None
 
         multi_type = len(inference_types) > 1
         return TenantUsageDetailResponse(
