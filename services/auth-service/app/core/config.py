@@ -193,7 +193,7 @@ settings = AuthSettings()
 
 # Hand the PII encryption key to the crypto module so the SQLAlchemy encrypted
 # column types can source it from settings (pydantic loads .env into settings,
-# not os.environ). Migrations configure the same key via the env var instead.
+# not os.environ).
 from app.core import pii_crypto  # noqa: E402
 
 pii_crypto.configure_key(
