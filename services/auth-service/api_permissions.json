@@ -113,6 +113,13 @@
     { "endpoint": "GET:/api/v1/metering/tenant-consumption",               "permissionRequired": 133, "description": "Metering tenant consumption (metering.read); admin/moderator only (platform-wide)" },
     { "endpoint": "GET:/api/v1/metering/service-consumption",              "permissionRequired": 133, "description": "Metering service consumption (metering.read); role 1/2 platform-wide, role 5 own tenant only" },
 
+    { "endpoint": "GET:/api/v1/pay-per-use/tiers",                         "permissionRequired": 140, "description": "List PPU tiers (ppu.tier.read)" },
+    { "endpoint": "GET:/api/v1/pay-per-use/tier",                          "permissionRequired": 140, "description": "Get PPU tier by ID (ppu.tier.read)" },
+    { "endpoint": "POST:/api/v1/pay-per-use/tier",                         "permissionRequired": 141, "description": "Create PPU tier (ppu.tier.create)" },
+    { "endpoint": "PATCH:/api/v1/pay-per-use/tier",                        "permissionRequired": 142, "description": "Update PPU tier (ppu.tier.update)" },
+    { "endpoint": "DELETE:/api/v1/pay-per-use/tier",                       "permissionRequired": 143, "description": "Delete PPU tier (ppu.tier.delete)" },
+    { "endpoint": "POST:/api/v1/pay-per-use/tenant/tier",                  "permissionRequired": 144, "description": "Assign PPU tier to tenant (ppu.tenant.assign)" },
+
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
     { "endpoint": "GET:/api/v1/alerts/definitions/{alert_id}",             "permissionRequired": 116, "description": "Get alert definition (alerts.read)" },
