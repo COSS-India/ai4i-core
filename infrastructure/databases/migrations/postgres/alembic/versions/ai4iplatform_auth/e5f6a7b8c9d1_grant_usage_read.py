@@ -9,7 +9,7 @@ all gated on usage.read (134) at the gateway. platform-core then decides
 breadth from the X-Permission-IDS header, mirroring metering.read (133).
 
 Revision ID: e5f6a7b8c9d1
-Revises: 71c7094f5950
+Revises: c5d6e7f8a9b0
 Create Date: 2026-06-26 00:00:00.000000
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'e5f6a7b8c9d1'
-down_revision: Union[str, None] = '71c7094f5950'
+down_revision: Union[str, None] = 'c5d6e7f8a9b0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
