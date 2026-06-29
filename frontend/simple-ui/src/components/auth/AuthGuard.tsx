@@ -5,7 +5,13 @@ import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { Spinner, Center } from '@chakra-ui/react';
 import { useAuth } from '../../hooks/useAuth';
-import { canAccessUsageDashboard } from '../../utils/rbac';
+import {
+  canAccessUsageDashboard,
+  isGuestUser,
+  isPlatformAdminUser,
+  isRegularUser,
+  isTenantAdminUser,
+} from '../../utils/rbac';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -40,7 +46,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const isTryItRoute = tryItRoutes.has(router.pathname);
 
   // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
+  const isAdmin = isPlatformAdminUser(user?.roles);
   const canAccessUsage = canAccessUsageDashboard(user?.roles);
 
   // Redirect to auth page if accessing protected route without authentication

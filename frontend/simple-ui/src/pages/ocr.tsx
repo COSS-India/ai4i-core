@@ -10,7 +10,7 @@ import {
   useCopyToClipboard,
 } from "../components/service-page";
 import OCRImageUploadInput from "../components/service-page/inputs/OCRImageUploadInput";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { getServicePageDefaults } from "../constants/servicePageConfig";
 import { useOCRPage } from "../hooks/useOCRPage";
 
 const pageDefaults = getServicePageDefaults("ocr");

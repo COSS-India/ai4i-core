@@ -34,8 +34,8 @@ import {
   formatDuration,
   MAX_RECORDING_DURATION,
   TTS_SUPPORTED_LANGUAGES,
-} from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+} from '../constants';
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { useAuth } from "../hooks/useAuth";
 import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";

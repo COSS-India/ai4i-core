@@ -5,7 +5,7 @@ import type {
   ServiceConsumptionSummary,
   ServiceRow,
 } from "../types/metering";
-import { METERING } from "../config/meteringConstants";
+import { METERING } from "../constants";
 import { meteringServiceColor } from "./meteringColors";
 
 export const getWindowLabel = (window: MeteringWindow): string =>

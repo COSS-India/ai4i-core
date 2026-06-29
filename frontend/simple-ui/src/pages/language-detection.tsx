@@ -12,10 +12,10 @@ import {
 } from "../components/service-page";
 import {
   LANGUAGE_DETECTION_ERRORS,
-  MAX_LANGUAGE_DETECTION_INPUT_LENGTH,
-  MIN_LANGUAGE_DETECTION_TEXT_LENGTH,
-} from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+  MAX_TEXT_LENGTH,
+  MIN_INFERENCE_TEXT_LENGTH,
+} from "../constants";
+import { getServicePageDefaults } from "../constants/servicePageConfig";
 import {
   listLanguageDetectionServices,
   performLanguageDetectionInference,
@@ -55,8 +55,8 @@ const LanguageDetectionPage: React.FC = () => {
   const trimmedText = inputText.trim();
   const canDetect =
     !!selectedServiceId?.trim() &&
-    trimmedText.length >= MIN_LANGUAGE_DETECTION_TEXT_LENGTH &&
-    trimmedText.length <= MAX_LANGUAGE_DETECTION_INPUT_LENGTH &&
+    trimmedText.length >= MIN_INFERENCE_TEXT_LENGTH &&
+    trimmedText.length <= MAX_TEXT_LENGTH &&
     !fetching;
 
   const handleProcess = async () => {
@@ -66,12 +66,12 @@ const LanguageDetectionPage: React.FC = () => {
       showToast({ type: "error", message: err.description });
       return;
     }
-    if (text.length < MIN_LANGUAGE_DETECTION_TEXT_LENGTH) {
+    if (text.length < MIN_INFERENCE_TEXT_LENGTH) {
       const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_SHORT;
       showToast({ type: "error", message: err.description });
       return;
     }
-    if (text.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH) {
+    if (text.length > MAX_TEXT_LENGTH) {
       const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
       showToast({ type: "error", message: err.description });
       return;
@@ -131,7 +131,7 @@ const LanguageDetectionPage: React.FC = () => {
             onChange: setInputText,
             label: "Input Text",
             placeholder: "Paste text here (e.g., Hindi, Kannada, Telugu)...",
-            maxLength: MAX_LANGUAGE_DETECTION_INPUT_LENGTH,
+            maxLength: MAX_TEXT_LENGTH,
             disabled: fetching || !selectedServiceId,
           }}
           helperText={pageDefaults.helperText}

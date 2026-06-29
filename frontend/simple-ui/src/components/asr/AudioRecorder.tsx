@@ -17,7 +17,7 @@ import {
 } from "@chakra-ui/react";
 import React, { useEffect, useRef, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
-import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
+import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from '../../constants';
 import { AudioRecorderProps } from "../../types/asr";
 import { showToast } from "../../utils/toast";
 import { DeleteIcon } from "@chakra-ui/icons";

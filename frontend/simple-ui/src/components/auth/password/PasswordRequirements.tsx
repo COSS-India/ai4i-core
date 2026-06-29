@@ -7,7 +7,7 @@
 import { Box, HStack, Icon, Text, VStack } from "@chakra-ui/react";
 import { CheckIcon, CloseIcon } from "@chakra-ui/icons";
 import React from "react";
-import { PASSWORD_POLICY } from "../../../config/constants";
+import { PASSWORD_POLICY } from '../../../constants';
 
 const SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 

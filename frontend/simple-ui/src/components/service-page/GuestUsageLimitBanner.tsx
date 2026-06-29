@@ -2,7 +2,7 @@
 
 import { Alert, AlertDescription, AlertIcon, AlertTitle, Box } from "@chakra-ui/react";
 import React from "react";
-import { GUEST_REQUESTS_PER_HOUR_PER_SERVICE } from "../../config/constants";
+import { GUEST_REQUESTS_PER_HOUR_PER_SERVICE } from '../../constants';
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 

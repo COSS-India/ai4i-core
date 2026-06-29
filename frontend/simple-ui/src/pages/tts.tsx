@@ -12,7 +12,7 @@ import {
   ResponseContainer,
   ServicePageLayout,
 } from "../components/service-page";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { useTTS } from "../hooks/useTTS";
 import { listVoices, listTTSServices } from "../services/ttsService";
 

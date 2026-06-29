@@ -1,4 +1,4 @@
-import { METERING } from "../config/meteringConstants";
+import { METERING } from "../constants";
 
 type MeteringChartColorKey = keyof typeof METERING.COLORS.CHART;
 type ServiceCssKey = keyof typeof METERING.SERVICE_CSS_KEYS;

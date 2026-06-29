@@ -1,33 +1,5 @@
 // Profile-specific types
 
-export const TIMEZONES = [
-  "UTC",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
-  "Europe/London",
-  "Europe/Paris",
-  "Europe/Berlin",
-  "Asia/Kolkata",
-  "Asia/Tokyo",
-  "Asia/Shanghai",
-  "Australia/Sydney",
-];
-
-export const LANGUAGES = [
-  { value: "en", label: "English" },
-  { value: "hi", label: "Hindi" },
-  { value: "ta", label: "Tamil" },
-  { value: "te", label: "Telugu" },
-  { value: "kn", label: "Kannada" },
-  { value: "ml", label: "Malayalam" },
-  { value: "bn", label: "Bengali" },
-  { value: "gu", label: "Gujarati" },
-  { value: "mr", label: "Marathi" },
-  { value: "pa", label: "Punjabi" },
-];
-
 export type {
   TenantAssignableRole,
   TenantView,
@@ -52,12 +24,6 @@ export interface TenantUserFormState {
   phone_number: string;
   role: TenantAssignableRole;
 }
-
-/** Assignable tenant-user roles (create/edit forms). */
-export const TENANT_USER_ROLE_OPTIONS = [
-  { value: "USER", label: "User" },
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
-] as const satisfies ReadonlyArray<{ value: TenantAssignableRole; label: string }>;
 
 export interface EditTenantFormState {
   tenant_id: string;

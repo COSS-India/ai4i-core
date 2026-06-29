@@ -1,6 +1,6 @@
 // Model Management service API client
 
-import { MODEL_VERSION } from '../config/constants';
+import { MODEL_VERSION } from '../constants';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -22,6 +22,10 @@ import type {
   Service,
   UnpublishModelResponse,
 } from '../types/platform';
+import { PAGINATION } from '../constants/pagination';
+
+const REGISTRY_FETCH_PAGE_SIZE = PAGINATION.REGISTRY_FETCH_PAGE_SIZE;
+const MAX_REGISTRY_FETCH_PAGES = PAGINATION.MAX_REGISTRY_FETCH_PAGES;
 
 export type {
   ModelCreateRequest,
@@ -78,8 +82,6 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
  * Get models with server-side pagination, filtering, and search.
  * Reads the X-Total-Count response header for the accurate total count.
  */
-const REGISTRY_FETCH_PAGE_SIZE = 100;
-const MAX_REGISTRY_FETCH_PAGES = 500;
 
 /**
  * Fetches every model matching list filters by walking paginated API pages.

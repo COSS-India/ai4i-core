@@ -1,4 +1,4 @@
-// Sidebar navigation tab ids
+// Sidebar navigation tab ids (route segments)
 
 /** Sidebar nav item ids (kebab-case segments; `home` uses path `/` not `/home`). */
 export const TABS = {
@@ -27,3 +27,6 @@ export const TABS = {
   audioLanguageDetection: "audio-language-detection",
   ner: "ner",
 } as const;
+
+/** Route path segments keyed by sidebar tab id. */
+export const ROUTES = TABS;

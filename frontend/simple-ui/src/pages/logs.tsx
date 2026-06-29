@@ -39,7 +39,7 @@ import {
   TelemetryTraceRecord,
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
-import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel, TIMING } from '../constants';
 import { listTenants } from "../services/tenantService";
 import {
   useAdminTableSurface,
@@ -50,9 +50,15 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
+import {
+  isGuestUser,
+  isPlatformAdminUser,
+  isRegularUser,
+  isTenantAdminUser,
+} from "../utils/rbac";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
-const AUTO_REFRESH_MS = 37_000;
+const AUTO_REFRESH_MS = TIMING.LOGS_AUTO_REFRESH_MS;
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -112,13 +118,10 @@ const LogsPage: React.FC = () => {
   const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
   // Check if user is admin (full ADMIN role — sees all tenants)
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-  // Check if user has USER role - hide logs UI for them
-  const isUser = user?.roles?.includes('USER') || false;
-  // Check if user has GUEST role - hide logs UI for them
-  const isGuest = user?.roles?.includes('GUEST') || false;
-  // Check if user is a TENANT ADMIN — scoped to their own tenant only
-  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isUser = isRegularUser(user?.roles);
+  const isGuest = isGuestUser(user?.roles);
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
   const canPickTenant = isAdmin && !isTenantAdmin;
   const { cardBg, borderColor } = useAdminTableSurface();
 

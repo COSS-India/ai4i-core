@@ -8,7 +8,13 @@ import { nmtInferenceResponseSchema } from './dto/schemas/inference';
 import { tryItServiceListSchema } from './dto/schemas/platform';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import type { Service } from '../types/platform';
-import { UI_ERROR_MESSAGES } from '../config/constants';
+import { UI_ERROR_MESSAGES } from '../constants';
+import {
+  RATE_LIMIT_WINDOW_MS,
+  TRY_IT_RATE_LIMIT_WARN_THRESHOLD,
+  TRY_IT_REQUESTS_PER_HOUR,
+} from '../constants/limits';
+import { SESSION_STORAGE_KEYS } from '../constants/storage';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 const getTryItHeaders = () => ({
@@ -125,8 +131,8 @@ export const performTryItNMTInference = async (
  * @returns boolean indicating if rate limit might be exceeded
  */
 export const shouldWarnAboutRateLimit = (): boolean => {
-  const key = 'tryit_request_count';
-  const timestampKey = 'tryit_first_request_time';
+  const key = SESSION_STORAGE_KEYS.TRY_IT_REQUEST_COUNT;
+  const timestampKey = SESSION_STORAGE_KEYS.TRY_IT_FIRST_REQUEST_TIME;
 
   if (typeof window === 'undefined') return false;
 
@@ -134,17 +140,14 @@ export const shouldWarnAboutRateLimit = (): boolean => {
     const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
     const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
 
-    // Reset if more than an hour has passed
-    if (now - firstRequestTime > oneHour) {
+    if (now - firstRequestTime > RATE_LIMIT_WINDOW_MS) {
       sessionStorage.setItem(key, '0');
       sessionStorage.removeItem(timestampKey);
       return false;
     }
 
-    // Warn if approaching limit (4 or more requests)
-    return count >= 4;
+    return count >= TRY_IT_RATE_LIMIT_WARN_THRESHOLD;
   } catch (e) {
     return false;
   }
@@ -154,8 +157,8 @@ export const shouldWarnAboutRateLimit = (): boolean => {
  * Track try-it request for client-side rate limit warning
  */
 export const trackTryItRequest = (): void => {
-  const key = 'tryit_request_count';
-  const timestampKey = 'tryit_first_request_time';
+  const key = SESSION_STORAGE_KEYS.TRY_IT_REQUEST_COUNT;
+  const timestampKey = SESSION_STORAGE_KEYS.TRY_IT_FIRST_REQUEST_TIME;
 
   if (typeof window === 'undefined') return;
 
@@ -163,10 +166,8 @@ export const trackTryItRequest = (): void => {
     const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
     const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
 
-    // Reset if more than an hour has passed
-    if (now - firstRequestTime > oneHour || !firstRequestTime) {
+    if (now - firstRequestTime > RATE_LIMIT_WINDOW_MS || !firstRequestTime) {
       sessionStorage.setItem(key, '1');
       sessionStorage.setItem(timestampKey, now.toString());
     } else {
@@ -182,9 +183,9 @@ export const trackTryItRequest = (): void => {
  * @returns number of remaining requests (estimate)
  */
 export const getRemainingTryItRequests = (): number => {
-  const key = 'tryit_request_count';
-  const timestampKey = 'tryit_first_request_time';
-  const limit = 5;
+  const key = SESSION_STORAGE_KEYS.TRY_IT_REQUEST_COUNT;
+  const timestampKey = SESSION_STORAGE_KEYS.TRY_IT_FIRST_REQUEST_TIME;
+  const limit = TRY_IT_REQUESTS_PER_HOUR;
 
   if (typeof window === 'undefined') return limit;
 
@@ -192,10 +193,8 @@ export const getRemainingTryItRequests = (): number => {
     const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
     const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
 
-    // Reset if more than an hour has passed
-    if (now - firstRequestTime > oneHour || !firstRequestTime) {
+    if (now - firstRequestTime > RATE_LIMIT_WINDOW_MS || !firstRequestTime) {
       return limit;
     }
 

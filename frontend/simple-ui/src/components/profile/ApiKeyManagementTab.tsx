@@ -40,13 +40,14 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import StandardModal from "../common/StandardModal";
+import { LABELS } from "../../constants/labels";
 import {
   API_KEY,
   API_KEY_FILTER_STATUS_LIST,
   formatApiKeyDisplayStatusLabel,
   formatApiKeyFilterStatusLabel,
   getApiKeyDisplayStatusColorScheme,
-} from "../../config/constants";
+} from '../../constants';
 
 export interface ApiKeyManagementTabProps {
   /** When true, tab is visible; used to fetch data when user switches to this tab */
@@ -249,7 +250,7 @@ export default function ApiKeyManagementTab({
               colorScheme="blue"
               onClick={() => void mgmt.handleFetchAllApiKeys()}
               isLoading={mgmt.isLoadingAllApiKeys}
-              loadingText="Loading..."
+              loadingText={LABELS.STATUS.LOADING}
             >
               Refresh
             </Button>

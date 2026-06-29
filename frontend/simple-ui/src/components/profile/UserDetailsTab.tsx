@@ -19,7 +19,8 @@ import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useUserDetails } from "./hooks/useUserDetails";
-import { TIMEZONES } from "./types";
+import { TIMEZONES } from "../../constants/tenant";
+import { maskPhoneForDisplay } from "../../utils/helpers";
 import DeleteAccountSection from "./DeleteAccountSection";
 
 export default function UserDetailsTab() {

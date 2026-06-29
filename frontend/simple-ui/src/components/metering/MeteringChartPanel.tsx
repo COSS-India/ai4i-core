@@ -1,6 +1,6 @@
 import { Box, Center, Flex, HStack, Spinner, Text } from "@chakra-ui/react";
 import React, { useEffect, useRef, useState } from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 
 interface MeteringChartPanelProps {
   height?: number;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TENANT } from '../../../config/constants';
+import { TENANT } from '../../../constants';
 
 const tenantStatusValues = Object.values(TENANT.STATUS) as [
   (typeof TENANT.STATUS)[keyof typeof TENANT.STATUS],

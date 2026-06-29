@@ -1,6 +1,6 @@
 import { Alert, AlertDescription, AlertIcon, Center, Spinner, Text, VStack } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 
 interface MeteringAlertsProps {
   errorMessage?: string | null;

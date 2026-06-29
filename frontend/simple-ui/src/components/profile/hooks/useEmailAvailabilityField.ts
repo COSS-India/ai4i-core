@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { VALIDATION } from "../../../constants/validation";
 import {
-  EMAIL_CHECK_DEBOUNCE_MS,
   runEmailAvailabilityCheck,
   type EmailAvailabilityStatus,
   type RunEmailAvailabilityCheckOptions,
@@ -83,7 +83,7 @@ export function useEmailAvailabilityField({
       patchError("email", undefined);
       setStatus("checking");
 
-      timerRef.current = setTimeout(runCheck, EMAIL_CHECK_DEBOUNCE_MS);
+      timerRef.current = setTimeout(runCheck, VALIDATION.EMAIL.CHECK_DEBOUNCE_MS);
     },
     [getCheckOptions, patchError]
   );

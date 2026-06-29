@@ -6,12 +6,13 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import PolicyManagement from "../components/policy/PolicyManagement";
 import { useAuth } from "../hooks/useAuth";
+import { isPlatformAdminUser } from "../utils/rbac";
 
 const PolicyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const canManagePolicies = Boolean(user?.roles?.includes("ADMIN"));
+  const canManagePolicies = isPlatformAdminUser(user?.roles);
 
   React.useEffect(() => {
     if (!authLoading && !isAuthenticated) {

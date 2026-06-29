@@ -1,6 +1,6 @@
 /*
  * Metering dashboard color tokens.
- * Values are defined in src/config/meteringConstants.ts (METERING.COLORS).
+ * Values are defined in src/constants/meteringConstants.ts (METERING.COLORS).
  * This file exposes them as CSS custom properties for non-React styling if needed.
  */
 :root {

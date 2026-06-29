@@ -1,20 +1,8 @@
-import { formatPlatformRoleLabel } from "./defaultTenant";
-import { TENANT_USER_ROLE_OPTIONS } from "../components/profile/types";
+import { formatPlatformRoleLabel, PLATFORM_ROLES, TENANT_ASSIGNABLE_ROLES } from "../constants/roles";
 import type { TenantAssignableRole, TenantUserView } from "../types/tenant";
 
-const TENANT_ASSIGNABLE_ROLE_VALUES: readonly TenantAssignableRole[] = [
-  "USER",
-  "TENANT ADMIN",
-];
-
-/** Tenant user list role filter only (not platform ADMIN / MODERATOR / GUEST). */
-export const TENANT_USER_ROLE_FILTER_LIST: ReadonlyArray<{
-  value: TenantAssignableRole;
-  label: string;
-}> = [
-  { value: "USER", label: "User" },
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
-] as const;
+const TENANT_ASSIGNABLE_ROLE_VALUES: readonly TenantAssignableRole[] =
+  TENANT_ASSIGNABLE_ROLES.map((o) => o.value);
 
 export function isTenantAssignableRole(role: string): role is TenantAssignableRole {
   const normalized = normalizeTenantUserRole(role);
@@ -30,7 +18,7 @@ export function normalizeTenantUserRole(role: string): string {
 
 export function formatTenantUserRoleLabel(role: string): string {
   const normalized = normalizeTenantUserRole(role);
-  const match = TENANT_USER_ROLE_OPTIONS.find(
+  const match = TENANT_ASSIGNABLE_ROLES.find(
     (o) => normalizeTenantUserRole(o.value) === normalized,
   );
   if (match) return match.label;
@@ -48,8 +36,8 @@ export function resolvePrimaryTenantAssignableRole(
   source: TenantUserRoleSource,
 ): TenantAssignableRole {
   const normalized = resolveTenantUserRoles(source).map(normalizeTenantUserRole);
-  if (normalized.includes("TENANT ADMIN")) return "TENANT ADMIN";
-  return "USER";
+  if (normalized.includes(PLATFORM_ROLES.TENANT_ADMIN)) return PLATFORM_ROLES.TENANT_ADMIN;
+  return PLATFORM_ROLES.USER;
 }
 
 export function resolveTenantUserRoles(source: TenantUserRoleSource): string[] {

@@ -12,16 +12,15 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
+import { isPlatformAdminUser, isTenantAdminUser } from "../utils/rbac";
 import TenantManagementTab from "../components/profile/TenantManagementTab";
 
 const TenantManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isTenantAdmin = Boolean(
-    user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN")
-  );
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
   const showTenantManagement = isAdmin || isTenantAdmin;
 
   React.useEffect(() => {

@@ -1,6 +1,6 @@
 // Tenant + tenant-user types — calls auth-service /api/v1/auth/tenants endpoints.
 
-import type { TenantStatusValue, TenantUserStatusValue } from '../config/constants';
+import type { TenantStatusValue, TenantUserStatusValue } from '../constants';
 
 export type TenantStatus = TenantStatusValue;
 export type TenantUserStatus = TenantUserStatusValue;

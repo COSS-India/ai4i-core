@@ -1,6 +1,6 @@
 import { Badge, HStack, Progress, Tbody, Td, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import type { MeteringTopN, TenantConsumptionResponse } from "../../types/metering";
 import { meteringColorAt } from "../../utils/meteringColors";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";

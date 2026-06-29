@@ -34,14 +34,14 @@ import {
   TableSortHeader,
   useAdminTableSurface,
 } from "./TableControls";
+import { DEFAULT_PAGE_SIZE_OPTIONS } from "../../constants/pagination";
 import {
-  DEFAULT_PAGE_SIZE_OPTIONS,
   useAdminDataTable,
   useAdminDataTableServer,
   type UseAdminDataTableServerOptions,
 } from "../../hooks/useAdminDataTable";
 
-export { DEFAULT_PAGE_SIZE_OPTIONS } from "../../hooks/useAdminDataTable";
+export { DEFAULT_PAGE_SIZE_OPTIONS } from "../../constants/pagination";
 export { useAdminDataTable, useAdminDataTableServer } from "../../hooks/useAdminDataTable";
 
 type SortDirection = "asc" | "desc";

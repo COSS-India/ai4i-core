@@ -13,7 +13,7 @@ import {
   ServicePageLayout,
   useCopyToClipboard,
 } from "../components/service-page";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
 import {
@@ -21,6 +21,7 @@ import {
   listNMTServices,
 } from "../services/nmtService";
 import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
+import { TRY_IT_REQUESTS_PER_HOUR } from "../constants/limits";
 
 const pageDefaults = getServicePageDefaults("nmt");
 
@@ -128,7 +129,7 @@ const NMTPage: React.FC = () => {
         <AlertDescription fontSize="sm">
           {anonymousRateLimitReached ? (
             <>
-              You have used all <strong>5 translations</strong> for this hour. Sign in to get access to all services, or try again later.
+              You have used all <strong>{TRY_IT_REQUESTS_PER_HOUR} translations</strong> for this hour. Sign in to get access to all services, or try again later.
             </>
           ) : showRateLimitWarning ? (
             <>
@@ -141,7 +142,7 @@ const NMTPage: React.FC = () => {
           ) : (
             <>
               You&apos;re using NMT without an account. You can try up to{" "}
-              <strong>5 translations per hour</strong>. Sign in to get access to all services.
+              <strong>{TRY_IT_REQUESTS_PER_HOUR} translations per hour</strong>. Sign in to get access to all services.
             </>
           )}
         </AlertDescription>

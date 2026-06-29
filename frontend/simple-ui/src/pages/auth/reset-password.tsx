@@ -27,7 +27,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import { authService } from "../../services/authService";
-import { PASSWORD_POLICY } from "../../config/constants";
+import { PASSWORD_POLICY } from '../../constants';
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from "../../components/auth/password/PasswordRequirements";
 
 type Phase =

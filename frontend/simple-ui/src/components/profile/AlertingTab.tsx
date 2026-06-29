@@ -66,7 +66,9 @@ import {
   EditIcon,
   LockIcon,
 } from "@chakra-ui/icons";
-import { isTenantStatus, TENANT } from "../../config/constants";
+import { isTenantStatus, TENANT } from '../../constants';
+import { PLATFORM_ROLES } from "../../constants/roles";
+import { LABELS } from "../../constants/labels";
 import * as tenantService from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 import type { NotificationReceiver } from "../../types/alerting";
@@ -86,7 +88,9 @@ import {
   CONDITION_OPERATORS,
   LATENCY_THRESHOLD_UNITS,
   PERCENTAGE_UNIT,
-} from "../../types/alerting";
+  EVAL_INTERVALS,
+  FOR_DURATIONS,
+} from "../../constants/alerting";
 import { useAdminTableSurface } from "../common/TableControls";
 import AdminDataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
@@ -96,9 +100,6 @@ import AdminDataTable, {
 } from "../common/AdminDataTable";
 import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
-
-const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
-const FOR_DURATIONS = ["1m", "2m", "5m", "10m"] as const;
 
 /** Allowed "For Duration" options per "Evaluation Interval" (for_duration should be >= eval interval). */
 const FOR_DURATION_BY_EVAL_INTERVAL: Record<string, readonly string[]> = {
@@ -290,7 +291,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     await rules.handleCreate({
       tenant: tenantName,
       // Infra rules are org-wide: tenant null, notify global admins via RBAC ADMIN (no tenant-scoped delivery).
-      ...(isInfrastructure ? { tenant: null, rbac_role: "ADMIN" as const, email_to: [] as string[] } : {}),
+      ...(isInfrastructure ? { tenant: null, rbac_role: PLATFORM_ROLES.ADMIN, email_to: [] as string[] } : {}),
     });
     resetCreateRuleExtras();
   };
@@ -1774,7 +1775,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={recvs.openCreate}>
                 Create
               </Button>
-              <Button size="sm" colorScheme="blue" onClick={recvs.fetchReceivers} isLoading={recvs.isLoading} loadingText="Loading...">Refresh</Button>
+              <Button size="sm" colorScheme="blue" onClick={recvs.fetchReceivers} isLoading={recvs.isLoading} loadingText={LABELS.STATUS.LOADING}>{LABELS.ACTIONS.REFRESH}</Button>
             </HStack>
           </HStack>
         </CardHeader>
@@ -2645,14 +2646,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         setEditRuleScope(v);
                         if (v === "global") {
                           // Backend expects global scope to be expressed as tenant="" + rbac_role=ADMIN.
-                          rules.setUpdateForm({ ...rules.updateForm, tenant: "", rbac_role: "ADMIN" });
+                          rules.setUpdateForm({ ...rules.updateForm, tenant: "", rbac_role: PLATFORM_ROLES.ADMIN });
                           setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
                         } else {
                           rules.setUpdateForm({
                             ...rules.updateForm,
                             tenant: rules.updateItem?.tenant ?? "",
                             // Routing rules always use RBAC delivery with ADMIN.
-                            rbac_role: "ADMIN",
+                            rbac_role: PLATFORM_ROLES.ADMIN,
                           });
                         }
                       }}

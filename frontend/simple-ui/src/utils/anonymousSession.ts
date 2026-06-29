@@ -2,6 +2,7 @@
 // Generates and stores a unique session ID for anonymous users
 // Used by the backend to track rate limits for try-it feature
 import { getStoredAccessToken } from './tokenStorage';
+import { SESSION_STORAGE_KEYS } from '../constants/storage';
 
 /**
  * Generate a random UUID v4
@@ -28,7 +29,7 @@ function generateUUID(): string {
  * @returns Anonymous session ID
  */
 export function getAnonymousSessionId(): string {
-  const key = 'anonymous_session_id';
+  const key = SESSION_STORAGE_KEYS.ANONYMOUS_SESSION_ID;
 
   if (typeof window === 'undefined') {
     // Server-side: generate temporary ID
@@ -58,7 +59,7 @@ export function getAnonymousSessionId(): string {
  * Useful when user logs in or logs out
  */
 export function clearAnonymousSessionId(): void {
-  const key = 'anonymous_session_id';
+  const key = SESSION_STORAGE_KEYS.ANONYMOUS_SESSION_ID;
 
   if (typeof window === 'undefined') return;
 
@@ -85,7 +86,8 @@ export function isAnonymousUser(): boolean {
     const hasAccessToken = getStoredAccessToken();
     if (!hasAccessToken) return true;
     const hasStoredUser =
-      typeof sessionStorage !== 'undefined' && !!sessionStorage.getItem('user');
+      typeof sessionStorage !== 'undefined' &&
+      !!sessionStorage.getItem(SESSION_STORAGE_KEYS.USER);
     return !hasStoredUser;
   } catch {
     return true;

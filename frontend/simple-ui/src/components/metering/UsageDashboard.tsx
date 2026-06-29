@@ -1,6 +1,6 @@
 import { Box, VStack } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
 import LoadingSpinner from "../common/LoadingSpinner";

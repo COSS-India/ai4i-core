@@ -1,6 +1,6 @@
 import { Badge, Box, HStack, Progress, Text, VStack } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import { meteringColorAt } from "../../utils/meteringColors";
 import MeteringTableText from "./MeteringTableText";
 

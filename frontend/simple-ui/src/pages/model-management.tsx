@@ -53,6 +53,7 @@ import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
+import { LABELS } from "../constants/labels";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
@@ -68,7 +69,7 @@ import {
   formatModelVersionFilterLabel,
   formatModelVersionStatusLabel,
   isModelVersionStatusActive,
-} from "../config/constants";
+} from "../constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 
 /** Registry UI model row — requires fields used in forms/tables. */
@@ -1373,8 +1374,8 @@ const ModelManagementPage: React.FC = () => {
             </>
           )
         }
-        confirmLabel="Confirm"
-        cancelLabel="Cancel"
+        confirmLabel={LABELS.ACTIONS.CONFIRM}
+        cancelLabel={LABELS.ACTIONS.CANCEL}
         confirmColorScheme={confirmAction === "deprecate" ? "orange" : "green"}
         isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
         confirmLoadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}

@@ -18,6 +18,7 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
+import { isPlatformAdminUser, isTenantAdminUser } from "../utils/rbac";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
 const ApiKeyManagementPage: React.FC = () => {
@@ -27,8 +28,8 @@ const ApiKeyManagementPage: React.FC = () => {
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const refreshManagedKeysRef = useRef<(() => Promise<void>) | null>(null);
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
 
   const showApiKeyManagement = isAdmin || isTenantAdmin;
 

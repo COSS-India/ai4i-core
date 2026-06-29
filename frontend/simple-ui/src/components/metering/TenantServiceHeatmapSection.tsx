@@ -19,7 +19,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDownIcon } from "@chakra-ui/icons";
 import React, { useEffect, useMemo, useState } from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
 import { formatTenantLabel } from "../../utils/meteringFormatters";
 import {

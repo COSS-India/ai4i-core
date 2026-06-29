@@ -1,5 +1,7 @@
 /** Shared RBAC role helpers for the simple-ui app. */
 
+import { PLATFORM_ROLES } from "../constants/roles";
+
 export function normalizeRole(role?: string | null): string {
   return (role ?? "").trim().toUpperCase().replaceAll("_", " ");
 }
@@ -10,11 +12,11 @@ export function userHasRole(roles: string[] | undefined, target: string): boolea
 }
 
 export function isTenantAdminUser(roles?: string[]): boolean {
-  return userHasRole(roles, "TENANT ADMIN");
+  return userHasRole(roles, PLATFORM_ROLES.TENANT_ADMIN);
 }
 
 export function isPlatformAdminUser(roles?: string[]): boolean {
-  return userHasRole(roles, "ADMIN");
+  return userHasRole(roles, PLATFORM_ROLES.ADMIN);
 }
 
 /** Tenant Admin without platform ADMIN — model registry is read-only. */
@@ -35,7 +37,7 @@ export function canAccessUsageDashboard(roles?: string[]): boolean {
 
 /** Platform-wide metering tabs (tenant ranking, adoption) — ADMIN/MODERATOR only. */
 export function canAccessPlatformMetering(roles?: string[]): boolean {
-  return isPlatformAdminUser(roles) || userHasRole(roles, "MODERATOR");
+  return isPlatformAdminUser(roles) || userHasRole(roles, PLATFORM_ROLES.MODERATOR);
 }
 
 /** Default / platform ADMIN — adopter-wide metering view. */
@@ -45,7 +47,7 @@ export function isDefaultAdminUser(roles?: string[]): boolean {
 
 /** Adopter Admin (MODERATOR) without platform ADMIN. */
 export function isAdopterAdminUser(roles?: string[]): boolean {
-  return userHasRole(roles, "MODERATOR") && !isPlatformAdminUser(roles);
+  return userHasRole(roles, PLATFORM_ROLES.MODERATOR) && !isPlatformAdminUser(roles);
 }
 
 /** Tenant Admin without platform ADMIN or MODERATOR. */
@@ -61,8 +63,16 @@ export function canSelfDeleteAccount(roles?: string[]): boolean {
   if (!roles?.length) return false;
   if (isPlatformAdminUser(roles)) return false;
   if (isAdopterAdminUser(roles)) return false;
-  if (userHasRole(roles, "GUEST")) return false;
-  return userHasRole(roles, "USER") || isTenantAdminUser(roles);
+  if (userHasRole(roles, PLATFORM_ROLES.GUEST)) return false;
+  return userHasRole(roles, PLATFORM_ROLES.USER) || isTenantAdminUser(roles);
+}
+
+export function isGuestUser(roles?: string[]): boolean {
+  return userHasRole(roles, PLATFORM_ROLES.GUEST);
+}
+
+export function isRegularUser(roles?: string[]): boolean {
+  return userHasRole(roles, PLATFORM_ROLES.USER);
 }
 
 export type MeteringRoleView = "adopter" | "tenant";

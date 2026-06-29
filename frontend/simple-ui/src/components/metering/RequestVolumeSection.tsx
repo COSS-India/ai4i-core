@@ -1,7 +1,7 @@
 import { Box, Text } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
 import type { MeteringGraph, MeteringWindow } from "../../types/metering";
 import {

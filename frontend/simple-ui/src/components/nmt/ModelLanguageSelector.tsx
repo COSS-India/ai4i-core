@@ -20,7 +20,7 @@ import { LanguageSelectorProps } from '../../types/nmt';
 import { listNMTServices, getNMTLanguagesForService } from '../../services/nmtService';
 import { NMTServiceDetailsResponse, NMTLanguagesResponse } from '../../types/nmt';
 import { useAuth } from '../../hooks/useAuth';
-import { LANG_CODE_TO_LABEL } from '../../config/constants';
+import { LANG_CODE_TO_LABEL } from '../../constants';
 
 interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   selectedServiceId?: string;

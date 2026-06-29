@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SET_PASSWORD_TOKEN } from '../../../config/constants';
+import { SET_PASSWORD_TOKEN } from '../../../constants';
 
 export const messageResponseSchema = z.object({
   message: z.string(),

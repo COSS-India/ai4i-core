@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { Box, Spinner, Text, VStack, Alert, AlertIcon, AlertTitle, AlertDescription } from '@chakra-ui/react';
 import authService from '../../services/authService';
-import { UI_ERROR_MESSAGES } from '../../config/constants';
+import { UI_ERROR_MESSAGES } from '../../constants';
 import { getRememberMeFromStorage } from '../../utils/tokenStorage';
 
 const OAuthCallback = () => {

@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload } from "react-icons/fa";
-import { MAX_IMAGE_FILE_SIZE } from "../../../config/constants";
+import { MAX_IMAGE_FILE_SIZE } from '../../../constants';
 import type { ServiceImageInputProps } from "../../../types/servicePage";
 import { showToast } from "../../../utils/toast";
 

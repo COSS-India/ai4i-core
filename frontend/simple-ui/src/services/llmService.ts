@@ -1,12 +1,17 @@
 // LLM service API client with typed methods
 
-import { LLM_SUPPORTED_LANGUAGES } from '../config/constants';
+import { LLM_SUPPORTED_LANGUAGES } from '../constants';
+import {
+  AGRINET_MODEL,
+  isLlmChatService,
+  LLM_CHAT_DEFAULT_SOURCE_LANGUAGE,
+  LLM_CHAT_DEFAULT_TARGET_LANGUAGE,
+  LLM_CHAT_MODEL,
+  LLM_CHAT_MODELS,
+} from '../constants/llm';
 import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
-/** Hardcoded model for POST /api/v1/chat/completions (OpenAI-compatible proxy). */
-export const LLM_CHAT_MODEL = 'google/gemma-4-E4B-it';
-export const AGRINET_MODEL = 'agrinet-model';
 
 /** serviceId (from platform-core service registry) keyed by model name. */
 export const MODEL_SERVICE_IDS: Record<string, string> = {
@@ -14,13 +19,6 @@ export const MODEL_SERVICE_IDS: Record<string, string> = {
   [AGRINET_MODEL]: '30622e0a5b1cfb70dd008281adfd7d8c',
 };
 
-export const LLM_CHAT_MODELS = [LLM_CHAT_MODEL, AGRINET_MODEL] as const;
-
-export const isLlmChatService = (id?: string): boolean =>
-  (LLM_CHAT_MODELS as readonly string[]).includes(id ?? '');
-
-export const LLM_CHAT_DEFAULT_SOURCE_LANGUAGE = 'en';
-export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = 'hi';
 
 export interface LLMServiceDetailsResponse {
   service_id: string;

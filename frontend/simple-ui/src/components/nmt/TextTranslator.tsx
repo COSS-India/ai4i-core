@@ -12,7 +12,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { TextTranslatorProps } from '../../types/nmt';
-import { MAX_TEXT_LENGTH } from '../../config/constants';
+import { MAX_TEXT_LENGTH } from '../../constants';
 
 const TextTranslator: React.FC<TextTranslatorProps> = ({
   inputText,

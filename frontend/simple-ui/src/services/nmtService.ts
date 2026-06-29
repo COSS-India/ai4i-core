@@ -19,7 +19,7 @@ import {
 } from '../types/nmt';
 import { performTryItNMTInference, trackTryItRequest, listTryItNMTServices } from './tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
-import { LANG_CODE_TO_LABEL } from '../config/constants';
+import { LANG_CODE_TO_LABEL } from '../constants';
 
 /**
  * Perform NMT inference on text

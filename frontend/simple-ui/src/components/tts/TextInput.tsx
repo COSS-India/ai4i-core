@@ -12,7 +12,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { TextInputProps } from '../../types/tts';
-import { MAX_TEXT_LENGTH } from '../../config/constants';
+import { MAX_TEXT_LENGTH } from '../../constants';
 
 const TextInput: React.FC<TextInputProps> = ({
   value,

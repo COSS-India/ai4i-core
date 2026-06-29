@@ -5,7 +5,8 @@ import type { User } from "../../../types/auth";
 import {
   DEFAULT_TENANT_ASSIGNABLE_ROLES,
   isDefaultTenantAssignableRole,
-} from "../../../utils/defaultTenant";
+} from "../../../constants/roles";
+import { isAdopterAdminUser, isPlatformAdminUser } from "../../../utils/rbac";
 import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseRolesTabOptions {
@@ -30,10 +31,8 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const [draftRole, setDraftRole] = useState<string>("");
   const [isSavingRoles, setIsSavingRoles] = useState(false);
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  const isModeratorOnly = Boolean(
-    user?.roles?.includes("MODERATOR") && !user?.roles?.includes("ADMIN")
-  );
+  const isAdmin = isPlatformAdminUser(user?.roles);
+  const isModeratorOnly = isAdopterAdminUser(user?.roles);
 
   const handleLoadRoles = async () => {
     setIsLoadingRoles(true);

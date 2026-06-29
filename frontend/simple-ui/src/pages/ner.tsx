@@ -5,14 +5,13 @@ import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   buildResponseMetadata,
-  INDIC_LANGUAGE_OPTIONS,
   mapToServiceOptions,
   RequestContainer,
   ResponseContainer,
   ServicePageLayout,
 } from "../components/service-page";
-import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { NER_ERRORS, MAX_TEXT_LENGTH, MIN_INFERENCE_TEXT_LENGTH, INDIC_LANGUAGE_OPTIONS } from '../constants';
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { performNERInference, listNERServices } from "../services/nerService";
 import { parseNerEntities } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
@@ -67,7 +66,7 @@ const NERPage: React.FC = () => {
       showToast({ type: "error", message: err.description });
       return;
     }
-    if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
+    if (trimmedText.length < MIN_INFERENCE_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_SHORT;
       showToast({ type: "error", message: err.description });
       return;
