@@ -1,1 +1,1 @@
-from .handler import handle_my_topic  # noqa: F401
+from . import handler  # noqa: F401 — side-effect import: registers @kafka_listener handlers

@@ -4,6 +4,18 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+class Topics(BaseSettings):
+    TOPIC_PAY_PER_USE: str = Field(
+        "traces", # Currently 1 topic only.
+        description="Kafka topic for pay-per-use usage events",
+    )
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "ignore"
+
+
 class KafkaSettings(BaseSettings):
     """Kafka connection settings loaded from environment variables."""
 
@@ -31,6 +43,7 @@ class KafkaSettings(BaseSettings):
         1.0,
         description="Seconds to block on each Consumer.poll() call",
     )
+    topics: Topics = Field(default_factory=Topics)
 
     class Config:
         env_file = ".env"
@@ -38,13 +51,23 @@ class KafkaSettings(BaseSettings):
         extra = "ignore"
 
 
-def build_consumer_config(group_id: str, settings: KafkaSettings) -> dict:
+settings = KafkaSettings()
+
+
+def build_consumer_config(group_id: str, s: KafkaSettings) -> dict:
     """Translate KafkaSettings into a confluent-kafka Consumer config dict."""
     return {
-        "bootstrap.servers": settings.KAFKA_SERVER,
+        "bootstrap.servers": s.KAFKA_SERVER,
         "group.id": group_id,
-        "auto.offset.reset": settings.KAFKA_AUTO_OFFSET_RESET,
-        "enable.auto.commit": settings.KAFKA_ENABLE_AUTO_COMMIT,
-        "session.timeout.ms": settings.KAFKA_SESSION_TIMEOUT_MS,
-        "max.poll.interval.ms": settings.KAFKA_MAX_POLL_INTERVAL_MS,
+        "auto.offset.reset": s.KAFKA_AUTO_OFFSET_RESET,
+        "enable.auto.commit": s.KAFKA_ENABLE_AUTO_COMMIT,
+        "session.timeout.ms": s.KAFKA_SESSION_TIMEOUT_MS,
+        "max.poll.interval.ms": s.KAFKA_MAX_POLL_INTERVAL_MS,
+    }
+
+
+def build_producer_config(s: KafkaSettings) -> dict:
+    """Translate KafkaSettings into a confluent-kafka Producer config dict."""
+    return {
+        "bootstrap.servers": s.KAFKA_SERVER,
     }
