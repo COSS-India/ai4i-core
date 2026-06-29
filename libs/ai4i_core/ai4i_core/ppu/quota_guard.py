@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _YAML_PATH = Path(__file__).parent / "inference_types.yaml"
 _cache: list[dict] | None = None
 
+# Unified endpoint that accepts any task_type in the request body.
+# It has no entry in the YAML (one path serves all types), so quota
+# enforcement must inspect the body field rather than matching the path.
+_UNIFIED_INFERENCE_PATH = "/api/v1/inference"
+
 
 def get_inference_types() -> list[dict]:
     """Return the raw inference type list from the bundled YAML (cached after first read)."""
@@ -50,7 +55,7 @@ def load_inference_types(app: FastAPI) -> None:
             "Inference type map loaded: %d types.", len(app.state.inference_type_map)
         )
     except Exception as exc:
-        logger.error("Failed to load inference type map — quota enforcement disabled: %s", exc)
+        logger.error("Failed to load inference_types.yaml — service cannot start: %s", exc)
         raise
 
 
@@ -75,14 +80,34 @@ async def quota_guard(request: Request) -> None:
 
     exhausted_types_raw = request.headers.get("X-Quota-Exhausted")
     if exhausted_types_raw:
-        pattern_map: dict = getattr(request.app.state, "inference_type_map", {})
-        for exhausted_type in (t.strip() for t in exhausted_types_raw.split(",") if t.strip()):
-            pattern = pattern_map.get(exhausted_type)
-            if pattern and request.url.path == pattern:
+        exhausted_set = {t.strip() for t in exhausted_types_raw.split(",") if t.strip()}
+
+        if request.url.path == _UNIFIED_INFERENCE_PATH:
+            # Unified endpoint: task_type lives in the request body, not the path.
+            # Body bytes are cached by Starlette after the first read, so the
+            # downstream route handler sees the same bytes untouched.
+            try:
+                body = await request.json()
+                task_type = str(body.get("task_type", "")).lower()
+            except Exception:
+                task_type = ""
+            if task_type and task_type in exhausted_set:
                 raise HTTPException(
                     status_code=429,
                     detail={
                         "error": "quota_exhausted",
-                        "message": f"Quota Exhausted for: {exhausted_type}",
+                        "message": f"Quota Exhausted for: {task_type}",
                     },
                 )
+        else:
+            pattern_map: dict = getattr(request.app.state, "inference_type_map", {})
+            for exhausted_type in exhausted_set:
+                pattern = pattern_map.get(exhausted_type)
+                if pattern and request.url.path.startswith(pattern):
+                    raise HTTPException(
+                        status_code=429,
+                        detail={
+                            "error": "quota_exhausted",
+                            "message": f"Quota Exhausted for: {exhausted_type}",
+                        },
+                    )

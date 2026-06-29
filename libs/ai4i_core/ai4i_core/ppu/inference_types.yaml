@@ -1,6 +1,6 @@
 inference_types:
   - name: llm
-    endpoint_pattern: /api/v1/chat/completions
+    endpoint_pattern: /api/v1/chat
     unit: tokens
   - name: asr
     endpoint_pattern: /api/v1/asr/inference
