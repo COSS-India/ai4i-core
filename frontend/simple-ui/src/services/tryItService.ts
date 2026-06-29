@@ -14,7 +14,7 @@ import {
   TRY_IT_RATE_LIMIT_WARN_THRESHOLD,
   TRY_IT_REQUESTS_PER_HOUR,
 } from '../constants/limits';
-import { SESSION_STORAGE_KEYS } from '../constants/storage';
+import { SESSION_STORAGE_KEYS } from '../constants/auth';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 const getTryItHeaders = () => ({

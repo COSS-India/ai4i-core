@@ -12,7 +12,8 @@ import {
 import { LLM_SUPPORTED_LANGUAGES, MAX_LLM_TEXT_LENGTH } from '../constants';
 import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { useLLM } from "../hooks/useLLM";
-import { DEFAULT_LLM_SERVICES, LLM_CHAT_MODEL } from "../services/llmService";
+import { DEFAULT_LLM_SERVICES } from "../services/llmService";
+import { LLM_CHAT_MODEL } from "../constants/modelManagement";
 
 const pageDefaults = getServicePageDefaults("llm");
 const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({ code: l.code, label: l.label }));

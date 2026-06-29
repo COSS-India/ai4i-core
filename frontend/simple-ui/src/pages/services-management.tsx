@@ -66,12 +66,11 @@ import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
-  DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
-import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel, SERVICE_PUBLISH } from "../constants";
+import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel, PAGINATION, SERVICE_PUBLISH } from "../constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 
 const ServicesManagementPage: React.FC = () => {
@@ -1231,7 +1230,7 @@ const ServicesManagementPage: React.FC = () => {
                             )
                           }
                           paginate="client"
-                          pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                          pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
                           isLoading={isLoading}
                           loadingMessage="Loading services..."
                           emptyMessage="No services in the registry yet."

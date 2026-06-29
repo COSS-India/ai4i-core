@@ -26,7 +26,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useRolesTab } from "./hooks/useRolesTab";
 import UserSearchableSelect from "../common/UserSearchableSelect";
 import StandardModal from "../common/StandardModal";
-import { formatDefaultTenantAssignableRoleLabel } from "../../constants/roles";
+import { formatPlatformRoleLabel } from "../../constants/roles";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
@@ -115,7 +115,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                   {rt.selectedUserRoles.map((roleName) => (
                     <WrapItem key={roleName}>
                       <Badge colorScheme="green" fontSize="sm" px={2} py={1}>
-                        {formatDefaultTenantAssignableRoleLabel(roleName)}
+                        {formatPlatformRoleLabel(roleName)}
                       </Badge>
                     </WrapItem>
                   ))}
@@ -183,7 +183,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                 <option value="">Select a role</option>
                 {rt.availableRoles.map((roleName) => (
                   <option key={roleName} value={roleName}>
-                    {formatDefaultTenantAssignableRoleLabel(roleName)}
+                    {formatPlatformRoleLabel(roleName)}
                   </option>
                 ))}
               </Select>

@@ -7,7 +7,6 @@ export {
   TableSelectField,
   useAdminDataTable,
   useAdminDataTableServer,
-  DEFAULT_PAGE_SIZE_OPTIONS,
 } from "./AdminDataTable";
 export type { AdminTableColumn, AdminDataTableProps } from "./AdminDataTable";
 

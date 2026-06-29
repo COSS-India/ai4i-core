@@ -48,9 +48,5 @@ export function isDefaultTenantAssignableRole(role: string): boolean {
   return (DEFAULT_TENANT_ASSIGNABLE_ROLES as readonly string[]).includes(normalized);
 }
 
-export function formatDefaultTenantAssignableRoleLabel(role: string): string {
-  return formatPlatformRoleLabel(role);
-}
-
 /** Default primary role for new tenant users. */
 export const DEFAULT_TENANT_USER_ROLE = PLATFORM_ROLES.USER as TenantAssignableRole;

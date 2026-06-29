@@ -34,14 +34,13 @@ import {
   TableSortHeader,
   useAdminTableSurface,
 } from "./TableControls";
-import { DEFAULT_PAGE_SIZE_OPTIONS } from "../../constants/pagination";
+import { PAGINATION } from "../../constants/limits";
 import {
   useAdminDataTable,
   useAdminDataTableServer,
   type UseAdminDataTableServerOptions,
 } from "../../hooks/useAdminDataTable";
 
-export { DEFAULT_PAGE_SIZE_OPTIONS } from "../../constants/pagination";
 export { useAdminDataTable, useAdminDataTableServer } from "../../hooks/useAdminDataTable";
 
 type SortDirection = "asc" | "desc";
@@ -266,7 +265,7 @@ export default function AdminDataTable<T>({
   filtersHeading = "Filters",
   paginate = "client",
   initialPageSize = 25,
-  pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
+  pageSizeOptions = PAGINATION.TABLE_PAGE_SIZE_OPTIONS,
   serverPagination,
   isLoading = false,
   loadingMessage = "Loading…",

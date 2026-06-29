@@ -5,7 +5,7 @@
  */
 
 import CryptoJS from 'crypto-js';
-import { LOCAL_STORAGE_KEYS, SESSION_STORAGE_KEYS } from '../constants/storage';
+import { LOCAL_STORAGE_KEYS, SESSION_STORAGE_KEYS } from '../constants/auth';
 
 const ACCESS_TOKEN_KEY = LOCAL_STORAGE_KEYS.ACCESS_TOKEN;
 const REFRESH_TOKEN_KEY = LOCAL_STORAGE_KEYS.REFRESH_TOKEN;

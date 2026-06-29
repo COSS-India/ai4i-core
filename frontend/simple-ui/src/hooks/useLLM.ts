@@ -3,12 +3,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { showToast } from '../utils/toast';
+import { performLLMChat } from '../services/llmService';
 import {
-  performLLMChat,
   isLlmChatService,
   LLM_CHAT_DEFAULT_SOURCE_LANGUAGE,
   LLM_CHAT_DEFAULT_TARGET_LANGUAGE,
-} from '../services/llmService';
+} from '../constants/modelManagement';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
 import { parseError, showError } from '../utils/errorHandler';

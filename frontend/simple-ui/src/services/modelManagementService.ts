@@ -22,7 +22,7 @@ import type {
   Service,
   UnpublishModelResponse,
 } from '../types/platform';
-import { PAGINATION } from '../constants/pagination';
+import { PAGINATION } from '../constants/limits';
 
 const REGISTRY_FETCH_PAGE_SIZE = PAGINATION.REGISTRY_FETCH_PAGE_SIZE;
 const MAX_REGISTRY_FETCH_PAGES = PAGINATION.MAX_REGISTRY_FETCH_PAGES;

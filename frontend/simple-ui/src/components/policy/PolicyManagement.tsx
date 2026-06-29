@@ -57,7 +57,7 @@ import {
 } from "../../services/policyService";
 import { isTenantStatus, TENANT } from '../../constants';
 import { POLICY_LANGUAGE_OPTIONS } from "../../constants/languages";
-import { PAGINATION } from "../../constants/pagination";
+import { PAGINATION } from "../../constants/limits";
 import { LABELS } from "../../constants/labels";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";

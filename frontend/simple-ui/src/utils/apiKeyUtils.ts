@@ -1,6 +1,6 @@
 import type { APIKeyResponse } from "../types/auth";
 import { INFERENCE_PERMISSION_LABEL_BY_ID } from '../constants';
-import { SESSION_STORAGE_KEYS } from '../constants/storage';
+import { SESSION_STORAGE_KEYS } from '../constants/auth';
 
 type ApiKeyLike = {
   api_key?: string | null;

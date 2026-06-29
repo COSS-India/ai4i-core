@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DEFAULT_PAGE_SIZE_OPTIONS, PAGINATION } from "../constants/pagination";
+import { PAGINATION } from "../constants/limits";
 
 export type UseAdminDataTableOptions = {
   initialPage?: number;
@@ -11,7 +11,7 @@ export function useAdminDataTable<T>(
   items: T[],
   options: UseAdminDataTableOptions = {}
 ) {
-  const pageSizeOptions = options.pageSizeOptions ?? DEFAULT_PAGE_SIZE_OPTIONS;
+  const pageSizeOptions = options.pageSizeOptions ?? PAGINATION.TABLE_PAGE_SIZE_OPTIONS;
   const [page, setPage] = useState(options.initialPage ?? 1);
   const [pageSize, setPageSize] = useState(options.initialPageSize ?? PAGINATION.DEFAULT_TABLE_PAGE_SIZE);
 
@@ -65,7 +65,7 @@ export type UseAdminDataTableServerOptions = {
 
 /** Pagination state owned by parent (e.g. API offset/limit). */
 export function useAdminDataTableServer(options: UseAdminDataTableServerOptions) {
-  const pageSizeOptions = options.pageSizeOptions ?? DEFAULT_PAGE_SIZE_OPTIONS;
+  const pageSizeOptions = options.pageSizeOptions ?? PAGINATION.TABLE_PAGE_SIZE_OPTIONS;
   const { page, pageSize, totalItems } = options;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const startRow = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;

@@ -8,7 +8,7 @@ import {
   LLM_CHAT_DEFAULT_TARGET_LANGUAGE,
   LLM_CHAT_MODEL,
   LLM_CHAT_MODELS,
-} from '../constants/llm';
+} from '../constants/modelManagement';
 import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
@@ -18,7 +18,6 @@ export const MODEL_SERVICE_IDS: Record<string, string> = {
   [LLM_CHAT_MODEL]: '8e588907767a26835acbf29d83de9e31',
   [AGRINET_MODEL]: '30622e0a5b1cfb70dd008281adfd7d8c',
 };
-
 
 export interface LLMServiceDetailsResponse {
   service_id: string;

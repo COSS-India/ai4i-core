@@ -17,7 +17,7 @@ import {
 import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
 import authService from "../../services/authService";
 import type { User } from "../../types/auth";
-import { PAGINATION } from "../../constants/pagination";
+import { PAGINATION } from "../../constants/limits";
 
 export type UserSearchablePick = Pick<User, "user_id" | "email" | "username" | "full_name">;
 

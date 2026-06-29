@@ -93,11 +93,11 @@ import {
 } from "../../constants/alerting";
 import { useAdminTableSurface } from "../common/TableControls";
 import AdminDataTable, {
-  DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
   type AdminTableColumn,
 } from "../common/AdminDataTable";
+import { PAGINATION } from "../../constants";
 import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
 
@@ -809,7 +809,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             getRowKey={(d) => String(d.id)}
             onRowClick={defs.openView}
             paginate="client"
-            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
             isLoading={defs.isLoading}
             loadingMessage="Loading alert definitions..."
             emptyMessage="No alert definitions found. Click 'Create Alert Definition' to get started."
@@ -1786,7 +1786,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             getRowKey={(r) => String(r.id)}
             onRowClick={recvs.openView}
             paginate="client"
-            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
             filterToolbarAlign="flex-end"
             isLoading={recvs.isLoading}
             loadingMessage="Loading receivers..."
@@ -2038,7 +2038,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             rules.openView(rule);
           }}
           paginate="client"
-          pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+          pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
           isLoading={rules.isLoading}
           loadingMessage="Loading alert routing..."
           emptyMessage="No alert routing configured. Click 'Create Routing Rule' to add one."
@@ -2806,7 +2806,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             onRowClick={history.openView}
             paginate="server"
             paginationPosition="top"
-            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
             initialPageSize={history.pageSize}
             serverPagination={{
               page: history.currentPage,

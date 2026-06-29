@@ -2,7 +2,7 @@
 // Generates and stores a unique session ID for anonymous users
 // Used by the backend to track rate limits for try-it feature
 import { getStoredAccessToken } from './tokenStorage';
-import { SESSION_STORAGE_KEYS } from '../constants/storage';
+import { SESSION_STORAGE_KEYS } from '../constants/auth';
 
 /**
  * Generate a random UUID v4

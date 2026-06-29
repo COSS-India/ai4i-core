@@ -36,11 +36,11 @@ import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";
 import AdminDataTable, {
-  DEFAULT_PAGE_SIZE_OPTIONS,
   TableSearchField,
   TableSelectField,
   type AdminTableColumn,
 } from "../common/AdminDataTable";
+import { PAGINATION } from "../../constants";
 import StandardModal from "../common/StandardModal";
 
 interface Rule {
@@ -735,7 +735,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                         getRowKey={(r) => `${r.entity_type}-${r.action}-${r.custom_regex ?? ""}`}
                         paginate="client"
                         initialPageSize={10}
-                        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                        pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
                         emptyMessage="No rules configured for this domain."
                         onRowClick={openRuleDetail}
                         maxHeight="280px"
@@ -874,7 +874,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                       getRowKey={(row) => row.tenant_id}
                       paginate="client"
                       initialPageSize={10}
-                      pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                      pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
                       emptyMessage="No mappings configured."
                       noResultsMessage="No mappings match the current filters."
                       unfilteredCount={tenantMappings.length}
@@ -974,7 +974,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                     getRowKey={(row) => String(row.id)}
                     paginate="client"
                     initialPageSize={10}
-                    pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                    pageSizeOptions={PAGINATION.TABLE_PAGE_SIZE_OPTIONS}
                     isLoading={auditLoading}
                     loadingMessage="Loading logs…"
                     emptyMessage="No audit logs found."
