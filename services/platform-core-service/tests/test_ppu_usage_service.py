@@ -187,9 +187,30 @@ class TestResolveTenantNames:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_returns_empty_for_non_numeric_ids(self):
+    async def test_resolves_integer_tenant_ids(self):
+        """Numeric string IDs must reach the DB and return the org name mapping."""
         from app.services.pay_per_use.ppu_usage_service import _resolve_tenant_names
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            return_value=MagicMock(
+                all=MagicMock(return_value=[(1, "Acme Corp"), (42, "Beta Labs")])
+            )
+        )
+
+        result = await _resolve_tenant_names(["1", "42"], auth_db=db)
+
+        db.execute.assert_called_once()
+        assert result == {"1": "Acme Corp", "42": "Beta Labs"}
+
+    @pytest.mark.asyncio
+    async def test_skips_db_when_no_valid_integer_ids(self):
+        """Non-integer IDs are silently skipped — tenant_id is INTEGER in the PPU schema,
+        so a string like 'abc' can never match a row and the DB round-trip is avoided."""
+        from app.services.pay_per_use.ppu_usage_service import _resolve_tenant_names
+
         db = MagicMock()
         result = await _resolve_tenant_names(["abc", "uuid-xyz"], auth_db=db)
+
         assert result == {}
         db.execute.assert_not_called()
