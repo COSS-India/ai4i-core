@@ -62,6 +62,13 @@ class ServiceCreateRequest(BaseSchema):
     def _validate_name(cls, v: str) -> str:
         return validate_entity_name(v, field="Service name")
 
+    @field_validator("unitSize")
+    @classmethod
+    def _validate_unit_size(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("unitSize must be greater than 0")
+        return v
+
     @field_validator("inferenceServerType", mode="before")
     @classmethod
     def _normalize_server_type(cls, v: Any) -> Any:
@@ -96,6 +103,13 @@ class ServiceUpdateRequest(BaseSchema):
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     tierId: Optional[UUID] = None
+
+    @field_validator("unitSize")
+    @classmethod
+    def _validate_unit_size(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("unitSize must be greater than 0")
+        return v
 
     @field_validator("inferenceServerType", mode="before")
     @classmethod
@@ -136,6 +150,7 @@ class ServiceResponse(BaseSchema):
     unitSize: Optional[int] = None
     unitRate: Optional[float] = None
     tierId: Optional[UUID] = None
+    tierName: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 

@@ -61,6 +61,18 @@ async def delete_tier(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/tenant/tier", response_model=TierAssignResponse)
+async def get_tenant_tier(
+    tenant_id: str = Query(..., description="tenant ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the currently active PPU tier assignment for a tenant.
+
+    Returns 404 if the tenant has no active assignment.
+    """
+    return await tenant_assignment_service.get_tenant_tier(tenant_id, db)
+
+
 @router.post("/tenant/tier", response_model=TierAssignResponse)
 async def assign_tenant_tier(
     request: Request,

@@ -54,6 +54,7 @@ def service_to_dict(
     *,
     model: Optional[Model] = None,
     include_task_languages: bool = False,
+    tier_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Serialize a Service ORM row. Optionally enrich with task & languages
     from the joined Model (used by list endpoints)."""
@@ -78,7 +79,8 @@ def service_to_dict(
         "costPerUnit": float(service.cost_per_unit) if service.cost_per_unit is not None else None,
         "unitSize": service.unit_size,
         "unitRate": float(service.unit_rate) if service.unit_rate is not None else None,
-        "tierId": str(service.tier_id) if service.tier_id is not None else None,
+        "tierId": service.tier_id,
+        "tierName": tier_name,
         "deletedAt": _iso(service.deleted_at),
         "createdAt": _iso(service.created_at),
         "createdBy": service.created_by,

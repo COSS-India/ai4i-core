@@ -12,6 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.model_management.model import Model
 from app.models.model_management.service import Service
+from app.models.pay_per_use.ppu_tier import PPUTier
 
 
 _JSON_COLUMNS = frozenset({"health_status", "benchmarks", "policy"})
@@ -79,15 +80,20 @@ class ServiceRepository:
         created_by: Optional[str] = None,
         offset: int = 0,
         limit: Optional[int] = None,
-    ) -> List[Tuple[Service, Model]]:
-        """Return (service, model) tuples joined on (model_id, model_version)."""
-        stmt = select(Service, Model).join(
-            Model,
-            and_(
-                Model.model_id == Service.model_id,
-                Model.version == Service.model_version,
-            ),
-        ).where(Service.deleted_at.is_(None))
+    ) -> List[Tuple[Service, Model, Optional[PPUTier]]]:
+        """Return (service, model, tier) tuples; tier is None when not assigned."""
+        stmt = (
+            select(Service, Model, PPUTier)
+            .join(
+                Model,
+                and_(
+                    Model.model_id == Service.model_id,
+                    Model.version == Service.model_version,
+                ),
+            )
+            .outerjoin(PPUTier, PPUTier.id == Service.tier_id)
+            .where(Service.deleted_at.is_(None))
+        )
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
         if is_published is not None:
@@ -99,7 +105,7 @@ class ServiceRepository:
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self._db.execute(stmt)
-        return [(svc, model) for svc, model in result.all()]
+        return [(svc, model, tier) for svc, model, tier in result.all()]
 
     async def list_published_for_model_version(
         self, model_id: str, model_version: str

@@ -138,8 +138,13 @@ class ServiceService:
             limit=limit,
         )
         items = [
-            service_to_dict(service, model=model, include_task_languages=True)
-            for service, model in rows
+            service_to_dict(
+                service,
+                model=model,
+                include_task_languages=True,
+                tier_name=tier.name if tier is not None else None,
+            )
+            for service, model, tier in rows
         ]
         if offset > 0 or limit is not None:
             total = await self._services.count_services(
@@ -319,7 +324,7 @@ class ServiceService:
             new_size = update_data.get("unit_size", instance.unit_size)
             update_data["unit_rate"] = (
                 float(new_cost) / int(new_size)
-                if new_cost is not None and new_size is not None
+                if new_cost is not None and new_size is not None and int(new_size) > 0
                 else None
             )
 
