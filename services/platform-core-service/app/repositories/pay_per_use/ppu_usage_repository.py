@@ -195,6 +195,7 @@ class PPUUsageRepository:
             select(
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
+                func.max(PPUQuotaUsage.monthly_quota_snap).label("monthly_quota_snap"),
                 pricing_sq.c.unit_size,
                 pricing_sq.c.unit_rate,
                 pricing_sq.c.cost_per_unit,

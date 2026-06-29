@@ -159,11 +159,21 @@ class PPUUsageService:
             else:
                 spend = 0.0
 
+            snap = row.monthly_quota_snap
+            if snap is not None:
+                row_quota_limit = round(int(snap) / unit_size, 1)
+                row_remaining = round(max(0.0, row_quota_limit - consumption), 1)
+            else:
+                row_quota_limit = None
+                row_remaining = None
+
             breakdown.append(TenantUsageBreakdown(
                 modelTaskType=row.inference_name,
                 consumptionToDate=consumption,
                 unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
                 spend=spend,
+                quotaLimit=row_quota_limit,
+                remainingQuota=row_remaining,
             ))
 
         # Use the specific unit label only when all usage is from one inference type;
@@ -179,6 +189,7 @@ class PPUUsageService:
         raw_quota = assignment.total_quota  # None means unlimited (no quota rows for this tier)
         quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
 
+        multi_type = len(inference_types) > 1
         return TenantUsageDetailResponse(
             tenantId=tenant_id,
             tenantName=org_map.get(tenant_id, tenant_id),
@@ -186,10 +197,12 @@ class PPUUsageService:
             budgetLimit=round(budget_limit, 2),
             spendToDate=round(budget_limit - remaining_budget, 2),
             remainingBudget=round(remaining_budget, 2),
-            quotaLimit=quota_display,
+            quotaLimit=None if multi_type else quota_display,
             quotaUnit=quota_unit,
-            consumptionToDate=round(total_consumption, 1),
-            remainingQuota=round(max(0.0, quota_display - total_consumption), 1) if quota_display is not None else None,
+            consumptionToDate=None if multi_type else round(total_consumption, 1),
+            remainingQuota=None if multi_type else (
+                round(max(0.0, quota_display - total_consumption), 1) if quota_display is not None else None
+            ),
             currency=_CURRENCY,
             breakdown=breakdown,
         )
