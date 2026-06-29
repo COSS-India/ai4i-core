@@ -22,12 +22,16 @@ from fastapi import FastAPI, HTTPException, Request
 logger = logging.getLogger(__name__)
 
 _YAML_PATH = Path(__file__).parent / "inference_types.yaml"
+_cache: list[dict] | None = None
 
 
 def get_inference_types() -> list[dict]:
-    """Return the raw inference type list from the bundled YAML."""
-    with _YAML_PATH.open() as f:
-        return yaml.safe_load(f)["inference_types"]
+    """Return the raw inference type list from the bundled YAML (cached after first read)."""
+    global _cache
+    if _cache is None:
+        with _YAML_PATH.open() as f:
+            _cache = yaml.safe_load(f)["inference_types"]
+    return _cache
 
 
 def load_inference_types(app: FastAPI) -> None:
@@ -46,8 +50,8 @@ def load_inference_types(app: FastAPI) -> None:
             "Inference type map loaded: %d types.", len(app.state.inference_type_map)
         )
     except Exception as exc:
-        logger.warning("Failed to load inference type map: %s", exc)
-        app.state.inference_type_map = {}
+        logger.error("Failed to load inference type map — quota enforcement disabled: %s", exc)
+        raise
 
 
 async def quota_guard(request: Request) -> None:
