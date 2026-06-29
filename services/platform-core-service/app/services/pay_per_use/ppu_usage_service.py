@@ -183,7 +183,8 @@ class PPUUsageService:
 
         budget_limit = float(assignment.budget_limit)
         remaining_budget = float(assignment.available_balance)
-        quota_display = round(int(assignment.total_quota or 0) / _DEFAULT_UNIT_SIZE, 1)
+        unit_size = int(assignment.unit_size or _DEFAULT_UNIT_SIZE)
+        quota_display = round(int(assignment.total_quota or 0) / unit_size, 1)
 
         return TenantUsageDetailResponse(
             tenantId=tenant_id,

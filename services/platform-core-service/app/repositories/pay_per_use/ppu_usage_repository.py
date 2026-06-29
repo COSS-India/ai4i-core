@@ -139,7 +139,7 @@ class PPUUsageRepository:
         return result.all()
 
     async def get_tenant_assignment(self, tenant_id: str):
-        """Budget, balance, tier name, and total monthly quota for a single tenant."""
+        """Budget, balance, tier name, total monthly quota, and unit_size for a single tenant."""
         quota_sq = (
             select(
                 PPUTierQuota.tier_id,
@@ -148,12 +148,33 @@ class PPUUsageRepository:
             .group_by(PPUTierQuota.tier_id)
             .subquery()
         )
+        # Correlated scalar subquery: fetches unit_size from mm_services for the
+        # tenant's tier inference type(s).  Mirrors the same pattern used in
+        # get_tenant_usages so the detail page applies the correct divisor (e.g.
+        # unit_size=60 for ASR minutes) instead of always falling back to 1 000 000.
+        unit_size_sq = (
+            select(Service.unit_size)
+            .where(
+                Service.billing_unit_type.in_(
+                    select(PPUTierQuota.inference_name).where(
+                        PPUTierQuota.tier_id == PPUTenantTierAssignment.tier_id
+                    )
+                ),
+                Service.deleted_at.is_(None),
+            )
+            .order_by(Service.created_at.desc())
+            .limit(1)
+            .correlate(PPUTenantTierAssignment)
+            .scalar_subquery()
+            .label("unit_size")
+        )
         stmt = (
             select(
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 PPUTier.name.label("tier_name"),
                 func.coalesce(quota_sq.c.total_quota, 0).label("total_quota"),
+                unit_size_sq,
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
             .outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
