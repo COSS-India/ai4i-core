@@ -36,6 +36,7 @@ def upgrade() -> None:
             INSERT INTO permissions (id, name, resource, action, created_by)
             SELECT 134, 'usage.read', 'usage', 'read', :seeder_id
             WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE id = 134)
+              AND NOT EXISTS (SELECT 1 FROM permissions WHERE name = 'usage.read')
         """),
         {"seeder_id": SEEDER_ID},
     )
