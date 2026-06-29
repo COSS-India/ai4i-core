@@ -10,11 +10,18 @@ logger = logging.getLogger(__name__)
 _shared_async_client: Optional[httpx.AsyncClient] = None
 
 
-def _get_shared_async_client(timeout: int) -> httpx.AsyncClient:
-    """Reuse one AsyncClient per process for connection pooling to Triton/MMS."""
+def _get_shared_async_client() -> httpx.AsyncClient:
+    """Reuse one AsyncClient per process for connection pooling to Triton/MMS.
+
+    No client-level timeout is baked in: each request passes its own timeout
+    (self.timeout) below. Otherwise the shared client would lock every caller to
+    whichever timeout created it first — e.g. the MMS resolve (30s) runs before
+    the Triton call (300s), so Triton inference would silently get capped at 30s
+    and long ASR requests would time out.
+    """
     global _shared_async_client
     if _shared_async_client is None:
-        _shared_async_client = httpx.AsyncClient(timeout=timeout)
+        _shared_async_client = httpx.AsyncClient(timeout=None)
     return _shared_async_client
 
 
@@ -50,10 +57,11 @@ class HTTPServiceClient:
             ConnectionError: If request fails or returns error status
         """
         try:
-            client = _get_shared_async_client(self.timeout)
+            client = _get_shared_async_client()
             response = await client.get(
                 url,
                 headers=headers or {},
+                timeout=self.timeout,
             )
 
             if response.status_code == 404:
@@ -92,11 +100,12 @@ class HTTPServiceClient:
             ConnectionError: If request fails or returns error status
         """
         try:
-            client = _get_shared_async_client(self.timeout)
+            client = _get_shared_async_client()
             response = await client.post(
                 url,
                 json=data,
                 headers=headers or {},
+                timeout=self.timeout,
             )
 
             if response.status_code == 404:

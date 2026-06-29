@@ -69,9 +69,6 @@ export const overviewResponseSchema = z.object({
   request_volume: meteringGraphSchema.nullable().optional(),
   degraded: z.boolean().optional(),
   generated_at: z.string(),
-  refresh_interval_seconds: z.number().optional(),
-  data_state: z.string().optional(),
-  is_stale: z.boolean().optional(),
 });
 
 export const serviceEntrySchema = z.object({
@@ -95,9 +92,6 @@ export const tenantConsumptionResponseSchema = z.object({
   usage_by_service: z.array(tenantServiceRowSchema),
   degraded: z.boolean().optional(),
   generated_at: z.string(),
-  refresh_interval_seconds: z.number().optional(),
-  data_state: z.string().optional(),
-  is_stale: z.boolean().optional(),
 });
 
 export const serviceConsumptionSummarySchema = z.object({
@@ -133,7 +127,4 @@ export const serviceConsumptionResponseSchema = z.object({
   service_breakdown: z.array(serviceRowSchema),
   degraded: z.boolean().optional(),
   generated_at: z.string(),
-  refresh_interval_seconds: z.number().optional(),
-  data_state: z.string().optional(),
-  is_stale: z.boolean().optional(),
 });

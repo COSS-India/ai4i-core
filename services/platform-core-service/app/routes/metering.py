@@ -142,6 +142,15 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
     return out
 
 
+_STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _step_seconds(step: str) -> int:
+    """Parse a Prometheus duration step (e.g. '10m', '4h', '1d') to seconds."""
+    m = re.fullmatch(r"(\d+)([smhd])", step.strip())
+    return int(m.group(1)) * _STEP_UNIT_SECONDS[m.group(2)] if m else 0
+
+
 async def _request_volume_chart(
     svc: MeteringService,
     window: str,
@@ -164,12 +173,22 @@ async def _request_volume_chart(
     success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
     step = WINDOW_STEP[window]
+    step_secs = _step_seconds(step)
     w_secs = _WINDOW_SECONDS[window]
     now = _time.time()
-    start = now - w_secs
+    # Align the range so the LAST bucket ends at `now`. query_range places eval
+    # points at start + i*step, so an unaligned start (e.g. a 30d window with a 7d
+    # step — 30 isn't divisible by 7) leaves the final point short of now and the
+    # most recent bucket (today's requests) is never evaluated. Snap start to a
+    # whole number of buckets ending at now.
+    n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
+    start = now - n_buckets * step_secs
 
-    success_q = f"sum(increase({success_metric}[{step}]))"
-    failed_q = f"sum(increase({failed_metric}[{step}]))"
+    # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
+    # Without it increase() emits no sample for a zero-traffic bucket, the chart
+    # drops it, and the axis shows gaps (missing days / jumping intervals).
+    success_q = f"sum(increase({success_metric}[{step}])) or vector(0)"
+    failed_q = f"sum(increase({failed_metric}[{step}])) or vector(0)"
 
     succ_res, fail_res = await asyncio.gather(
         svc._client.query_range(success_q, start=start, end=now, step=step),
@@ -177,18 +196,22 @@ async def _request_volume_chart(
         return_exceptions=True,
     )
 
-    succ_points = _series_points(succ_res, 0)        # counts
-    fail_points = _series_points(fail_res, 0)        # counts
+    succ_points = _series_points(succ_res, 0)        # counts (zero-filled)
+    fail_points = _series_points(fail_res, 0)        # counts (zero-filled)
 
-    if not succ_points and not fail_points:
+    # Series are now dense, so emptiness can't be inferred from point count —
+    # only suppress the chart when there's no real activity anywhere in the window.
+    has_data = any(p.value > 0 for p in succ_points) or any(p.value > 0 for p in fail_points)
+    if not has_data:
         return None
 
-    series = []
-    if succ_points:
-        series.append(GraphSeries(key="successful", label="Successful", points=succ_points))
-    if fail_points:
-        series.append(GraphSeries(key="failed", label="Failed", points=fail_points))
-    return Graph(step=step, series=series)
+    return Graph(
+        step=step,
+        series=[
+            GraphSeries(key="successful", label="Successful", points=succ_points),
+            GraphSeries(key="failed", label="Failed", points=fail_points),
+        ],
+    )
 
 
 async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
@@ -216,39 +239,6 @@ def _validate_window(window: str) -> None:
             status_code=400,
             detail=f"Invalid window '{window}'. Allowed: 1h, 24h, 7d, 30d",
         )
-
-
-def _compute_dashboard_meta(
-    degraded: bool,
-    total_requests: int,
-    window: str,
-) -> dict:
-    """Compute refresh/stale fields to attach to every dashboard response."""
-    is_stale = degraded
-
-    if degraded:
-        data_state = "error"
-    elif total_requests == 0 and window == "30d":
-        # 30d is the widest available window; zero requests here means no history at all.
-        data_state = "no_history"
-    elif total_requests == 0:
-        data_state = "empty"
-    else:
-        data_state = "ok"
-
-    return {
-        "refresh_interval_seconds": settings.metering_refresh_interval_seconds,
-        "is_stale": is_stale,
-        "data_state": data_state,
-    }
-
-
-def _enrich_cached(cached: dict) -> dict:
-    """Inject current refresh_interval_seconds into a cached response."""
-    return {
-        **cached,
-        "refresh_interval_seconds": settings.metering_refresh_interval_seconds,
-    }
 
 
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
@@ -283,7 +273,7 @@ async def get_overview(
     cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return _enrich_cached(cached)
+        return cached
 
     degraded = False
 
@@ -324,34 +314,37 @@ async def get_overview(
                 key="total_requests",
                 label="Total Requests",
                 value=rt["total_requests"]["formatted"],
+                previous=rt["total_requests"]["previous_formatted"],
                 pct_change=rt["total_requests"]["vs_previous_pct"],
             ),
             Cell(
                 key="success_rate",
                 label="Success Rate",
                 value=rt["success_rate"]["rate_pct"],
+                previous=rt["success_rate"]["previous_rate_pct"],
                 pct_change=rt["success_rate"]["vs_previous_pct"],
             ),
             Cell(
                 key="avg_rps",
                 label="Avg RPS",
                 value=rt["avg_rps"]["value"],
+                previous=rt["avg_rps"]["previous_value"],
                 pct_change=rt["avg_rps"]["vs_previous_pct"],
             ),
         ])
     if is_admin and rt and at_window and at_window.get("count"):
         avg_per_tenant = round(rt["total_requests"]["count"] / at_window["count"], 1)
         # Trend vs previous window: prev avg = prev_total / prev_active_tenants.
-        avg_pct_change = None
         prev_total = rt["total_requests"].get("previous_count")
-        if prev_total and prev_active:
-            prev_avg = prev_total / prev_active
-            if prev_avg > 0:
-                avg_pct_change = round((avg_per_tenant - prev_avg) / prev_avg * 100, 1)
+        prev_avg = (prev_total / prev_active) if (prev_total and prev_active) else 0.0
+        avg_pct_change = (
+            round((avg_per_tenant - prev_avg) / prev_avg * 100, 1) if prev_avg > 0 else None
+        )
         kpis.append(Cell(
             key="avg_requests_per_tenant",
             label="Avg Requests / Tenant",
             value=avg_per_tenant,
+            previous=round(prev_avg, 1),
             pct_change=avg_pct_change,
         ))
 
@@ -388,8 +381,6 @@ async def get_overview(
         )
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    total_requests = rt["total_requests"]["count"] if rt else 0
-    meta = _compute_dashboard_meta(degraded, total_requests, window)
 
     response = OverviewResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
@@ -399,7 +390,6 @@ async def get_overview(
         request_volume=chart,
         degraded=degraded,
         generated_at=generated_at,
-        **meta,
     )
 
     if not degraded:
@@ -416,6 +406,7 @@ async def get_tenant_consumption(
     request: Request,
     window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
+    tenant_id: Optional[str] = Query(None, description="Scope to a single tenant (admin only)"),
     services: Optional[str] = Query(
         None, description="Comma-separated service keys for the heatmap columns (default: all)"
     ),
@@ -432,19 +423,26 @@ async def get_tenant_consumption(
 
     _validate_window(window)
 
+    # Admin-only endpoint: scope to the selected tenant when one is chosen,
+    # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
+    scope_tenant = _validate_scope_tenant(tenant_id or None)
+
     service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
 
-    cache_key = f"metering:tenant-consumption:{window}:{limit}:{services or 'all'}"
+    cache_key = (
+        f"metering:tenant-consumption:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
+    )
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return _enrich_cached(cached)
+        return cached
 
     degraded = False
 
-    # Platform-wide (admin-only endpoint): tenant=None throughout.
     ranking_result, heatmap_result = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window),
-        svc.usage_by_tenant_service(limit=limit, time_range=window, services=service_filter),
+        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant),
+        svc.usage_by_tenant_service(
+            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant
+        ),
         return_exceptions=True,
     )
 
@@ -470,11 +468,14 @@ async def get_tenant_consumption(
         r["organisation"] = org_map.get(r["tenant"])
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    total_requests = sum(t["requests"] for t in ranking_tenants)
-    meta = _compute_dashboard_meta(degraded, total_requests, window)
 
     response = TenantConsumptionResponse(
-        scope=Scope(role=_caller_role_label(request), tenant_id=None, organisation=None, window=window),
+        scope=Scope(
+            role=_caller_role_label(request),
+            tenant_id=scope_tenant,
+            organisation=org_map.get(scope_tenant) if scope_tenant else None,
+            window=window,
+        ),
         tenant_ranking=[
             TenantRow(
                 rank=t["rank"],
@@ -489,7 +490,6 @@ async def get_tenant_consumption(
         usage_by_service=heatmap_rows,
         degraded=degraded,
         generated_at=generated_at,
-        **meta,
     )
 
     if not degraded:
@@ -530,7 +530,7 @@ async def get_service_consumption(
     cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
-        return _enrich_cached(cached)
+        return cached
 
     degraded = False
 
@@ -552,8 +552,6 @@ async def get_service_consumption(
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
     services = breakdown["services"] if breakdown else []
-    total_reqs = sum(s["requests"] for s in services)
-
     # Summary KPIs — computed over services with traffic (a 0-request service
     # must not win "highest failure rate").
     summary: Optional[ServiceSummary] = None
@@ -576,7 +574,6 @@ async def get_service_consumption(
         )
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    meta = _compute_dashboard_meta(degraded, total_reqs, window)
 
     response = ServiceConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
@@ -597,7 +594,6 @@ async def get_service_consumption(
         ],
         degraded=degraded,
         generated_at=generated_at,
-        **meta,
     )
 
     if not degraded:

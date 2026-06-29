@@ -56,10 +56,13 @@ export const METERING = {
       SUCCESSFUL: "successful",
       FAILED: "failed",
     },
+    // Backend bucket sizes per window (see WINDOW_STEP in metering_promql_builder.py).
+    // Label formatting keys off the step's duration, not these exact strings.
     STEP: {
-      FIVE_MINUTES: "5m",
-      ONE_HOUR: "1h",
+      TEN_MINUTES: "10m",
+      FOUR_HOURS: "4h",
       SIX_HOURS: "6h",
+      ONE_DAY: "1d",
     },
     EMPTY_VALUE: "—",
   },
@@ -223,6 +226,10 @@ export const METERING = {
       SERIES_FAILED: "Failed",
     },
     SERVICE: {
+      CONSUMPTION_TITLE: "Service consumption",
+      CONSUMPTION_SUBTITLE_PREFIX: "Your service consumption ·",
+      DONUT_CENTER_PRIMARY: "All",
+      DONUT_CENTER_SECONDARY: "Services",
       BREAKDOWN_TITLE: "Service breakdown",
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
       MOST_USED: "Most used service",
