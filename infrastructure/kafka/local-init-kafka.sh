@@ -90,7 +90,7 @@ kafka-topics --create \
     --config retention.ms=604800000 \
     --config compression.type=gzip \
     --config cleanup.policy=delete \
-    --if-not-exists || echo "Topic alerts already exists"
+    --if-not-exists || echo "Topic usage already exists"
 
 echo "Creating consumer groups..."
 
