@@ -67,8 +67,7 @@ class ImageBase(BaseTaskService):
     async def _download_image(self, uri: str) -> bytes:
         """Download raw image bytes from an HTTP(S) URI.
         The URI is user-supplied — validated against the SSRF guard first."""
-        from utils.url_guard import validate_external_url
-        validate_external_url(uri)
+        self._validate_external_url(uri)
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(uri)

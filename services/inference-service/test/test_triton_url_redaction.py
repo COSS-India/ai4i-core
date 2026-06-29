@@ -117,7 +117,7 @@ async def test_resolver_success_log_does_not_dump_service_info() -> None:
     import os
     with patch.dict(os.environ, {"MODEL_MANAGEMENT_SERVICE_URL": "http://mms-host:9090"}):
         with patch(
-            "utils.http_client.HTTPServiceClient.get_json",
+            "http_client.HTTPServiceClient.get_json",
             new=AsyncMock(return_value=fake_mms_response),
         ):
             info = await resolver.resolve_service("indictrans-v2-all")
@@ -148,7 +148,7 @@ async def test_resolver_lookup_failure_log_redacted() -> None:
     import os
     with patch.dict(os.environ, {"MODEL_MANAGEMENT_SERVICE_URL": SECRET_MMS}):
         with patch(
-            "utils.http_client.HTTPServiceClient.get_json",
+            "http_client.HTTPServiceClient.get_json",
             new=AsyncMock(side_effect=_UrlEmbeddedError()),
         ):
             try:
@@ -176,7 +176,7 @@ async def test_resolver_connection_failure_log_redacted() -> None:
     import os
     with patch.dict(os.environ, {"MODEL_MANAGEMENT_SERVICE_URL": SECRET_MMS}):
         with patch(
-            "utils.http_client.HTTPServiceClient.get_json",
+            "http_client.HTTPServiceClient.get_json",
             new=AsyncMock(side_effect=_UrlEmbeddedError()),
         ):
             try:
@@ -206,7 +206,7 @@ async def test_triton_call_failure_log_and_exception_redacted() -> None:
             return f"Connection refused while POSTing to {SECRET_URL}"
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(side_effect=_UrlEmbeddedError()),
     ):
         try:
@@ -236,7 +236,7 @@ async def test_triton_call_debug_log_redacted() -> None:
     svc = BaseTaskService(service_info=_service_info())
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(return_value={"outputs": []}),
     ):
         await svc._call_triton_inference(

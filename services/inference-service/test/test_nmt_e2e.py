@@ -84,7 +84,7 @@ async def test_full_pipeline_camel_payload():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_SINGLE),
     ):
         response = await service.process(portal_payload)
@@ -124,7 +124,7 @@ async def test_multi_input_pipeline():
         call_count += 1
         return batch_response
 
-    with patch("utils.http_client.HTTPServiceClient.post_json", new=mock_post_json):
+    with patch("http_client.HTTPServiceClient.post_json", new=mock_post_json):
         response = await service.process(payload)
 
     assert isinstance(response, dict)
@@ -149,7 +149,7 @@ async def test_response_serialization():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_SINGLE),
     ):
         response = await service.process(payload)
@@ -192,7 +192,7 @@ async def test_validate_whitespace_source_accepted():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_SINGLE),
     ):
         response = await service.process(payload)

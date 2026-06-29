@@ -5,9 +5,15 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from services.base.text_base import TextBase
+from services.base.text_base import TextBase, chunk_text
 from services.base.task_service import InferenceContext
-from utils import audio_utils, text_utils
+from services.base.audio_base import (
+    append_silence,
+    encode_audio,
+    resample,
+    resample_to_count,
+    to_int16,
+)
 
 # Triton model always outputs at this rate
 _TRITON_SAMPLE_RATE = 22050
@@ -30,13 +36,13 @@ class TTSTaskService(TextBase):
                             language_id (the adapter reads them per item);
                             per-item call mode = one Triton call per chunk
       run_inference       → generic (BaseTaskService) — no override
-      produce_result      → extract each chunk's waveform (FP32 → int16) from
-                            the raw Triton responses, merge per input item, then
-                            resample / duration-adjust / encode / base64
-      build_envelope      → wrap the audio items + config echo
+      post_process        → extract each chunk's waveform (FP32 → int16) from
+                            the raw Triton responses, merge per input item,
+                            resample / duration-adjust / encode / base64, then
+                            wrap the audio items + config echo
 
     TTS is a code-output service (no output_transform): the waveform DSP cannot
-    be expressed as a JSON transform, so produce_result reads the raw tensors.
+    be expressed as a JSON transform, so post_process reads the raw tensors.
     """
 
     # One Triton call per (chunk) item — the TTS model takes one text per call.
@@ -50,12 +56,12 @@ class TTSTaskService(TextBase):
         payload = await super().preprocess_input(payload)
         config: Dict[str, Any] = payload.get("config") or {}
         gender = config.get("gender", "female")
-        language_id = self._extract_source_lang(config.get("language") or {}) or ""
+        language_id = self._get_nested(config, "language.sourceLanguage") or ""
 
         chunked: List[Dict[str, Any]] = []
         for idx, item in enumerate(payload[self.payload_key]):
             duration = self._validated_duration(item.get("audioDuration"))
-            for piece in text_utils.chunk_text(item.get("source", ""), _MAX_CHUNK_LENGTH):
+            for piece in chunk_text(item.get("source", ""), _MAX_CHUNK_LENGTH):
                 chunked.append({
                     "source": piece,
                     "gender": gender,
@@ -84,22 +90,47 @@ class TTSTaskService(TextBase):
                 f"{self.task_name}: OUTPUT_GENERATED_AUDIO not found in Triton response"
             )
         audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
-        return audio_utils.to_int16(audio_fp32 * 32767)
+        return to_int16(audio_fp32 * 32767)
 
     # ------------------------------------------------------------------
-    # produce_result — merge chunks per item, resample/encode the waveforms
-    # build_envelope — wrap the audio items + config echo
+    # post_process — merge chunks per item, resample/encode the waveforms,
+    # then wrap the audio items + config echo into the response envelope.
     # ------------------------------------------------------------------
 
-    async def produce_result(self, result: InferenceContext) -> InferenceContext:
+    async def post_process(self, result: InferenceContext) -> InferenceContext:
         payload = result.payload
         config: Dict[str, Any] = payload.get("config") or {}
         target_rate  = self._validated_sample_rate(config)
         audio_format = (config.get("audioFormat") or "wav").lower()
 
+        audio_outputs = self._render_audio_outputs(result, target_rate, audio_format)
+
+        source_lang = self._get_nested(payload, "config.language.sourceLanguage") or ""
+        result.transformed = {
+            "audio": audio_outputs,
+            "config": {
+                "language": {
+                    "sourceLanguage":   source_lang,
+                    "sourceScriptCode": None,
+                },
+                "audioFormat":   audio_format,
+                "encoding":      "base64",
+                "samplingRate":  target_rate,
+                # Scalar field — accurate for single-item requests (the common
+                # case); multi-item callers should read audio[i].audioDuration.
+                "audioDuration": audio_outputs[0]["audioDuration"] if audio_outputs else 0,
+            },
+        }
+        return result
+
+    def _render_audio_outputs(
+        self, result: InferenceContext, target_rate: int, audio_format: str
+    ) -> List[Dict[str, Any]]:
+        """Merge each input item's chunk waveforms, fit the requested duration,
+        and encode to base64 audio items."""
         # Per-chunk int16 waveforms, parallel to chunk_items, extracted from the
         # raw Triton responses captured in run_inference.
-        chunk_items = payload.get(self.payload_key) or []
+        chunk_items = result.payload.get(self.payload_key) or []
         chunk_samples = [self._extract_waveform(raw) for raw in result.raw_triton_outputs]
 
         merged: Dict[int, List[np.ndarray]] = {}
@@ -113,56 +144,35 @@ class TTSTaskService(TextBase):
         for idx in sorted(merged):
             arrays = merged[idx]
             combined = np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
-
-            if target_rate != _TRITON_SAMPLE_RATE:
-                combined = audio_utils.to_int16(
-                    audio_utils.resample(combined, _TRITON_SAMPLE_RATE, target_rate)
-                )
-
-            audio_duration = durations_req.get(idx)
-            if audio_duration is not None:
-                actual = len(combined) / target_rate
-                if actual > audio_duration:
-                    target_samples = max(1, int(audio_duration * target_rate))
-                    combined = audio_utils.to_int16(
-                        audio_utils.resample_to_count(combined, target_samples)
-                    )
-                elif actual < audio_duration:
-                    combined = audio_utils.append_silence(combined, target_rate, audio_duration)
+            combined = self._fit_duration(combined, target_rate, durations_req.get(idx))
 
             duration = len(combined) / target_rate
-            audio_bytes = audio_utils.encode_audio(combined, target_rate, audio_format)
+            audio_bytes = encode_audio(combined, target_rate, audio_format)
             audio_outputs.append({
                 "audioContent": base64.b64encode(audio_bytes).decode("utf-8"),
                 "audioUri": None,
                 "audioDuration": duration,
             })
+        return audio_outputs
 
-        result.result_items = audio_outputs
-        return result
+    def _fit_duration(
+        self, combined: np.ndarray, target_rate: int, audio_duration: Any
+    ) -> np.ndarray:
+        """Resample to the target rate, then stretch/pad to the requested
+        audioDuration (no-op when audioDuration is None)."""
+        if target_rate != _TRITON_SAMPLE_RATE:
+            combined = to_int16(resample(combined, _TRITON_SAMPLE_RATE, target_rate))
 
-    def build_envelope(self, result: InferenceContext) -> Dict[str, Any]:
-        payload = result.payload
-        config: Dict[str, Any] = payload.get("config") or {}
-        source_lang  = self._extract_source_lang(self._get_language(payload)) or ""
-        target_rate  = self._validated_sample_rate(config)
-        audio_format = (config.get("audioFormat") or "wav").lower()
-        items = result.result_items
-        return {
-            "audio": items,
-            "config": {
-                "language": {
-                    "sourceLanguage":   source_lang,
-                    "sourceScriptCode": None,
-                },
-                "audioFormat":   audio_format,
-                "encoding":      "base64",
-                "samplingRate":  target_rate,
-                # Scalar field — accurate for single-item requests (the common
-                # case); multi-item callers should read audio[i].audioDuration.
-                "audioDuration": items[0]["audioDuration"] if items else 0,
-            },
-        }
+        if audio_duration is None:
+            return combined
+
+        actual = len(combined) / target_rate
+        if actual > audio_duration:
+            target_samples = max(1, int(audio_duration * target_rate))
+            return to_int16(resample_to_count(combined, target_samples))
+        if actual < audio_duration:
+            return append_silence(combined, target_rate, audio_duration)
+        return combined
 
     # ------------------------------------------------------------------
     # Input bounds (user-controlled numerics)

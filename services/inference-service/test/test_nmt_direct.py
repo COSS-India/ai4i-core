@@ -174,7 +174,7 @@ async def test_resolver_url_construction():
         captured.clear()
         resolver._memory_cache.clear()
         with _patch.object(_settings, "MODEL_MANAGEMENT_SERVICE_URL", base_url):
-            with _patch("utils.http_client.HTTPServiceClient.get_json", new=_mock_get_json):
+            with _patch("http_client.HTTPServiceClient.get_json", new=_mock_get_json):
                 await resolver.resolve_service("indictrans-v2-all")
         assert captured[0] == expected, f"base={base_url!r}: got {captured[0]!r}, want {expected!r}"
 

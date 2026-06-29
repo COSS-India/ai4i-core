@@ -114,8 +114,8 @@ All 7 steps have been completed. The monolith inference service now provides a u
       return postprocess_output(result)
   ```
   - `run_inference()` — generic, the ONLY implementation (no overrides);
-    call topology is data/class-driven (`adapter_config["call_mode"]` or
-    `TRITON_CALL_MODE`: batch vs per-item). TTS expands items into chunks in
+    call topology is class-driven (`TRITON_CALL_MODE`: batch vs per-item, set
+    by the modality base). TTS expands items into chunks in
     preprocess_input and merges results in postprocess_output. Output
     conversion is adapter_config-driven via GenericTritonMapper, incl.
     transforms like `json_field` (Surya envelope unwrap)

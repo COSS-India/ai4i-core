@@ -1,9 +1,9 @@
 """Characterization tests for TTS, ASR, and Speaker Diarization responses.
 
 These pin the exact client-facing response of process() for each service, so
-the Phase 4 produce_result / build_envelope split can be proven byte-identical.
+the run_inference / post_process pipeline can be proven byte-identical.
 They mock only the HTTP call to Triton; the real preprocess, mapper, run, and
-postprocess run unchanged.
+post_process run unchanged.
 
 Run from the inference-service root:
     PYTHONPATH=. pytest test/test_phase4_characterization.py
@@ -30,7 +30,7 @@ def _post_json_returning(triton_response: dict) -> AsyncMock:
 # ════════════════════════════════════════════════════════════════════════════
 
 # TTS migrated to v2 (AI4IDS-1981): code-output (no output_transform); its
-# produce_result extracts the waveform from the raw Triton responses and does
+# post_process extracts the waveform from the raw Triton responses and does
 # the DSP. Same task-type output as v1.
 _TTS_ADAPTER_CONFIG = {
     "schema_version": "2.0",
@@ -72,7 +72,7 @@ async def test_tts_response_characterization():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=_post_json_returning(_TTS_TRITON_RESPONSE),
     ):
         response = await service.process(payload)
@@ -152,7 +152,7 @@ async def test_asr_response_characterization():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=_post_json_returning(triton_response),
     ):
         response = await service.process(payload)
@@ -217,7 +217,7 @@ async def test_speaker_diarization_response_characterization():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=_post_json_returning(triton_response),
     ):
         response = await service.process(payload)

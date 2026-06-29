@@ -9,7 +9,7 @@ import time
 
 from config import settings
 
-from utils import HTTPServiceClient
+from http_client import HTTPServiceClient
 
 
 logger = logging.getLogger(__name__)

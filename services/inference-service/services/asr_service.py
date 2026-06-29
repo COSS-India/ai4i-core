@@ -2,8 +2,13 @@
 
 from typing import Any, Dict
 
-from services.base.audio_base import AudioBase
-from utils import audio_utils
+from services.base.audio_base import (
+    AudioBase,
+    decode_audio_bytes,
+    equalize_amplitude,
+    resample,
+    stereo_to_mono,
+)
 
 
 class ASRTaskService(AudioBase):
@@ -43,12 +48,12 @@ class ASRTaskService(AudioBase):
         for item in input_data:
             audio_bytes = await self._get_audio_bytes(item)
             try:
-                audio_data, sample_rate = audio_utils.decode_audio_bytes(audio_bytes)
+                audio_data, sample_rate = decode_audio_bytes(audio_bytes)
             except ValueError as decode_err:
                 raise ValueError(f"{self.task_name}: {decode_err}") from decode_err
-            audio_data = audio_utils.stereo_to_mono(audio_data)
-            audio_data = audio_utils.resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
-            audio_data = audio_utils.equalize_amplitude(audio_data)
+            audio_data = stereo_to_mono(audio_data)
+            audio_data = resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
+            audio_data = equalize_amplitude(audio_data)
 
             # samples must be a plain Python list — the renderer's _cast_dtype
             # operates on Python lists, not numpy arrays.

@@ -95,7 +95,7 @@ async def _run_inference(
     default the task_type, route via the Orchestrator, and map failures to
     client-safe HTTP errors (full details logged server-side only).
 
-    Each task service's build_envelope emits exactly the keys its contract
+    Each task service's pipeline emits exactly the keys its contract
     declares, so no response-key stripping is needed here.
     """
     # No manual timing here: the logging middleware records duration_ms for

@@ -32,7 +32,7 @@ async def _run(mod, cls, cfg, payload, triton):
     m = importlib.import_module(mod)
     svc = getattr(m, cls)(service_info={
         "name": "m", "endpoint": "http://t/m/infer", "api_key": None, "adapter_config": cfg})
-    with patch("utils.http_client.HTTPServiceClient.post_json",
+    with patch("http_client.HTTPServiceClient.post_json",
                new=AsyncMock(return_value=triton)):
         return await svc.process(payload)
 
@@ -130,7 +130,7 @@ async def test_language_diarization_v2_matches_golden():
 
 
 async def test_ner_v2_matches_golden():
-    # NER is a code-output v2 service: no output_transform; produce_result reads
+    # NER is a code-output v2 service: no output_transform; post_process reads
     # the decoded OUTPUT_TEXT tensor and runs the alignment algorithm.
     pred = ('{"source":"John lives in Delhi","nerPrediction":'
             '[{"token":"John","class":"PER"},{"token":"Delhi","class":"LOC"}]}')

@@ -1,10 +1,11 @@
-"""Typed Triton input rendering for adapter configs.
+"""Typed Triton input mapping for adapter configs.
 
 The adapter config declares each Triton input tensor (name, dtype, shape, and a
-value_path into the request). TritonInputRenderer walks those declarations and
-builds a KServe v2 input payload. This is the ONLY input transform: tensors are
-typed and shaped, which a JSON-to-JSON engine cannot express, so the input path
-stays declarative here and the output path is JSONata (see jsonata_mapper.py).
+value_path into the request; see adapter_config.py). TritonInputMapper walks
+those declarations and builds a KServe v2 input payload. This is the ONLY input
+transform: tensors are typed and shaped, which a JSON-to-JSON engine cannot
+express, so the input path stays declarative here and the output path is JSONata
+(see triton_output_mapper.py).
 
 value_path namespaces:
   request.*  — the request envelope, wire casing (camelCase, e.g.
@@ -15,8 +16,7 @@ value_path namespaces:
   index      — the item's position in the batch.
 """
 
-import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -64,11 +64,11 @@ class InputTensorDeclaration(BaseModel):
         return self
 
 
-class TritonInputRenderer:
+class TritonInputMapper:
     """Renders typed input-tensor declarations into a KServe v2 Triton payload.
 
-    Constructed directly from the adapter config's input declarations — no
-    output schema, so it is shared by the mapper without faking a config.
+    Constructed directly from the adapter config's input declarations. Owns the
+    input side only; TritonOutputMapper owns decode + output transform.
     """
 
     def __init__(self, inputs: Sequence[InputTensorDeclaration]):

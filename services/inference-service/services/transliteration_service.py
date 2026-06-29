@@ -1,14 +1,15 @@
 """Transliteration TaskService."""
 from typing import Any, Dict
 
-from services.base.text_base import TextBase
+from services.base.text_base import TranslationTextBase
 
 
-class TransliterationTaskService(TextBase):
-    REQUIRES_TARGET_LANGUAGE = True  # source/target language checks via TextBase
-
-    async def validate_config(self, payload: Dict[str, Any]) -> None:
-        await super().validate_config(payload)  # config present + language rules
+class TransliterationTaskService(TranslationTextBase):
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
+        """Translation rules (super) plus the transliteration-specific
+        numSuggestions/isSentence rule. Also derives is_word_level for the
+        input mapper."""
+        await super().validate_request(payload)
 
         config = payload.get("config", {})
         num_suggestions = config.get("numSuggestions") or 0
@@ -20,7 +21,7 @@ class TransliterationTaskService(TextBase):
             )
 
         # is_word_level = not isSentence: a boolean inversion the typed input
-        # path cannot express, injected for the renderer (request.config.is_word_level).
+        # path cannot express, injected for the input mapper (request.config.is_word_level).
         # top_k is a plain rename, handled in config (TOP_K reads numSuggestions).
         config["is_word_level"] = not is_sentence
 

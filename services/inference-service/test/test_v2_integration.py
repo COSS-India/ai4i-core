@@ -51,7 +51,7 @@ async def test_v2_nmt_process_end_to_end():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(return_value=triton_response),
     ):
         response = await service.process(payload)
@@ -75,7 +75,7 @@ async def test_v2_nmt_multi_input_batch():
     }
 
     with patch(
-        "utils.http_client.HTTPServiceClient.post_json",
+        "http_client.HTTPServiceClient.post_json",
         new=AsyncMock(return_value=triton_response),
     ):
         response = await service.process(payload)

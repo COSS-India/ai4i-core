@@ -2,20 +2,74 @@
 TextBase — base class for all text-backed inference services.
 
 Item presence (each item needs a 'source') is declared via REQUIRED_ITEM_FIELDS
-and checked by the generic BaseTaskService.validate_request. Config/language
-rules live in validate_config:
-  - config block present
-  - sourceLanguage when a language block is given
-  - targetLanguage + not-equal (REQUIRES_TARGET_LANGUAGE=True)
+and checked by the generic BaseTaskService.validate_request. TextBase overrides
+validate_request to add the text config rule (a 'config' block, and a
+sourceLanguage when a language block is supplied). Services that translate (NMT,
+Transliteration) extend TranslationTextBase, which adds the source/target rule.
 
 The module-level NER BPE-to-word alignment functions at the bottom are pure
 helpers imported and used by ner_service (kept here by request so the service
-file holds only its produce_result orchestration).
+file holds only its post_process orchestration).
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from services.base.task_service import BaseTaskService
-from utils import text_utils
+
+
+# ----------------------------------------------------------------------------
+# Stateless text helpers (sanitisation, normalisation, chunking).
+#
+# Pure functions, no task state — text services compose these instead of
+# re-implementing them. Module-level (not TextBase methods) so TTS, which
+# expands text into chunks before inference, can reuse chunk_text without an
+# instance.
+# ----------------------------------------------------------------------------
+
+def normalize_text(text: str) -> str:
+    """Collapse runs of whitespace to single spaces and strip the ends."""
+    return " ".join(text.split()).strip()
+
+
+def sanitize_source(text: object) -> str:
+    """Return a single-line, whitespace-normalised source string.
+
+    Falsy input becomes a single space (Triton text models reject empty
+    strings); newlines and carriage returns are flattened to spaces before
+    normalisation. Never returns an empty string.
+    """
+    if not text:
+        return " "
+    text = str(text).replace("\n", " ").replace("\r", " ")
+    return normalize_text(text) or " "
+
+
+def chunk_text(text: str, max_length: int) -> list:
+    """Split text into chunks of at most max_length characters.
+
+    Splits at the nearest sentence or clause boundary (., ?, !, Devanagari
+    danda, comma, space) before max_length, falling back to a hard cut.
+    Empty input yields a single empty chunk; empty pieces are dropped.
+    """
+    text = normalize_text(text)
+    if not text:
+        return [""]
+    if len(text) <= max_length:
+        return [text]
+
+    chunks: list = []
+    while len(text) > max_length:
+        split_pos = max_length
+        for sep in (".", "?", "!", "।", ",", " "):
+            pos = text.rfind(sep, 0, max_length)
+            if pos > 0:
+                split_pos = pos + 1
+                break
+        chunks.append(text[:split_pos].strip())
+        text = text[split_pos:].strip()
+
+    if text:
+        chunks.append(text)
+    return [c for c in chunks if c]
 
 
 class TextBase(BaseTaskService):
@@ -24,44 +78,22 @@ class TextBase(BaseTaskService):
     # Each text item must carry a non-empty 'source'.
     REQUIRED_ITEM_FIELDS = (("source",),)
 
-    # Set True in subclasses that require both source and target language (NMT, Transliteration)
-    REQUIRES_TARGET_LANGUAGE: bool = False
-
     # ------------------------------------------------------------------
-    # Common language helpers
+    # Validation (item presence is generic; text adds the config rule)
     # ------------------------------------------------------------------
 
-    def _get_language(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return payload.get("config", {}).get("language", {})
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
+        """Generic item presence (super) plus the text config rule: a 'config'
+        block must be present, and when a language block is supplied it must
+        carry a sourceLanguage. Translating services extend TranslationTextBase,
+        which adds the source/target rule."""
+        await super().validate_request(payload)
 
-    def _extract_source_lang(self, language: Dict[str, Any]) -> Optional[str]:
-        return language.get("sourceLanguage")
-
-    def _extract_target_lang(self, language: Dict[str, Any]) -> Optional[str]:
-        return language.get("targetLanguage")
-
-    # ------------------------------------------------------------------
-    # Config / language validation (cross-field; item presence is generic)
-    # ------------------------------------------------------------------
-
-    async def validate_config(self, payload: Dict[str, Any]) -> None:
         if not payload.get("config"):
             raise ValueError(f"{self.task_name}: payload must contain a 'config' field")
 
-        language = self._get_language(payload)
-        # Services that require a target language (NMT, Transliteration) need the
-        # language block. Other text services (e.g. language detection) leave it
-        # optional, validating sourceLanguage only when a block is supplied.
-        if self.REQUIRES_TARGET_LANGUAGE:
-            source_lang = self._extract_source_lang(language)
-            target_lang = self._extract_target_lang(language)
-            if not source_lang:
-                raise ValueError(f"{self.task_name}: config.language.sourceLanguage is required")
-            if not target_lang:
-                raise ValueError(f"{self.task_name}: config.language.targetLanguage is required")
-            if source_lang == target_lang:
-                raise ValueError(f"{self.task_name}: sourceLanguage and targetLanguage cannot be the same")
-        elif language and not self._extract_source_lang(language):
+        language = self._get_nested(payload, "config.language")
+        if language and not self._get_nested(payload, "config.language.sourceLanguage"):
             raise ValueError(f"{self.task_name}: config.language.sourceLanguage is required")
 
     # ------------------------------------------------------------------
@@ -71,7 +103,7 @@ class TextBase(BaseTaskService):
     async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         input_data = payload.get(self.payload_key) or []
         source_texts = self.extract_field_from_items(input_data, "source")
-        sanitized = [text_utils.sanitize_source(t) for t in source_texts]
+        sanitized = [sanitize_source(t) for t in source_texts]
 
         items = [
             {**item, "source": sanitized[idx] if idx < len(sanitized) else ""}
@@ -80,6 +112,26 @@ class TextBase(BaseTaskService):
 
         payload[self.payload_key] = items
         return payload
+
+
+class TranslationTextBase(TextBase):
+    """Base for text services that translate between a source and target
+    language (NMT, Transliteration). Adds the required, distinct source/target
+    rule on top of the TextBase config checks, so a leaf service declares the
+    requirement by extending this class rather than via a flag or a per-service
+    validate_request override."""
+
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
+        """Text rules (super) plus a required, distinct source and target language."""
+        await super().validate_request(payload)
+        source = self._get_nested(payload, "config.language.sourceLanguage")
+        target = self._get_nested(payload, "config.language.targetLanguage")
+        if not source:
+            raise ValueError(f"{self.task_name}: config.language.sourceLanguage is required")
+        if not target:
+            raise ValueError(f"{self.task_name}: config.language.targetLanguage is required")
+        if source == target:
+            raise ValueError(f"{self.task_name}: sourceLanguage and targetLanguage cannot be the same")
 
 
 # ----------------------------------------------------------------------------

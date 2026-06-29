@@ -5,11 +5,11 @@ from services.base.task_service import InferenceContext
 
 class NERTaskService(TextBase):
     """Code-output service: BPE-to-word alignment cannot be a JSON transform, so
-    it overrides produce_result and sets result.transformed directly (the base
-    build_envelope returns it as-is). Tensor decoding happens once in
-    run_inference (result.decoded_tensors); the alignment lives in text_base."""
+    it overrides post_process and sets result.transformed directly. Tensor
+    decoding happens once in run_inference (result.decoded_tensors); the
+    alignment helpers live in text_base."""
 
-    async def produce_result(self, result: InferenceContext) -> InferenceContext:
+    async def post_process(self, result: InferenceContext) -> InferenceContext:
         """Align the model's entity predictions onto the original text as
         per-token tags with char offsets (the ULCA NER contract)."""
         raw_values = result.decoded_tensors.get("OUTPUT_TEXT", [])
