@@ -3,10 +3,10 @@ Async repository for the Service entity.
 """
 
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, delete, desc, func, select, update
+from sqlalchemy import String, and_, cast, delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -80,10 +80,10 @@ class ServiceRepository:
         created_by: Optional[str] = None,
         offset: int = 0,
         limit: Optional[int] = None,
-    ) -> List[Tuple[Service, Model, Optional[PPUTier]]]:
-        """Return (service, model, tier) tuples; tier is None when not assigned."""
+    ) -> List[Tuple[Service, Model]]:
+        """Return (service, model) tuples."""
         stmt = (
-            select(Service, Model, PPUTier)
+            select(Service, Model)
             .join(
                 Model,
                 and_(
@@ -91,7 +91,6 @@ class ServiceRepository:
                     Model.version == Service.model_version,
                 ),
             )
-            .outerjoin(PPUTier, PPUTier.id == Service.tier_id)
             .where(Service.deleted_at.is_(None))
         )
         if task_type:
@@ -105,7 +104,7 @@ class ServiceRepository:
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self._db.execute(stmt)
-        return [(svc, model, tier) for svc, model, tier in result.all()]
+        return [(svc, model) for svc, model in result.all()]
 
     async def list_published_for_model_version(
         self, model_id: str, model_version: str
@@ -131,6 +130,16 @@ class ServiceRepository:
         )
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_tier_names_by_ids(self, tier_ids: List[str]) -> Dict[str, str]:
+        """Return {tier_id_str: tier_name} for the given list of UUID strings."""
+        if not tier_ids:
+            return {}
+        result = await self._db.execute(
+            select(cast(PPUTier.id, String).label("id_str"), PPUTier.name)
+            .where(cast(PPUTier.id, String).in_(tier_ids))
+        )
+        return {row.id_str: row.name for row in result.all()}
 
     # ── Writes ──
 

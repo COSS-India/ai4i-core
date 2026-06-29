@@ -117,7 +117,9 @@ class ServiceService:
                 f"Model '{service.model_id}' v{service.model_version}"
             )
 
-        data = service_detail_dict(service, model)
+        tier_name_map = await self._services.get_tier_names_by_ids(service.tier_ids or [])
+        tier_names = [tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None
+        data = service_detail_dict(service, model, tier_names=tier_names)
         await self._cache.set_service(service.service_id, data)
         return data
 
@@ -137,14 +139,16 @@ class ServiceService:
             offset=offset,
             limit=limit,
         )
+        all_tier_ids = list({tid for svc, _ in rows for tid in (svc.tier_ids or [])})
+        tier_name_map = await self._services.get_tier_names_by_ids(all_tier_ids)
         items = [
             service_to_dict(
                 service,
                 model=model,
                 include_task_languages=True,
-                tier_name=tier.name if tier is not None else None,
+                tier_names=[tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None,
             )
-            for service, model, tier in rows
+            for service, model in rows
         ]
         if offset > 0 or limit is not None:
             total = await self._services.count_services(
@@ -218,7 +222,7 @@ class ServiceService:
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
             unit_rate=unit_rate,
-            tier_id=payload.tierId,
+            tier_ids=payload.tierIds,
             created_by=created_by,
         )
         try:
@@ -230,7 +234,9 @@ class ServiceService:
             raise
 
         # 5. Warm cache
-        data = service_detail_dict(instance, model)
+        tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
+        tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+        data = service_detail_dict(instance, model, tier_names=tier_names)
         await self._cache.set_service(instance.service_id, data)
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
         return service_id
@@ -315,8 +321,8 @@ class ServiceService:
             update_data["cost_per_unit"] = request_dict["costPerUnit"]
         if "unitSize" in request_dict:
             update_data["unit_size"] = request_dict["unitSize"]
-        if "tierId" in request_dict:
-            update_data["tier_id"] = request_dict["tierId"]
+        if "tierIds" in request_dict:
+            update_data["tier_ids"] = request_dict["tierIds"]
 
         # Recompute unit_rate whenever either factor changes.
         if "cost_per_unit" in update_data or "unit_size" in update_data:
@@ -338,7 +344,7 @@ class ServiceService:
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
                     "benchmarks, isPublished, policy, billingUnitType, "
-                    "costPerUnit, unitSize, tierId. Note: name, modelId, "
+                    "costPerUnit, unitSize, tierIds. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),
                 code="NO_UPDATABLE_FIELDS",
@@ -358,8 +364,10 @@ class ServiceService:
             instance.model_id, instance.model_version
         )
         if model is not None:
+            tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
+            tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
             await self._cache.set_service(
-                instance.service_id, service_detail_dict(instance, model)
+                instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
 
     async def delete_service(self, id_str: str) -> None:

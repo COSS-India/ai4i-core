@@ -1,7 +1,7 @@
-"""add_tier_id_to_mm_services
+"""add_tier_ids_to_mm_services
 
-Adds a nullable tier_id foreign key on mm_services referencing ppu_tiers.id.
-A service may optionally belong to a PPU tier; deleting the tier sets this field to NULL.
+Adds a nullable tier_ids ARRAY(String) column on mm_services.
+A service may optionally belong to multiple PPU tiers.
 
 Revision ID: c9b397ba24f6
 Revises: c4d5e6f7a8b9
@@ -23,20 +23,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column(
         'mm_services',
-        sa.Column('tier_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('tier_ids', postgresql.ARRAY(sa.String()), nullable=True),
     )
-    op.create_foreign_key(
-        'fk_mm_services_tier_id',
-        'mm_services',
-        'ppu_tiers',
-        ['tier_id'],
-        ['id'],
-        ondelete='SET NULL',
-    )
-    op.create_index('ix_mm_services_tier_id', 'mm_services', ['tier_id'])
 
 
 def downgrade() -> None:
-    op.drop_index('ix_mm_services_tier_id', table_name='mm_services')
-    op.drop_constraint('fk_mm_services_tier_id', 'mm_services', type_='foreignkey')
-    op.drop_column('mm_services', 'tier_id')
+    op.drop_column('mm_services', 'tier_ids')
