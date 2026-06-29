@@ -122,7 +122,7 @@
 
     { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin/moderator only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin/moderator only (platform-wide)" },
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 134, "description": "PPU usage single-tenant detail (usage.read); admin/moderator platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 135, "description": "PPU usage single-tenant detail (usage.tenant_read); admin/moderator platform-wide, role 5 own tenant only" },
 
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
