@@ -6,11 +6,12 @@ Creates and configures the unified inference service with all components.
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ai4i_core.observability import setup_observability
 from ai4i_core.logging import RequestMiddleware
+from ai4i_core.ppu import load_inference_types, quota_guard
 from routes import router
 from config import settings
 from trace.setup import setup_tracing
@@ -23,6 +24,7 @@ _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
+    load_inference_types(app)
     logger.info("✓ Inference service started")
     yield
     from opentelemetry import trace
@@ -61,7 +63,7 @@ def _setup_middleware(app: FastAPI) -> None:
 
 def _setup_routes(app: FastAPI) -> None:
     """Register all routes/routers with the application."""
-    app.include_router(router, prefix=settings.API_PREFIX)
+    app.include_router(router, prefix=settings.API_PREFIX, dependencies=[Depends(quota_guard)])
 
     # Health check endpoint — excluded from Swagger; used only by Docker HEALTHCHECK
     @app.get("/health", include_in_schema=False)
@@ -125,12 +127,30 @@ def _setup_openapi_security(app: FastAPI) -> None:
             "name": "X-Permission-IDs",
             "description": "Comma-separated list of permission IDs injected by the gateway after token validation.",
         }
+        security_schemes["XBudgetExhausted"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Budget-Exhausted",
+            "description": "Injected by the gateway. Set to 'true' when the tenant's overall budget is exhausted — triggers HTTP 429 (budget_exhausted) for all inference requests.",
+        }
+        security_schemes["XQuotaExhausted"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Quota-Exhausted",
+            "description": "Injected by the gateway. Comma-separated inference type names whose monthly quota is exhausted (e.g. 'nmt' or 'nmt,asr') — triggers HTTP 429 (quota_exhausted) when the request path matches any exhausted type.",
+        }
         for path, methods in (schema.get("paths") or {}).items():
             if path in _PUBLIC_PATHS:
                 continue
             for _method, op in (methods or {}).items():
                 if isinstance(op, dict):
-                    op.setdefault("security", [{"bearerAuth": []}, {"XUserID": []}, {"XPermissionIDs": []}])
+                    op.setdefault("security", [
+                        {"bearerAuth": []},
+                        {"XUserID": []},
+                        {"XPermissionIDs": []},
+                        {"XBudgetExhausted": []},
+                        {"XQuotaExhausted": []},
+                    ])
         app.openapi_schema = schema
         return app.openapi_schema
 
