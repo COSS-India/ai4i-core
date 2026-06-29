@@ -120,9 +120,9 @@
     { "endpoint": "DELETE:/api/v1/pay-per-use/tier",                       "permissionRequired": 143, "description": "Delete PPU tier (ppu.tier.delete)" },
     { "endpoint": "POST:/api/v1/pay-per-use/tenant/tier",                  "permissionRequired": 144, "description": "Assign PPU tier to tenant (ppu.tenant.assign)" },
 
-    { "endpoint": "GET:/api/v1/usage/summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin/moderator only (platform-wide)" },
-    { "endpoint": "GET:/api/v1/usage/tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin/moderator only (platform-wide)" },
-    { "endpoint": "GET:/api/v1/usage/tenant",                              "permissionRequired": 134, "description": "PPU usage single-tenant detail (usage.read); admin/moderator platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin/moderator only (platform-wide)" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin/moderator only (platform-wide)" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 134, "description": "PPU usage single-tenant detail (usage.read); admin/moderator platform-wide, role 5 own tenant only" },
 
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },

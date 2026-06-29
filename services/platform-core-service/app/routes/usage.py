@@ -23,7 +23,7 @@ from app.schemas.pay_per_use.usage import (
 )
 from app.services.pay_per_use.ppu_usage_service import PPUUsageService
 
-router = APIRouter(prefix="/usage", tags=["Usage"])
+router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
 
 def _require_admin(request: Request) -> None:
@@ -44,7 +44,7 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
 
 
-@router.get("/summary", response_model=UsageSummaryResponse)
+@router.get("/usage-summary", response_model=UsageSummaryResponse)
 async def get_usage_summary(
     request: Request,
     billing_period: Annotated[
@@ -59,7 +59,7 @@ async def get_usage_summary(
     return await svc.get_summary(month)
 
 
-@router.get("/tenants", response_model=TenantUsageListResponse)
+@router.get("/usage-tenants", response_model=TenantUsageListResponse)
 async def get_tenant_usage_list(
     request: Request,
     billing_period: Annotated[
@@ -77,7 +77,7 @@ async def get_tenant_usage_list(
     return await svc.get_tenant_list(month, tier, modelTaskType.lower() if modelTaskType else None, auth_db)
 
 
-@router.get("/tenant", response_model=TenantUsageDetailResponse)
+@router.get("/usage-tenant", response_model=TenantUsageDetailResponse)
 async def get_tenant_usage_detail(
     request: Request,
     tenant_id: str = Query(..., description="Tenant ID."),
