@@ -66,7 +66,7 @@ import {
   EditIcon,
   LockIcon,
 } from "@chakra-ui/icons";
-import { isTenantStatus, TENANT } from '../../constants';
+import { isTenantStatus, TENANT, PAGINATION } from '../../constants';
 import { PLATFORM_ROLES } from "../../constants/roles";
 import { LABELS } from "../../constants/labels";
 import * as tenantService from "../../services/tenantService";
@@ -89,7 +89,6 @@ import {
   LATENCY_THRESHOLD_UNITS,
   PERCENTAGE_UNIT,
   EVAL_INTERVALS,
-  FOR_DURATIONS,
 } from "../../constants/alerting";
 import { useAdminTableSurface } from "../common/TableControls";
 import AdminDataTable, {
@@ -97,7 +96,6 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../common/AdminDataTable";
-import { PAGINATION } from "../../constants";
 import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
 

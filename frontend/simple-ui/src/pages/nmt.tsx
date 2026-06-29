@@ -25,6 +25,64 @@ import { TRY_IT_REQUESTS_PER_HOUR } from "../constants/limits";
 
 const pageDefaults = getServicePageDefaults("nmt");
 
+type TryItAlertStatus = "error" | "warning" | "info";
+
+function getAnonymousTryItAlertStatus(
+  rateLimitReached: boolean,
+  showWarning: boolean,
+): TryItAlertStatus {
+  if (rateLimitReached) return "error";
+  if (showWarning) return "warning";
+  return "info";
+}
+
+function getAnonymousTryItAlertTitle(
+  rateLimitReached: boolean,
+  showWarning: boolean,
+): string {
+  if (rateLimitReached) return "Rate Limit Reached";
+  if (showWarning) return "Rate Limit Warning";
+  return "Try Neural Machine Translation";
+}
+
+function AnonymousTryItAlertDescription({
+  rateLimitReached,
+  showWarning,
+  remainingRequests,
+}: {
+  rateLimitReached: boolean;
+  showWarning: boolean;
+  remainingRequests: number;
+}) {
+  if (rateLimitReached) {
+    return (
+      <>
+        You have used all <strong>{TRY_IT_REQUESTS_PER_HOUR} translations</strong> for this hour.
+        Sign in to get access to all services, or try again later.
+      </>
+    );
+  }
+  if (showWarning) {
+    const requestLabel = remainingRequests === 1 ? "translation" : "translations";
+    return (
+      <>
+        You have approximately{" "}
+        <strong>
+          {remainingRequests} {requestLabel}
+        </strong>{" "}
+        remaining. Sign in to get access to all services.
+      </>
+    );
+  }
+  return (
+    <>
+      You&apos;re using NMT without an account. You can try up to{" "}
+      <strong>{TRY_IT_REQUESTS_PER_HOUR} translations per hour</strong>. Sign in to get access to all
+      services.
+    </>
+  );
+}
+
 const NMTPage: React.FC = () => {
   const router = useRouter();
   const { copy } = useCopyToClipboard();
@@ -108,9 +166,7 @@ const NMTPage: React.FC = () => {
 
   const rateLimitBanner = !authLoading && !isAuthenticated && (
     <Alert
-      status={
-        anonymousRateLimitReached ? "error" : showRateLimitWarning ? "warning" : "info"
-      }
+      status={getAnonymousTryItAlertStatus(anonymousRateLimitReached, showRateLimitWarning)}
       variant="left-accent"
       borderRadius="md"
       w="full"
@@ -120,31 +176,14 @@ const NMTPage: React.FC = () => {
       <AlertIcon />
       <Box flex="1">
         <AlertTitle fontSize="md">
-          {anonymousRateLimitReached
-            ? "Rate Limit Reached"
-            : showRateLimitWarning
-              ? "Rate Limit Warning"
-              : "Try Neural Machine Translation"}
+          {getAnonymousTryItAlertTitle(anonymousRateLimitReached, showRateLimitWarning)}
         </AlertTitle>
         <AlertDescription fontSize="sm">
-          {anonymousRateLimitReached ? (
-            <>
-              You have used all <strong>{TRY_IT_REQUESTS_PER_HOUR} translations</strong> for this hour. Sign in to get access to all services, or try again later.
-            </>
-          ) : showRateLimitWarning ? (
-            <>
-              You have approximately{" "}
-              <strong>
-                {remainingRequests} translation{remainingRequests !== 1 ? "s" : ""}
-              </strong>{" "}
-              remaining. Sign in to get access to all services.
-            </>
-          ) : (
-            <>
-              You&apos;re using NMT without an account. You can try up to{" "}
-              <strong>{TRY_IT_REQUESTS_PER_HOUR} translations per hour</strong>. Sign in to get access to all services.
-            </>
-          )}
+          <AnonymousTryItAlertDescription
+            rateLimitReached={anonymousRateLimitReached}
+            showWarning={showRateLimitWarning}
+            remainingRequests={remainingRequests}
+          />
         </AlertDescription>
       </Box>
       {!anonymousRateLimitReached && (

@@ -277,7 +277,7 @@ export default function AdminDataTable<T>({
   tableContainerProps,
   size = "sm",
   paginationPosition = "bottom",
-}: AdminDataTableProps<T>) {
+}: Readonly<AdminDataTableProps<T>>) {
   const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
   const clientTable = useAdminDataTable(paginate === "client" ? items : [], {

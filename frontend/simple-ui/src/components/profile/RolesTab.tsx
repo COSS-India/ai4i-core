@@ -28,6 +28,47 @@ import UserSearchableSelect from "../common/UserSearchableSelect";
 import StandardModal from "../common/StandardModal";
 import { formatPlatformRoleLabel } from "../../constants/roles";
 
+function getUserSelectPlaceholder(isLoadingUsers: boolean, defaultTenantId?: string | null): string {
+  if (isLoadingUsers) return "Loading users...";
+  if (defaultTenantId) return "Select a user";
+  return "Default tenant not found";
+}
+
+function SelectedUserRolesContent({
+  isLoading,
+  roles,
+}: {
+  isLoading: boolean;
+  roles: string[];
+}) {
+  if (isLoading) {
+    return (
+      <Center py={4}>
+        <Spinner size="md" color="blue.500" />
+      </Center>
+    );
+  }
+  if (roles.length === 0) {
+    return (
+      <Alert status="info" borderRadius="md">
+        <AlertIcon />
+        <AlertDescription>This user has no roles assigned.</AlertDescription>
+      </Alert>
+    );
+  }
+  return (
+    <Wrap spacing={2}>
+      {roles.map((roleName) => (
+        <WrapItem key={roleName}>
+          <Badge colorScheme="green" fontSize="sm" px={2} py={1}>
+            {formatPlatformRoleLabel(roleName)}
+          </Badge>
+        </WrapItem>
+      ))}
+    </Wrap>
+  );
+}
+
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
   isLoadingUsers: boolean;
@@ -87,13 +128,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                 usersFromSeedOnly={true}
                 isLoading={isLoadingUsers}
                 isDisabled={isLoadingUsers || !defaultTenantId}
-                placeholder={
-                  isLoadingUsers
-                    ? "Loading users..."
-                    : defaultTenantId
-                      ? "Select a user"
-                      : "Default tenant not found"
-                }
+                placeholder={getUserSelectPlaceholder(isLoadingUsers, defaultTenantId)}
                 selectedPreview={rt.selectedUser}
                 allowClear
               />
@@ -106,26 +141,10 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
               <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                 Current Role for {rt.selectedUser.username}
               </Heading>
-              {rt.isLoadingUserRoles ? (
-                <Center py={4}>
-                  <Spinner size="md" color="blue.500" />
-                </Center>
-              ) : rt.selectedUserRoles.length > 0 ? (
-                <Wrap spacing={2}>
-                  {rt.selectedUserRoles.map((roleName) => (
-                    <WrapItem key={roleName}>
-                      <Badge colorScheme="green" fontSize="sm" px={2} py={1}>
-                        {formatPlatformRoleLabel(roleName)}
-                      </Badge>
-                    </WrapItem>
-                  ))}
-                </Wrap>
-              ) : (
-                <Alert status="info" borderRadius="md">
-                  <AlertIcon />
-                  <AlertDescription>This user has no roles assigned.</AlertDescription>
-                </Alert>
-              )}
+              <SelectedUserRolesContent
+                isLoading={rt.isLoadingUserRoles}
+                roles={rt.selectedUserRoles}
+              />
             </Box>
           )}
 

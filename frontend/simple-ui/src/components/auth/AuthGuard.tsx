@@ -7,10 +7,7 @@ import { Spinner, Center } from '@chakra-ui/react';
 import { useAuth } from '../../hooks/useAuth';
 import {
   canAccessUsageDashboard,
-  isGuestUser,
   isPlatformAdminUser,
-  isRegularUser,
-  isTenantAdminUser,
 } from '../../utils/rbac';
 
 interface AuthGuardProps {

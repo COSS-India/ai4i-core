@@ -1,14 +1,7 @@
 // LLM service API client with typed methods
 
 import { LLM_SUPPORTED_LANGUAGES } from '../constants';
-import {
-  AGRINET_MODEL,
-  isLlmChatService,
-  LLM_CHAT_DEFAULT_SOURCE_LANGUAGE,
-  LLM_CHAT_DEFAULT_TARGET_LANGUAGE,
-  LLM_CHAT_MODEL,
-  LLM_CHAT_MODELS,
-} from '../constants/modelManagement';
+import { AGRINET_MODEL, LLM_CHAT_MODEL } from '../constants/modelManagement';
 import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';

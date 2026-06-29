@@ -35,6 +35,33 @@ export const VALIDATION = {
   },
 } as const;
 
-/** ES5-compatible Indic + Latin text pattern for inference inputs. */
-export const INDIC_TEXT_CHAR_REGEX =
-  /^(?:[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9]|[\u0900-\u097F]|[\u0980-\u09FF]|[\u0A00-\u0A7F]|[\u0A80-\u0AFF]|[\u0B00-\u0B7F]|[\u0B80-\u0BFF]|[\u0C00-\u0C7F]|[\u0C80-\u0CFF]|[\u0D00-\u0D7F]|[\u0D80-\u0DFF])*$/;
+const INDIC_CODEPOINT_MIN = 0x0900;
+const INDIC_CODEPOINT_MAX = 0x0dff;
+
+const ALLOWED_SPECIAL_CHARS = new Set(
+  ' .,!?;:\'"\-–—()[]{}@#$%&*+=/\\<>~`'.split(""),
+);
+
+function isAllowedLatinChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  if (code >= 0x41 && code <= 0x5a) return true;
+  if (code >= 0x61 && code <= 0x7a) return true;
+  if (code >= 0x30 && code <= 0x39) return true;
+  if (/\s/.test(char)) return true;
+  return ALLOWED_SPECIAL_CHARS.has(char);
+}
+
+/** Validates Indic + Latin text for inference inputs (replaces complex regex). */
+export function isIndicTextInputValid(text: string): boolean {
+  for (const char of text) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) return false;
+    if (codePoint >= INDIC_CODEPOINT_MIN && codePoint <= INDIC_CODEPOINT_MAX) continue;
+    if (isAllowedLatinChar(char)) continue;
+    return false;
+  }
+  return true;
+}
+
+/** @deprecated Use isIndicTextInputValid — kept for call sites using .test(). */
+export const INDIC_TEXT_CHAR_REGEX = { test: isIndicTextInputValid };
