@@ -121,7 +121,7 @@ class PPUUsageRepository:
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 func.coalesce(usage_sq.c.total_units, 0).label("total_units"),
-                func.coalesce(quota_sq.c.total_quota, 0).label("total_quota"),
+                quota_sq.c.total_quota.label("total_quota"),
                 unit_size_col,
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
@@ -173,7 +173,7 @@ class PPUUsageRepository:
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 PPUTier.name.label("tier_name"),
-                func.coalesce(quota_sq.c.total_quota, 0).label("total_quota"),
+                quota_sq.c.total_quota.label("total_quota"),
                 unit_size_sq,
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)

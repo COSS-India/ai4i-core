@@ -117,10 +117,10 @@ class PPUUsageService:
             budget_limit = float(row.budget_limit)
             remaining_budget = float(row.available_balance)
             total_units = int(row.total_units or 0)
-            total_quota = int(row.total_quota or 0)
+            raw_quota = row.total_quota  # None means unlimited (no quota rows for this tier)
             unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
             consumption = round(total_units / unit_size, 1)
-            quota_display = round(total_quota / unit_size, 1)
+            quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
 
             items.append(TenantUsageItem(
                 tenantId=row.tenant_id,
@@ -132,7 +132,7 @@ class PPUUsageService:
                 quotaLimit=quota_display,
                 quotaUnit=unit_label,
                 consumptionToDate=consumption,
-                remainingQuota=round(max(0.0, quota_display - consumption), 1),
+                remainingQuota=round(max(0.0, quota_display - consumption), 1) if quota_display is not None else None,
                 currency=_CURRENCY,
             ))
 
@@ -186,7 +186,8 @@ class PPUUsageService:
         budget_limit = float(assignment.budget_limit)
         remaining_budget = float(assignment.available_balance)
         unit_size = int(assignment.unit_size or _DEFAULT_UNIT_SIZE)
-        quota_display = round(int(assignment.total_quota or 0) / unit_size, 1)
+        raw_quota = assignment.total_quota  # None means unlimited (no quota rows for this tier)
+        quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
 
         return TenantUsageDetailResponse(
             tenantId=tenant_id,
@@ -198,7 +199,7 @@ class PPUUsageService:
             quotaLimit=quota_display,
             quotaUnit=quota_unit,
             consumptionToDate=round(total_consumption, 1),
-            remainingQuota=round(max(0.0, quota_display - total_consumption), 1),
+            remainingQuota=round(max(0.0, quota_display - total_consumption), 1) if quota_display is not None else None,
             currency=_CURRENCY,
             breakdown=breakdown,
         )

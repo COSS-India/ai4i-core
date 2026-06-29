@@ -1,4 +1,6 @@
 """Response schemas for the PPU usage dashboard."""
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -31,10 +33,10 @@ class TenantUsageItem(BaseModel):
     budgetLimit: float
     spendToDate: float
     remainingBudget: float
-    quotaLimit: float
+    quotaLimit: Optional[float]
     quotaUnit: str
     consumptionToDate: float
-    remainingQuota: float
+    remainingQuota: Optional[float]
     currency: str
 
 
