@@ -115,31 +115,43 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
   const adoption = data.platform_adoption;
   const section = METERING.SECTIONS.PLATFORM_ADOPTION;
 
-  if (!adoption) return null;
+  const activeByKey = useMemo(
+    () => Object.fromEntries((data.active_tenants ?? []).map((cell) => [cell.key, cell])),
+    [data.active_tenants],
+  );
+
+  if (!adoption && !data.active_tenants?.length) return null;
 
   const adoptionValues: Record<string, number | null | undefined> = {
-    total_tenants: adoption.total_tenants,
-    new_tenants_7d: adoption.new_tenants_7d,
-    active_24h: adoption.active_24h,
-    active_7d: adoption.active_7d,
-    active_30d: adoption.active_30d,
+    total_tenants: adoption?.total_tenants,
+    new_tenants_7d: adoption?.new_tenants_7d,
+    active_24h: adoption?.active_24h,
+    active_7d: adoption?.active_7d,
+    active_30d: adoption?.active_30d,
   };
 
   return (
     <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel bare>
       <SimpleGrid columns={{ base: 1, sm: 2, lg: 5 }} spacing={4}>
-        {section.CARDS.map((card) => (
-          <KpiCard
-            key={card.key}
-            label={card.label}
-            value={
-              adoptionValues[card.key as keyof PlatformAdoption] ??
-              METERING.GRAPH.EMPTY_VALUE
-            }
-            helper={card.helper}
-            accent="teal"
-          />
-        ))}
+        {section.CARDS.map((card) => {
+          const activeCell = activeByKey[card.key];
+          const adoptionValue = adoptionValues[card.key as keyof PlatformAdoption];
+
+          return (
+            <KpiCard
+              key={card.key}
+              label={activeCell?.label ?? card.label}
+              value={
+                activeCell?.value ??
+                adoptionValue ??
+                METERING.GRAPH.EMPTY_VALUE
+              }
+              pctChange={activeCell?.pct_change}
+              helper={card.helper}
+              accent="teal"
+            />
+          );
+        })}
       </SimpleGrid>
     </MeteringSectionCard>
   );

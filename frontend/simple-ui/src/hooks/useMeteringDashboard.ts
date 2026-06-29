@@ -2,7 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { listTenants } from "../services/tenantService";
-import type { MeteringTopN, MeteringWindow } from "../types/metering";
+import type {
+  MeteringResponseMeta,
+  MeteringTopN,
+  MeteringWindow,
+} from "../types/metering";
 import {
   fetchMeteringOverview,
   fetchMeteringServiceConsumption,
@@ -12,7 +16,7 @@ import {
 } from "../services/meteringService";
 import { getMeteringRoleViewConfig } from "../utils/rbac";
 import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery";
-import { resolveMeteringGeneratedAt } from "../utils/meteringFormatters";
+import { resolveMeteringGeneratedAt, formatMeteringDataStateBanner } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
 
 export interface TenantPreviewOption {
@@ -162,8 +166,23 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     return () => observer.disconnect();
   }, [tenantOverviewEnabled, overview]);
 
-  const isDegraded = Boolean(
-    overview?.degraded || tenantQuery.data?.degraded || serviceQuery.data?.degraded,
+  const primaryMeteringResponse = useMemo((): MeteringResponseMeta | null => {
+    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.data) {
+      return tenantQuery.data;
+    }
+    if (isAdopterView && subTab === METERING.SUB_TAB.SERVICE && serviceQuery.data) {
+      return serviceQuery.data;
+    }
+    return overview ?? null;
+  }, [isAdopterView, subTab, tenantQuery.data, serviceQuery.data, overview]);
+
+  const dataStateBanner = useMemo(
+    () =>
+      formatMeteringDataStateBanner(
+        primaryMeteringResponse?.data_state,
+        primaryMeteringResponse?.generated_at,
+      ),
+    [primaryMeteringResponse?.data_state, primaryMeteringResponse?.generated_at],
   );
 
   const primaryError = useMemo(() => {
@@ -248,7 +267,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     isRefreshing,
     handleRefresh,
     primaryError,
-    isDegraded,
+    dataStateBanner,
     requestVolumeGraph,
     totalRequestsKpi,
     successRateKpi,

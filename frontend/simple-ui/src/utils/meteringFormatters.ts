@@ -1,15 +1,100 @@
-import type { MeteringGraph, MeteringWindow, ServiceConsumptionSummary, ServiceRow } from "../types/metering";
+import type {
+  MeteringDataState,
+  MeteringGraph,
+  MeteringResponseMeta,
+  MeteringWindow,
+  ServiceConsumptionSummary,
+  ServiceRow,
+} from "../types/metering";
 import { METERING } from "../config/meteringConstants";
+import { meteringServiceColor } from "./meteringColors";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
 
 export type MeteringKpiInput = string | number | null | undefined;
 
-export interface RequestVolumeChartPoint {
+export interface MeteringRatePoint {
+  ts: number;
   label: string;
-  successful: number;
-  failed: number;
+  rps: number;
+}
+
+export interface RequestVolumeChartPoint {
+  ts: number;
+  label: string;
+  requests: number;
+  failureRate?: number | null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+/** X-axis label format per selected time window (HH:mm or DD MMM). */
+export function formatMeteringAxisLabel(ts: number, window: MeteringWindow): string {
+  const d = new Date(ts * 1000);
+  if (window === "1h" || window === "24h") {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+/** Rich tooltip timestamp — includes time for multi-day windows. */
+export function formatMeteringTooltipLabel(ts: number, window: MeteringWindow): string {
+  const d = new Date(ts * 1000);
+  if (window === "1h" || window === "24h") {
+    return formatMeteringAxisLabel(ts, window);
+  }
+  return d.toLocaleString([], {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+/**
+ * Build sparse x-axis labels for metering charts.
+ * 1h → every 10 min; 24h → every 4 h; 7d → daily; 30d → weekly from first point.
+ */
+export function buildMeteringAxisLabels(
+  timestamps: number[],
+  window: MeteringWindow,
+): string[] {
+  if (!timestamps.length) return [];
+
+  const anchorTs = timestamps[0] * 1000;
+  const seenDays = new Set<string>();
+
+  return timestamps.map((ts) => {
+    const d = new Date(ts * 1000);
+    let show = false;
+
+    switch (window) {
+      case "1h":
+        show = d.getMinutes() % 10 === 0;
+        break;
+      case "24h":
+        show = d.getMinutes() === 0 && d.getHours() % 4 === 0;
+        break;
+      case "7d": {
+        const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        if (!seenDays.has(dayKey)) {
+          seenDays.add(dayKey);
+          show = true;
+        }
+        break;
+      }
+      case "30d": {
+        const elapsed = ts * 1000 - anchorTs;
+        show = elapsed >= 0 && elapsed % WEEK_MS < 60_000;
+        break;
+      }
+    }
+
+    return show ? formatMeteringAxisLabel(ts, window) : "";
+  });
 }
 
 /** Map graph series points by timestamp for aligned multi-series charts. */
@@ -28,68 +113,59 @@ export function findMeteringSeries(
   return graph?.series?.find((s) => s.key === key) ?? null;
 }
 
-/** Build request volume chart rows from the successful / failed count series. */
+/** Build request volume chart rows; joins failure_rate to requests by timestamp. */
 export function buildRequestVolumeChartData(
   graph?: MeteringGraph | null,
+  timeWindow: MeteringWindow = METERING.DEFAULTS.TIME_WINDOW,
 ): RequestVolumeChartPoint[] {
-  if (!graph?.series?.length) return [];
+  const requestsSeries = extractMeteringRequestsSeries(graph);
+  if (!requestsSeries?.points?.length || !graph) return [];
 
-  const successfulSeries = findMeteringSeries(
-    graph,
-    METERING.GRAPH.SERIES_KEYS.SUCCESSFUL,
-  );
-  const failedSeries = findMeteringSeries(
-    graph,
-    METERING.GRAPH.SERIES_KEYS.FAILED,
+  const failureByTs = indexMeteringSeriesByTs(
+    findMeteringSeries(graph, METERING.GRAPH.SERIES_KEYS.FAILURE_RATE),
   );
 
-  const failedByTs = indexMeteringSeriesByTs(failedSeries);
+  const timestamps = requestsSeries.points.map((p) => p.ts);
+  const axisLabels = buildMeteringAxisLabels(timestamps, timeWindow);
 
-  // Build the timeline from whichever series has points (they share timestamps).
-  const baseSeries = successfulSeries ?? failedSeries;
-  if (!baseSeries?.points?.length) return [];
-
-  const successfulByTs = indexMeteringSeriesByTs(successfulSeries);
-
-  return baseSeries.points.map((p) => ({
-    label: formatMeteringTimestamp(p.ts, graph.step),
-    successful: successfulByTs.get(p.ts) ?? 0,
-    failed: failedByTs.get(p.ts) ?? 0,
+  return requestsSeries.points.map((p, index) => ({
+    ts: p.ts,
+    label: axisLabels[index] ?? "",
+    requests: p.value,
+    failureRate: failureByTs.get(p.ts) ?? null,
   }));
 }
 
-/** Parse a Prometheus duration step (e.g. "10m", "4h", "1d") into seconds. */
-function meteringStepSeconds(step: string): number {
-  const match = /^(\d+)([smhd])$/.exec(step.trim());
-  if (!match) return 0;
-  const unitSeconds: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
-  return Number(match[1]) * (unitSeconds[match[2]] ?? 0);
+/** Resolve the primary requests / RPS series from a metering graph payload. */
+export function extractMeteringRequestsSeries(
+  graph?: MeteringGraph | null,
+): MeteringGraph["series"][number] | null {
+  if (!graph?.series?.length) return null;
+  const { REQUESTS, REQUEST_RATE } = METERING.GRAPH.SERIES_KEYS;
+  return (
+    graph.series.find((s) => s.key === REQUESTS) ??
+    graph.series.find((s) => s.key === REQUEST_RATE) ??
+    graph.series.find((s) => /request/i.test(s.key)) ??
+    graph.series[0] ??
+    null
+  );
 }
 
-/**
- * Label a chart bucket based on its step width, so the axis matches the window:
- *   - day-or-larger buckets (7d → 1d, 30d-as-weekly → 7d): date only ("17 Jun")
- *   - 6h buckets (30d window): date + time, since they span many days ("25 Jun, 16:36")
- *   - intraday buckets (1h → 10m, 24h → 4h): time of day ("18:12")
- * Keying off the step's duration (not exact string match) keeps labels correct even
- * for steps not enumerated in METERING.GRAPH.STEP, including stale cached responses.
- */
-export function formatMeteringTimestamp(ts: number, step: string): string {
-  const d = new Date(ts * 1000);
-  const stepSeconds = meteringStepSeconds(step);
-  if (stepSeconds >= 86_400) {
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
-  }
-  if (stepSeconds >= 6 * 3_600) {
-    return d.toLocaleString([], {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  }
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+export function extractMeteringRateChartData(
+  graph?: MeteringGraph | null,
+  timeWindow: MeteringWindow = METERING.DEFAULTS.TIME_WINDOW,
+): MeteringRatePoint[] {
+  const series = extractMeteringRequestsSeries(graph);
+  if (!series?.points?.length) return [];
+
+  const timestamps = series.points.map((p) => p.ts);
+  const axisLabels = buildMeteringAxisLabels(timestamps, timeWindow);
+
+  return series.points.map((p, index) => ({
+    ts: p.ts,
+    label: axisLabels[index] ?? "",
+    rps: p.value,
+  }));
 }
 
 /** Format throughput / RPS values (supports sub-unit rates from API). */
@@ -99,6 +175,26 @@ export function formatMeteringRps(value?: number | null): string | number {
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+export function formatMeteringPeakAt(peakAt?: string | null): string {
+  if (!peakAt) return METERING.GRAPH.EMPTY_VALUE;
+  // API returns bucket labels (e.g. H-3, D-2, M-5), not timestamps.
+  if (/^[HDM]-\d+$/i.test(peakAt.trim())) {
+    return peakAt.trim();
+  }
+  try {
+    const d = new Date(peakAt);
+    if (Number.isNaN(d.getTime())) return peakAt;
+    return d.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return peakAt;
+  }
 }
 
 /** Prefer organisation name; fall back to tenant id/slug or lookup table. */
@@ -134,6 +230,20 @@ export function formatSuccessRateDisplay(rate: MeteringKpiInput): string {
   return `${pct}%`;
 }
 
+/** Failure rate label for request health summary cards. */
+export function formatFailureRateDisplay(
+  requestHealth?: { failure_rate_pct: number } | null,
+  successPct?: number | null,
+): string {
+  if (requestHealth) {
+    return `${requestHealth.failure_rate_pct.toFixed(2)}%`;
+  }
+  if (successPct != null) {
+    return `${(100 - successPct).toFixed(2)}%`;
+  }
+  return METERING.GRAPH.EMPTY_VALUE;
+}
+
 /** Format KPI Cell.value for display (mixed types per key). */
 export function formatMeteringKpiValue(
   key: string,
@@ -167,6 +277,45 @@ export function formatMeteringRefreshTime(iso?: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
+/** Absolute timestamp for data_state error banners. */
+export function formatMeteringGeneratedAt(iso?: string | null): string {
+  if (!iso?.trim()) return METERING.GRAPH.EMPTY_VALUE;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+export type MeteringDataStateBanner =
+  | { status: "error"; message: string }
+  | { status: "info"; message: string };
+
+/** Map API `data_state` to a dashboard banner (omit when ok). */
+export function formatMeteringDataStateBanner(
+  dataState: MeteringDataState | undefined,
+  generatedAt?: string | null,
+): MeteringDataStateBanner | null {
+  switch (dataState) {
+    case "error":
+      return {
+        status: "error",
+        message: `${METERING.BANNERS.DATA_STATE.ERROR_PREFIX} ${formatMeteringGeneratedAt(generatedAt)}`,
+      };
+    case "empty":
+      return { status: "info", message: METERING.BANNERS.DATA_STATE.EMPTY };
+    case "no_history":
+      return { status: "info", message: METERING.BANNERS.DATA_STATE.NO_HISTORY };
+    default:
+      return null;
+  }
+}
+
 /** Pick the latest `generated_at` among active metering endpoint responses. */
 export function resolveMeteringGeneratedAt(
   timestamps: (string | undefined | null)[],
@@ -192,6 +341,16 @@ export function formatMeteringLastRefreshed(
   return formatMeteringRefreshTime(resolveMeteringGeneratedAt(timestamps));
 }
 
+export function parseCompactTotal(total: string | number): number | null {
+  if (typeof total === "number") return total;
+  if (!total || total === METERING.GRAPH.EMPTY_VALUE) return null;
+  const s = String(total).trim();
+  if (s.endsWith("M")) return Number.parseFloat(s) * 1_000_000;
+  if (s.endsWith("K")) return Number.parseFloat(s) * 1_000;
+  const n = Number.parseFloat(s);
+  return Number.isNaN(n) ? null : n;
+}
+
 /** Compact number display — `indian` uses Cr/L suffixes for service metrics. */
 export function formatCompactNumber(
   n: number,
@@ -208,11 +367,38 @@ export function formatCompactNumber(
   return n.toLocaleString();
 }
 
+export interface ServiceChartSlice {
+  name: string;
+  value: number;
+  color: string;
+  pct: number;
+}
+
+/** Donut + legend data for service breakdown charts. */
+export function buildServiceBreakdownChart(breakdown: ServiceRow[]): {
+  slices: ServiceChartSlice[];
+  totalRequests: number;
+} {
+  const totalRequests = breakdown.reduce((sum, s) => sum + s.requests, 0);
+  const slices = breakdown.map((s, i) => {
+    const value = s.requests;
+    const pct =
+      s.percentage ?? (totalRequests > 0 ? (value / totalRequests) * 100 : 0);
+    return {
+      name: s.service,
+      value,
+      color: meteringServiceColor(s.service, i),
+      pct,
+    };
+  });
+  return { slices, totalRequests };
+}
+
 export interface ServiceInsights {
-  // null in the empty-state (no service had traffic in the window).
-  mostUsed: { service: string; requests: number } | null;
-  highestFailureRate: number | null;
-  highestFailureService: string | null;
+  activeCount: number;
+  mostUsed: { service: string; requests: number };
+  highestFailureRate: number;
+  highestFailureService: string;
 }
 
 /** Service tab KPI row — prefers API summary, derives from breakdown when absent. */
@@ -222,13 +408,15 @@ export function deriveServiceInsights(
 ): ServiceInsights | null {
   if (summary) {
     return {
+      activeCount: summary.active_services,
       mostUsed: summary.most_used,
-      highestFailureRate: summary.highest_failure_rate?.failure_rate_pct ?? null,
-      highestFailureService: summary.highest_failure_rate?.service ?? null,
+      highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
+      highestFailureService: summary.highest_failure_rate.service,
     };
   }
   if (!breakdown.length) return null;
 
+  const active = breakdown.filter((s) => s.requests > 0);
   const mostUsed = [...breakdown].sort((a, b) => b.requests - a.requests)[0];
   const highestFailure = [...breakdown].sort(
     (a, b) =>
@@ -239,6 +427,7 @@ export function deriveServiceInsights(
   if (!mostUsed || !highestFailure) return null;
 
   return {
+    activeCount: active.length,
     mostUsed: { service: mostUsed.service, requests: mostUsed.requests },
     highestFailureRate: highestFailure.failure_rate_pct ?? 100 - highestFailure.success_pct,
     highestFailureService: highestFailure.service,

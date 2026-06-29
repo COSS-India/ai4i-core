@@ -3,6 +3,7 @@ import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ServiceConsumptionResponse } from "../../types/metering";
 import {
+  buildServiceBreakdownChart,
   deriveServiceInsights,
   formatCompactNumber,
   formatNativeConsumption,
@@ -14,45 +15,41 @@ import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
+import ThroughputLoadSection from "./ThroughputLoadSection";
 
 interface ServiceConsumptionTabProps {
   data?: ServiceConsumptionResponse;
   isLoading?: boolean;
   errorMessage?: string | null;
-  /** Render the service-distribution donut above the breakdown. Defaults to true. */
-  showDonut?: boolean;
 }
 
 const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   data,
   isLoading,
   errorMessage,
-  showDonut = true,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
   const breakdown = data?.service_breakdown ?? [];
+
+  const { slices } = useMemo(
+    () => buildServiceBreakdownChart(breakdown),
+    [breakdown],
+  );
 
   const insights = useMemo(
     () => deriveServiceInsights(data?.summary, breakdown),
     [data?.summary, breakdown],
   );
 
-  // Donut shows the share of total requests per service (services with traffic only).
-  const { donutData, donutLegend } = useMemo(() => {
-    const active = breakdown.filter((row) => row.requests > 0);
-    const total = active.reduce((sum, row) => sum + row.requests, 0);
-    const donutData = active.map((row, i) => ({
-      name: row.service,
-      value: row.requests,
-      color: meteringServiceColor(row.service, i),
-    }));
-    const donutLegend = donutData.map((d) => ({
-      name: d.name,
-      color: d.color,
-      pct: total > 0 ? (d.value / total) * 100 : 0,
-    }));
-    return { donutData, donutLegend };
-  }, [breakdown]);
+  const pieData = useMemo(
+    () => slices.map(({ name, value, color }) => ({ name, value, color })),
+    [slices],
+  );
+
+  const legendItems = useMemo(
+    () => slices.map(({ name, color, pct }) => ({ name, color, pct })),
+    [slices],
+  );
 
   return (
     <MeteringAsyncState
@@ -64,20 +61,22 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+              <KpiCard
+                label={section.ACTIVE_SERVICES}
+                value={insights.activeCount}
+                helper={section.ACTIVE_SERVICES_HELPER}
+                accent="gray"
+              />
               <KpiCard
                 label={section.MOST_USED}
                 value={
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="green.400" />
-                    <Text as="span">{insights.mostUsed?.service ?? "—"}</Text>
+                    <Text as="span">{insights.mostUsed.service}</Text>
                   </HStack>
                 }
-                helper={
-                  insights.mostUsed
-                    ? `${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`
-                    : "—"
-                }
+                helper={`${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`}
                 accent="gray"
               />
               <KpiCard
@@ -86,34 +85,33 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="pink.300" />
                     <Text as="span" color="orange.600">
-                      {insights.highestFailureService ?? "—"}
+                      {insights.highestFailureService}
                     </Text>
                   </HStack>
                 }
-                helper={
-                  insights.highestFailureRate != null
-                    ? `${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`
-                    : "—"
-                }
+                helper={`${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`}
                 accent="gray"
               />
             </SimpleGrid>
           ) : null}
 
-          {showDonut && donutData.length ? (
-            <MeteringSectionCard
-              title={section.CONSUMPTION_TITLE}
-              subtitle={`${section.CONSUMPTION_SUBTITLE_PREFIX} ${getWindowLabel(data.scope.window)}`}
-              sectionLabel
-            >
-              <MeteringDonutChart
-                data={donutData}
-                legendItems={donutLegend}
-                centerPrimary={section.DONUT_CENTER_PRIMARY}
-                centerSecondary={section.DONUT_CENTER_SECONDARY}
-              />
-            </MeteringSectionCard>
-          ) : null}
+          <ThroughputLoadSection
+            throughput={data.throughput}
+            timeWindow={data.scope.window}
+            requestVolumeGraph={data.request_volume}
+          />
+
+          <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
+            <MeteringDonutChart
+              data={pieData}
+              legendItems={legendItems}
+              height={300}
+              innerRadius={70}
+              outerRadius={110}
+              centerPrimary={section.DONUT_PRIMARY}
+              centerSecondary={section.DONUT_SECONDARY}
+            />
+          </MeteringSectionCard>
 
           <MeteringSectionCard
             title={section.BREAKDOWN_TITLE}
