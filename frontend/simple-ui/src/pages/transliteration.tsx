@@ -18,13 +18,12 @@ import {
 } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError } from "../utils/errorHandler";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("transliteration");
 
 const TransliterationPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputText, setInputText] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("");
@@ -68,26 +67,26 @@ const TransliterationPage: React.FC = () => {
   const handleProcess = async () => {
     const trimmedText = inputText.trim();
     if (!serviceId?.trim()) {
-      toast({ title: "Service Required", description: "Please select a transliteration.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a transliteration." });
       return;
     }
     if (!sourceLanguage?.trim() || !targetLanguage?.trim()) {
-      toast({ title: "Language Required", description: "Please select both source and target languages.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select both source and target languages." });
       return;
     }
     if (!trimmedText) {
       const err = TRANSLITERATION_ERRORS.TEXT_REQUIRED;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (trimmedText.length < MIN_TRANSLITERATION_TEXT_LENGTH) {
       const err = TRANSLITERATION_ERRORS.TEXT_TOO_SHORT;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (trimmedText.length > MAX_TEXT_LENGTH) {
       const err = TRANSLITERATION_ERRORS.TEXT_TOO_LONG;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
@@ -106,15 +105,8 @@ const TransliterationPage: React.FC = () => {
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "transliteration");
+      const { message: errorMessage } = parseError(err, { service: "transliteration" });
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

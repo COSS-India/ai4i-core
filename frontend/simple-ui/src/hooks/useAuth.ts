@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { User, AuthState, LoginRequest, LoginResponse, RegisterRequest } from '../types/auth';
 import authService from '../services/authService';
 import { useTokenRefresh } from './useTokenRefresh';
+import { UI_ERROR_MESSAGES } from '../config/constants';
 
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
@@ -28,7 +29,7 @@ function runAuthInitOnce(): Promise<void> {
 
     if (hasToken && storedUser) {
       try {
-        const currentUser = await authService.getCurrentUser();
+        const currentUser = await authService.getCurrentUser({ suppressErrorAlert: true });
         authService.setStoredUser(currentUser);
       } catch (error: any) {
         const errorMessage = error?.message || 'Token validation failed';
@@ -164,7 +165,9 @@ export const useAuth = () => {
       }
     };
 
-    initializeAuth();
+    void initializeAuth().catch((error) => {
+      console.error('Auth initialization failed:', error);
+    });
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', handleSessionRevokedFromStorage);
     }
@@ -180,7 +183,7 @@ export const useAuth = () => {
     // Verify tokens are stored before proceeding
     const accessToken = authService.getAccessToken();
     if (!accessToken) {
-      throw new Error('Access token was not stored after login. Please try again.');
+      throw new Error(UI_ERROR_MESSAGES.LOGIN_TOKEN_NOT_STORED);
     }
 
     // Small delay to ensure tokens are fully stored (especially for sessionStorage)
@@ -230,7 +233,7 @@ export const useAuth = () => {
         isLoginLoading: false,
         isGuestLoginLoading: false,
         error: errorMessage.includes('timeout')
-          ? 'Request timeout. The server is taking too long to respond. Please try again.'
+          ? UI_ERROR_MESSAGES.REQUEST_TIMEOUT
           : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
           ? 'Invalid credentials. Please check your username and password.'
           : `Token validation failed: ${errorMessage}. Please try logging in again.`,
@@ -266,7 +269,7 @@ export const useAuth = () => {
       } else if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
         errorMessage = 'Login endpoint not found. Please check your connection and try again.';
       } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-        errorMessage = 'Request timeout. The server is taking too long to respond. Please try again.';
+        errorMessage = UI_ERROR_MESSAGES.REQUEST_TIMEOUT;
       } else if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
         errorMessage = 'Network error. Please check your internet connection and try again.';
       }

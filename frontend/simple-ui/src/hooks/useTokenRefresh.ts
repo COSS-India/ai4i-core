@@ -11,13 +11,13 @@ interface UseTokenRefreshOptions {
    * Default: true
    */
   enableBackgroundRefresh?: boolean;
-  
+
   /**
    * Refresh interval in milliseconds
    * Default: 5 minutes (300000ms)
    */
   refreshInterval?: number;
-  
+
   /**
    * Threshold in minutes before expiry to trigger refresh
    * Default: 5 minutes
@@ -27,7 +27,7 @@ interface UseTokenRefreshOptions {
 
 /**
  * Hook to manage automatic token refresh
- * 
+ *
  * Usage:
  * ```typescript
  * const { refreshToken, isRefreshing } = useTokenRefresh({
@@ -90,11 +90,11 @@ export const useTokenRefresh = (options: UseTokenRefreshOptions = {}) => {
     }
 
     // Initial check
-    refreshToken();
+    void refreshToken().catch(() => undefined);
 
     // Setup interval for periodic checks
     intervalRef.current = setInterval(() => {
-      refreshToken();
+      void refreshToken().catch(() => undefined);
     }, refreshInterval);
 
     // Cleanup
@@ -115,7 +115,7 @@ export const useTokenRefresh = (options: UseTokenRefreshOptions = {}) => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         // Page became visible, check if we need to refresh
-        refreshToken();
+        void refreshToken().catch(() => undefined);
       }
     };
 
@@ -134,6 +134,3 @@ export const useTokenRefresh = (options: UseTokenRefreshOptions = {}) => {
 };
 
 export default useTokenRefresh;
-
-
-

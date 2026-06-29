@@ -366,7 +366,6 @@ apiClient.interceptors.response.use(
                     await clearSessionAndRedirect('/auth');
                     return Promise.reject(new Error('Session expired. Please sign in again.'));
                   } else {
-                    // Refresh failed for other reasons - don't logout, let UI handle it
                     console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
                   }
                 }
@@ -439,7 +438,6 @@ apiClient.interceptors.response.use(
                     await clearSessionAndRedirect('/auth');
                     return Promise.reject(new Error('Session expired. Please sign in again.'));
                   } else {
-                    // Other refresh error - logout
                     console.error('Token refresh failed for auth endpoint:', refreshError);
                     await clearSessionAndRedirect('/');
                   }

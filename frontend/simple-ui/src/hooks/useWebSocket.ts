@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { StreamingConfig, SocketStatus } from '../types/common';
 
 interface UseWebSocketOptions {
@@ -44,9 +43,6 @@ export const useWebSocket = (
   // Refs
   const reconnectAttemptsRef = useRef<number>(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Toast hook
-  const toast = useToastWithDeduplication();
 
   // Connect to WebSocket
   const connect = useCallback(() => {

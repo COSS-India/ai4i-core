@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { showToast } from "../../../utils/toast";
 import type { User, UserUpdateRequest } from "../../../types/auth";
 
 export interface UseUserDetailsOptions {
@@ -9,7 +9,6 @@ export interface UseUserDetailsOptions {
 }
 
 export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUserDetailsOptions) {
-  const toast = useToastWithDeduplication();
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [userFormData, setUserFormData] = useState<UserUpdateRequest>({
@@ -113,22 +112,16 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
         preferences: userFormData.preferences || {},
       };
       await updateUser(updateData as Partial<User>);
-      toast({
-        title: "Profile Updated",
-        description: "Your profile has been updated successfully",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Your profile has been updated successfully",
       });
       setIsEditingUser(false);
       setErrors({});
     } catch (error) {
-      toast({
-        title: "Update Failed",
-        description: error instanceof Error ? error.message : "Failed to update profile",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update profile",
       });
     } finally {
       setIsSaving(false);

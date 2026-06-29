@@ -15,7 +15,7 @@ import {
 } from '@chakra-ui/react';
 import { FaCopy } from 'react-icons/fa';
 import { TranslationResultsProps } from '../../types/nmt';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { showToast } from '../../utils/toast';
 
 const TranslationResults: React.FC<TranslationResultsProps> = ({
   sourceText,
@@ -27,18 +27,10 @@ const TranslationResults: React.FC<TranslationResultsProps> = ({
   onCopySource,
   onCopyTranslation,
 }) => {
-  const toast = useToastWithDeduplication();
-
   const handleCopySource = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(sourceText).then(() => {
-        toast({
-          title: 'Copied to Clipboard',
-          description: 'Source text copied to clipboard.',
-          status: 'success',
-          duration: 2000,
-          isClosable: true,
-        });
+        showToast({ type: "success", message: "Source text copied to clipboard." });
         onCopySource?.();
       }).catch(() => {
         fallbackCopy(sourceText);
@@ -51,13 +43,7 @@ const TranslationResults: React.FC<TranslationResultsProps> = ({
   const handleCopyTranslation = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(translatedText).then(() => {
-        toast({
-          title: 'Copied to Clipboard',
-          description: 'Translation copied to clipboard.',
-          status: 'success',
-          duration: 2000,
-          isClosable: true,
-        });
+        showToast({ type: "success", message: "Translation copied to clipboard." });
         onCopyTranslation?.();
       }).catch(() => {
         fallbackCopy(translatedText);
@@ -74,21 +60,9 @@ const TranslationResults: React.FC<TranslationResultsProps> = ({
     textArea.select();
     try {
       document.execCommand('copy');
-      toast({
-        title: 'Copied to Clipboard',
-        description: 'Text copied to clipboard.',
-        status: 'success',
-        duration: 2000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Text copied to clipboard." });
     } catch (err) {
-      toast({
-        title: 'Copy Failed',
-        description: 'Failed to copy text to clipboard.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to copy text to clipboard." });
     }
     document.body.removeChild(textArea);
   };

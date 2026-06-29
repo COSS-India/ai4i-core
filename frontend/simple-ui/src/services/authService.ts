@@ -77,7 +77,7 @@ class AuthService {
     endpoint: string,
     schema: S,
     options: RequestInit = {},
-    requestOpts: { withAuth?: boolean; timeoutMs?: number } = {}
+    requestOpts: { withAuth?: boolean; timeoutMs?: number; suppressErrorAlert?: boolean } = {}
   ): Promise<z.infer<S>> {
     const url = `${this.baseUrl}${endpoint}`;
     const withAuth = requestOpts.withAuth !== false;
@@ -111,6 +111,7 @@ class AuthService {
           headers: config.headers as Record<string, string>,
           timeout: timeoutMs,
           responseSchema: schema,
+          suppressErrorAlert: requestOpts.suppressErrorAlert,
         }
       );
       return response.data as z.infer<S>;
@@ -370,12 +371,12 @@ class AuthService {
     });
   }
 
-  async getCurrentUser(): Promise<User> {
+  async getCurrentUser(options?: { suppressErrorAlert?: boolean }): Promise<User> {
     return this.validatedRequest(
       authPath.me,
       authUnwrappedSchema(userSchema),
       { method: 'GET' },
-      { timeoutMs: 20000 }
+      { timeoutMs: 20000, suppressErrorAlert: options?.suppressErrorAlert }
     );
   }
 
@@ -831,7 +832,6 @@ class AuthService {
         await this.refreshToken();
         return true;
       } catch (refreshError) {
-        // Refresh failed, clear tokens
         this.clearTokens();
         this.clearStoredUser();
         return false;

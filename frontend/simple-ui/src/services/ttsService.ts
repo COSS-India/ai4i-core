@@ -110,6 +110,7 @@ export const performTTSInference = async (
 
     const response = await apiService.post(apiEndpoints.tts.inference, payload, {
       responseSchema: ttsInferenceResponseSchema,
+      errorService: 'tts',
     });
 
     // Extract response time from headers

@@ -8,6 +8,7 @@ import { nmtInferenceResponseSchema } from './dto/schemas/inference';
 import { tryItServiceListSchema } from './dto/schemas/platform';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import type { Service } from '../types/platform';
+import { UI_ERROR_MESSAGES } from '../config/constants';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 const getTryItHeaders = () => ({
@@ -105,16 +106,16 @@ export const performTryItNMTInference = async (
         rawMessage.toLowerCase().includes('rate') ||
         error?.response?.status === 429
       ) {
-        throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.');
+        throw new Error(UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT);
       }
 
-      throw new Error('Access denied. Please login to access this service.');
+      throw new Error(UI_ERROR_MESSAGES.TRY_IT_LOGIN_REQUIRED);
     }
 
     if (error?.message) {
       throw error;
     }
-    throw new Error('Failed to perform translation. Please try again.');
+    throw new Error(UI_ERROR_MESSAGES.TRY_IT_TRANSLATION_FAILED);
   }
 };
 

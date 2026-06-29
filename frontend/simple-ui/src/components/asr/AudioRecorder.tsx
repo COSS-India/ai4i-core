@@ -19,7 +19,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
 import { AudioRecorderProps } from "../../types/asr";
-import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import { showToast } from "../../utils/toast";
 import { DeleteIcon } from "@chakra-ui/icons";
 import { convertWebmToWav } from "../../utils/helpers";
 
@@ -36,7 +36,6 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   showUpload = true,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const toast = useToastWithDeduplication();
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -53,13 +52,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (!file) {
       console.log("No file selected");
       const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
@@ -75,13 +68,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
     // Validate file size
     if (file.size > MAX_AUDIO_FILE_SIZE) {
       const err = UPLOAD_ERRORS.FILE_TOO_LARGE;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
@@ -98,13 +85,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
     if (!isMP3 && !isWAV) {
       const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
@@ -170,13 +151,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
               err = UPLOAD_ERRORS.INVALID_FILE;
               break;
           }
-          toast({
-            title: err.title,
-            description: err.description,
-            status: "error",
-            duration: 5000,
-            isClosable: true,
-          });
+          showToast({ type: "error", message: err.description });
           return;
         }
 
@@ -205,26 +180,14 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
               } catch (err) {
                 console.error("Error processing file result:", err);
                 const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
-                toast({
-                  title: uploadErr.title,
-                  description: uploadErr.description,
-                  status: "error",
-                  duration: 3000,
-                  isClosable: true,
-                });
+                showToast({ type: "error", message: uploadErr.description });
               }
             };
 
             reader.onerror = (error) => {
               console.error("FileReader error:", error);
               const err = UPLOAD_ERRORS.INVALID_FILE;
-              toast({
-                title: err.title,
-                description: err.description,
-                status: "error",
-                duration: 3000,
-                isClosable: true,
-              });
+              showToast({ type: "error", message: err.description });
             };
 
             reader.onabort = () => {
@@ -250,25 +213,13 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
         } catch (error) {
           console.error("Error reading file:", error);
           const err = UPLOAD_ERRORS.INVALID_FILE;
-          toast({
-            title: err.title,
-            description: err.description,
-            status: "error",
-            duration: 3000,
-            isClosable: true,
-          });
+          showToast({ type: "error", message: err.description });
         }
       })
       .catch((error) => {
         console.error("Error validating audio duration:", error);
         const err = UPLOAD_ERRORS.INVALID_FILE;
-        toast({
-          title: err.title,
-          description: err.description,
-          status: "error",
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: "error", message: err.description });
       });
   };
 

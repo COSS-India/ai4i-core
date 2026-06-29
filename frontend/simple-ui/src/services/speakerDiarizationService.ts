@@ -102,7 +102,7 @@ export const performSpeakerDiarizationInference = async (
     const response = await apiService.post(
       apiEndpoints['speaker-diarization'].inference,
       payload,
-      { responseSchema: speakerDiarizationInferenceResponseSchema }
+      { responseSchema: speakerDiarizationInferenceResponseSchema, errorService: 'speaker-diarization' }
     );
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

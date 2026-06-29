@@ -102,7 +102,7 @@ export const performLanguageDiarizationInference = async (
     const response = await apiService.post(
       apiEndpoints['language-diarization'].inference,
       payload,
-      { responseSchema: languageDiarizationInferenceResponseSchema }
+      { responseSchema: languageDiarizationInferenceResponseSchema, suppressErrorAlert: true }
     );
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

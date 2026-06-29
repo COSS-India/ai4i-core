@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { showToast } from '../utils/toast';
 import {
   performLLMChat,
   isLlmChatService,
@@ -11,7 +11,7 @@ import {
 } from '../services/llmService';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { parseError, showError } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
 
@@ -35,7 +35,6 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const [error, setError] = useState<string | null>(null);
 
   const hasShownTextLimitToastRef = useRef(false);
-  const toast = useToastWithDeduplication();
 
   useEffect(() => {
     if (!isLlmChatService(serviceId)) return;
@@ -69,63 +68,38 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     },
     onError: (error: unknown) => {
       console.error('LLM chat error:', error);
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } =
-        extractErrorInfo(error);
+      const { message: errorMessage } = parseError(error);
       setError(errorMessage);
       setFetching(false);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: 'error',
-        duration: 7000,
-        isClosable: true,
-      });
+      showError(error);
     },
   });
 
   const performInference = useCallback(
     async (text: string) => {
       if (!text || text.trim() === '') {
-        toast({
-          title: 'Input Required',
-          description: 'Please enter text to process.',
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'warning', message: 'Please enter text to process.' });
         return;
       }
 
       if (text.length > MAX_TEXT_LENGTH) {
-        toast({
-          title: 'Text Too Long',
-          description: `Text length exceeds maximum limit of ${MAX_TEXT_LENGTH} characters.`,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: 'warning',
+          message: `Text length exceeds maximum limit of ${MAX_TEXT_LENGTH} characters.`,
         });
         return;
       }
 
       const effectiveServiceId = serviceId || selectedModelId;
       if (!effectiveServiceId) {
-        toast({
-          title: 'Service Required',
-          description: 'Please select an LLM service.',
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'warning', message: 'Please select an LLM service.' });
         return;
       }
 
       if (!inputLanguage?.trim() || !outputLanguage?.trim()) {
-        toast({
-          title: 'Language Required',
-          description: 'Please select both source and target languages.',
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: 'warning',
+          message: 'Please select both source and target languages.',
         });
         return;
       }
@@ -141,7 +115,6 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     },
     [
       llmMutation,
-      toast,
       serviceId,
       selectedModelId,
       inputLanguage,
@@ -156,20 +129,16 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       if (text.length > MAX_TEXT_LENGTH) {
         if (!hasShownTextLimitToastRef.current) {
           hasShownTextLimitToastRef.current = true;
-          toast({
-            id: 'llm-text-exceeds-limit',
-            title: 'Text Length Warning',
-            description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
-            status: 'warning',
-            duration: 3000,
-            isClosable: true,
+          showToast({
+            type: 'warning',
+            message: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
           });
         }
       } else {
         hasShownTextLimitToastRef.current = false;
       }
     },
-    [toast]
+    []
   );
 
   const clearResults = useCallback(() => {

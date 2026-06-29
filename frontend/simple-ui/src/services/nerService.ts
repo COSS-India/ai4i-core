@@ -87,6 +87,7 @@ export const performNERInference = async (
 
     const response = await apiService.post(apiEndpoints.ner.inference, payload, {
       responseSchema: nerInferenceResponseSchema,
+      errorService: 'ner',
     });
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

@@ -39,6 +39,7 @@ export async function listTenants(params?: {
 }): Promise<ListTenantsResponse> {
   const response = await apiService.get(BASE, {
     params,
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantViewSchema)),
   });
   const tenants = response.data.data ?? [];
@@ -47,6 +48,7 @@ export async function listTenants(params?: {
 
 export async function getViewTenant(tenant_id: string): Promise<TenantView> {
   const response = await apiService.get(`${BASE}/${tenant_id}`, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });
   return response.data.data;
@@ -56,6 +58,7 @@ export async function registerTenant(
   payload: TenantRegisterRequest
 ): Promise<TenantRegisterResponse> {
   const response = await apiService.post(BASE, payload, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });
   return response.data.data;
@@ -66,6 +69,7 @@ export async function updateTenant(
 ): Promise<TenantUpdateResponse> {
   const { tenant_id, ...body } = payload;
   const response = await apiService.patch(`${BASE}/${tenant_id}`, body, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });
   return response.data.data;
@@ -76,6 +80,7 @@ export async function updateTenantStatus(
 ): Promise<TenantStatusUpdateResponse> {
   const { tenant_id, status } = payload;
   const response = await apiService.patch(`${BASE}/${tenant_id}/status`, { status }, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });
   return response.data.data;
@@ -92,6 +97,7 @@ export async function resendTenantVerificationEmail(
     apiEndpoints.tenants.resendVerification(tenant_id),
     {},
     {
+      suppressErrorAlert: true,
       responseSchema: tenantSuccessEnvelopeSchema(
         z.object({ message: z.string() }).passthrough()
       ),
@@ -103,6 +109,7 @@ export async function resendTenantVerificationEmail(
 
 export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
   const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
   });
   const users = response.data.data ?? [];
@@ -114,6 +121,7 @@ export async function registerUser(
 ): Promise<UserRegisterResponse> {
   const { tenant_id, ...body } = payload;
   const response = await apiService.post(`${BASE}/${tenant_id}/users`, body, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(userRegisterResponseSchema),
   });
   return response.data.data;
@@ -127,6 +135,7 @@ export async function updateUserStatus(
     `${BASE}/${tenant_id}/users/${user_id}/status`,
     body,
     {
+      suppressErrorAlert: true,
       responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
     }
   );
@@ -138,6 +147,7 @@ export async function updateUser(
 ): Promise<TenantUserUpdateResponse> {
   const { tenant_id, user_id, ...body } = payload;
   const response = await apiService.patch(`${BASE}/${tenant_id}/users/${user_id}`, body, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
   });
   return response.data.data;
@@ -149,6 +159,7 @@ export async function deleteUser(payload: {
 }): Promise<{ user_id: string; deleted: boolean }> {
   const { tenant_id, user_id } = payload;
   const response = await apiService.delete(`${BASE}/${tenant_id}/users/${user_id}`, {
+    suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantDeleteUserDataSchema),
   });
   return response.data.data;

@@ -11,7 +11,7 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import UsageDashboard from "../components/metering/UsageDashboard";
 import { useAuth } from "../hooks/useAuth";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showToast } from "../utils/toast";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   canAccessUsageDashboard,
@@ -19,7 +19,6 @@ import {
 
 const UsageDashboardPage: React.FC = () => {
   const router = useRouter();
-  const toast = useToastWithDeduplication();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
   const canAccess = canAccessUsageDashboard(user?.roles);
@@ -31,29 +30,23 @@ const UsageDashboardPage: React.FC = () => {
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view the usage dashboard.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please log in to view the usage dashboard.",
       });
       router.push("/auth");
     }
-  }, [authLoading, isAuthenticated, router, toast]);
+  }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {
     if (!authLoading && isAuthenticated && !canAccess) {
-      toast({
-        title: "Access Denied",
-        description: "You do not have permission to view the usage dashboard.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "You do not have permission to view the usage dashboard.",
       });
       router.push("/");
     }
-  }, [authLoading, isAuthenticated, canAccess, router, toast]);
+  }, [authLoading, isAuthenticated, canAccess, router]);
 
   if (authLoading) {
     return (
