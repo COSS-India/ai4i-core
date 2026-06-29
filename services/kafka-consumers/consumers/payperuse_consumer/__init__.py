@@ -1,0 +1,1 @@
+from .handler import handle_my_topic  # noqa: F401

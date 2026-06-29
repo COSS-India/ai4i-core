@@ -1,1 +1,0 @@
-# Kafka Consumers Collection
