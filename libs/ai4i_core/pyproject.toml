@@ -93,7 +93,7 @@ Source = "https://github.com/COSS-India/ai4i-core/tree/master/libs/ai4i_core"
 include = ["ai4i_core*"]
 
 [tool.setuptools.package-data]
-ai4i_core = ["telemetry/util/**/*.json"]
+ai4i_core = ["telemetry/util/**/*.json", "ppu/*.yaml"]
 
 [tool.black]
 line-length = 100

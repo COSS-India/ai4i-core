@@ -1,8 +1,6 @@
-import yaml
-from pathlib import Path
-
 from fastapi import APIRouter
 
+from ai4i_core.ppu import get_inference_types
 from app.core.responses import success_response
 from app.schemas.common import SuccessResponse
 from app.schemas.inference_types import InferenceTypesResponse
@@ -12,10 +10,7 @@ router = APIRouter(
     tags=["Inference Types"],
 )
 
-_CONFIG_PATH = Path(__file__).parent.parent.parent / "inference_types.yaml"
-
-with _CONFIG_PATH.open() as _f:
-    _INFERENCE_TYPES: list = yaml.safe_load(_f)["inference_types"]
+_INFERENCE_TYPES: list = get_inference_types()
 
 
 @router.get("", response_model=SuccessResponse[InferenceTypesResponse])
