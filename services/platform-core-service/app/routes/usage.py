@@ -1,7 +1,7 @@
 """PPU usage dashboard routes."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -54,7 +54,7 @@ async def get_usage_summary(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
-    month = billing_period or date.today().strftime("%Y-%m")
+    month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_summary(month)
 
@@ -72,7 +72,7 @@ async def get_tenant_usage_list(
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
-    month = billing_period or date.today().strftime("%Y-%m")
+    month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_tenant_list(month, tier, modelTaskType.lower() if modelTaskType else None, auth_db)
 
@@ -100,6 +100,6 @@ async def get_tenant_usage_detail(
         if caller_tid != tenant_id:
             raise InsufficientPermissionsError()
 
-    month = billing_period or date.today().strftime("%Y-%m")
+    month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_tenant_detail(tenant_id, month, auth_db)
