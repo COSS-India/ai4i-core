@@ -2,7 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -44,8 +44,6 @@ async def list_tiers(
         quotas = tier.tier_quotas
         if model_task_type:
             quotas = [q for q in quotas if q.inference_name == model_task_type]
-            if not quotas:
-                continue
         out.append(_build_out(tier, quotas))
 
     return {"data": out, "total": len(out)}
@@ -151,7 +149,10 @@ async def delete_tier(tier_id: str, session: AsyncSession) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
 
     assigned = await session.execute(
-        select(PPUTenantTierAssignment).where(PPUTenantTierAssignment.tier_id == uid).limit(1)
+        select(PPUTenantTierAssignment).where(
+            PPUTenantTierAssignment.tier_id == uid,
+            PPUTenantTierAssignment.effective_to > func.now(),
+        ).limit(1)
     )
     if assigned.scalar_one_or_none():
         raise HTTPException(
