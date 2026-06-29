@@ -12,11 +12,11 @@ import {
 import SpeakerDiarizationResult, {
   type SpeakerDiarizationResultData,
 } from "../components/service-page/results/SpeakerDiarizationResult";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { parseError } from "../utils/errorHandler";
-import { SPEAKER_DIARIZATION_ERRORS } from "../config/constants";
+import { SPEAKER_DIARIZATION_ERRORS } from '../constants';
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("speaker-diarization");

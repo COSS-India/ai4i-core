@@ -5,7 +5,7 @@ import { AxiosError } from 'axios';
 import {
   NETWORK_ERROR_MESSAGE,
   PARSE_ERROR_MESSAGES,
-} from '../../config/errorShared';
+} from '../../constants/errorShared';
 import {
   ASR_ERRORS,
   TTS_ERRORS,
@@ -18,7 +18,7 @@ import {
   SPEAKER_DIARIZATION_ERRORS,
   AUDIO_LANGUAGE_DETECTION_ERRORS,
   NER_ERRORS,
-} from '../../config/constants';
+} from '../../constants';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import { combineMessages, extractMessagesFromValue } from './extractMessages';
 import type { ToastType } from '../toast';

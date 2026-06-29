@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { showToast } from "../../../utils/toast";
 import alertingService from "../../../services/alertingService";
+import { PLATFORM_ROLES } from "../../../constants/roles";
 import type {
   NotificationReceiver,
   NotificationReceiverCreate,
@@ -16,7 +17,7 @@ const EMPTY_CREATE_FORM = {
   alert_names: null as string[] | null,
   tenant: null as string | null,
   email_to: [] as string[],
-  rbac_role: "ADMIN" as string | null,
+  rbac_role: PLATFORM_ROLES.ADMIN as string | null,
   email_subject_template: null as string | null,
   email_body_template: null as string | null,
 };

@@ -139,7 +139,7 @@ src/
 ├── services/            # API service clients
 ├── types/               # TypeScript type definitions
 ├── utils/               # Utility functions
-├── config/              # Configuration constants
+├── constants/           # Application constants (canonical)
 ├── styles/              # Global styles
 └── pages/               # Next.js pages
 ```

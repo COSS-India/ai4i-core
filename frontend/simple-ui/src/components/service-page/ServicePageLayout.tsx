@@ -8,7 +8,7 @@ import {
   getServiceDescription,
   getServiceTitle,
   type ServiceId,
-} from "../../config/serviceMetadata";
+} from '../../constants/serviceMetadata';
 import type { ServicePageLayoutProps } from "../../types/servicePage";
 
 const ServicePageLayout: React.FC<ServicePageLayoutProps> = ({

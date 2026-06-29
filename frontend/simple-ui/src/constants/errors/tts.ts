@@ -1,8 +1,5 @@
 // Service error codes and user-facing messages
 
-/** Minimum TTS text length (characters) to be considered valid */
-export const MIN_TTS_TEXT_LENGTH = 2;
-
 /** TTS (Text-to-Speech) error codes and user-facing messages */
 export const TTS_ERRORS = {
   // Input errors

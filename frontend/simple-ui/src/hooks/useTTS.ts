@@ -6,12 +6,9 @@ import { showToast } from '../utils/toast';
 import { performTTSInference } from '../services/ttsService';
 import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
-import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_TTS_TEXT_LENGTH, TTS_ERRORS } from '../config/constants';
+import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_INFERENCE_TEXT_LENGTH, TTS_ERRORS } from '../constants';
+import { INDIC_TEXT_CHAR_REGEX } from '../constants/validation';
 import { parseError } from '../utils/errorHandler';
-
-// Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
-const VALID_TTS_CHAR_REGEX =
-  /^(?:[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9]|[\u0900-\u097F]|[\u0980-\u09FF]|[\u0A00-\u0A7F]|[\u0A80-\u0AFF]|[\u0B00-\u0B7F]|[\u0B80-\u0BFF]|[\u0C00-\u0C7F]|[\u0C80-\u0CFF]|[\u0D00-\u0D7F]|[\u0D80-\u0DFF])*$/;
 
 // Helper function to get the correct service ID based on language
 const getServiceIdForLanguage = (language: string): string => {
@@ -158,7 +155,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       return;
     }
 
-    if (trimmed.length < MIN_TTS_TEXT_LENGTH) {
+    if (trimmed.length < MIN_INFERENCE_TEXT_LENGTH) {
       const err = TTS_ERRORS.TEXT_TOO_SHORT;
       showToast({ type: 'error', message: err.description });
       return;
@@ -170,7 +167,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       return;
     }
 
-    if (!VALID_TTS_CHAR_REGEX.test(trimmed)) {
+    if (!INDIC_TEXT_CHAR_REGEX.test(trimmed)) {
       const err = TTS_ERRORS.INVALID_CHARACTERS;
       showToast({ type: 'error', message: err.description });
       return;

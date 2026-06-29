@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-
-export const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+import { DEFAULT_PAGE_SIZE_OPTIONS, PAGINATION } from "../constants/pagination";
 
 export type UseAdminDataTableOptions = {
   initialPage?: number;
@@ -14,7 +13,7 @@ export function useAdminDataTable<T>(
 ) {
   const pageSizeOptions = options.pageSizeOptions ?? DEFAULT_PAGE_SIZE_OPTIONS;
   const [page, setPage] = useState(options.initialPage ?? 1);
-  const [pageSize, setPageSize] = useState(options.initialPageSize ?? 25);
+  const [pageSize, setPageSize] = useState(options.initialPageSize ?? PAGINATION.DEFAULT_TABLE_PAGE_SIZE);
 
   const totalItems = items.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));

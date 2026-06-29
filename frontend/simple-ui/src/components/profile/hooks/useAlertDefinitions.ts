@@ -7,7 +7,7 @@ import type {
   AlertDefinitionUpdate,
   AlertAnnotation,
 } from "../../../types/alerting";
-import { TARGET_SERVICES, UI_VALUE_TO_INFERENCE_TASK, INFERENCE_TASK_TO_UI_VALUE, SUB_CATEGORIES_BY_CATEGORY } from "../../../types/alerting";
+import { TARGET_SERVICES, UI_VALUE_TO_INFERENCE_TASK, INFERENCE_TASK_TO_UI_VALUE, SUB_CATEGORIES_BY_CATEGORY } from "../../../constants/alerting";
 
 const DEFAULT_THRESHOLD_UNIT = "%"; // overridden to "ms" when signal is latency
 

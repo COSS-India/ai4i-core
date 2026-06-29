@@ -1,5 +1,5 @@
 import type { MeteringGraph, MeteringWindow, ServiceConsumptionSummary, ServiceRow } from "../types/metering";
-import { METERING } from "../config/meteringConstants";
+import { METERING } from "../constants";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;

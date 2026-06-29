@@ -1,4 +1,4 @@
-import { METERING } from "../config/meteringConstants";
+import { METERING } from "../constants";
 
 export const meteringQueryDefaults = {
   staleTime: METERING.QUERY.STALE_TIME_MS,

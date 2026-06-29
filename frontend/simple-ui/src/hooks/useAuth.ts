@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { User, AuthState, LoginRequest, LoginResponse, RegisterRequest } from '../types/auth';
 import authService from '../services/authService';
 import { useTokenRefresh } from './useTokenRefresh';
-import { UI_ERROR_MESSAGES } from '../config/constants';
+import { UI_ERROR_MESSAGES } from '../constants';
 
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';

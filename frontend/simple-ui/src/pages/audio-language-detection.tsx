@@ -10,8 +10,8 @@ import {
   ResponseContainer,
   ServicePageLayout,
 } from "../components/service-page";
-import { AUDIO_LANGUAGE_DETECTION_ERRORS } from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { AUDIO_LANGUAGE_DETECTION_ERRORS } from '../constants';
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import {
   performAudioLanguageDetectionInference,
   listAudioLanguageDetectionServices,

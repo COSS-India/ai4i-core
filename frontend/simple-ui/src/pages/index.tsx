@@ -33,7 +33,7 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
-import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
+import { getServiceDescription, getServiceTitle, type ServiceId } from '../constants/serviceMetadata';
 import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 import { useGuestServices } from "../hooks/useGuestServices";

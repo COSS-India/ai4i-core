@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   buildResponseMetadata,
-  INDIC_LANGUAGE_OPTIONS,
   mapToServiceOptions,
   RequestContainer,
   ResponseContainer,
@@ -13,10 +12,11 @@ import {
 } from "../components/service-page";
 import {
   TRANSLITERATION_ERRORS,
-  MIN_TRANSLITERATION_TEXT_LENGTH,
+  MIN_INFERENCE_TEXT_LENGTH,
   MAX_TEXT_LENGTH,
-} from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+  INDIC_LANGUAGE_OPTIONS,
+} from '../constants';
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
 import { parseError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
@@ -79,7 +79,7 @@ const TransliterationPage: React.FC = () => {
       showToast({ type: "error", message: err.description });
       return;
     }
-    if (trimmedText.length < MIN_TRANSLITERATION_TEXT_LENGTH) {
+    if (trimmedText.length < MIN_INFERENCE_TEXT_LENGTH) {
       const err = TRANSLITERATION_ERRORS.TEXT_TOO_SHORT;
       showToast({ type: "error", message: err.description });
       return;

@@ -17,10 +17,11 @@ import {
 import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
 import authService from "../../services/authService";
 import type { User } from "../../types/auth";
+import { PAGINATION } from "../../constants/pagination";
 
 export type UserSearchablePick = Pick<User, "user_id" | "email" | "username" | "full_name">;
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = PAGINATION.USER_LIST_PAGE_SIZE;
 
 function mergeById(a: User[], b: User[]): User[] {
   const m = new Map<string, User>();

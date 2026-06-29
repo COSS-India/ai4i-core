@@ -10,7 +10,7 @@ import {
   Textarea,
   useColorModeValue,
 } from "@chakra-ui/react";
-import { MAX_TEXT_LENGTH } from "../../../config/constants";
+import { MAX_TEXT_LENGTH } from '../../../constants';
 import type { ServiceTextInputProps } from "../../../types/servicePage";
 
 const TextInput: React.FC<ServiceTextInputProps> = ({

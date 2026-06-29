@@ -14,7 +14,7 @@ import {
   AUDIO_FORMATS,
   GENDER_OPTIONS,
   LANG_CODE_TO_LABEL,
-} from "../../config/constants";
+} from '../../constants';
 import { VoiceSelectorProps } from "../../types/tts";
 
 const VoiceSelector: React.FC<VoiceSelectorProps> = ({

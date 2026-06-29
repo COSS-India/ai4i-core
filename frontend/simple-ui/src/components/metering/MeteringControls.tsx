@@ -9,7 +9,7 @@ import {
 } from "@chakra-ui/react";
 import { RepeatIcon } from "@chakra-ui/icons";
 import React from "react";
-import { METERING, type MeteringSubTab } from "../../config/meteringConstants";
+import { METERING, type MeteringSubTab } from "../../constants";
 import type { MeteringTopN, MeteringWindow } from "../../types/metering";
 import SegmentedTabBar from "./SegmentedTabBar";
 

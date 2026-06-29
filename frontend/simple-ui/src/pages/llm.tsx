@@ -9,8 +9,8 @@ import {
   ResponseContainer,
   ServicePageLayout,
 } from "../components/service-page";
-import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { LLM_SUPPORTED_LANGUAGES, MAX_LLM_TEXT_LENGTH } from '../constants';
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { useLLM } from "../hooks/useLLM";
 import { DEFAULT_LLM_SERVICES, LLM_CHAT_MODEL } from "../services/llmService";
 
@@ -48,7 +48,7 @@ const LLMPage: React.FC = () => {
     setSelectedModelId(LLM_CHAT_MODEL);
   }, [setSelectedModelId]);
 
-  const MAX_LLM_INPUT_LENGTH = pageDefaults.maxTextLength ?? 512;
+  const MAX_LLM_INPUT_LENGTH = pageDefaults.maxTextLength ?? MAX_LLM_TEXT_LENGTH;
   const canTranslate =
     !!serviceId?.trim() &&
     !!inputLanguage?.trim() &&

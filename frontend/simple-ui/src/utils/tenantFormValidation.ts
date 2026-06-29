@@ -1,32 +1,13 @@
 // Client-side field rules for tenant + tenant user create/edit forms.
 
 import type { TenantView } from "../types/tenant";
+import { VALIDATION } from "../constants/validation";
 
 const INVISIBLE_CHARS = /[\u00AD\u200B-\u200D\u2060\uFEFF\u2028\u2029\u200E\u200F]+/g;
 const PHONE_FORMAT_CHARS = /[ \-().]/g;
 const E164_RE = /^\+[1-9]\d{1,14}$/;
-
 const ORG_PUNCT = new Set([" ", "-", ".", "'"]);
 const NAME_PUNCT = new Set([" ", "-", "'"]);
-
-export const ORG_REQUIRED_MSG = "Organisation is required.";
-export const ORG_TOO_SHORT_MSG = "Organisation must be at least 2 characters.";
-export const ORG_TOO_LONG_MSG = "Organisation must be at most 100 characters.";
-export const ORG_INVALID_CHARS_MSG =
-  "Organisation may only contain letters, digits, spaces, hyphens, dots, and apostrophes.";
-export const ORG_NO_ALNUM_MSG = "Organisation must contain at least one letter or digit.";
-export const ORG_DUPLICATE_MSG = "A tenant with this organisation name already exists.";
-
-export const CONTACT_NAME_REQUIRED_MSG = "Contact name is required.";
-export const FULL_NAME_REQUIRED_MSG = "Full name is required.";
-export const NAME_TOO_SHORT_MSG = "Must be at least 2 characters.";
-export const NAME_TOO_LONG_MSG = "Must be at most 80 characters.";
-export const NAME_INVALID_CHARS_MSG =
-  "May only contain letters, spaces, hyphens, and apostrophes.";
-export const NAME_NO_LETTER_MSG = "Must contain at least one letter.";
-
-export const PHONE_E164_MSG =
-  "Phone number must be in E.164 format (e.g. +919876543210).";
 
 export function cleanText(value: string): string {
   return (value ?? "").replaceAll(INVISIBLE_CHARS, "").trim();
@@ -46,19 +27,19 @@ function isDigit(char: string): boolean {
 
 export function validateOrganisation(value: string): string | undefined {
   const trimmed = cleanText(value);
-  if (!trimmed) return ORG_REQUIRED_MSG;
-  if (trimmed.length < 2) return ORG_TOO_SHORT_MSG;
-  if (trimmed.length > 100) return ORG_TOO_LONG_MSG;
+  if (!trimmed) return VALIDATION.ORG.REQUIRED;
+  if (trimmed.length < VALIDATION.ORG.MIN_LENGTH) return VALIDATION.ORG.TOO_SHORT;
+  if (trimmed.length > VALIDATION.ORG.MAX_LENGTH) return VALIDATION.ORG.TOO_LONG;
 
   let hasAlnum = false;
   for (const char of trimmed) {
     if (isLetterOrMark(char) || isDigit(char)) {
       hasAlnum = true;
     } else if (!ORG_PUNCT.has(char)) {
-      return ORG_INVALID_CHARS_MSG;
+      return VALIDATION.ORG.INVALID_CHARS;
     }
   }
-  if (!hasAlnum) return ORG_NO_ALNUM_MSG;
+  if (!hasAlnum) return VALIDATION.ORG.NO_ALNUM;
   return undefined;
 }
 
@@ -68,45 +49,45 @@ export function validatePersonName(
 ): string | undefined {
   const trimmed = cleanText(value);
   if (!trimmed) return options.requiredMessage;
-  if (trimmed.length < 2) return NAME_TOO_SHORT_MSG;
-  if (trimmed.length > 80) return NAME_TOO_LONG_MSG;
+  if (trimmed.length < VALIDATION.NAME.MIN_LENGTH) return VALIDATION.NAME.TOO_SHORT;
+  if (trimmed.length > VALIDATION.NAME.MAX_LENGTH) return VALIDATION.NAME.TOO_LONG;
 
   let hasLetter = false;
   for (const char of trimmed) {
     if (isLetterOrMark(char)) {
       hasLetter = true;
     } else if (!NAME_PUNCT.has(char)) {
-      return NAME_INVALID_CHARS_MSG;
+      return VALIDATION.NAME.INVALID_CHARS;
     }
   }
-  if (!hasLetter) return NAME_NO_LETTER_MSG;
+  if (!hasLetter) return VALIDATION.NAME.NO_LETTER;
   return undefined;
 }
 
 export function validateContactName(value: string): string | undefined {
-  return validatePersonName(value, { requiredMessage: CONTACT_NAME_REQUIRED_MSG });
+  return validatePersonName(value, { requiredMessage: VALIDATION.NAME.CONTACT_REQUIRED });
 }
 
 export function validateFullName(value: string): string | undefined {
-  return validatePersonName(value, { requiredMessage: FULL_NAME_REQUIRED_MSG });
+  return validatePersonName(value, { requiredMessage: VALIDATION.NAME.FULL_REQUIRED });
 }
 
 /** Format-only check for optional name fields on edit forms. */
 export function validateOptionalPersonName(value: string): string | undefined {
   const trimmed = cleanText(value);
   if (!trimmed) return undefined;
-  if (trimmed.length < 2) return NAME_TOO_SHORT_MSG;
-  if (trimmed.length > 80) return NAME_TOO_LONG_MSG;
+  if (trimmed.length < VALIDATION.NAME.MIN_LENGTH) return VALIDATION.NAME.TOO_SHORT;
+  if (trimmed.length > VALIDATION.NAME.MAX_LENGTH) return VALIDATION.NAME.TOO_LONG;
 
   let hasLetter = false;
   for (const char of trimmed) {
     if (isLetterOrMark(char)) {
       hasLetter = true;
     } else if (!NAME_PUNCT.has(char)) {
-      return NAME_INVALID_CHARS_MSG;
+      return VALIDATION.NAME.INVALID_CHARS;
     }
   }
-  if (!hasLetter) return NAME_NO_LETTER_MSG;
+  if (!hasLetter) return VALIDATION.NAME.NO_LETTER;
   return undefined;
 }
 
@@ -118,7 +99,7 @@ export function validateE164Phone(value: string): string | undefined {
   const trimmed = cleanText(value);
   if (!trimmed) return undefined;
   const normalized = normalizePhoneInput(trimmed);
-  if (!E164_RE.test(normalized)) return PHONE_E164_MSG;
+  if (!E164_RE.test(normalized)) return VALIDATION.PHONE.E164;
   return undefined;
 }
 
@@ -133,7 +114,7 @@ export function validateOrganisationUnique(
     if (excludeTenantId && t.tenant_id === excludeTenantId) return false;
     return cleanText(t.organisation ?? "").toLowerCase() === normalized;
   });
-  return duplicate ? ORG_DUPLICATE_MSG : undefined;
+  return duplicate ? VALIDATION.ORG.DUPLICATE : undefined;
 }
 
 export function setFieldError(

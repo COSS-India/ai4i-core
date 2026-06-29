@@ -30,9 +30,9 @@ import {
   ServicePageLayout,
   useCopyToClipboard,
 } from "../components/service-page";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { performOCRInference, listOCRServices } from "../services/ocrService";
-import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
+import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from '../constants';
 import { parseError } from "../utils/errorHandler";
 import {
   isSafeUserImageUrl,

@@ -9,7 +9,7 @@ import {
   PipelineInferenceRequest,
   PipelineResult
 } from '../types/pipeline';
-import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS, UI_ERROR_MESSAGES } from '../constants';
 import { parseError } from '../utils/errorHandler';
 
 export const usePipeline = () => {

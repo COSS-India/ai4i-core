@@ -31,7 +31,7 @@ import AccessibleAudio from '../components/common/AccessibleAudio';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
 import { base64ToAudioObjectUrl } from '../utils/helpers';
-import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../constants';
 import { showError } from '../utils/errorHandler';
 import { showToast } from '../utils/toast';
 

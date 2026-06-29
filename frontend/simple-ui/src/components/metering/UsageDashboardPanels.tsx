@@ -1,6 +1,6 @@
 import { Box, Heading, Text, VStack } from "@chakra-ui/react";
 import React from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import type { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections";
 import ServiceConsumptionTab from "./ServiceConsumptionTab";

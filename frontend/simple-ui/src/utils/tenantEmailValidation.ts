@@ -1,17 +1,7 @@
 // Client-side email rules for tenant contact + tenant user provisioning.
 
 import type { TenantView } from "../types/tenant";
-
-export const EMAIL_REQUIRED_MSG = "Email is required.";
-export const EMAIL_INVALID_FORMAT_MSG =
-  "Enter a valid email address (e.g. example@domain.com).";
-/** Tenant / tenant-admin contact email collides with an existing user account. */
-export const EMAIL_USER_ALREADY_EXISTS_MSG =
-  "A user with this email address already exists.";
-/** Tenant user (or tenant contact) email already in use. */
-export const EMAIL_ALREADY_EXISTS_MSG =
-  "This email is already associated with an existing account";
-export const EMAIL_AVAILABLE_MSG = "Email is available.";
+import { VALIDATION } from "../constants/validation";
 
 export function normalizeEmail(email: string): string {
   return (email || "").trim().toLowerCase();
@@ -64,8 +54,8 @@ function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions):
 
 export function validateEmailFormatOnly(email: string): string | undefined {
   const trimmed = (email || "").trim();
-  if (!trimmed) return EMAIL_REQUIRED_MSG;
-  if (!isValidEmailFormat(trimmed)) return EMAIL_INVALID_FORMAT_MSG;
+  if (!trimmed) return VALIDATION.EMAIL.REQUIRED;
+  if (!isValidEmailFormat(trimmed)) return VALIDATION.EMAIL.INVALID_FORMAT;
   return undefined;
 }
 
@@ -79,7 +69,7 @@ export function validateTenantContactEmailTaken(
   if (formatError) return formatError;
   const lower = normalizeEmail(email);
   const skip = isExcludedEmail(lower, exclusions);
-  if (tenantEmails.has(lower) && !skip.tenant) return EMAIL_ALREADY_EXISTS_MSG;
+  if (tenantEmails.has(lower) && !skip.tenant) return VALIDATION.EMAIL.ALREADY_EXISTS;
   return undefined;
 }
 
@@ -91,12 +81,12 @@ export function validateTenantContactEmail(
   exclusions?: EmailUniquenessExclusions
 ): string | undefined {
   const trimmed = (email || "").trim();
-  if (!trimmed) return EMAIL_REQUIRED_MSG;
-  if (!isValidEmailFormat(trimmed)) return EMAIL_INVALID_FORMAT_MSG;
+  if (!trimmed) return VALIDATION.EMAIL.REQUIRED;
+  if (!isValidEmailFormat(trimmed)) return VALIDATION.EMAIL.INVALID_FORMAT;
   const lower = normalizeEmail(trimmed);
   const skip = isExcludedEmail(lower, exclusions);
-  if (userEmails.has(lower) && !skip.user) return EMAIL_USER_ALREADY_EXISTS_MSG;
-  if (tenantEmails.has(lower) && !skip.tenant) return EMAIL_ALREADY_EXISTS_MSG;
+  if (userEmails.has(lower) && !skip.user) return VALIDATION.EMAIL.USER_ALREADY_EXISTS;
+  if (tenantEmails.has(lower) && !skip.tenant) return VALIDATION.EMAIL.ALREADY_EXISTS;
   return undefined;
 }
 
@@ -108,12 +98,12 @@ export function validateTenantUserEmail(
   exclusions?: EmailUniquenessExclusions
 ): string | undefined {
   const trimmed = (email || "").trim();
-  if (!trimmed) return EMAIL_REQUIRED_MSG;
-  if (!isValidEmailFormat(trimmed)) return EMAIL_INVALID_FORMAT_MSG;
+  if (!trimmed) return VALIDATION.EMAIL.REQUIRED;
+  if (!isValidEmailFormat(trimmed)) return VALIDATION.EMAIL.INVALID_FORMAT;
   const lower = normalizeEmail(trimmed);
   const skip = isExcludedEmail(lower, exclusions);
   if ((userEmails.has(lower) && !skip.user) || (tenantEmails.has(lower) && !skip.tenant)) {
-    return EMAIL_ALREADY_EXISTS_MSG;
+    return VALIDATION.EMAIL.ALREADY_EXISTS;
   }
   return undefined;
 }

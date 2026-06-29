@@ -3,6 +3,8 @@
  * Keeps identical messages in one place; service maps reference these by error code key.
  */
 
+import { TRY_IT_REQUESTS_PER_HOUR } from "./limits";
+
 export type ErrorEntry = {
   readonly title: string;
   readonly description: string;
@@ -65,8 +67,7 @@ export const UI_ERROR_MESSAGES = {
   AUTH_TOKENS_MISSING: 'Missing authentication tokens. Please try again.',
   LOGIN_TOKEN_NOT_STORED: 'Access token was not stored after login. Please try again.',
   REQUEST_TIMEOUT: 'Request timeout. The server is taking too long to respond. Please try again.',
-  TRY_IT_RATE_LIMIT:
-    'Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.',
+  TRY_IT_RATE_LIMIT: `Rate limit exceeded. You can try up to ${TRY_IT_REQUESTS_PER_HOUR} translations per hour. Please sign in to get access to all services.`,
   TRY_IT_TRANSLATION_FAILED: 'Failed to perform translation. Please try again.',
   TRY_IT_LOGIN_REQUIRED: 'Access denied. Please login to access this service.',
 };

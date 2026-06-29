@@ -21,7 +21,7 @@ import {
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { showToast } from "../../utils/toast";
-import { PASSWORD_POLICY, UI_ERROR_MESSAGES } from "../../config/constants";
+import { PASSWORD_POLICY, UI_ERROR_MESSAGES } from '../../constants';
 import PasswordRequirements, {
   getPasswordValidationError,
   passwordPasses,

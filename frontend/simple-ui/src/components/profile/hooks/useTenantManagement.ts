@@ -29,7 +29,7 @@ import {
   TENANT_ADMIN_UPDATABLE_STATUSES,
   normalizeTenantStatus,
   resolveTenantUserDisplayStatus,
-} from "../../../config/constants";
+} from '../../../constants';
 import type { TenantStatus, TenantUserStatus, TenantView, TenantUserView } from "../../../types/tenant";
 import type {
   TenantFormState,
@@ -44,15 +44,14 @@ import {
   normalizeTenantUserRoles,
   tenantUserHasRole,
   tenantUserMatchesSearch,
-  TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
-import {
-  DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
-  isDefaultTenant,
-} from "../../../utils/defaultTenant";
+import { PLATFORM_ROLE_FILTER_LIST, TENANT_ASSIGNABLE_ROLES } from "../../../constants/roles";
+import { isDefaultTenant } from "../../../utils/defaultTenant";
+import { DEFAULT_TENANT_USER_ROLE, PLATFORM_ROLES } from "../../../constants/roles";
+import { PAGINATION } from "../../../constants/pagination";
+import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../../../utils/rbac";
 
-const USER_EMAIL_PAGE_SIZE = 100;
-const DEFAULT_TENANT_USER_ROLE = "USER" as const;
+const USER_EMAIL_PAGE_SIZE = PAGINATION.USER_LIST_PAGE_SIZE;
 
 /** Client-side tenant list search: organisation name or tenant ID (substring, case-insensitive). */
 function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
@@ -64,7 +63,7 @@ function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
 }
 
 function isTenantAdminRoleForSessionEnd(role?: string): boolean {
-  return (role ?? "").trim().toUpperCase() === "TENANT ADMIN";
+  return userHasRole(role ? [role] : [], PLATFORM_ROLES.TENANT_ADMIN);
 }
 
 export interface UseTenantManagementOptions {
@@ -77,8 +76,8 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const isTenantAdmin = Boolean(user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)));
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
+  const isAdmin = isPlatformAdminUser(user?.roles);
   const isTenantScopedUser = isTenantAdmin && !isAdmin;
   const userIdStr = user?.user_id ?? null;
 
@@ -219,8 +218,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const tenantUserRoleFilterOptions = useMemo(
     () =>
       isDefaultTenantUsersView
-        ? DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST
-        : TENANT_USER_ROLE_FILTER_LIST,
+        ? PLATFORM_ROLE_FILTER_LIST
+        : TENANT_ASSIGNABLE_ROLES,
     [isDefaultTenantUsersView]
   );
 
@@ -1055,7 +1054,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleOpenEditUser = (u: TenantUserView) => {
     const normalizedRole = (u.role ?? u.roles?.[0] ?? "").trim().toUpperCase();
     const role =
-      normalizedRole === "TENANT ADMIN" ? "TENANT ADMIN" : DEFAULT_TENANT_USER_ROLE;
+      normalizedRole === PLATFORM_ROLES.TENANT_ADMIN
+        ? PLATFORM_ROLES.TENANT_ADMIN
+        : DEFAULT_TENANT_USER_ROLE;
     setEditUserRow(u);
     setEditUserForm({
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",

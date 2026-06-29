@@ -12,7 +12,7 @@ import {
 import LanguageDiarizationResult, {
   type LanguageDiarizationResultData,
 } from "../components/service-page/results/LanguageDiarizationResult";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
 import { parseError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";

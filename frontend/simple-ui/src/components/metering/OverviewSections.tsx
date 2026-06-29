@@ -1,6 +1,6 @@
 import { Box, Flex, SimpleGrid, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import type { OverviewResponse, PlatformAdoption } from "../../types/metering";
 import {
   formatMeteringKpiValue,

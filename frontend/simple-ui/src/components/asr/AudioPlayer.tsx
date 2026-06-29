@@ -17,7 +17,7 @@ import AccessibleAudio from '../common/AccessibleAudio';
 import { AudioPlayerProps } from '../../types/asr';
 import { formatDuration } from '../../utils/helpers';
 import { showToast } from '../../utils/toast';
-import { UI_ERROR_MESSAGES } from '../../config/constants';
+import { UI_ERROR_MESSAGES } from '../../constants';
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioSrc,

@@ -118,3 +118,30 @@ export const LANG_CODE_TO_LABEL: { [key: string]: string } =
     acc[lang.code] = lang.label;
     return acc;
   }, {} as { [key: string]: string });
+
+/** Core Indic language codes used by NER, transliteration, and similar services. */
+export const INDIC_LANGUAGE_CODES = [
+  "en",
+  "hi",
+  "ta",
+  "te",
+  "kn",
+  "ml",
+  "mr",
+  "gu",
+  "bn",
+  "pa",
+  "or",
+  "as",
+] as const;
+
+export type IndicLanguageCode = (typeof INDIC_LANGUAGE_CODES)[number];
+
+/** Language options for Indic-script inference services. */
+export const INDIC_LANGUAGE_OPTIONS = INDIC_LANGUAGE_CODES.map((code) => ({
+  code,
+  label: LANG_CODE_TO_LABEL[code] ?? code,
+}));
+
+/** Languages supported in policy configuration UI. */
+export const POLICY_LANGUAGE_OPTIONS = ["en", "hi"] as const;

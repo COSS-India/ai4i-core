@@ -12,7 +12,7 @@ import {
 } from '@chakra-ui/react';
 import { FaExchangeAlt } from 'react-icons/fa';
 import { LanguageSelectorProps } from '../../types/llm';
-import { LANG_CODE_TO_LABEL } from '../../config/constants';
+import { LANG_CODE_TO_LABEL } from '../../constants';
 
 const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   inputLanguage,
@@ -95,4 +95,3 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
 };
 
 export default LanguageSelector;
-

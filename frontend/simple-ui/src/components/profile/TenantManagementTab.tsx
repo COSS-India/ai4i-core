@@ -53,6 +53,7 @@ import {
 } from "react-icons/fi";
 import { ChevronDownIcon, DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
+import { isPlatformAdminUser } from "../../utils/rbac";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
 import AdminDataTable, {
@@ -61,7 +62,8 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
-import { TENANT_USER_ROLE_OPTIONS } from "./types";
+import { TENANT_ASSIGNABLE_ROLES } from "../../constants/roles";
+import { VALIDATION } from "../../constants/validation";
 import {
   TENANT,
   TENANT_STATUS_LIST,
@@ -71,8 +73,8 @@ import {
   getTenantStatusColorScheme,
   isTenantStatus,
   resolveTenantUserDisplayStatus,
-} from "../../config/constants";
-import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
+} from "../../constants";
+import { LABELS } from "../../constants/labels";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 function dash(v?: string | null): string {
@@ -96,7 +98,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
 
-  const isAdmin = Boolean(user?.roles?.includes('ADMIN'));
+  const isAdmin = isPlatformAdminUser(user?.roles);
   const userListTenantStatus = tm.activeUserListTenant?.status ?? null;
 
   const resolveUserDisplayStatus = (u: TenantUserView) =>
@@ -787,7 +789,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
                 )}
                 {tm.tenantEmailStatus === "available" && !tm.tenantFormErrors.email && (
-                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
+                  <FormHelperText color="green.600">{VALIDATION.EMAIL.AVAILABLE}</FormHelperText>
                 )}
               </FormControl>
               <FormControl isInvalid={Boolean(tm.tenantFormErrors.phone_number)}>
@@ -863,7 +865,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
                 )}
                 {tm.editTenantEmailStatus === "available" && !tm.editTenantFormErrors.email && (
-                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
+                  <FormHelperText color="green.600">{VALIDATION.EMAIL.AVAILABLE}</FormHelperText>
                 )}
                 <FormHelperText>
                   If you change the contact email, the update takes effect only after the new
@@ -949,7 +951,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
                 )}
                 {tm.userEmailStatus === "available" && !tm.userFormErrors.email && (
-                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
+                  <FormHelperText color="green.600">{VALIDATION.EMAIL.AVAILABLE}</FormHelperText>
                 )}
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.full_name)}>
@@ -971,7 +973,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     })
                   }
                 >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {TENANT_ASSIGNABLE_ROLES.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -1056,7 +1058,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     })
                   }
                 >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {TENANT_ASSIGNABLE_ROLES.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -1167,7 +1169,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         onConfirm={tm.handleConfirmStatusUpdate}
         title={`Change ${targetLabel} status`}
         body={`Set ${targetLabel} status to "${statusLabel}"?`}
-        confirmLabel="Update"
+        confirmLabel={LABELS.ACTIONS.UPDATE}
         confirmColorScheme="blue"
         isConfirmLoading={tm.isSubmittingStatus}
       />
@@ -1183,7 +1185,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         onConfirm={tm.handleConfirmDeleteUser}
         title="Delete user"
         body={`Soft-delete user ${target?.username ?? ""}?`}
-        confirmLabel="Delete"
+        confirmLabel={LABELS.ACTIONS.DELETE}
         confirmColorScheme="red"
         isConfirmLoading={tm.isDeletingUser}
       />

@@ -12,7 +12,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React, { useMemo } from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
 import { formatTenantLabel } from "../../utils/meteringFormatters";
 import {

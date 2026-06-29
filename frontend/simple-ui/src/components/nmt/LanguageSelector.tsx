@@ -13,7 +13,7 @@ import {
 } from '@chakra-ui/react';
 import { FaExchangeAlt } from 'react-icons/fa';
 import { LanguageSelectorProps } from '../../types/nmt';
-import { LANG_CODE_TO_LABEL } from '../../config/constants';
+import { LANG_CODE_TO_LABEL } from '../../constants';
 
 const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   languagePair,
@@ -40,7 +40,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
 
     // Check if swapped pair is available
     const isSwappedPairAvailable = availableLanguagePairs.some(
-      pair => 
+      pair =>
         pair.sourceLanguage === swappedPair.sourceLanguage &&
         pair.targetLanguage === swappedPair.targetLanguage
     );
@@ -57,7 +57,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   };
 
   const isSwapAvailable = availableLanguagePairs.some(
-    pair => 
+    pair =>
       pair.sourceLanguage === languagePair.targetLanguage &&
       pair.targetLanguage === languagePair.sourceLanguage
   );

@@ -4,6 +4,7 @@
 
 import type { ServiceInputType } from "../types/servicePage";
 import type { ServiceId } from "./serviceMetadata";
+import { MAX_LLM_TEXT_LENGTH, MAX_TEXT_LENGTH } from "./limits";
 
 export interface ServicePageDefaults {
   inputType: ServiceInputType;
@@ -23,7 +24,7 @@ export const SERVICE_PAGE_DEFAULTS: Partial<Record<ServiceId, ServicePageDefault
     helperText:
       'Select an NMT service and languages above, enter text, then click "Translate".',
     textPlaceholder: "Type your text here to translate...",
-    maxTextLength: 512,
+    maxTextLength: MAX_TEXT_LENGTH,
   },
   asr: {
     inputType: "audio",
@@ -38,7 +39,7 @@ export const SERVICE_PAGE_DEFAULTS: Partial<Record<ServiceId, ServicePageDefault
     helperText:
       'Enter text and click "Generate Audio" to create speech synthesis. Adjust voice settings in the configuration panel.',
     textPlaceholder: "Enter text to synthesize...",
-    maxTextLength: 512,
+    maxTextLength: MAX_TEXT_LENGTH,
   },
   llm: {
     inputType: "text",
@@ -46,7 +47,7 @@ export const SERVICE_PAGE_DEFAULTS: Partial<Record<ServiceId, ServicePageDefault
     submitLoadingLabel: "Translating...",
     helperText: 'Enter text and click "Translate" to process.',
     textPlaceholder: "Enter text to process...",
-    maxTextLength: 512,
+    maxTextLength: MAX_LLM_TEXT_LENGTH,
   },
   ocr: {
     inputType: "image",

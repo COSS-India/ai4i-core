@@ -2,9 +2,6 @@
 
 import { MAX_TEXT_LENGTH } from "../limits";
 
-/** Minimum Transliteration text length (characters) to be considered valid */
-export const MIN_TRANSLITERATION_TEXT_LENGTH = 2;
-
 /** Transliteration error codes and user-facing messages */
 export const TRANSLITERATION_ERRORS = {
   // Input Errors

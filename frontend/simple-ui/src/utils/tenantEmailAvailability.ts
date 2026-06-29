@@ -1,9 +1,8 @@
 // Debounced live email availability checks (format + tenant list + /auth/check-email).
 
 import authService from "../services/authService";
+import { VALIDATION } from "../constants/validation";
 import {
-  EMAIL_ALREADY_EXISTS_MSG,
-  EMAIL_USER_ALREADY_EXISTS_MSG,
   normalizeEmail,
   validateEmailFormatOnly,
   validateTenantContactEmail,
@@ -13,8 +12,6 @@ import {
 } from "./tenantEmailValidation";
 
 export type EmailAvailabilityStatus = "idle" | "checking" | "available";
-
-export const EMAIL_CHECK_DEBOUNCE_MS = 400;
 
 export type TenantEmailCheckMode = "tenant_contact" | "tenant_user";
 
@@ -34,8 +31,8 @@ export interface EmailAvailabilityResult {
 
 function userExistsMessage(mode: TenantEmailCheckMode): string {
   return mode === "tenant_contact"
-    ? EMAIL_USER_ALREADY_EXISTS_MSG
-    : EMAIL_ALREADY_EXISTS_MSG;
+    ? VALIDATION.EMAIL.USER_ALREADY_EXISTS
+    : VALIDATION.EMAIL.ALREADY_EXISTS;
 }
 
 function clientCollisionError(

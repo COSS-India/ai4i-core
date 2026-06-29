@@ -11,11 +11,12 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { TextInputProps } from '../../types/llm';
+import { MAX_LLM_TEXT_LENGTH } from '../../constants/limits';
 
 const TextInput: React.FC<TextInputProps> = ({
   inputText,
   onInputChange,
-  maxLength = 50000,
+  maxLength = MAX_LLM_TEXT_LENGTH,
   disabled = false,
 }) => {
   const [isInvalid, setIsInvalid] = useState(inputText.length > maxLength);
@@ -77,4 +78,3 @@ const TextInput: React.FC<TextInputProps> = ({
 };
 
 export default TextInput;
-

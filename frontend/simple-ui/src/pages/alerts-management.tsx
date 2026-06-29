@@ -12,13 +12,14 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
+import { isPlatformAdminUser } from "../utils/rbac";
 import AlertingTab from "../components/profile/AlertingTab";
 
 const AlertsManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isAdmin = isPlatformAdminUser(user?.roles);
 
   React.useEffect(() => {
     if (!authLoading && (!isAuthenticated || !isAdmin)) {

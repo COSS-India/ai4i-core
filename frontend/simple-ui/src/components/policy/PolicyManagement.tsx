@@ -55,11 +55,14 @@ import {
   type PiiTypeOut,
   type PolicyOut,
 } from "../../services/policyService";
-import { isTenantStatus, TENANT } from "../../config/constants";
+import { isTenantStatus, TENANT } from '../../constants';
+import { POLICY_LANGUAGE_OPTIONS } from "../../constants/languages";
+import { PAGINATION } from "../../constants/pagination";
+import { LABELS } from "../../constants/labels";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 
-const AUDIT_PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+const AUDIT_PAGE_SIZE_OPTIONS = PAGINATION.AUDIT_PAGE_SIZE_OPTIONS;
 
 /** Set to `true` to show the Audit log tab again. */
 const SHOW_POLICY_AUDIT_TAB = false;
@@ -86,7 +89,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
-const LANGUAGE_OPTIONS = ["en", "hi"] as const;
+const LANGUAGE_OPTIONS = POLICY_LANGUAGE_OPTIONS;
 const MASK_OPTIONS: MaskFormat[] = ["full", "partial", "redact"];
 
 function getPolicyApiErrorMessage(e: unknown, fallback: string): string {
@@ -759,7 +762,7 @@ function PoliciesPanel() {
           ) : null
         }
         onConfirm={() => void handleConfirmDelete()}
-        confirmLabel="Delete"
+        confirmLabel={LABELS.ACTIONS.DELETE}
         confirmColorScheme="red"
         isConfirmLoading={deleting}
       />
@@ -1796,7 +1799,7 @@ function PiiTypesPanel() {
           ) : null
         }
         onConfirm={() => void confirmDelete()}
-        confirmLabel="Delete"
+        confirmLabel={LABELS.ACTIONS.DELETE}
         confirmColorScheme="red"
         isConfirmLoading={deleting}
       />

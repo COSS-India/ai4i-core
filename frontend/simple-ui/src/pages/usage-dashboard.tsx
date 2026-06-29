@@ -9,6 +9,7 @@ import Head from "next/head";
 import React, { useEffect, useMemo } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import UsageDashboard from "../components/metering/UsageDashboard";
 import { useAuth } from "../hooks/useAuth";
 import { showToast } from "../utils/toast";
@@ -83,6 +84,10 @@ const UsageDashboardPage: React.FC = () => {
 
       <ContentLayout>
         <Box maxW="7xl" mx="auto" py={4} px={2}>
+          <ManagementPageHeader
+            title="Usage Dashboard"
+            description="Monitor service consumption, tenant activity, and platform throughput"
+          />
           <UsageDashboard
             userRoles={user?.roles}
             tenantId={tenantId}

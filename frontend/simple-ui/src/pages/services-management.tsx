@@ -58,7 +58,7 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
-import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel } from "../config/constants";
+import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel, SERVICE_PUBLISH } from '../constants';
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -179,8 +179,8 @@ const ServicesManagementPage: React.FC = () => {
     setIsLoading(true);
     try {
       const isPublishedFilter =
-        filterStatus === "published" ? true :
-        filterStatus === "unpublished" ? false :
+        filterStatus === SERVICE_PUBLISH.FILTER.PUBLISHED ? true :
+        filterStatus === SERVICE_PUBLISH.FILTER.UNPUBLISHED ? false :
         undefined;
 
       const result = await fetchAllServicesMatchingFilters({
@@ -1027,8 +1027,8 @@ const ServicesManagementPage: React.FC = () => {
                                   formControlProps={{ w: { base: "full", sm: "140px" } }}
                                 >
                                   <option value="">All</option>
-                                  <option value="published">Published</option>
-                                  <option value="unpublished">Unpublished</option>
+                                  <option value={SERVICE_PUBLISH.FILTER.PUBLISHED}>{SERVICE_PUBLISH.LABEL.PUBLISHED}</option>
+                                  <option value={SERVICE_PUBLISH.FILTER.UNPUBLISHED}>{SERVICE_PUBLISH.LABEL.UNPUBLISHED}</option>
                                 </TableSelectField>
                                 <TableSelectField
                                   label="Model Task Type"
@@ -1070,7 +1070,7 @@ const ServicesManagementPage: React.FC = () => {
                                       _hover={{ opacity: 0.8 }}
                                     >
                                       Status:{" "}
-                                      {filterStatus === "published" ? "Published" : "Unpublished"}{" "}
+                                      {filterStatus === SERVICE_PUBLISH.FILTER.PUBLISHED ? SERVICE_PUBLISH.LABEL.PUBLISHED : SERVICE_PUBLISH.LABEL.UNPUBLISHED}{" "}
                                       ×
                                     </Badge>
                                   )}
@@ -1437,8 +1437,6 @@ const ServicesManagementPage: React.FC = () => {
             This action cannot be undone.
           </>
         }
-        confirmLabel="Confirm"
-        cancelLabel="Cancel"
         confirmColorScheme="red"
         isConfirmLoading={deletingServiceUuid === serviceToDelete?.serviceId}
         confirmLoadingText="Deleting..."
@@ -1460,8 +1458,6 @@ const ServicesManagementPage: React.FC = () => {
             The service will be available for use.
           </>
         }
-        confirmLabel="Confirm"
-        cancelLabel="Cancel"
         confirmColorScheme="green"
         isConfirmLoading={publishingServiceUuid === confirmPublishService?.serviceId}
         confirmLoadingText="Publishing..."
@@ -1483,8 +1479,6 @@ const ServicesManagementPage: React.FC = () => {
             The service will no longer be available for use.
           </>
         }
-        confirmLabel="Confirm"
-        cancelLabel="Cancel"
         confirmColorScheme="red"
         isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.serviceId}
         confirmLoadingText="Unpublishing..."

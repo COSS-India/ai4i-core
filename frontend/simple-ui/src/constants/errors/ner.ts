@@ -2,9 +2,6 @@
 
 import { MAX_TEXT_LENGTH } from "../limits";
 
-/** Minimum NER text length (characters) to be considered valid */
-export const MIN_NER_TEXT_LENGTH = 2;
-
 /** Named Entity Recognition (NER) error codes and user-facing messages */
 export const NER_ERRORS = {
   // Input Errors

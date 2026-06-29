@@ -12,6 +12,10 @@ import type {
   ServiceListParams,
   ServiceUpdateRequest,
 } from '../types/platform';
+import { PAGINATION } from '../constants/pagination';
+
+const REGISTRY_FETCH_PAGE_SIZE = PAGINATION.REGISTRY_FETCH_PAGE_SIZE;
+const MAX_REGISTRY_FETCH_PAGES = PAGINATION.MAX_REGISTRY_FETCH_PAGES;
 
 export type {
   DeleteServiceResponse,
@@ -46,8 +50,6 @@ export const listServices = async (): Promise<Service[]> => {
  * List services with server-side pagination, filtering, and search.
  * Reads the X-Total-Count response header for the accurate total count.
  */
-const REGISTRY_FETCH_PAGE_SIZE = 100;
-const MAX_REGISTRY_FETCH_PAGES = 500;
 
 /**
  * Fetches every service matching list filters by walking paginated API pages.

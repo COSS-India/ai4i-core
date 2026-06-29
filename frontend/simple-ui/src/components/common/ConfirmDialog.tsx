@@ -9,6 +9,7 @@ import {
   Button,
   useColorModeValue,
 } from "@chakra-ui/react";
+import { LABELS } from "../../constants/labels";
 
 export interface ConfirmDialogProps {
   /** Whether the dialog is visible. */
@@ -48,8 +49,8 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   title,
   body,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel = LABELS.ACTIONS.CONFIRM,
+  cancelLabel = LABELS.ACTIONS.CANCEL,
   confirmColorScheme = "red",
   isConfirmLoading = false,
   confirmLoadingText,
@@ -96,4 +97,3 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 };
 
 export default ConfirmDialog;
-

@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
 import type { MeteringGraph } from "../../types/metering";
 import { buildRequestVolumeChartData } from "../../utils/meteringFormatters";

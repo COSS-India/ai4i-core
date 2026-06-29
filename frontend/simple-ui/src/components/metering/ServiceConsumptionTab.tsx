@@ -1,6 +1,6 @@
 import { Box, HStack, SimpleGrid, Tbody, Td, Text, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
-import { METERING } from "../../config/meteringConstants";
+import { METERING } from "../../constants";
 import type { ServiceConsumptionResponse } from "../../types/metering";
 import {
   deriveServiceInsights,

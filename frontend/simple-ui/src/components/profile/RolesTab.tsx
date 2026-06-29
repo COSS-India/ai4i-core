@@ -26,7 +26,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useRolesTab } from "./hooks/useRolesTab";
 import UserSearchableSelect from "../common/UserSearchableSelect";
 import StandardModal from "../common/StandardModal";
-import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenant";
+import { formatDefaultTenantAssignableRoleLabel } from "../../constants/roles";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];

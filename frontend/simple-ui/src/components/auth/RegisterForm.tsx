@@ -25,7 +25,7 @@ import { RegisterRequest } from '../../types/auth';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { showToast } from '../../utils/toast';
-import { PASSWORD_POLICY, COMMON_ERRORS, UI_ERROR_MESSAGES } from '../../config/constants';
+import { PASSWORD_POLICY, COMMON_ERRORS, UI_ERROR_MESSAGES } from '../../constants';
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
 import authService from '../../services/authService';
 

@@ -5,30 +5,6 @@ import type { TenantUserView, TenantView } from "../types/tenant";
 export const DEFAULT_TENANT_ORGANISATION =
   (process.env.NEXT_PUBLIC_DEFAULT_TENANT_ORG || "default organisation").trim();
 
-/**
- * Roles assignable on Profile → Roles (Adopter / Default tenant scope).
- * API values must match auth-service `RoleName`.
- */
-export const DEFAULT_TENANT_ASSIGNABLE_ROLES = ["ADMIN", "MODERATOR", "USER"] as const;
-
-export type DefaultTenantAssignableRole = (typeof DEFAULT_TENANT_ASSIGNABLE_ROLES)[number];
-
-const ASSIGNABLE_ROLE_LABELS: Record<DefaultTenantAssignableRole, string> = {
-  ADMIN: "Admin",
-  MODERATOR: "Moderator",
-  USER: "User",
-};
-
-export function isDefaultTenantAssignableRole(role: string): boolean {
-  const normalized = role.trim().toUpperCase();
-  return (DEFAULT_TENANT_ASSIGNABLE_ROLES as readonly string[]).includes(normalized);
-}
-
-export function formatDefaultTenantAssignableRoleLabel(role: string): string {
-  const normalized = role.trim().toUpperCase() as DefaultTenantAssignableRole;
-  return ASSIGNABLE_ROLE_LABELS[normalized] ?? role;
-}
-
 export function resolveDefaultTenantId(tenants: TenantView[]): string | null {
   const target = DEFAULT_TENANT_ORGANISATION.toLowerCase();
   const match = tenants.find(
@@ -43,21 +19,6 @@ export function isDefaultTenantOrg(organisation?: string | null): boolean {
 
 export function isDefaultTenant(tenant: { organisation?: string | null }): boolean {
   return isDefaultTenantOrg(tenant.organisation);
-}
-
-/** Role filter options for Default Tenant user list (Tenant Management). */
-export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
-  { value: "ADMIN", label: "Admin" },
-  { value: "USER", label: "User" },
-  { value: "MODERATOR", label: "Moderator" },
-  { value: "GUEST", label: "Guest" },
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
-] as const;
-
-export function formatPlatformRoleLabel(role: string): string {
-  const normalized = role.trim().toUpperCase();
-  const match = DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST.find((o) => o.value === normalized);
-  return match?.label ?? role;
 }
 
 /** Map tenant user rows for Profile → Roles picker (auth `User` shape). */

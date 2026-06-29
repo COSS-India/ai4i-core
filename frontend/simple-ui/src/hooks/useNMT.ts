@@ -8,12 +8,9 @@ import { getRemainingTryItRequests } from '../services/tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
-import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_INFERENCE_TEXT_LENGTH, NMT_ERRORS, UI_ERROR_MESSAGES } from '../constants';
+import { INDIC_TEXT_CHAR_REGEX } from '../constants/validation';
 import { parseError } from '../utils/errorHandler';
-
-// Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
-const VALID_NMT_CHAR_REGEX =
-  /^(?:[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9]|[\u0900-\u097F]|[\u0980-\u09FF]|[\u0A00-\u0A7F]|[\u0A80-\u0AFF]|[\u0B00-\u0B7F]|[\u0B80-\u0BFF]|[\u0C00-\u0C7F]|[\u0C80-\u0CFF]|[\u0D00-\u0D7F]|[\u0D80-\u0DFF])*$/;
 
 export const useNMT = (): UseNMTReturn => {
   // State
@@ -109,7 +106,7 @@ export const useNMT = (): UseNMTReturn => {
       return;
     }
 
-    if (trimmed.length < MIN_NMT_TEXT_LENGTH) {
+    if (trimmed.length < MIN_INFERENCE_TEXT_LENGTH) {
       const err = NMT_ERRORS.TEXT_TOO_SHORT;
       showToast({ type: 'error', message: err.description });
       return;
@@ -121,7 +118,7 @@ export const useNMT = (): UseNMTReturn => {
       return;
     }
 
-    if (!VALID_NMT_CHAR_REGEX.test(trimmed)) {
+    if (!INDIC_TEXT_CHAR_REGEX.test(trimmed)) {
       const err = NMT_ERRORS.INVALID_CHARACTERS;
       showToast({ type: 'error', message: err.description });
       return;

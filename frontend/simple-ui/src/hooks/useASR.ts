@@ -7,7 +7,7 @@ import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
 import { getAsrTranscriptText } from '../types/inference';
-import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, UI_ERROR_MESSAGES } from '../constants';
 import { parseError } from '../utils/errorHandler';
 
 // MediaRecorder is a standard Web API, no need to extend Window

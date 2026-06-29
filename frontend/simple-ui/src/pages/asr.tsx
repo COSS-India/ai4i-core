@@ -13,8 +13,8 @@ import {
   ServicePageLayout,
   useCopyToClipboard,
 } from "../components/service-page";
-import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
-import { getServicePageDefaults } from "../config/servicePageConfig";
+import { ASR_SUPPORTED_LANGUAGES } from '../constants';
+import { getServicePageDefaults } from '../constants/servicePageConfig';
 import { useASR } from "../hooks/useASR";
 import { listASRServices } from "../services/asrService";
 

@@ -12,8 +12,9 @@ import {
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
 import { parseError, showError } from '../utils/errorHandler';
+import { MAX_LLM_TEXT_LENGTH } from '../constants/limits';
 
-const MAX_TEXT_LENGTH = 50000;
+const MAX_TEXT_LENGTH = MAX_LLM_TEXT_LENGTH;
 
 export const useLLM = (serviceId?: string): UseLLMReturn => {
   const useChatDefaults = isLlmChatService(serviceId);

@@ -13,6 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import type { ServiceDropdownProps } from "../../types/servicePage";
+import { LABELS } from "../../constants/labels";
 
 const ServiceDropdown: React.FC<ServiceDropdownProps> = ({
   label = "Service",
@@ -28,7 +29,7 @@ const ServiceDropdown: React.FC<ServiceDropdownProps> = ({
 }) => {
   const selected = options.find((o) => o.id === value);
   const displayPlaceholder =
-    placeholder ?? (loading ? "Loading..." : "Select");
+    placeholder ?? (loading ? LABELS.STATUS.LOADING : "Select");
 
   return (
     <VStack spacing={2} align="stretch">

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { METERING, type MeteringSubTab } from "../config/meteringConstants";
+import { METERING, type MeteringSubTab } from "../constants";
 import { listTenants } from "../services/tenantService";
 import type { MeteringTopN, MeteringWindow } from "../types/metering";
 import {

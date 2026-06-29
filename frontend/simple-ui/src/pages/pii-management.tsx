@@ -6,12 +6,13 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import PiiManagement from "../components/pii/PiiManagement";
 import { useAuth } from "../hooks/useAuth";
+import { isPlatformAdminUser } from "../utils/rbac";
 
 const PiiManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isAdmin = isPlatformAdminUser(user?.roles);
 
   React.useEffect(() => {
     if (!authLoading && !isAuthenticated) {

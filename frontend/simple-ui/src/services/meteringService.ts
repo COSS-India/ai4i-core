@@ -1,4 +1,4 @@
-import { METERING } from "../config/meteringConstants";
+import { METERING } from "../constants";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {

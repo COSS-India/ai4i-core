@@ -17,7 +17,7 @@ import {
   isApiKeyEffectivelyActive,
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
-} from "../../../config/constants";
+} from '../../../constants';
 import {
   formatApiKeyDisplayId,
   mergeApiKeyHexFromCache,

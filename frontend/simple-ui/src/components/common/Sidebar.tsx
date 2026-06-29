@@ -37,13 +37,13 @@ import {
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { TABS } from "../../config/constants";
-import { getServiceTitle } from "../../config/serviceMetadata";
+import { TABS } from '../../constants';
+import { getServiceTitle } from '../../constants/serviceMetadata';
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { canAccessServicesManagement, canAccessUsageDashboard } from "../../utils/rbac";
+import { canAccessServicesManagement, canAccessUsageDashboard, isGuestUser, isPlatformAdminUser, isRegularUser, isTenantAdminUser } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -454,14 +454,12 @@ const Sidebar: React.FC = () => {
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
 
   // Check if user is GUEST or USER
-  const isGuest = user?.roles?.includes('GUEST') || false;
-  const isUser = user?.roles?.includes('USER') || false;
+  const isGuest = isGuestUser(user?.roles);
+  const isUser = isRegularUser(user?.roles);
 
-  // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
+  const isAdmin = isPlatformAdminUser(user?.roles);
 
-  // Check if user is TENANT ADMIN
-  const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
+  const isTenantAdmin = isTenantAdminUser(user?.roles);
 
   // Show Tenant Management to admins and tenant admins
   const showTenantManagement = isAdmin || isTenantAdmin;

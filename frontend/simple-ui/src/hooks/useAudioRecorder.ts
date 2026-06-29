@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { showToast } from '../utils/toast';
 import { convertWebmToWav } from '../utils/helpers';
-import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS } from '../config/constants';
+import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS } from '../constants';
 
 interface UseAudioRecorderOptions {
   sampleRate?: number;

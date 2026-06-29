@@ -5,19 +5,20 @@
  */
 
 import CryptoJS from 'crypto-js';
+import { LOCAL_STORAGE_KEYS, SESSION_STORAGE_KEYS } from '../constants/storage';
 
-const ACCESS_TOKEN_KEY = 'access_token';
-const REFRESH_TOKEN_KEY = 'refresh_token';
-const REMEMBER_ME_KEY = 'remember_me';
+const ACCESS_TOKEN_KEY = LOCAL_STORAGE_KEYS.ACCESS_TOKEN;
+const REFRESH_TOKEN_KEY = LOCAL_STORAGE_KEYS.REFRESH_TOKEN;
+const REMEMBER_ME_KEY = SESSION_STORAGE_KEYS.REMEMBER_ME;
 const ENCRYPTED_PREFIX = 'enc:';
 
 /** Keys that must never hold auth/session data in localStorage (legacy cleanup). */
 const LEGACY_LOCAL_AUTH_KEYS = [
-  ACCESS_TOKEN_KEY,
-  REFRESH_TOKEN_KEY,
-  REMEMBER_ME_KEY,
-  'login_timestamp',
-  'user',
+  LOCAL_STORAGE_KEYS.ACCESS_TOKEN,
+  LOCAL_STORAGE_KEYS.REFRESH_TOKEN,
+  SESSION_STORAGE_KEYS.REMEMBER_ME,
+  LOCAL_STORAGE_KEYS.LOGIN_TIMESTAMP,
+  LOCAL_STORAGE_KEYS.USER,
 ] as const;
 
 function purgeLegacyAuthLocalStorage(): void {

@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
-import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
+import { getServiceTitle, type ServiceId } from '../../constants/serviceMetadata';
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import AuthModal from "../auth/AuthModal";

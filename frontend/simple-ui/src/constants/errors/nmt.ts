@@ -1,8 +1,5 @@
 // Service error codes and user-facing messages
 
-/** Minimum NMT text length (characters) to be considered valid */
-export const MIN_NMT_TEXT_LENGTH = 2;
-
 /** NMT (Neural Machine Translation) error codes and user-facing messages */
 export const NMT_ERRORS = {
   // Input errors
