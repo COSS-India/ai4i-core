@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai4i_core.ppu import get_inference_types
 from app.core.exceptions import EntityNotFoundError
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
@@ -21,19 +22,8 @@ from app.schemas.pay_per_use.usage import (
 )
 
 _UNIT_LABELS: dict[str, str] = {
-    "llm": "M Tokens",
-    "asr": "Minutes",
-    "nmt": "M Characters",
-    "ocr": "KB",
-    "tts": "M Characters",    # PRD: Characters / Per million characters
-    "ner": "M Characters",    # PRD: Characters / Per million characters
-    "transliteration": "M Characters",    # PRD: Characters / Per million characters
-    "language-detection": "M Characters", # PRD: Characters / Per million characters
-    "speaker-diarization": "Minutes",
-    "audio-lang-detection": "Minutes",
-    "language-diarization": "Minutes",
-    "pipeline": "Requests",   # PRD: pipeline type billed per request
-    "pii": "M Characters",    # PRD: Characters / Per million characters
+    it["name"]: it["unit"]
+    for it in get_inference_types()
 }
 _CURRENCY = "INR"
 _DEFAULT_UNIT_SIZE = 1_000_000
@@ -110,7 +100,7 @@ class PPUUsageService:
     ) -> TenantUsageListResponse:
         rows = await self._repo.get_tenant_usages(billing_month, tier, model_task_type)
         org_map = await _resolve_tenant_names([row.tenant_id for row in rows], auth_db)
-        unit_label = _UNIT_LABELS.get(model_task_type, "M Tokens") if model_task_type else "M Tokens"
+        unit_label = _UNIT_LABELS.get(model_task_type, "Units") if model_task_type else "Units"
 
         items = []
         for row in rows:
