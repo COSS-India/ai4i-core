@@ -9,7 +9,7 @@ all gated on usage.read (134) at the gateway. platform-core then decides
 breadth from the X-Permission-IDS header, mirroring metering.read (133).
 
 Revision ID: e5f6a7b8c9d1
-Revises: ad79a2cfe40f
+Revises: 71c7094f5950
 Create Date: 2026-06-26 00:00:00.000000
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'e5f6a7b8c9d1'
-down_revision: Union[str, None] = 'ad79a2cfe40f'
+down_revision: Union[str, None] = '71c7094f5950'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
@@ -32,11 +32,12 @@ def upgrade() -> None:
 
     # 1. Ensure the permission row exists (id 134).
     conn.execute(
-        sa.text(f"""
+        sa.text("""
             INSERT INTO permissions (id, name, resource, action, created_by)
-            VALUES (134, 'usage.read', 'usage', 'read', '{SEEDER_ID}')
-            ON CONFLICT (id) DO NOTHING
-        """)
+            SELECT 134, 'usage.read', 'usage', 'read', :seeder_id
+            WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE id = 134)
+        """),
+        {"seeder_id": SEEDER_ID},
     )
     conn.execute(sa.text(
         "SELECT setval(pg_get_serial_sequence('permissions', 'id'),"
@@ -45,9 +46,9 @@ def upgrade() -> None:
 
     # 2. Grant to ADMIN, MODERATOR, TENANT_ADMIN.
     conn.execute(
-        sa.text(f"""
+        sa.text("""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.id, p.id, '{SEEDER_ID}'
+            SELECT r.id, p.id, :seeder_id
             FROM roles r
             JOIN permissions p ON p.name = 'usage.read'
             WHERE r.name IN ('ADMIN', 'MODERATOR', 'TENANT ADMIN')
@@ -55,7 +56,8 @@ def upgrade() -> None:
                   SELECT 1 FROM role_permission rp
                   WHERE rp.role_id = r.id AND rp.permission_id = p.id
               )
-        """)
+        """),
+        {"seeder_id": SEEDER_ID},
     )
 
 
