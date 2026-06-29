@@ -42,9 +42,16 @@ class Service(Base):
             ["mm_models.model_id"],
             name="fk_mm_services_model_id",
         ),
+        ForeignKeyConstraint(
+            ["tier_id"],
+            ["ppu_tiers.id"],
+            name="fk_mm_services_tier_id",
+            ondelete="SET NULL",
+        ),
         Index("ix_mm_services_is_published", "is_published"),
         Index("ix_mm_services_created_by", "created_by"),
         Index("ix_mm_services_deleted_at", "deleted_at"),
+        Index("ix_mm_services_tier_id", "tier_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -69,9 +76,11 @@ class Service(Base):
     cost_per_unit = Column(Numeric(15, 8), nullable=True)
     unit_size = Column(BigInteger, nullable=True)
     unit_rate = Column(Numeric(15, 8), nullable=True)
+    tier_id = Column(UUID(as_uuid=True), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now(),nullable=False,)
 
     model = relationship("Model", back_populates="services", foreign_keys=[model_id])
+    tier = relationship("PPUTier", foreign_keys=[tier_id])

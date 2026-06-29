@@ -3,6 +3,7 @@ Pydantic request/response schemas for the Service domain.
 """
 
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import Field, field_validator
 
@@ -51,6 +52,10 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
+    billingUnitType: Optional[str] = None
+    costPerUnit: Optional[float] = None
+    unitSize: Optional[int] = None
+    tierId: Optional[UUID] = None
 
     @field_validator("name")
     @classmethod
@@ -87,6 +92,10 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
+    billingUnitType: Optional[str] = None
+    costPerUnit: Optional[float] = None
+    unitSize: Optional[int] = None
+    tierId: Optional[UUID] = None
 
     @field_validator("inferenceServerType", mode="before")
     @classmethod
@@ -122,6 +131,11 @@ class ServiceResponse(BaseSchema):
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
+    billingUnitType: Optional[str] = None
+    costPerUnit: Optional[float] = None
+    unitSize: Optional[int] = None
+    unitRate: Optional[float] = None
+    tierId: Optional[UUID] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 

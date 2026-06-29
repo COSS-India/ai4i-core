@@ -185,6 +185,11 @@ class ServiceService:
         service_id = generate_service_id(payload.name)
         is_published = bool(payload.isPublished)
         now = datetime.now(timezone.utc) if is_published else None
+        unit_rate = (
+            payload.costPerUnit / payload.unitSize
+            if payload.costPerUnit is not None and payload.unitSize is not None
+            else None
+        )
         instance = Service(
             service_id=service_id,
             name=payload.name,
@@ -204,6 +209,11 @@ class ServiceService:
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
             is_published=is_published,
             published_at=now,
+            billing_unit_type=payload.billingUnitType,
+            cost_per_unit=payload.costPerUnit,
+            unit_size=payload.unitSize,
+            unit_rate=unit_rate,
+            tier_id=payload.tierId,
             created_by=created_by,
         )
         try:
@@ -294,6 +304,25 @@ class ServiceService:
             else:
                 update_data["unpublished_at"] = now
 
+        if "billingUnitType" in request_dict:
+            update_data["billing_unit_type"] = request_dict["billingUnitType"]
+        if "costPerUnit" in request_dict:
+            update_data["cost_per_unit"] = request_dict["costPerUnit"]
+        if "unitSize" in request_dict:
+            update_data["unit_size"] = request_dict["unitSize"]
+        if "tierId" in request_dict:
+            update_data["tier_id"] = request_dict["tierId"]
+
+        # Recompute unit_rate whenever either factor changes.
+        if "cost_per_unit" in update_data or "unit_size" in update_data:
+            new_cost = update_data.get("cost_per_unit", instance.cost_per_unit)
+            new_size = update_data.get("unit_size", instance.unit_size)
+            update_data["unit_rate"] = (
+                float(new_cost) / int(new_size)
+                if new_cost is not None and new_size is not None
+                else None
+            )
+
         if updated_by is not None:
             update_data["updated_by"] = updated_by
 
@@ -303,7 +332,8 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, policy. Note: name, modelId, "
+                    "benchmarks, isPublished, policy, billingUnitType, "
+                    "costPerUnit, unitSize, tierId. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),
                 code="NO_UPDATABLE_FIELDS",
