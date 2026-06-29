@@ -107,6 +107,9 @@ class APIKeyService:
                 "permissions": db_key.permissions or [],
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
+                "tier_id": "",
+                "budget_exhausted": "false",
+                "quota_exhausted": "",
             },
         )
 
@@ -253,6 +256,9 @@ class APIKeyService:
                     "permissions": permission_ids,
                     "user_id": str(user_id),
                     "tenant_id": tenant_id,
+                    "tier_id": "",
+                    "budget_exhausted": "false",
+                    "quota_exhausted": "",
                 },
             )
 
@@ -276,6 +282,9 @@ class APIKeyService:
             "user_id": cached.get("user_id"),
             "permission_ids": cached.get("permissions", []),
             "tenant_id": cached.get("tenant_id"),
+            "tier_id": cached.get("tier_id", ""),
+            "budget_exhausted": cached.get("budget_exhausted", "false"),
+            "quota_exhausted": cached.get("quota_exhausted", ""),
         }
 
     async def revoke_api_key(
