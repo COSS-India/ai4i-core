@@ -1,7 +1,6 @@
 """PPU usage dashboard routes."""
 from __future__ import annotations
 
-import re
 from datetime import date
 from typing import Annotated, Optional
 
@@ -10,6 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db_optional, get_db
 from app.core.exceptions import InsufficientPermissionsError
+from app.core.permissions import (
+    ROLE_ADMIN as _ROLE_ADMIN,
+    ROLE_MODERATOR as _ROLE_MODERATOR,
+    ROLE_TENANT_ADMIN as _ROLE_TENANT_ADMIN,
+    permission_ids as _permission_ids,
+)
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
     TenantUsageDetailResponse,
@@ -19,15 +24,6 @@ from app.schemas.pay_per_use.usage import (
 from app.services.pay_per_use.ppu_usage_service import PPUUsageService
 
 router = APIRouter(prefix="/usage", tags=["Usage"])
-
-_ROLE_ADMIN = 1
-_ROLE_MODERATOR = 2
-_ROLE_TENANT_ADMIN = 5
-
-
-def _permission_ids(request: Request) -> set[int]:
-    raw = request.headers.get("X-Permission-IDS", "")
-    return {int(m) for m in re.findall(r"\d+", raw)}
 
 
 def _require_admin(request: Request) -> None:
