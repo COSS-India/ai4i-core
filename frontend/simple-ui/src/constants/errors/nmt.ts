@@ -1,6 +1,11 @@
 // Service error codes and user-facing messages
 
-/** NMT (Neural Machine Translation) error codes and user-facing messages */
+import {
+  SHARED_SERVICE_ERRORS,
+  quotaExceeded,
+  serviceUnavailable,
+} from "../errorShared";
+
 export const NMT_ERRORS = {
   // Input errors
   NO_TEXT_INPUT: {
@@ -39,44 +44,20 @@ export const NMT_ERRORS = {
     description: 'Translation from {source} to {target} is not supported. Please check available language pairs.',
     action: 'Select supported pair',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Translation service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Translation service'),
   TRANSLATION_FAILED: {
     title: 'Translation failed',
     description: 'Translation failed. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for translation service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('translation service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model not available',
     description: 'The selected translation model is currently unavailable. Please try a different model.',
     action: 'Select different model',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
 } as const;

@@ -2,7 +2,6 @@
 
 import { MAX_RECORDING_DURATION } from "../limits";
 
-/** Audio upload error codes and user-facing messages */
 export const UPLOAD_ERRORS = {
   NO_FILE_SELECTED: {
     title: 'No file selected',

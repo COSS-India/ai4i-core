@@ -1,6 +1,11 @@
 // Service error codes and user-facing messages
 
-/** TTS (Text-to-Speech) error codes and user-facing messages */
+import {
+  SHARED_SERVICE_ERRORS,
+  quotaExceeded,
+  serviceUnavailable,
+} from "../errorShared";
+
 export const TTS_ERRORS = {
   // Input errors
   NO_TEXT_INPUT: {
@@ -44,26 +49,14 @@ export const TTS_ERRORS = {
     description: 'The selected voice is not available for this language. Please choose a different voice.',
     action: 'Select different voice',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'TTS service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('TTS service'),
   PROCESSING_FAILED: {
     title: 'Processing failed',
     description: 'Failed to generate speech. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for TTS service. Please contact your administrator or try again tomorrow.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('TTS service', ' or try again tomorrow'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model not available',
     description: 'The selected TTS model is currently unavailable. Please try a different model.',
@@ -74,21 +67,9 @@ export const TTS_ERRORS = {
     description: 'Audio generation failed. Please try again or contact support if the issue persists.',
     action: 'Retry or contact support',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
   // Output errors
   PLAYBACK_FAILED: {
     title: 'Audio playback failed',

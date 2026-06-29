@@ -1,12 +1,9 @@
 // Service error codes and user-facing messages
 
-/** Common Network and System Errors (All Services) */
+import { NETWORK_ERROR_ENTRY } from "../errorShared";
+
 export const COMMON_ERRORS = {
-  NETWORK_ERROR: {
-    title: 'Network connection lost',
-    description: 'Network connection lost. Please check your internet connection and try again.',
-    action: 'Check connection',
-  },
+  NETWORK_ERROR: NETWORK_ERROR_ENTRY,
   INTERNAL_SERVER_ERROR: {
     title: 'Server error',
     description: 'An internal server error occurred. Please try again later or contact support.',

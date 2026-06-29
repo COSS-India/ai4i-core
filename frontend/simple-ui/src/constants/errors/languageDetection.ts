@@ -1,8 +1,12 @@
 // Service error codes and user-facing messages
 
-import { MAX_TEXT_LENGTH } from "../limits";
+import {
+  SHARED_SERVICE_ERRORS,
+  modelUnavailable,
+  quotaExceeded,
+  serviceUnavailable,
+} from "../errorShared";
 
-/** Language Detection error codes and user-facing messages */
 export const LANGUAGE_DETECTION_ERRORS = {
   // Input Errors
   TEXT_REQUIRED: {
@@ -26,24 +30,8 @@ export const LANGUAGE_DETECTION_ERRORS = {
     description: 'Cannot detect language from the provided text. Please try with longer or more distinctive text.',
     action: 'Enter longer text',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Language detection service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for language detection service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
-  MODEL_UNAVAILABLE: {
-    title: 'Model unavailable',
-    description: 'Language detection model is currently unavailable. Please try again later.',
-    action: 'Retry later',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Language detection service'),
+  QUOTA_EXCEEDED: quotaExceeded('language detection service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
+  MODEL_UNAVAILABLE: modelUnavailable('Language detection model'),
 } as const;

@@ -1,8 +1,12 @@
 // Service error codes and user-facing messages
 
 import { MAX_TEXT_LENGTH } from "../limits";
+import {
+  SHARED_SERVICE_ERRORS,
+  quotaExceeded,
+  serviceUnavailable,
+} from "../errorShared";
 
-/** Transliteration error codes and user-facing messages */
 export const TRANSLITERATION_ERRORS = {
   // Input Errors
   TEXT_REQUIRED: {
@@ -36,26 +40,14 @@ export const TRANSLITERATION_ERRORS = {
     description: 'Input script doesn\'t match the selected source language. Please verify your input.',
     action: 'Verify input script',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Transliteration is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Transliteration'),
   PROCESSING_FAILED: {
     title: 'Processing failed',
     description: 'Transliteration failed. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for transliteration. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('transliteration'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'The selected transliteration model is currently unavailable. Please try another model.',

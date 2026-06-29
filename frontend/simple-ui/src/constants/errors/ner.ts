@@ -1,8 +1,12 @@
 // Service error codes and user-facing messages
 
 import { MAX_TEXT_LENGTH } from "../limits";
+import {
+  SHARED_SERVICE_ERRORS,
+  quotaExceeded,
+  serviceUnavailable,
+} from "../errorShared";
 
-/** Named Entity Recognition (NER) error codes and user-facing messages */
 export const NER_ERRORS = {
   // Input Errors
   TEXT_REQUIRED: {
@@ -36,36 +40,20 @@ export const NER_ERRORS = {
     description: 'No entities detected in the provided text. Please verify your input text.',
     action: 'Verify input text',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Named entity recognition service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Named entity recognition service'),
   PROCESSING_FAILED: {
     title: 'Processing failed',
     description: 'Entity recognition failed. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for NER service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('NER service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'The selected NER model is currently unavailable. Please try a different model.',
     action: 'Select different model',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
   // Authentication & Authorization Errors
   AUTHENTICATION_REQUIRED: {
     title: 'Authentication required',
@@ -76,16 +64,6 @@ export const NER_ERRORS = {
     title: 'Invalid credentials',
     description: 'Invalid credentials provided. Please log in again.',
     action: 'Re-authenticate',
-  },
-  SESSION_EXPIRED: {
-    title: 'Session expired',
-    description: 'Your session has expired. Please log in again.',
-    action: 'Log in',
-  },
-  UNAUTHORIZED: {
-    title: 'Unauthorized access',
-    description: 'You don\'t have permission to access this service. Please contact your administrator.',
-    action: 'Contact admin',
   },
   ACCOUNT_LOCKED: {
     title: 'Account locked',

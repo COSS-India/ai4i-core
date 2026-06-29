@@ -1,25 +1,19 @@
 // Service error codes and user-facing messages
 
 import { MAX_RECORDING_DURATION } from "../limits";
+import {
+  SHARED_MIC_ERRORS,
+  SHARED_SERVICE_ERRORS,
+  quotaExceeded,
+  serviceUnavailable,
+} from "../errorShared";
+import { RECORDING_ERRORS } from "./recording";
 
-/** Speech-to-Speech Pipeline error codes and user-facing messages */
 export const PIPELINE_ERRORS = {
   // Audio Recording Errors (Source Speech)
-  MIC_ACCESS_DENIED: {
-    title: 'Microphone access denied',
-    description: 'Microphone access is required. Please allow microphone permissions in your browser settings.',
-    action: 'Grant microphone permission',
-  },
-  MIC_NOT_FOUND: {
-    title: 'Microphone not detected',
-    description: 'No microphone detected. Please connect a microphone and try again.',
-    action: 'Connect microphone device',
-  },
-  REC_START_FAILED: {
-    title: 'Recording failed to start',
-    description: 'Unable to start recording. Please check your microphone connection and try again.',
-    action: 'Check device and retry',
-  },
+  MIC_ACCESS_DENIED: SHARED_MIC_ERRORS.MIC_PERMISSION_DENIED,
+  MIC_NOT_FOUND: SHARED_MIC_ERRORS.MIC_NOT_FOUND,
+  REC_START_FAILED: RECORDING_ERRORS.REC_START_FAILED,
   REC_TOO_SHORT: {
     title: 'Recording duration too short',
     description: 'Recording must be at least 1 second for speech-to-speech translation.',
@@ -30,11 +24,7 @@ export const PIPELINE_ERRORS = {
     description: `Recording exceeds maximum duration of ${MAX_RECORDING_DURATION} seconds. Please record a shorter audio clip.`,
     action: 'Record shorter audio',
   },
-  REC_INTERRUPTED: {
-    title: 'Recording interrupted',
-    description: 'Recording was interrupted. Please try recording again.',
-    action: 'Restart recording',
-  },
+  REC_INTERRUPTED: RECORDING_ERRORS.REC_INTERRUPTED,
   NO_SPEECH_DETECTED: {
     title: 'No speech detected',
     description: 'No speech detected in the recording. Please speak clearly and try again.',
@@ -72,36 +62,16 @@ export const PIPELINE_ERRORS = {
     description: 'Speech-to-speech translation from {source} to {target} is not supported.',
     action: 'Select supported pair',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Speech-to-speech service is temporarily unavailable. Please try again later.',
-    action: 'Retry after some time',
-  },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Speech-to-speech service', 'later'),
+  QUOTA_EXCEEDED: quotaExceeded('this service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'One or more required models are unavailable. Please try again later.',
     action: 'Retry later',
   },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
   // Output Errors
   PLAYBACK_FAILED: {
     title: 'Audio playback failed',

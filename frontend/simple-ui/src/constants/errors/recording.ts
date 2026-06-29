@@ -2,7 +2,6 @@
 
 import { MAX_RECORDING_DURATION } from "../limits";
 
-/** Recording error codes and user-facing messages */
 export const RECORDING_ERRORS = {
   REC_START_FAILED: {
     title: 'Recording failed to start',
