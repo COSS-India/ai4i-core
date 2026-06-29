@@ -75,6 +75,19 @@ _ai4i_exc = _conftest_stub(
 )
 _conftest_stub("ai4i_core", exceptions=_ai4i_exc)
 
+_INFERENCE_TYPES = [
+    {"name": "llm",  "unit": "tokens"},
+    {"name": "asr",  "unit": "minutes"},
+    {"name": "nmt",  "unit": "characters"},
+    {"name": "tts",  "unit": "characters"},
+    {"name": "ocr",  "unit": "characters"},
+]
+_conftest_stub("ai4i_core.ppu",
+    get_inference_types=lambda: _INFERENCE_TYPES,
+    load_inference_types=MagicMock(),
+    quota_guard=MagicMock(),
+)
+
 # Stub app.core.database so background-task helpers (e.g. audit_service) can
 # be loaded without requiring a live SQLAlchemy engine.  Tests mock the session
 # factory at the service level and never call these functions directly.

@@ -162,6 +162,155 @@ class TestGetTenantList:
         assert result.data[0].remainingQuota == 0.0
 
 
+# ── get_tenant_detail ─────────────────────────────────────────────────────────
+
+class TestGetTenantDetail:
+    def _assignment(self, **kwargs):
+        defaults = dict(
+            budget_limit=Decimal("1000"), available_balance=Decimal("600"),
+            tier_name="Pro", total_quota=None,
+        )
+        return _row(**{**defaults, **kwargs})
+
+    def _breakdown_row(self, **kwargs):
+        defaults = dict(
+            inference_name="llm", total_units=500_000, unit_size=1_000_000,
+            unit_rate=None, cost_per_unit=None, monthly_quota_snap=None,
+        )
+        return _row(**{**defaults, **kwargs})
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_assignment(self):
+        """EntityNotFoundError when tenant has no active tier assignment."""
+        from app.core.exceptions import EntityNotFoundError
+        repo = _make_repo(get_tenant_assignment=None, get_tenant_period_breakdown=[])
+        svc = PPUUsageService(repo)
+        with pytest.raises(EntityNotFoundError):
+            await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+    @pytest.mark.asyncio
+    async def test_single_type_quota_and_consumption(self):
+        """Single inference type: top-level quota and consumption use the correct unit_size."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(total_quota=3_000_000_000),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(
+                    inference_name="llm", total_units=500_000_000,
+                    unit_size=1_000_000, monthly_quota_snap=3_000_000_000,
+                ),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.consumptionToDate == 500.0        # 500M / 1M
+        assert result.quotaLimit == 3000.0              # 3B / 1M
+        assert result.remainingQuota == 2500.0          # 3000 - 500
+        assert result.quotaUnit != "Units"              # resolved to LLM unit label
+        assert len(result.breakdown) == 1
+        assert result.breakdown[0].quotaLimit == 3000.0
+        assert result.breakdown[0].remainingQuota == 2500.0
+
+    @pytest.mark.asyncio
+    async def test_multi_type_top_level_nulled(self):
+        """Multi inference type: top-level quota fields are null; per-breakdown fields are set."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(total_quota=5_000_000_000),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(
+                    inference_name="llm", total_units=500_000_000,
+                    unit_size=1_000_000, monthly_quota_snap=3_000_000_000,
+                ),
+                self._breakdown_row(
+                    inference_name="asr", total_units=3600,
+                    unit_size=60, monthly_quota_snap=18000,
+                ),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.quotaLimit is None
+        assert result.consumptionToDate is None
+        assert result.remainingQuota is None
+        assert result.quotaUnit == "Units"
+
+        llm = next(b for b in result.breakdown if b.modelTaskType == "llm")
+        assert llm.quotaLimit == 3000.0     # 3B / 1M
+        assert llm.remainingQuota == 2500.0
+
+        asr = next(b for b in result.breakdown if b.modelTaskType == "asr")
+        assert asr.quotaLimit == 300.0      # 18000 / 60
+        assert asr.consumptionToDate == 60.0  # 3600 / 60
+        assert asr.remainingQuota == 240.0
+
+    @pytest.mark.asyncio
+    async def test_unlimited_quota_returns_none(self):
+        """total_quota=None (no quota rows for tier) → quotaLimit and remainingQuota are None."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(total_quota=None),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(monthly_quota_snap=None),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.quotaLimit is None
+        assert result.remainingQuota is None
+        assert result.breakdown[0].quotaLimit is None
+        assert result.breakdown[0].remainingQuota is None
+
+    @pytest.mark.asyncio
+    async def test_remaining_quota_clamped_at_zero(self):
+        """remainingQuota never goes negative when consumption exceeds the quota."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(total_quota=1_000_000_000),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(
+                    total_units=2_000_000_000, unit_size=1_000_000,
+                    monthly_quota_snap=1_000_000_000,
+                ),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.remainingQuota == 0.0
+        assert result.breakdown[0].remainingQuota == 0.0
+
+    @pytest.mark.asyncio
+    async def test_budget_fields(self):
+        """spendToDate = budgetLimit - availableBalance; remainingBudget = availableBalance."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(
+                budget_limit=Decimal("5000"), available_balance=Decimal("3500"),
+            ),
+            get_tenant_period_breakdown=[self._breakdown_row()],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.budgetLimit == 5000.0
+        assert result.spendToDate == 1500.0
+        assert result.remainingBudget == 3500.0
+
+    @pytest.mark.asyncio
+    async def test_empty_breakdown_returns_null_quota(self):
+        """No usage rows this month: breakdown is empty, top-level quota fields are None."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(total_quota=1_000_000_000),
+            get_tenant_period_breakdown=[],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.breakdown == []
+        assert result.consumptionToDate == 0.0  # zero usage, not unknown
+        assert result.quotaLimit is None         # no inference type to derive unit_size from
+        assert result.remainingQuota is None
+
+
 # ── _resolve_tenant_names ─────────────────────────────────────────────────────
 
 class TestResolveTenantNames:
