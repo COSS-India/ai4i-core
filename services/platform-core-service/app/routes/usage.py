@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,9 +51,10 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
 @router.get("/summary", response_model=UsageSummaryResponse)
 async def get_usage_summary(
     request: Request,
-    billing_period: Optional[str] = Query(
-        None, description="Billing month in YYYY-MM format. Defaults to current month."
-    ),
+    billing_period: Annotated[
+        Optional[str],
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
+    ] = None,
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
@@ -65,7 +66,10 @@ async def get_usage_summary(
 @router.get("/tenants", response_model=TenantUsageListResponse)
 async def get_tenant_usage_list(
     request: Request,
-    billing_period: Optional[str] = Query(None, description="Billing month in YYYY-MM format. Defaults to current month."),
+    billing_period: Annotated[
+        Optional[str],
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
+    ] = None,
     tier: Optional[str] = Query(None, description="Filter by tier name."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
     db: AsyncSession = Depends(get_db),
@@ -81,7 +85,10 @@ async def get_tenant_usage_list(
 async def get_tenant_usage_detail(
     request: Request,
     tenant_id: str = Query(..., description="Tenant ID."),
-    billing_period: Optional[str] = Query(None, description="Billing month in YYYY-MM format. Defaults to current month."),
+    billing_period: Annotated[
+        Optional[str],
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
+    ] = None,
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
