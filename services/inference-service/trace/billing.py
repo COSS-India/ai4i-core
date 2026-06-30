@@ -74,7 +74,11 @@ async def compute_and_emit_billing(
             return
 
         pricing = json.loads(raw)
-        billing_unit_type = pricing.get("billing_unit_type", "characters")
+        billing_unit_type = (
+            pricing.get("billing_unit_type")
+            or pricing.get("billingUnitType")
+            or "characters"
+        )
 
         if billing_unit_type == "tokens":
             # LLM-style: total tokens in + out
