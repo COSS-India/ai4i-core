@@ -102,11 +102,13 @@ def get_model_service(
 def get_service_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
+    redis_client: aioredis.Redis = Depends(get_redis),
 ) -> ServiceService:
     return ServiceService(
         service_repo=ServiceRepository(db),
         model_repo=ModelRepository(db),
         cache=cache,
+        redis=redis_client,
     )
 
 

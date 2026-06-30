@@ -13,12 +13,14 @@ Owns the rules:
 - Policy fields (latency/cost/accuracy) are stored as-is; combination enforcement is the gateway's responsibility.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
+import redis.asyncio as aioredis
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -82,6 +84,9 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
     }
 
 
+_PPU_REDIS_KEY_PREFIX = "ppu:svc:"
+
+
 class ServiceService:
     """Application-level service orchestrating service use-cases."""
 
@@ -90,10 +95,40 @@ class ServiceService:
         service_repo: ServiceRepository,
         model_repo: ModelRepository,
         cache: CacheService,
+        redis: Optional[aioredis.Redis] = None,
     ) -> None:
         self._services = service_repo
         self._models = model_repo
         self._cache = cache
+        self._redis = redis
+
+    async def _write_ppu_pricing(self, instance: "Service") -> None:
+        """Write PPU pricing for a service to Redis so the inference service can read it."""
+        if self._redis is None:
+            return
+        if not any([instance.billing_unit_type, instance.cost_per_unit, instance.unit_rate]):
+            return
+        pricing = {
+            "billing_unit_type": instance.billing_unit_type,
+            "cost_per_unit": float(instance.cost_per_unit) if instance.cost_per_unit is not None else None,
+            "unit_size": instance.unit_size,
+            "unit_rate": float(instance.unit_rate) if instance.unit_rate is not None else None,
+        }
+        key = f"{_PPU_REDIS_KEY_PREFIX}{instance.service_id}"
+        try:
+            await self._redis.set(key, json.dumps(pricing))
+            logger.debug("Wrote PPU pricing to Redis key=%s", key)
+        except Exception:
+            logger.warning("Failed to write PPU pricing to Redis for service_id=%s", instance.service_id, exc_info=True)
+
+    async def _delete_ppu_pricing(self, service_id: str) -> None:
+        """Remove PPU pricing key from Redis when a service is deleted."""
+        if self._redis is None:
+            return
+        try:
+            await self._redis.delete(f"{_PPU_REDIS_KEY_PREFIX}{service_id}")
+        except Exception:
+            logger.warning("Failed to delete PPU pricing from Redis for service_id=%s", service_id, exc_info=True)
 
     # ── Reads ──
 
@@ -233,11 +268,12 @@ class ServiceService:
             logger.exception("DB error creating service")
             raise
 
-        # 5. Warm cache
+        # 5. Warm cache + publish PPU pricing to Redis
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
         tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)
         await self._cache.set_service(instance.service_id, data)
+        await self._write_ppu_pricing(instance)
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
         return service_id
 
@@ -358,7 +394,7 @@ class ServiceService:
             logger.exception("DB error updating service")
             raise
 
-        # Refresh cache (eager rebuild)
+        # Refresh cache (eager rebuild) + sync PPU pricing to Redis
         await self._cache.invalidate_service(instance.service_id)
         model = await self._models.get_by_id_version(
             instance.model_id, instance.model_version
@@ -369,6 +405,8 @@ class ServiceService:
             await self._cache.set_service(
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
+        if any(k in update_data for k in ("billing_unit_type", "cost_per_unit", "unit_size", "unit_rate")):
+            await self._write_ppu_pricing(instance)
 
     async def delete_service(self, id_str: str) -> None:
         instance = await self._services.get_by_service_id(id_str)
@@ -386,6 +424,7 @@ class ServiceService:
             raise
 
         await self._cache.invalidate_service(instance.service_id)
+        await self._delete_ppu_pricing(instance.service_id)
         logger.info("Deleted service %s", instance.service_id)
 
     # ── Internals ──

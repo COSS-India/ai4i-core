@@ -36,6 +36,44 @@ from ai4i_core.exceptions import ErrorDetail
 logger = logging.getLogger(__name__)
 
 
+async def _seed_ppu_pricing_to_redis() -> None:
+    """
+    On startup, write ppu:svc:{service_id} keys to Redis for every service that
+    has pricing data in Postgres. This ensures the inference service can resolve
+    pricing even for services created before this feature was deployed.
+    """
+    import json
+    from sqlalchemy import select
+    from app.models.model_management.service import Service
+
+    redis = get_redis_client()
+    session_factory = _get_pii_session_factory()
+    count = 0
+    try:
+        async with session_factory() as db:
+            result = await db.execute(
+                select(Service).where(
+                    Service.deleted_at.is_(None),
+                    (Service.billing_unit_type.isnot(None))
+                    | (Service.cost_per_unit.isnot(None))
+                    | (Service.unit_rate.isnot(None)),
+                )
+            )
+            services = result.scalars().all()
+            for svc in services:
+                pricing = {
+                    "billing_unit_type": svc.billing_unit_type,
+                    "cost_per_unit": float(svc.cost_per_unit) if svc.cost_per_unit is not None else None,
+                    "unit_size": svc.unit_size,
+                    "unit_rate": float(svc.unit_rate) if svc.unit_rate is not None else None,
+                }
+                await redis.set(f"ppu:svc:{svc.service_id}", json.dumps(pricing))
+                count += 1
+        logger.info("PPU pricing seeded to Redis for %d service(s)", count)
+    except Exception:
+        logger.warning("Failed to seed PPU pricing to Redis on startup", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
@@ -56,6 +94,7 @@ async def lifespan(app: FastAPI):
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
+    await _seed_ppu_pricing_to_redis()
     # ── Telemetry / OpenSearch ────────────────────────────────────────────
     if settings.opensearch_url and settings.opensearch_username and settings.opensearch_password:
         from app.utils.opensearch_client import OpenSearchTraceClient
