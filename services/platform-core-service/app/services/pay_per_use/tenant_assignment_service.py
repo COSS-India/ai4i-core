@@ -51,17 +51,18 @@ async def assign_tier(
 
     now = datetime.now(timezone.utc)
 
-    # 4. Reject if tenant already has an active tier assignment.
+    # 4. Reject if the new date range overlaps with any existing assignment.
     existing = await db.execute(
         select(PPUTenantTierAssignment).where(
             PPUTenantTierAssignment.tenant_id == body.tenant_id,
-            PPUTenantTierAssignment.effective_to > now,
+            PPUTenantTierAssignment.effective_from < body.effective_to,
+            PPUTenantTierAssignment.effective_to > body.effective_from,
         )
     )
-    if existing.scalar_one_or_none():
+    if existing.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Tenant '{body.tenant_id}' already has an active tier assignment",
+            detail=f"Tenant '{body.tenant_id}' already has a tier assignment overlapping the requested period",
         )
 
     # 5. Create the new assignment.
