@@ -64,6 +64,11 @@ from .responses.transliteration_triton_responses import (
     MEDIUM_TRANSLIT_TRITON_RESPONSE,
     LARGE_TRANSLIT_TRITON_RESPONSE,
 )
+from .responses.llm_responses import (
+    SMALL_LLM_RESPONSE,
+    MEDIUM_LLM_RESPONSE,
+    LARGE_LLM_RESPONSE,
+)
 
 # Maps service class name → (small_stub, medium_stub, large_stub)
 _STUBS = {
@@ -169,3 +174,33 @@ def get_stub_response(task_name, triton_inputs):
     payload_str = _extract_payload_string(triton_inputs)
     idx = _classify(payload_str)
     return copy.deepcopy(entry[idx])
+
+
+# Size-bucketed OpenAI chat-completion stubs for the LLM proxy path. Kept
+# separate from _STUBS because the LLM body is OpenAI-shaped, not Triton-shaped.
+_LLM_STUBS = (SMALL_LLM_RESPONSE, MEDIUM_LLM_RESPONSE, LARGE_LLM_RESPONSE)
+
+
+def _extract_chat_prompt(payload):
+    """Concatenate the string content of an OpenAI chat payload's messages,
+    the size proxy for classifying the LLM stub. Non-string content (multimodal
+    parts) is ignored for sizing."""
+    if not isinstance(payload, dict):
+        return ""
+    parts = []
+    for message in payload.get("messages") or []:
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+    return "".join(parts)
+
+
+def get_llm_stub_response(payload):
+    """
+    Return a deep copy of the size-matched OpenAI chat-completion stub for the
+    LLM proxy path. Mirrors get_stub_response so the LLM path is stubbed like
+    every other service during load testing.
+    """
+    idx = _classify(_extract_chat_prompt(payload))
+    return copy.deepcopy(_LLM_STUBS[idx])
