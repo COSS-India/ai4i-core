@@ -174,9 +174,14 @@ class PPUUsageService:
                 consumptionToDate=consumption,
                 unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
                 spend=spend,
+                percentage=0.0,
                 quotaLimit=row_quota_limit,
                 remainingQuota=row_remaining,
             ))
+
+        total_spend = sum(item.spend for item in breakdown)
+        for item in breakdown:
+            item.percentage = round(item.spend / total_spend * 100, 1) if total_spend > 0 else 0.0
 
         # Use the specific unit label only when all usage is from one inference type;
         # fall back to "Units" when the tenant uses multiple service types.

@@ -1,11 +1,22 @@
 """PPU usage repository — reads usage and pricing data."""
-from sqlalchemy import func, null, select
+from sqlalchemy import case, func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai4i_core.ppu import get_inference_types
 from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
+
+# Maps inference_name ('asr', 'nmt', 'llm') → billing_unit_type ('minutes', 'characters', 'tokens')
+_INFERENCE_TO_UNIT: dict[str, str] = {
+    it["name"]: it["unit"] for it in get_inference_types()
+}
+
+
+def _inference_name_to_billing_unit(col):
+    """SQLAlchemy CASE expression: inference_name → billing_unit_type (case-insensitive)."""
+    return case(_INFERENCE_TO_UNIT, value=func.lower(col), else_=func.lower(col))
 
 
 def _pricing_subquery():
@@ -63,7 +74,7 @@ class PPUUsageRepository:
             )
             .outerjoin(
                 pricing_sq,
-                pricing_sq.c.billing_unit_type == PPUQuotaUsage.inference_name,
+                pricing_sq.c.billing_unit_type == _inference_name_to_billing_unit(PPUQuotaUsage.inference_name),
             )
             .where(PPUQuotaUsage.billing_month == billing_month)
             .group_by(
@@ -110,7 +121,7 @@ class PPUUsageRepository:
             unit_size_col = (
                 select(Service.unit_size)
                 .where(
-                    Service.billing_unit_type == model_task_type,
+                    Service.billing_unit_type == _INFERENCE_TO_UNIT.get(model_task_type.lower(), model_task_type.lower()),
                     Service.deleted_at.is_(None),
                 )
                 .order_by(Service.created_at.desc())
@@ -195,7 +206,7 @@ class PPUUsageRepository:
             )
             .outerjoin(
                 pricing_sq,
-                pricing_sq.c.billing_unit_type == PPUQuotaUsage.inference_name,
+                pricing_sq.c.billing_unit_type == _inference_name_to_billing_unit(PPUQuotaUsage.inference_name),
             )
             .where(
                 PPUQuotaUsage.tenant_id == tenant_id,
