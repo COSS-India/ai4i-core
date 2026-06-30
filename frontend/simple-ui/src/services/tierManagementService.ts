@@ -51,3 +51,24 @@ export interface AssignTenantTierPayload {
 export async function assignTenantTier(payload: AssignTenantTierPayload): Promise<void> {
   await apiClient.post(apiEndpoints.tiers.assignTenant, payload);
 }
+
+export interface TenantTierAssignment {
+  tenant_id: string;
+  tier_id: string;
+  tier_name: string;
+  budget_limit: string;
+  available_balance: string;
+  effective_from: string;
+  effective_to: string;
+  updated_at: string;
+}
+
+export interface TenantTiersResponse {
+  success: boolean;
+  data: TenantTierAssignment[];
+}
+
+export async function fetchTenantTiers(): Promise<TenantTiersResponse> {
+  const response = await apiClient.get(apiEndpoints.tiers.assignTenant);
+  return response.data;
+}
