@@ -25,7 +25,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -69,6 +69,7 @@ class Service(Base):
     cost_per_unit = Column(Numeric(15, 8), nullable=True)
     unit_size = Column(BigInteger, nullable=True)
     unit_rate = Column(Numeric(15, 8), nullable=True)
+    tier_ids = Column(ARRAY(String), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
