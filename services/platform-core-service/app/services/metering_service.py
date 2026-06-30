@@ -68,14 +68,15 @@ class MeteringService:
         success_v = round(_float(raw[1]))
         avg_rps_v = round(_float(raw[2]), 2)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
-        failed_v = max(0, total_v - success_v)
-        if total_v - success_v < 0:
+        raw_failed = total_v - success_v
+        if raw_failed < 0:
             # Independent total/success queries can skew across a scrape boundary,
             # making success briefly exceed total. Clamp to 0 but flag it.
             logger.warning(
                 "Failed-count clamp: success(%s) > total(%s) — Prometheus query skew; reporting 0 failed.",
                 success_v, total_v,
             )
+        failed_v = max(0, raw_failed)
 
         total_vs_prev: Optional[float] = None
         success_rate_vs_prev: Optional[float] = None
@@ -212,9 +213,12 @@ class MeteringService:
             total, active = await asyncio.gather(
                 self._client.scalar(total_q), self._client.scalar(active_q)
             )
-            total, active = float(total), float(active)
-            return round(total / active) if active > 0 else None
+            if total is None or active is None:
+                return None  # no prior-window data — not an error
+            total_v, active_v = float(total), float(active)
+            return round(total_v / active_v) if active_v > 0 else None
         except Exception:
+            logger.warning("avg_per_active_tenant_previous: Prometheus query failed", exc_info=True)
             return None
 
     async def tenant_count(self) -> dict:
