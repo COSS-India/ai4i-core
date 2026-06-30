@@ -21,6 +21,7 @@ import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useUserDetails } from "./hooks/useUserDetails";
 import { TIMEZONES } from "./types";
 import { maskPhoneForDisplay } from "../../utils/helpers";
+import DeleteAccountSection from "./DeleteAccountSection";
 
 export default function UserDetailsTab() {
   const { user, updateUser } = useAuth();
@@ -174,6 +175,8 @@ export default function UserDetailsTab() {
               </Text>
             </FormControl>
           )}
+
+          <DeleteAccountSection user={user} />
         </VStack>
       </CardBody>
     </Card>
