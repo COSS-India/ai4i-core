@@ -74,12 +74,12 @@ const AuthPage: React.FC = () => {
       ? ACCOUNT_DELETED_LOGIN_MESSAGE
       : null;
 
-  const dismissLoginBanner = () => {
+  const dismissLoginBanner = async () => {
     setBannerDismissed(true);
     if (!router.isReady || router.query.message !== "account-deleted") return;
 
     const { message: _message, ...rest } = router.query;
-    void router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true });
+    await router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true });
   };
 
   // Handle successful login - redirect to home or intended destination from query

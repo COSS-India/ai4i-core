@@ -21,7 +21,7 @@ interface DeleteAccountSectionProps {
   user: User;
 }
 
-export default function DeleteAccountSection({ user }: DeleteAccountSectionProps) {
+export default function DeleteAccountSection({ user }: Readonly<DeleteAccountSectionProps>) {
   const dangerBg = useColorModeValue("red.50", "red.900");
   const dangerBorder = useColorModeValue("red.200", "red.700");
   const deleteAccount = useDeleteAccount(user);

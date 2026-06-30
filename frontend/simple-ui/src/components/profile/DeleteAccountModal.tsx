@@ -31,7 +31,7 @@ export default function DeleteAccountModal({
   onClose,
   onConfirm,
   isConfirmLoading = false,
-}: DeleteAccountModalProps) {
+}: Readonly<DeleteAccountModalProps>) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const dialogBg = useColorModeValue("white", "gray.800");
   const [checked, setChecked] = useState<boolean[]>(() => CHECKBOX_LABELS.map(() => false));

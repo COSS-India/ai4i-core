@@ -3,7 +3,7 @@ import type { User } from "../../../types/auth";
 import { deleteUser, getViewTenant, listUsers } from "../../../services/tenantService";
 import authService from "../../../services/authService";
 import { resetAuthInitPromise } from "../../../hooks/useAuth";
-import { isTenantAdminUser } from "../../../utils/rbac";
+import { isTenantAdminUser, normalizeRole, userHasRole } from "../../../utils/rbac";
 import { showError } from "../../../utils/errorHandler";
 
 const AUTH_UPDATED_EVENT = "auth:updated";
@@ -17,7 +17,7 @@ function extractApiErrorMessage(err: unknown): string | undefined {
       response?: { data?: { detail?: string | { message?: string; code?: string } } };
     };
     const detail = errorObj.response?.data?.detail;
-    if (typeof detail === "object" && detail !== null && detail.message) {
+    if (typeof detail === "object" && detail?.message) {
       return String(detail.message);
     }
     if (typeof detail === "string") return detail;
@@ -51,9 +51,9 @@ export function useDeleteAccount(user: User | null) {
     authService.clearAuthTokens();
     authService.clearStoredUser();
     resetAuthInitPromise();
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
-      window.location.assign("/auth?message=account-deleted");
+    if (typeof globalThis.window !== "undefined") {
+      globalThis.window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+      globalThis.window.location.assign("/auth?message=account-deleted");
     }
   }, []);
 
@@ -75,8 +75,7 @@ export function useDeleteAccount(user: User | null) {
         const activeTenantAdmins = users.filter(
           (u) =>
             u.is_active &&
-            (u.role === "TENANT ADMIN" ||
-              u.roles?.some((r) => r.trim().toUpperCase().replaceAll("_", " ") === "TENANT ADMIN"))
+            (normalizeRole(u.role) === "TENANT ADMIN" || userHasRole(u.roles, "TENANT ADMIN"))
         );
         if (activeTenantAdmins.length <= 1) {
           const tenantLabel = tenant.organisation || tenant.contact_name || "your organisation";
