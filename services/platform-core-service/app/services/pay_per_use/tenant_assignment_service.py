@@ -89,3 +89,37 @@ async def assign_tier(
         effective_to=assignment.effective_to,
         updated_at=assignment.updated_at,
     )
+
+
+async def get_tenant_tier(
+    tenant_id: str,
+    db: AsyncSession,
+) -> TierAssignResponse:
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        select(PPUTenantTierAssignment, PPUTier)
+        .join(PPUTier, PPUTenantTierAssignment.tier_id == PPUTier.id)
+        .where(
+            PPUTenantTierAssignment.tenant_id == tenant_id,
+            PPUTenantTierAssignment.effective_to > now,
+        )
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No active tier assignment found for tenant '{tenant_id}'",
+        )
+
+    assignment, tier = row
+    return TierAssignResponse(
+        tenant_id=assignment.tenant_id,
+        tier_id=str(tier.id),
+        tier_name=tier.name,
+        budget_limit=assignment.budget_limit,
+        available_balance=assignment.available_balance,
+        effective_from=assignment.effective_from,
+        effective_to=assignment.effective_to,
+        updated_at=assignment.updated_at,
+    )

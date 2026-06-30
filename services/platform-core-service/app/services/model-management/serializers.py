@@ -54,6 +54,7 @@ def service_to_dict(
     *,
     model: Optional[Model] = None,
     include_task_languages: bool = False,
+    tier_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Serialize a Service ORM row. Optionally enrich with task & languages
     from the joined Model (used by list endpoints)."""
@@ -74,6 +75,12 @@ def service_to_dict(
         "isPublished": bool(service.is_published),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
+        "billingUnitType": service.billing_unit_type,
+        "costPerUnit": float(service.cost_per_unit) if service.cost_per_unit is not None else None,
+        "unitSize": service.unit_size,
+        "unitRate": float(service.unit_rate) if service.unit_rate is not None else None,
+        "tierIds": service.tier_ids,
+        "tierNames": tier_names,
         "deletedAt": _iso(service.deleted_at),
         "createdAt": _iso(service.created_at),
         "createdBy": service.created_by,
@@ -99,8 +106,12 @@ def _normalize_languages(raw: List[Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def service_detail_dict(service: Service, model: Model) -> Dict[str, Any]:
+def service_detail_dict(
+    service: Service,
+    model: Model,
+    tier_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Full service-detail response, embedding the model card."""
-    out = service_to_dict(service)
+    out = service_to_dict(service, tier_names=tier_names)
     out["model"] = model_to_dict(model) if model else None
     return out
