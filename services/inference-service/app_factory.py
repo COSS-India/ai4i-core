@@ -6,12 +6,12 @@ Creates and configures the unified inference service with all components.
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ai4i_core.observability import setup_observability
 from ai4i_core.logging import RequestMiddleware
-from ai4i_core.ppu import load_inference_types, quota_guard
+from ai4i_core.ppu import load_inference_types
 from routes import router
 from config import settings
 from trace.setup import setup_tracing
@@ -63,7 +63,7 @@ def _setup_middleware(app: FastAPI) -> None:
 
 def _setup_routes(app: FastAPI) -> None:
     """Register all routes/routers with the application."""
-    app.include_router(router, prefix=settings.API_PREFIX, dependencies=[Depends(quota_guard)])
+    app.include_router(router, prefix=settings.API_PREFIX)
 
     # Health check endpoint — excluded from Swagger; used only by Docker HEALTHCHECK
     @app.get("/health", include_in_schema=False)
