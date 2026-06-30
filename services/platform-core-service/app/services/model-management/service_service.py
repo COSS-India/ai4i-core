@@ -85,6 +85,7 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
 
 
 _PPU_REDIS_KEY_PREFIX = "ppu:svc:"
+_PPU_REDIS_TTL = 3600  # 1 hour
 
 
 class ServiceService:
@@ -116,7 +117,7 @@ class ServiceService:
         }
         key = f"{_PPU_REDIS_KEY_PREFIX}{instance.service_id}"
         try:
-            await self._redis.set(key, json.dumps(pricing))
+            await self._redis.set(key, json.dumps(pricing), ex=_PPU_REDIS_TTL)
             logger.debug("Wrote PPU pricing to Redis key=%s", key)
         except Exception:
             logger.warning("Failed to write PPU pricing to Redis for service_id=%s", instance.service_id, exc_info=True)

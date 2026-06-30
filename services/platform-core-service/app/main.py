@@ -26,9 +26,9 @@ from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
-EndpointValidationFailedError = _importlib.import_module(
-    "app.services.model-management.service_service"
-).EndpointValidationFailedError
+_svc_svc = _importlib.import_module("app.services.model-management.service_service")
+EndpointValidationFailedError = _svc_svc.EndpointValidationFailedError
+_PPU_REDIS_TTL = _svc_svc._PPU_REDIS_TTL
 
 from ai4i_core.logging import configure_logging, RequestMiddleware
 from ai4i_core.exceptions import ErrorDetail
@@ -67,7 +67,7 @@ async def _seed_ppu_pricing_to_redis() -> None:
                     "unit_size": svc.unit_size,
                     "unit_rate": float(svc.unit_rate) if svc.unit_rate is not None else None,
                 }
-                await redis.set(f"ppu:svc:{svc.service_id}", json.dumps(pricing))
+                await redis.set(f"ppu:svc:{svc.service_id}", json.dumps(pricing), ex=_PPU_REDIS_TTL)
                 count += 1
         logger.info("PPU pricing seeded to Redis for %d service(s)", count)
     except Exception:
