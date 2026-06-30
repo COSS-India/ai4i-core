@@ -33,7 +33,6 @@ export interface MeteringGraphSeries {
 }
 
 export interface MeteringGraph {
-  step: string;
   series: MeteringGraphSeries[];
 }
 
@@ -100,7 +99,7 @@ export interface OverviewResponse extends MeteringResponseMeta {
   usage_concentration?: UsageConcentration | null;
   request_health?: RequestHealth | null;
   request_volume?: MeteringGraph | null;
-  throughput: ThroughputData;
+  throughput?: ThroughputData;
 }
 
 export interface ServiceEntry {
@@ -127,9 +126,9 @@ export interface TenantConsumptionResponse extends MeteringResponseMeta {
 }
 
 export interface ServiceConsumptionSummary {
-  active_services: number;
-  most_used: { service: string; requests: number };
-  highest_failure_rate: { service: string; failure_rate_pct: number };
+  active_services?: number;
+  most_used?: { service: string; requests: number } | null;
+  highest_failure_rate?: { service: string; failure_rate_pct: number } | null;
 }
 
 export interface ServiceRow {
@@ -149,6 +148,6 @@ export interface ServiceConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
   summary?: ServiceConsumptionSummary | null;
   service_breakdown: ServiceRow[];
-  throughput: ThroughputData;
+  throughput?: ThroughputData;
   request_volume?: MeteringGraph | null;
 }

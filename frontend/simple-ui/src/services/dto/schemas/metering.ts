@@ -22,7 +22,6 @@ export const meteringGraphSeriesSchema = z.object({
 });
 
 export const meteringGraphSchema = z.object({
-  step: z.string(),
   series: z.array(meteringGraphSeriesSchema),
 });
 
@@ -97,7 +96,7 @@ export const overviewResponseSchema = z.object({
   usage_concentration: usageConcentrationSchema.nullable().optional(),
   request_health: requestHealthSchema.nullable().optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
-  throughput: throughputDataSchema,
+  throughput: throughputDataSchema.optional(),
   ...meteringResponseMetaSchema,
 });
 
@@ -126,15 +125,21 @@ export const tenantConsumptionResponseSchema = z.object({
 });
 
 export const serviceConsumptionSummarySchema = z.object({
-  active_services: z.number(),
-  most_used: z.object({
-    service: z.string(),
-    requests: z.number(),
-  }),
-  highest_failure_rate: z.object({
-    service: z.string(),
-    failure_rate_pct: z.number(),
-  }),
+  active_services: z.number().optional(),
+  most_used: z
+    .object({
+      service: z.string(),
+      requests: z.number(),
+    })
+    .nullable()
+    .optional(),
+  highest_failure_rate: z
+    .object({
+      service: z.string(),
+      failure_rate_pct: z.number(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const serviceRowSchema = z.object({
@@ -154,7 +159,7 @@ export const serviceConsumptionResponseSchema = z.object({
   scope: meteringScopeSchema,
   summary: serviceConsumptionSummarySchema.nullable().optional(),
   service_breakdown: z.array(serviceRowSchema),
-  throughput: throughputDataSchema,
+  throughput: throughputDataSchema.optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
   ...meteringResponseMetaSchema,
 });

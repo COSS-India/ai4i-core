@@ -64,11 +64,6 @@ export const METERING = {
       REQUEST_RATE: "request_rate",
       FAILURE_RATE: "failure_rate",
     },
-    STEP: {
-      FIVE_MINUTES: "5m",
-      ONE_HOUR: "1h",
-      SIX_HOURS: "6h",
-    },
     EMPTY_VALUE: "—",
   },
   TIME_WINDOWS: [

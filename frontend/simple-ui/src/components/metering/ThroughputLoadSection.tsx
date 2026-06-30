@@ -98,7 +98,7 @@ const ThroughputLoadSection: React.FC<ThroughputLoadSectionProps> = ({
               formatter={(value: number) => [`${value.toLocaleString()} req/s`, section.AVG_RPS]}
               labelFormatter={(_, payload) => {
                 const ts = payload?.[0]?.payload?.ts as number | undefined;
-                return ts != null ? formatMeteringTooltipLabel(ts, timeWindow) : "";
+                return ts == null ? "" : formatMeteringTooltipLabel(ts, timeWindow);
               }}
             />
             <Area

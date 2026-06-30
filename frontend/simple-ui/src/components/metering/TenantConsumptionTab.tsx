@@ -3,7 +3,7 @@ import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantConsumptionResponse } from "../../types/metering";
 import { meteringColorAt } from "../../utils/meteringColors";
-import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
+import { formatCompactNumber, formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard from "./MeteringSectionCard";
@@ -128,7 +128,7 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
             requestVolumeGraph={data.request_volume}
             fourthMetric={{
               label: section.RANKED_REQUESTS_LABEL,
-              value: `${(totalRankedRequests / 1000).toFixed(1)}K`,
+              value: formatCompactNumber(totalRankedRequests, "indian"),
               helper: section.RANKED_REQUESTS_HELPER,
             }}
           />

@@ -3,7 +3,6 @@ import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections";
-import RequestVolumeSection from "./RequestVolumeSection";
 import ServiceConsumptionTab from "./ServiceConsumptionTab";
 import TenantConsumptionTab from "./TenantConsumptionTab";
 import UsageAndSpendTab from "./UsageAndSpendTab";

@@ -149,7 +149,7 @@ const RequestVolumeSection: React.FC<RequestVolumeSectionProps> = ({
               }}
               labelFormatter={(_, payload) => {
                 const ts = payload?.[0]?.payload?.ts as number | undefined;
-                return ts != null ? formatMeteringTooltipLabel(ts, timeWindow) : "";
+                return ts == null ? "" : formatMeteringTooltipLabel(ts, timeWindow);
               }}
               formatter={(value: number, name: string) => {
                 if (name === section.SERIES_FAILURE) {

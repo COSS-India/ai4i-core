@@ -1,7 +1,6 @@
 import type {
   MeteringDataState,
   MeteringGraph,
-  MeteringResponseMeta,
   MeteringWindow,
   ServiceConsumptionSummary,
   ServiceRow,
@@ -406,9 +405,10 @@ export function deriveServiceInsights(
   summary: ServiceConsumptionSummary | null | undefined,
   breakdown: ServiceRow[],
 ): ServiceInsights | null {
-  if (summary) {
+  if (summary?.most_used && summary.highest_failure_rate) {
+    const active = breakdown.filter((s) => s.requests > 0);
     return {
-      activeCount: summary.active_services,
+      activeCount: summary.active_services ?? active.length,
       mostUsed: summary.most_used,
       highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
       highestFailureService: summary.highest_failure_rate.service,
