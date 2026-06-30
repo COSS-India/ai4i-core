@@ -62,10 +62,16 @@ class OpenAIProxyService:
         Orchestrator + BaseTaskService pattern used by Triton-backed services.
         The caller (route) owns the outer request span.
         """
+        # Extract before forwarding — upstream LLM API doesn't accept this field.
+        service_id = ""
+        if isinstance(payload, dict):
+            service_id = payload.pop("serviceId", "") or ""
+
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
             model_attrs["model_name"] = payload.get("model", "unknown") if isinstance(payload, dict) else "unknown"
             model_attrs["model_version"] = "unknown"
+            model_attrs["serviceId"] = service_id
             model_attrs.update(get_context_attributes())
 
             async with traced_inference(payload, "LLM", logger) as infer_attrs:
