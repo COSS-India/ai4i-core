@@ -87,7 +87,6 @@ class OpenAIProxyService:
                     infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
                     infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
                     infer_attrs["output_type"] = "text"
-                    infer_attrs["service_id"] = service_id
 
         return status_code, body
 

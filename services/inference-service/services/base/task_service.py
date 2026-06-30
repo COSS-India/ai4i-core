@@ -273,7 +273,6 @@ class BaseTaskService:
             )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
             async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-                span_ctx["service_id"] = (serviceInfo or {}).get("serviceId", "") if serviceInfo else ""
                 span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
