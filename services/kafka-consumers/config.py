@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -24,18 +24,10 @@ class DatabaseSettings(BaseSettings):
     POSTGRES_PASSWORD: Optional[str] = Field(None, description="PostgreSQL password")
     POSTGRES_HOST: str = Field("localhost", description="PostgreSQL host")
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
-    POSTGRES_DB_LIST: list[str] = Field(['db1', 'db2'],
-                                        description="Comma-separated list of PostgreSQL database names",
-                                        )
+    INFERENCE_DB: str = Field(description="Database name for the inference service")
+    PLATFORM_CORE_DB: str = Field(description="Database name for the platform core service")
     DB_POOL_SIZE: int = Field(20, description="SQLAlchemy connection pool size")
     DB_MAX_OVERFLOW: int = Field(10, description="SQLAlchemy max overflow connections")
-
-    @field_validator("POSTGRES_DB_LIST", mode="before")
-    @classmethod
-    def split_csv(cls, v: str | list) -> list[str]:
-        if isinstance(v, list):
-            return v
-        return [db.strip() for db in v.split(",") if db.strip()]
 
     class Config:
         env_file = ".env"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import AsyncGenerator
+from typing import TYPE_CHECKING, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4i_core.logging import get_logger
+
+if TYPE_CHECKING:
+    from config import DatabaseSettings
 
 logger = get_logger(__name__)
 
@@ -57,6 +60,22 @@ async def register_database(
     logger.info("Database %r registered (%s)", name, db_url.split("@")[-1])
 
 
+async def init_databases(db_cfg: DatabaseSettings) -> None:
+    """Register the two service databases from settings. Called once at startup."""
+    await register_database(
+        name=db_cfg.INFERENCE_DB,
+        db_url=db_cfg.get_database_url(db_cfg.INFERENCE_DB),
+        pool_size=db_cfg.DB_POOL_SIZE,
+        max_overflow=db_cfg.DB_MAX_OVERFLOW,
+    )
+    await register_database(
+        name=db_cfg.PLATFORM_CORE_DB,
+        db_url=db_cfg.get_database_url(db_cfg.PLATFORM_CORE_DB),
+        pool_size=db_cfg.DB_POOL_SIZE,
+        max_overflow=db_cfg.DB_MAX_OVERFLOW,
+    )
+
+
 class DatabaseRegistry:
     """Dispatches session requests to the correct engine by database name.
 
@@ -98,3 +117,8 @@ class DatabaseRegistry:
             await entry.engine.dispose()
             logger.info("Database %r disposed", name)
         self._registry.clear()
+
+
+# Module-level singleton — every importer receives this exact object.
+# Never instantiate DatabaseRegistry anywhere else.
+db_registry = DatabaseRegistry(DB_REGISTRY)
