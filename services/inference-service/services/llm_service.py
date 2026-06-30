@@ -68,7 +68,8 @@ class OpenAIProxyService:
             config_block = payload.get("config") or {}
             service_id = (
                 config_block.get("serviceId") if isinstance(config_block, dict) else None
-            ) or payload.pop("serviceId", "") or ""
+            ) or payload.get("serviceId", "") or ""
+            payload.pop("serviceId", None)
         else:
             service_id = ""
 
@@ -150,30 +151,30 @@ class OpenAIProxyService:
             model_attrs.update(get_context_attributes())
             model_attrs["service_id"] = service_id
 
-        try:
-            url = self.resolve_upstream_url(model=model, path=path)
-        except ValueError as exc:
-            logger.error("LLM proxy misconfiguration: %s", exc)
-            return 503, {
-                "error": {"message": str(exc), "type": "api_error"}
-            }
+            try:
+                url = self.resolve_upstream_url(model=model, path=path)
+            except ValueError as exc:
+                logger.error("LLM proxy misconfiguration: %s", exc)
+                return 503, {
+                    "error": {"message": str(exc), "type": "api_error"}
+                }
 
-        logger.info("LLM proxy (multipart) -> %s (model=%s)", url, model)
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, files=files, data=data)
-        except httpx.RequestError as exc:
-            logger.warning(
-                "LLM upstream request failed (path=%s): %s", path, exc
-            )
-            return 502, {
-                "error": {"message": str(exc), "type": "upstream_error"}
-            }
+            logger.info("LLM proxy (multipart) -> %s (model=%s)", url, model)
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(url, files=files, data=data)
+            except httpx.RequestError as exc:
+                logger.warning(
+                    "LLM upstream request failed (path=%s): %s", path, exc
+                )
+                return 502, {
+                    "error": {"message": str(exc), "type": "upstream_error"}
+                }
 
-        try:
-            return response.status_code, response.json()
-        except Exception:
-            # Non-JSON 200 (response_format=text) or non-JSON error body
-            # — return the raw text so the route layer can decide how to
-            # surface it (text/plain vs JSON-wrapped).
-            return response.status_code, response.text
+            try:
+                return response.status_code, response.json()
+            except Exception:
+                # Non-JSON 200 (response_format=text) or non-JSON error body
+                # — return the raw text so the route layer can decide how to
+                # surface it (text/plain vs JSON-wrapped).
+                return response.status_code, response.text
