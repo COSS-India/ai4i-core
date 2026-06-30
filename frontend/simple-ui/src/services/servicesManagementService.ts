@@ -90,9 +90,11 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
       responseSchema: servicesListSchema,
     });
 
-    const total = Number.parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const headerTotal = Number.parseInt(response.headers['x-total-count'] ?? '', 10);
     const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
+    // Fall back to items.length when the header is absent (API uses meta.total instead)
+    const total = Number.isNaN(headerTotal) ? items.length : headerTotal;
 
     return {
       items,
@@ -146,6 +148,12 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
       api_key: serviceData.api_key || serviceData.apiKey || '',
     };
+
+    // Add billing/pricing fields if provided
+    if (serviceData.billingUnitType) apiPayload.billingUnitType = serviceData.billingUnitType;
+    if (serviceData.costPerUnit !== undefined) apiPayload.costPerUnit = serviceData.costPerUnit;
+    if (serviceData.unitSize !== undefined) apiPayload.unitSize = serviceData.unitSize;
+    if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
 
     // Add optional healthStatus if provided
     if (serviceData.healthStatus || serviceData.status) {

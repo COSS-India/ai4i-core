@@ -256,6 +256,7 @@ export const useAuth = () => {
         lower.includes('inactive') ||
         lower.includes('suspended') ||
         lower.includes('deactivated') ||
+        lower.includes('deleted') ||
         lower.includes('authorization error');
 
       // Provide more user-friendly error messages (keep server lifecycle messages as-is)

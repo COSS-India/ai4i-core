@@ -6,6 +6,6 @@ PPU (Pay-Per-Use) utilities.
     get_inference_types()      — returns raw inference type list from bundled YAML
 """
 
-from .quota_guard import get_inference_types, load_inference_types, quota_guard
+from .quota_guard import get_inference_types, get_inference_unit_map, load_inference_types, quota_guard
 
-__all__ = ["get_inference_types", "load_inference_types", "quota_guard"]
+__all__ = ["get_inference_types", "get_inference_unit_map", "load_inference_types", "quota_guard"]

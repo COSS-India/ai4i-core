@@ -8,7 +8,7 @@ import math
 import re
 import time as _time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -36,7 +36,7 @@ from app.schemas.metering import (
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import TIME_RANGES, WINDOW_STEP
+from app.utils.metering_promql_builder import WINDOW_STEP
 
 logger = logging.getLogger(__name__)
 
@@ -234,12 +234,11 @@ async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
         return {}
 
 
-def _validate_window(window: str) -> None:
-    if window not in TIME_RANGES or window == "all":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid window '{window}'. Allowed: 1h, 24h, 7d, 30d",
-        )
+# Allowed time windows, typed as a Literal so FastAPI validates the query param
+# itself and returns the standard 422 for unsupported values (e.g. "15d") — matching
+# the documented OpenAPI contract — instead of a hand-rolled 400. ("all" is internal
+# only and intentionally not an accepted window for these dashboard endpoints.)
+WindowParam = Literal["1h", "24h", "7d", "30d"]
 
 
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
@@ -248,13 +247,12 @@ def _validate_window(window: str) -> None:
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     request: Request,
-    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     _require_metering_access(request)
-    _validate_window(window)
 
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
@@ -271,7 +269,7 @@ async def get_overview(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
-    cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:overview:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
@@ -286,12 +284,10 @@ async def get_overview(
         svc.active_tenants("24h"),
         svc.active_tenants("7d"),
         svc.active_tenants("30d"),
-        svc.active_tenants(window),   # window-scoped, used as avg_requests_per_tenant denominator
         svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
         _request_volume_chart(svc, window, scope_tenant),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else _noop(),
-        svc.active_tenants_count_previous(window),  # prev-window denominator for avg/tenant trend
         return_exceptions=True,
     )
 
@@ -303,13 +299,17 @@ async def get_overview(
             return None
         return r
 
-    tc, at24, at7, at30, at_window, rt, chart, conc, prev_active = [_ok(r) for r in results]
+    tc, at24, at7, at30, rt, chart, conc = [_ok(r) for r in results]
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
-    # KPI cells
+    # KPI cells. Successful/Failed show the COUNT as the value and the rate as
+    # sub-text (helper); both are colored on the frontend (green / red).
     kpis: list[Cell] = []
     if rt:
+        success_rate = rt["success_rate"]["rate_pct"]
+        # No traffic → 0% failure (not 100%); 100−0 would be wrong.
+        failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
         kpis.extend([
             Cell(
                 key="total_requests",
@@ -319,35 +319,29 @@ async def get_overview(
                 pct_change=rt["total_requests"]["vs_previous_pct"],
             ),
             Cell(
-                key="success_rate",
-                label="Success Rate",
-                value=rt["success_rate"]["rate_pct"],
-                previous=rt["success_rate"]["previous_rate_pct"],
-                pct_change=rt["success_rate"]["vs_previous_pct"],
+                key="successful",
+                label="Successful",
+                value=rt["successful_requests"]["formatted"],
+                previous=rt["successful_requests"]["previous_formatted"],
+                pct_change=rt["successful_requests"]["vs_previous_pct"],
+                helper=f"{success_rate:.2f}% success rate",
+            ),
+            Cell(
+                key="failed",
+                label="Failed",
+                value=rt["failed_requests"]["formatted"],
+                previous=rt["failed_requests"]["previous_formatted"],
+                pct_change=rt["failed_requests"]["vs_previous_pct"],
+                helper=f"{failure_rate:.2f}% failure rate",
             ),
             Cell(
                 key="avg_rps",
-                label="Avg RPS",
+                label="Avg RPS (req/s)",
                 value=rt["avg_rps"]["value"],
                 previous=rt["avg_rps"]["previous_value"],
                 pct_change=rt["avg_rps"]["vs_previous_pct"],
             ),
         ])
-    if is_admin and rt and at_window and at_window.get("count"):
-        avg_per_tenant = round(rt["total_requests"]["count"] / at_window["count"], 1)
-        # Trend vs previous window: prev avg = prev_total / prev_active_tenants.
-        prev_total = rt["total_requests"].get("previous_count")
-        prev_avg = (prev_total / prev_active) if (prev_total and prev_active) else 0.0
-        avg_pct_change = (
-            round((avg_per_tenant - prev_avg) / prev_avg * 100, 1) if prev_avg > 0 else None
-        )
-        kpis.append(Cell(
-            key="avg_requests_per_tenant",
-            label="Avg Requests / Tenant",
-            value=avg_per_tenant,
-            previous=round(prev_avg, 1),
-            pct_change=avg_pct_change,
-        ))
 
     # Platform adoption block (admin only)
     platform_adoption: Optional[PlatformAdoption] = None
@@ -405,7 +399,7 @@ async def get_overview(
 @router.get("/tenant-consumption", response_model=TenantConsumptionResponse)
 async def get_tenant_consumption(
     request: Request,
-    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     tenant_id: Optional[str] = Query(None, description="Scope to a single tenant (admin only)"),
     services: Optional[str] = Query(
@@ -422,8 +416,6 @@ async def get_tenant_consumption(
             detail="Tenant admins cannot access tenant consumption.",
         )
 
-    _validate_window(window)
-
     # Admin-only endpoint: scope to the selected tenant when one is chosen,
     # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
     scope_tenant = _validate_scope_tenant(tenant_id or None)
@@ -431,7 +423,7 @@ async def get_tenant_consumption(
     service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
 
     cache_key = (
-        f"metering:tenant-consumption:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -439,11 +431,12 @@ async def get_tenant_consumption(
 
     degraded = False
 
-    ranking_result, heatmap_result = await asyncio.gather(
+    ranking_result, heatmap_result, prev_avg_result = await asyncio.gather(
         svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant),
         svc.usage_by_tenant_service(
             limit=limit, time_range=window, services=service_filter, tenant=scope_tenant
         ),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant),
         return_exceptions=True,
     )
 
@@ -470,6 +463,22 @@ async def get_tenant_consumption(
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # Avg requests per active tenant — KPI card shown above the ranking.
+    avg_per_tenant_cell = None
+    if ranking and ranking.get("total_tenant_count"):
+        prev_avg = _ok(prev_avg_result)
+        cur_avg = ranking.get("avg_per_active_tenant")
+        pct = (
+            round((cur_avg - prev_avg) / prev_avg * 100, 1)
+            if (prev_avg and cur_avg is not None) else None
+        )
+        avg_per_tenant_cell = Cell(
+            key="avg_requests_per_tenant",
+            label="Avg Requests Per Active Tenant",
+            value=ranking["formatted_avg_per_active_tenant"],
+            pct_change=pct,
+        )
+
     response = TenantConsumptionResponse(
         scope=Scope(
             role=_caller_role_label(request),
@@ -477,6 +486,7 @@ async def get_tenant_consumption(
             organisation=org_map.get(scope_tenant) if scope_tenant else None,
             window=window,
         ),
+        avg_requests_per_tenant=avg_per_tenant_cell,
         tenant_ranking=[
             TenantRow(
                 rank=t["rank"],
@@ -505,13 +515,12 @@ async def get_tenant_consumption(
 @router.get("/service-consumption", response_model=ServiceConsumptionResponse)
 async def get_service_consumption(
     request: Request,
-    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     _require_metering_access(request)
-    _validate_window(window)
 
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
@@ -528,7 +537,7 @@ async def get_service_consumption(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
-    cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached

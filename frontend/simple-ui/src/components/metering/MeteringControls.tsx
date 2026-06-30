@@ -9,7 +9,10 @@ import {
 } from "@chakra-ui/react";
 import { RepeatIcon } from "@chakra-ui/icons";
 import React from "react";
-import { METERING, type MeteringSubTab } from "../../config/meteringConstants";
+import {
+  METERING,
+  type MeteringSubTab,
+} from "../../config/meteringConstants";
 import type { MeteringTopN, MeteringWindow } from "../../types/metering";
 import SegmentedTabBar from "./SegmentedTabBar";
 
@@ -47,22 +50,27 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   subTab,
   onSubTabChange,
   showSubTabs = false,
-}) => (
+}) => {
+  const isUsageSpend = subTab === METERING.SUB_TAB.USAGE_SPEND;
+
+  return (
   <VStack align="stretch" spacing={3}>
-    <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
-      {METERING.TIME_WINDOWS.map((opt) => (
-        <Button
-          key={opt.value}
-          onClick={() => onTimeWindowChange(opt.value)}
-          colorScheme={timeWindow === opt.value ? "orange" : "gray"}
-          variant={timeWindow === opt.value ? "solid" : "outline"}
-          fontWeight={timeWindow === opt.value ? "semibold" : "normal"}
-          borderRadius="full"
-        >
-          {opt.label}
-        </Button>
-      ))}
-    </ButtonGroup>
+    {isUsageSpend ? null : (
+      <ButtonGroup size="sm" isAttached variant="outline" flexWrap="wrap">
+        {METERING.TIME_WINDOWS.map((opt) => (
+          <Button
+            key={opt.value}
+            onClick={() => onTimeWindowChange(opt.value)}
+            colorScheme={timeWindow === opt.value ? "orange" : "gray"}
+            variant={timeWindow === opt.value ? "solid" : "outline"}
+            fontWeight={timeWindow === opt.value ? "semibold" : "normal"}
+            borderRadius="full"
+          >
+            {opt.label}
+          </Button>
+        ))}
+      </ButtonGroup>
+    )}
 
     <HStack spacing={3} flexWrap="wrap" justify="space-between" align="flex-end">
       <HStack spacing={3} flexWrap="wrap" align="flex-end">
@@ -132,6 +140,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
       </VStack>
     </HStack>
   </VStack>
-);
+  );
+};
 
 export default MeteringControls;

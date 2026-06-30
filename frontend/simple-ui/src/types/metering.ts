@@ -1,7 +1,17 @@
 /** Metering & Usage Dashboard API types (matches platform-core-service contract). */
 
 export type MeteringWindow = "1h" | "24h" | "7d" | "30d";
-export type MeteringTopN = 5 | 10 | 25;
+export type MeteringTopN = 10 | 25;
+export type MeteringDataState = "ok" | "error" | "empty" | "no_history";
+
+/** Top-level fields present on every metering dashboard API response. */
+export interface MeteringResponseMeta {
+  degraded?: boolean;
+  generated_at: string;
+  refresh_interval_seconds?: number;
+  data_state?: MeteringDataState;
+  is_stale?: boolean;
+}
 
 export interface MeteringCell {
   key: string;
@@ -9,6 +19,7 @@ export interface MeteringCell {
   value: number | string | null;
   previous?: number | string | null;
   pct_change?: number | null;
+  helper?: string | null;        // optional dynamic sub-text (e.g. "97.40% success rate")
 }
 
 export interface MeteringGraphPoint {
@@ -23,7 +34,6 @@ export interface MeteringGraphSeries {
 }
 
 export interface MeteringGraph {
-  step: string;
   series: MeteringGraphSeries[];
 }
 
@@ -46,6 +56,7 @@ export interface TenantRow {
   rank: number;
   tenant: string;
   organisation?: string | null;
+  plan?: string | null;
   requests: number;
   formatted_requests: string;
   percentage: number;
@@ -64,20 +75,39 @@ export interface UsageConcentration {
   grand_total: number;
 }
 
-export interface OverviewResponse {
+export interface ThroughputData {
+  avg_rps: number;
+  peak_rps?: number | null;
+  peak_at?: string | null;
+}
+
+export interface RequestHealth {
+  total: number;
+  successful: number;
+  failed: number;
+  total_formatted: string;
+  successful_formatted: string;
+  failed_formatted: string;
+  success_rate_pct: number;
+  failure_rate_pct: number;
+}
+
+export interface OverviewResponse extends MeteringResponseMeta {
   scope: MeteringScope;
   kpis: MeteringCell[];
+  active_tenants: MeteringCell[];
   platform_adoption?: PlatformAdoption | null;
   usage_concentration?: UsageConcentration | null;
+  request_health?: RequestHealth | null;
   request_volume?: MeteringGraph | null;
-  degraded?: boolean;
-  generated_at: string;
+  throughput?: ThroughputData;
 }
 
 export interface ServiceEntry {
   display_name: string;
   requests: number;
   formatted_requests: string;
+  percentage: number;          // this service's share of the tenant's total (row %)
 }
 
 export interface TenantServiceRow {
@@ -87,35 +117,41 @@ export interface TenantServiceRow {
   services: Record<string, ServiceEntry>;
   total: number;
   formatted_total: string;
+  percentage: number;          // this tenant's share of all tenants' total (grand %)
 }
 
-export interface TenantConsumptionResponse {
+export interface TenantConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
+  avg_requests_per_tenant?: MeteringCell | null;   // KPI card shown above the ranking
   tenant_ranking: TenantRow[];
   usage_by_service: TenantServiceRow[];
-  degraded?: boolean;
-  generated_at: string;
+  throughput?: ThroughputData;
+  request_volume?: MeteringGraph | null;
 }
 
 export interface ServiceConsumptionSummary {
-  // null in the empty-state (no service has traffic in the window).
-  most_used: { service: string; requests: number } | null;
-  highest_failure_rate: { service: string; failure_rate_pct: number } | null;
+  active_services?: number;
+  most_used?: { service: string; requests: number } | null;
+  highest_failure_rate?: { service: string; failure_rate_pct: number } | null;
 }
 
 export interface ServiceRow {
   service: string;
+  metering_unit?: string;
   requests: number;
+  percentage?: number;
   native_units?: number | null;
   native_unit_suffix: string;
   success_pct: number;
   failure_rate_pct?: number;
+  failed?: number;
+  vs_prev_period_pct?: number | null;
 }
 
-export interface ServiceConsumptionResponse {
+export interface ServiceConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
   summary?: ServiceConsumptionSummary | null;
   service_breakdown: ServiceRow[];
-  degraded?: boolean;
-  generated_at: string;
+  throughput?: ThroughputData;
+  request_volume?: MeteringGraph | null;
 }

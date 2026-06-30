@@ -34,11 +34,15 @@ import { apiEndpoints } from "../../services/apiEndpoints";
 interface LoginFormProps {
   onSuccess?: () => void;
   onSwitchToRegister?: () => void;
+  bannerMessage?: string | null;
+  onDismissBanner?: () => void;
 }
 
 const LoginForm: React.FC<LoginFormProps> = ({
   onSuccess,
   onSwitchToRegister,
+  bannerMessage = null,
+  onDismissBanner,
 }) => {
   const { login, guestLogin, isLoading, isLoginLoading, isGuestLoginLoading, error, clearError } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
@@ -102,6 +106,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    onDismissBanner?.();
     clearError();
     setLoginError(null);
     setLoginAttempted(true);
@@ -123,6 +128,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
   };
 
   const handleGuestSignIn = async () => {
+    onDismissBanner?.();
     clearError();
     setLoginError(null);
     setLoginAttempted(true);
@@ -154,6 +160,17 @@ const LoginForm: React.FC<LoginFormProps> = ({
 
       <form onSubmit={handleSubmit}>
         <VStack spacing={4}>
+          {bannerMessage && (
+            <Alert status="success" borderRadius="md" width="full">
+              <AlertIcon />
+              <Box flex="1">
+                <AlertDescription fontSize="sm" display="block">
+                  {bannerMessage}
+                </AlertDescription>
+              </Box>
+            </Alert>
+          )}
+
           {loginError && (
             <Alert status="error" borderRadius="md" width="full">
               <AlertIcon />
