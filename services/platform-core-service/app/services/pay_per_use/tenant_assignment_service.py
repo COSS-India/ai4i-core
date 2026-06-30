@@ -91,35 +91,41 @@ async def assign_tier(
     )
 
 
-async def get_tenant_tier(
-    tenant_id: str,
+async def list_tenant_tiers(
     db: AsyncSession,
-) -> TierAssignResponse:
+    tier_id: Optional[str] = None,
+) -> list[TierAssignResponse]:
     now = datetime.now(timezone.utc)
 
-    result = await db.execute(
+    query = (
         select(PPUTenantTierAssignment, PPUTier)
         .join(PPUTier, PPUTenantTierAssignment.tier_id == PPUTier.id)
-        .where(
-            PPUTenantTierAssignment.tenant_id == tenant_id,
-            PPUTenantTierAssignment.effective_to > now,
-        )
+        .where(PPUTenantTierAssignment.effective_to > now)
     )
-    row = result.first()
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active tier assignment found for tenant '{tenant_id}'",
-        )
 
-    assignment, tier = row
-    return TierAssignResponse(
-        tenant_id=assignment.tenant_id,
-        tier_id=str(tier.id),
-        tier_name=tier.name,
-        budget_limit=assignment.budget_limit,
-        available_balance=assignment.available_balance,
-        effective_from=assignment.effective_from,
-        effective_to=assignment.effective_to,
-        updated_at=assignment.updated_at,
-    )
+    if tier_id is not None:
+        try:
+            tier_uuid = UUID(tier_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid tier_id format — expected a UUID",
+            )
+        query = query.where(PPUTenantTierAssignment.tier_id == tier_uuid)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    return [
+        TierAssignResponse(
+            tenant_id=assignment.tenant_id,
+            tier_id=str(tier.id),
+            tier_name=tier.name,
+            budget_limit=assignment.budget_limit,
+            available_balance=assignment.available_balance,
+            effective_from=assignment.effective_from,
+            effective_to=assignment.effective_to,
+            updated_at=assignment.updated_at,
+        )
+        for assignment, tier in rows
+    ]
