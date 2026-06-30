@@ -8,7 +8,7 @@ import math
 import re
 import time as _time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -36,7 +36,7 @@ from app.schemas.metering import (
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import TIME_RANGES, WINDOW_STEP
+from app.utils.metering_promql_builder import WINDOW_STEP
 
 logger = logging.getLogger(__name__)
 
@@ -234,12 +234,11 @@ async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
         return {}
 
 
-def _validate_window(window: str) -> None:
-    if window not in TIME_RANGES or window == "all":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid window '{window}'. Allowed: 1h, 24h, 7d, 30d",
-        )
+# Allowed time windows, typed as a Literal so FastAPI validates the query param
+# itself and returns the standard 422 for unsupported values (e.g. "15d") — matching
+# the documented OpenAPI contract — instead of a hand-rolled 400. ("all" is internal
+# only and intentionally not an accepted window for these dashboard endpoints.)
+WindowParam = Literal["1h", "24h", "7d", "30d"]
 
 
 # ── Tab 1: Overview ───────────────────────────────────────────────────────────
@@ -248,13 +247,12 @@ def _validate_window(window: str) -> None:
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     request: Request,
-    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     _require_metering_access(request)
-    _validate_window(window)
 
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
@@ -405,7 +403,7 @@ async def get_overview(
 @router.get("/tenant-consumption", response_model=TenantConsumptionResponse)
 async def get_tenant_consumption(
     request: Request,
-    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     tenant_id: Optional[str] = Query(None, description="Scope to a single tenant (admin only)"),
     services: Optional[str] = Query(
@@ -421,8 +419,6 @@ async def get_tenant_consumption(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant admins cannot access tenant consumption.",
         )
-
-    _validate_window(window)
 
     # Admin-only endpoint: scope to the selected tenant when one is chosen,
     # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
@@ -505,13 +501,12 @@ async def get_tenant_consumption(
 @router.get("/service-consumption", response_model=ServiceConsumptionResponse)
 async def get_service_consumption(
     request: Request,
-    window: str = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     _require_metering_access(request)
-    _validate_window(window)
 
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
