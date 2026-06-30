@@ -47,12 +47,12 @@ def test_resolve_uses_default_when_model_is_none(llm_service):
     assert url == "http://default:8000/v1/chat"
 
 
-# ── proxy — error mapping ─────────────────────────────────────────────────────
+# ── _proxy_upstream — live error mapping (stub bypassed) ─────────────────────
 
 async def test_proxy_returns_503_when_no_endpoint_configured(llm_service):
     llm_service.model_endpoints = {}
     llm_service.default_endpoint = ""
-    status, body = await llm_service.proxy("/v1/chat/completions", {"model": "x"})
+    status, body = await llm_service._proxy_upstream("/v1/chat/completions", {"model": "x"})
     assert status == 503
     assert "detail" in body
 
@@ -64,7 +64,7 @@ async def test_proxy_returns_502_on_connect_error(llm_service):
         llm_service, "forward",
         side_effect=httpx.ConnectError("unreachable"),
     ):
-        status, body = await llm_service.proxy("/v1/chat/completions", {"model": "x"})
+        status, body = await llm_service._proxy_upstream("/v1/chat/completions", {"model": "x"})
     assert status == 502
     assert body["error"]["type"] == "upstream_error"
 
@@ -78,7 +78,7 @@ async def test_proxy_forwards_payload_and_returns_upstream_response(llm_service)
         new_callable=AsyncMock,
         return_value=(200, expected_body),
     ):
-        status, body = await llm_service.proxy(
+        status, body = await llm_service._proxy_upstream(
             "/v1/chat/completions", {"model": "gemma", "messages": []}
         )
     assert status == 200
@@ -94,7 +94,7 @@ async def test_proxy_passes_through_upstream_4xx_unchanged(llm_service):
         new_callable=AsyncMock,
         return_value=(400, upstream_error),
     ):
-        status, body = await llm_service.proxy("/v1/chat/completions", {"model": "x"})
+        status, body = await llm_service._proxy_upstream("/v1/chat/completions", {"model": "x"})
     assert status == 400
     assert body == upstream_error
 
