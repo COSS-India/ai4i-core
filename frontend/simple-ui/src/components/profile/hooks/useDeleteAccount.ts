@@ -51,7 +51,7 @@ export function useDeleteAccount(user: User | null) {
     authService.clearAuthTokens();
     authService.clearStoredUser();
     resetAuthInitPromise();
-    if (typeof globalThis.window !== "undefined") {
+    if (globalThis.window !== undefined) {
       globalThis.window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
       globalThis.window.location.assign("/auth?message=account-deleted");
     }
