@@ -101,6 +101,15 @@ class APIKeyService:
             ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
         if ttl <= 0:
             return
+        # Preserve PPU exhaustion flags from the existing hash so a cache
+        # refresh doesn't unblock a tenant whose budget/quota is actually gone.
+        existing = await self._cache.get_api_key_cache(db_key.api_key)
+        budget_exhausted = (existing or {}).get("budget-exhausted", "0")
+        preserved_quota = {
+            k: v
+            for k, v in (existing or {}).items()
+            if k.startswith("quota-") and v == "1"
+        }
         await self._cache.set_api_key_cache(
             db_key.api_key,
             ttl,
@@ -110,8 +119,9 @@ class APIKeyService:
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
                 "tier_id": "",
-                "budget-exhausted": "0",
+                "budget-exhausted": budget_exhausted,
                 **{f"quota-{entry['name']}": "0" for entry in get_inference_types()},
+                **preserved_quota,
             },
         )
 
@@ -184,6 +194,63 @@ class APIKeyService:
             if len(users) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
+
+    async def _patch_all_tenant_key_caches(
+        self, tenant_id: int, field: str, value: str
+    ) -> None:
+        """Patch a single Redis hash field on every cached API key for the tenant."""
+        if self._repo is None or self._users is None:
+            return
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await self._cache.patch_api_key_cache_field(key.api_key, field, value)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
+    async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
+        """Flip budget-exhausted on all cached API key hashes for the tenant."""
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "budget-exhausted", "1" if exhausted else "0"
+        )
+
+    async def reset_all_quota_fields(self) -> None:
+        """HDEL every quota-* field from all active API key hashes across all tenants.
+        Called by the monthly cron on the 1st of each month.
+        """
+        if self._repo is None or self._users is None or self._tenants is None:
+            logger.warning("reset_all_quota_fields skipped: missing repositories")
+            return
+        inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
+        offset = 0
+        while True:
+            # list_by_tenant with tenant_id=None isn't available; iterate all users via repo
+            users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await self._cache.delete_api_key_cache_fields(key.api_key, inference_fields)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
+    async def set_quota_exhausted_for_tenant(
+        self, tenant_id: int, inference_name: str
+    ) -> None:
+        """Mark quota-{inference_name} exhausted on all cached API key hashes for the tenant."""
+        await self._patch_all_tenant_key_caches(
+            tenant_id, f"quota-{inference_name}", "1"
+        )
 
     async def create_api_key(
         self,

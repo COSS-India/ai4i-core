@@ -51,3 +51,20 @@ class CacheService(_BaseCacheService):
     async def delete_api_key_cache(self, api_key: str) -> None:
         """Immediately invalidate an API key — used on revocation."""
         await self._redis.delete(f"{REDIS_API_KEY_PREFIX}{api_key}")
+
+    async def patch_api_key_cache_field(self, api_key: str, field: str, value: str) -> bool:
+        """Update a single field on an existing API key hash. No-op if key is absent from Redis."""
+        key = f"{REDIS_API_KEY_PREFIX}{api_key}"
+        if await self._redis.exists(key):
+            await self._redis.hset(key, field, value)
+            return True
+        return False
+
+    async def delete_api_key_cache_field(self, api_key: str, field: str) -> None:
+        """Remove a single field from an existing API key hash (e.g. quota-* on month rollover)."""
+        await self._redis.hdel(f"{REDIS_API_KEY_PREFIX}{api_key}", field)
+
+    async def delete_api_key_cache_fields(self, api_key: str, fields: list[str]) -> None:
+        """Remove multiple fields from an API key hash in a single HDEL call."""
+        if fields:
+            await self._redis.hdel(f"{REDIS_API_KEY_PREFIX}{api_key}", *fields)
