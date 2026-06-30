@@ -84,6 +84,7 @@ _INFERENCE_TYPES = [
 ]
 _conftest_stub("ai4i_core.ppu",
     get_inference_types=lambda: _INFERENCE_TYPES,
+    get_inference_unit_map=lambda: {it["name"]: it["unit"] for it in _INFERENCE_TYPES},
     load_inference_types=MagicMock(),
     quota_guard=MagicMock(),
 )
