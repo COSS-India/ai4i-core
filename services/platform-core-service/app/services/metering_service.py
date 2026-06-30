@@ -68,11 +68,16 @@ class MeteringService:
         success_v = round(_float(raw[1]))
         avg_rps_v = round(_float(raw[2]), 2)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
+        failed_v = max(0, total_v - success_v)
 
         total_vs_prev: Optional[float] = None
         success_rate_vs_prev: Optional[float] = None
         avg_rps_vs_prev: Optional[float] = None
+        failed_vs_prev: Optional[float] = None
+        successful_vs_prev: Optional[float] = None
         prev_total_v: Optional[int] = None
+        prev_failed_v: Optional[int] = None
+        prev_success_v: Optional[int] = None
         prev_success_rate_v: Optional[float] = None
         prev_avg_rps_v: Optional[float] = None
 
@@ -80,7 +85,10 @@ class MeteringService:
             prev_total = max(0, round(_float(raw[3])))
             prev_success = max(0, round(_float(raw[4])))
             prev_avg_rps = _float(raw[5])
+            prev_failed = max(0, prev_total - prev_success)
             prev_total_v = prev_total
+            prev_failed_v = prev_failed
+            prev_success_v = prev_success
             prev_avg_rps_v = round(prev_avg_rps, 2)
             # Previous success rate is undefined without prior traffic → report 0.
             prev_success_rate_v = (
@@ -91,6 +99,12 @@ class MeteringService:
                 total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
                 # pp change so that "97.35 → 97.45" reports as +0.1
                 success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
+
+            if prev_failed > 0:
+                failed_vs_prev = round((failed_v - prev_failed) / prev_failed * 100, 1)
+
+            if prev_success > 0:
+                successful_vs_prev = round((success_v - prev_success) / prev_success * 100, 1)
 
             if prev_avg_rps > 0:
                 avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
@@ -103,6 +117,24 @@ class MeteringService:
                 "previous_count": prev_total_v,
                 "previous_formatted": (
                     self._format_count(prev_total_v) if prev_total_v is not None else None
+                ),
+            },
+            "successful_requests": {
+                "count": success_v,
+                "formatted": self._format_count(success_v),
+                "vs_previous_pct": successful_vs_prev,
+                "previous_count": prev_success_v,
+                "previous_formatted": (
+                    self._format_count(prev_success_v) if prev_success_v is not None else None
+                ),
+            },
+            "failed_requests": {
+                "count": failed_v,
+                "formatted": self._format_count(failed_v),
+                "vs_previous_pct": failed_vs_prev,
+                "previous_count": prev_failed_v,
+                "previous_formatted": (
+                    self._format_count(prev_failed_v) if prev_failed_v is not None else None
                 ),
             },
             "success_rate": {
@@ -361,6 +393,8 @@ class MeteringService:
         )
 
         grand_total = sum(t["requests"] for t in all_tenants)
+        active_count = len(all_tenants)
+        avg_per_active = round(grand_total / active_count) if active_count else 0
         top = all_tenants[:limit]
 
         ranked = [
@@ -378,7 +412,9 @@ class MeteringService:
             "tenants": ranked,
             "grand_total": grand_total,
             "formatted_grand_total": self._format_count(grand_total),
-            "total_tenant_count": len(all_tenants),
+            "total_tenant_count": active_count,
+            "avg_per_active_tenant": avg_per_active,
+            "formatted_avg_per_active_tenant": self._format_count(avg_per_active),
             "filters": {"limit": limit, "time_range": time_range or "all"},
         }
 
@@ -451,11 +487,15 @@ class MeteringService:
                         "display_name": SERVICE_BREAKDOWN_CONFIG[svc]["display_name"],
                         "requests": tasks.get(svc, 0),
                         "formatted_requests": self._format_count(tasks.get(svc, 0)),
+                        # share of THIS tenant's total (row-wise %)
+                        "percentage": round(tasks.get(svc, 0) / total * 100, 1) if total else 0.0,
                     }
                     for svc in active_services
                 },
                 "total": total,
                 "formatted_total": self._format_count(total),
+                # this tenant's share of all tenants' total (grand-total %)
+                "percentage": round(total / grand_total * 100, 1) if grand_total else 0.0,
             }
             for idx, (tenant_label, total, tasks) in enumerate(top)
         ]

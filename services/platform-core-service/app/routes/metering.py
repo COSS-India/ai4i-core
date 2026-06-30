@@ -271,7 +271,7 @@ async def get_overview(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
-    cache_key = f"metering:overview:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:overview:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
@@ -286,12 +286,10 @@ async def get_overview(
         svc.active_tenants("24h"),
         svc.active_tenants("7d"),
         svc.active_tenants("30d"),
-        svc.active_tenants(window),   # window-scoped, used as avg_requests_per_tenant denominator
         svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
         _request_volume_chart(svc, window, scope_tenant),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else _noop(),
-        svc.active_tenants_count_previous(window),  # prev-window denominator for avg/tenant trend
         return_exceptions=True,
     )
 
@@ -303,13 +301,17 @@ async def get_overview(
             return None
         return r
 
-    tc, at24, at7, at30, at_window, rt, chart, conc, prev_active = [_ok(r) for r in results]
+    tc, at24, at7, at30, rt, chart, conc = [_ok(r) for r in results]
 
     org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
-    # KPI cells
+    # KPI cells. Successful/Failed show the COUNT as the value and the rate as
+    # sub-text (helper); both are colored on the frontend (green / red).
     kpis: list[Cell] = []
     if rt:
+        success_rate = rt["success_rate"]["rate_pct"]
+        # No traffic → 0% failure (not 100%); 100−0 would be wrong.
+        failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
         kpis.extend([
             Cell(
                 key="total_requests",
@@ -319,35 +321,29 @@ async def get_overview(
                 pct_change=rt["total_requests"]["vs_previous_pct"],
             ),
             Cell(
-                key="success_rate",
-                label="Success Rate",
-                value=rt["success_rate"]["rate_pct"],
-                previous=rt["success_rate"]["previous_rate_pct"],
-                pct_change=rt["success_rate"]["vs_previous_pct"],
+                key="successful",
+                label="Successful",
+                value=rt["successful_requests"]["formatted"],
+                previous=rt["successful_requests"]["previous_formatted"],
+                pct_change=rt["successful_requests"]["vs_previous_pct"],
+                helper=f"{success_rate:.2f}% success rate",
+            ),
+            Cell(
+                key="failed",
+                label="Failed",
+                value=rt["failed_requests"]["formatted"],
+                previous=rt["failed_requests"]["previous_formatted"],
+                pct_change=rt["failed_requests"]["vs_previous_pct"],
+                helper=f"{failure_rate:.2f}% failure rate",
             ),
             Cell(
                 key="avg_rps",
-                label="Avg RPS",
+                label="Avg RPS (req/s)",
                 value=rt["avg_rps"]["value"],
                 previous=rt["avg_rps"]["previous_value"],
                 pct_change=rt["avg_rps"]["vs_previous_pct"],
             ),
         ])
-    if is_admin and rt and at_window and at_window.get("count"):
-        avg_per_tenant = round(rt["total_requests"]["count"] / at_window["count"], 1)
-        # Trend vs previous window: prev avg = prev_total / prev_active_tenants.
-        prev_total = rt["total_requests"].get("previous_count")
-        prev_avg = (prev_total / prev_active) if (prev_total and prev_active) else 0.0
-        avg_pct_change = (
-            round((avg_per_tenant - prev_avg) / prev_avg * 100, 1) if prev_avg > 0 else None
-        )
-        kpis.append(Cell(
-            key="avg_requests_per_tenant",
-            label="Avg Requests / Tenant",
-            value=avg_per_tenant,
-            previous=round(prev_avg, 1),
-            pct_change=avg_pct_change,
-        ))
 
     # Platform adoption block (admin only)
     platform_adoption: Optional[PlatformAdoption] = None
@@ -431,7 +427,7 @@ async def get_tenant_consumption(
     service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
 
     cache_key = (
-        f"metering:tenant-consumption:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -470,6 +466,16 @@ async def get_tenant_consumption(
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # Avg requests per active tenant — KPI card shown above the ranking.
+    avg_per_tenant_cell = None
+    if ranking and ranking.get("total_tenant_count"):
+        avg_per_tenant_cell = Cell(
+            key="avg_requests_per_tenant",
+            label="Avg Requests Per Active Tenant",
+            value=ranking["formatted_avg_per_active_tenant"],
+            pct_change=None,
+        )
+
     response = TenantConsumptionResponse(
         scope=Scope(
             role=_caller_role_label(request),
@@ -477,6 +483,7 @@ async def get_tenant_consumption(
             organisation=org_map.get(scope_tenant) if scope_tenant else None,
             window=window,
         ),
+        avg_requests_per_tenant=avg_per_tenant_cell,
         tenant_ranking=[
             TenantRow(
                 rank=t["rank"],
@@ -528,7 +535,7 @@ async def get_service_consumption(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
-    cache_key = f"metering:service-consumption:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached

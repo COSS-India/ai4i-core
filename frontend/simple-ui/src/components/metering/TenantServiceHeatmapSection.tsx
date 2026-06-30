@@ -165,7 +165,14 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
                     bg={heatmapIntensityColor(intensity)}
                     color={heatmapTextColor(intensity)}
                   >
-                    {entry?.formatted_requests ?? (requests > 0 ? requests.toLocaleString() : "0")}
+                    <VStack spacing={0} align="flex-end">
+                      <Text>
+                        {entry?.formatted_requests ?? (requests > 0 ? requests.toLocaleString() : "0")}
+                      </Text>
+                      <Text fontSize="xs" fontWeight="normal" opacity={0.7}>
+                        {(entry?.percentage ?? 0).toFixed(1)}%
+                      </Text>
+                    </VStack>
                   </Td>
                 );
               })}
@@ -173,6 +180,9 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
                 <VStack align="stretch" spacing={1}>
                   <Text fontSize="sm" fontWeight="bold" color="gray.800" textAlign="right">
                     {row.formatted_total}
+                  </Text>
+                  <Text fontSize="xs" color="gray.500" textAlign="right">
+                    {(row.percentage ?? 0).toFixed(1)}%
                   </Text>
                   <Progress
                     value={maxTotal > 0 ? (row.total / maxTotal) * 100 : 0}

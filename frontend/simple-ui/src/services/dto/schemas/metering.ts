@@ -8,6 +8,7 @@ export const meteringCellSchema = z.object({
   value: z.union([z.string(), z.number(), z.null()]),
   previous: z.union([z.string(), z.number(), z.null()]).optional(),
   pct_change: z.number().nullable().optional(),
+  helper: z.string().nullable().optional(),
 });
 
 export const meteringGraphPointSchema = z.object({
@@ -75,6 +76,7 @@ export const serviceEntrySchema = z.object({
   display_name: z.string(),
   requests: z.number(),
   formatted_requests: z.string(),
+  percentage: z.number().optional().default(0),
 });
 
 export const tenantServiceRowSchema = z.object({
@@ -84,10 +86,12 @@ export const tenantServiceRowSchema = z.object({
   services: z.record(z.string(), serviceEntrySchema),
   total: z.number(),
   formatted_total: z.string(),
+  percentage: z.number().optional().default(0),
 });
 
 export const tenantConsumptionResponseSchema = z.object({
   scope: meteringScopeSchema,
+  avg_requests_per_tenant: meteringCellSchema.nullable().optional(),
   tenant_ranking: z.array(tenantRowSchema),
   usage_by_service: z.array(tenantServiceRowSchema),
   degraded: z.boolean().optional(),

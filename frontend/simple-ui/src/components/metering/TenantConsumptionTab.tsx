@@ -23,7 +23,7 @@ import { meteringColorAt } from "../../utils/meteringColors";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
-import MeteringSectionCard from "./MeteringSectionCard";
+import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
 import TenantServiceHeatmapSection from "./TenantServiceHeatmapSection";
@@ -149,6 +149,13 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
+          <KpiCard
+            label={data.avg_requests_per_tenant?.label ?? "Average requests per tenant"}
+            value={data.avg_requests_per_tenant?.value ?? "—"}
+            pctChange={data.avg_requests_per_tenant?.pct_change}
+            helper={data.avg_requests_per_tenant?.helper}
+            accent="gray"
+          />
           <MeteringSectionCard
             title={section.TITLE}
             subtitle={`${section.SUBTITLE_PREFIX} ${windowLabel}`}
