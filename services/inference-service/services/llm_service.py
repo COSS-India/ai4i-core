@@ -71,7 +71,7 @@ class OpenAIProxyService:
             model_attrs["task_type"] = "LLM"
             model_attrs["model_name"] = payload.get("model", "unknown") if isinstance(payload, dict) else "unknown"
             model_attrs["model_version"] = "unknown"
-            model_attrs["serviceId"] = service_id
+            model_attrs["service_id"] = service_id
             model_attrs.update(get_context_attributes())
 
             async with traced_inference(payload, "LLM", logger) as infer_attrs:

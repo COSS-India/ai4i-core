@@ -177,7 +177,7 @@ class Orchestrator:
                 ) from e
 
             adapter_cfg = service_info.get("adapter_config") or {}
-            attrs["serviceId"] = serviceId
+            attrs["service_id"] = serviceId
             attrs["model_name"] = service_info.get("name", "")
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
