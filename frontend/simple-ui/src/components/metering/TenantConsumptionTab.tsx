@@ -47,7 +47,7 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
             label={data.avg_requests_per_tenant?.label ?? "Average requests per tenant"}
             value={data.avg_requests_per_tenant?.value ?? "—"}
             pctChange={data.avg_requests_per_tenant?.pct_change}
-            helper={data.avg_requests_per_tenant?.helper}
+            helper={data.avg_requests_per_tenant?.helper ?? undefined}
             accent="gray"
           />
           <MeteringSectionCard
