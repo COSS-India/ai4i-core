@@ -310,6 +310,62 @@ class TestGetTenantDetail:
         assert result.quotaLimit is None         # no inference type to derive unit_size from
         assert result.remainingQuota is None
 
+    @pytest.mark.asyncio
+    async def test_breakdown_percentage_single_type(self):
+        """Single inference type: breakdown percentage must be 100.0."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(
+                    inference_name="llm", total_units=1_000_000,
+                    unit_size=1_000_000, unit_rate=Decimal("1"),
+                ),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.breakdown[0].percentage == 100.0
+
+    @pytest.mark.asyncio
+    async def test_breakdown_percentage_multi_type_sums_to_100(self):
+        """Multi inference type: breakdown percentages must sum to 100."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(total_quota=None),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(
+                    inference_name="llm", total_units=750_000,
+                    unit_size=1_000_000, unit_rate=Decimal("1"),
+                ),
+                self._breakdown_row(
+                    inference_name="asr", total_units=250_000,
+                    unit_size=1_000_000, unit_rate=Decimal("1"),
+                ),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        llm = next(b for b in result.breakdown if b.modelTaskType == "llm")
+        asr = next(b for b in result.breakdown if b.modelTaskType == "asr")
+        assert llm.percentage == 75.0
+        assert asr.percentage == 25.0
+        assert abs(llm.percentage + asr.percentage - 100.0) < 0.2
+
+    @pytest.mark.asyncio
+    async def test_breakdown_percentage_zero_spend(self):
+        """When all spend is zero, percentage must be 0.0 (no division-by-zero)."""
+        repo = _make_repo(
+            get_tenant_assignment=self._assignment(),
+            get_tenant_period_breakdown=[
+                self._breakdown_row(unit_rate=None, cost_per_unit=None),
+            ],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.breakdown[0].percentage == 0.0
+
 
 # ── _resolve_tenant_names ─────────────────────────────────────────────────────
 

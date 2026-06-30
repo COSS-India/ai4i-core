@@ -5,7 +5,7 @@ import type HttpProxy from "http-proxy";
 // types. A default ESM import type-checks, but under Next/webpack the runtime
 // interop does NOT unwrap it ("createProxyServer is not a function"). Require it
 // directly to bypass the interop, and re-apply the types via the cast below.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+// eslint-disable-next-line -- http-proxy CJS interop; see comment above
 const httpProxy = require("http-proxy") as {
   createProxyServer(options?: HttpProxy.ServerOptions): HttpProxy;
 };

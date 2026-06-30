@@ -42,19 +42,28 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     isRefreshing,
     handleRefresh,
     primaryError,
-    isDegraded,
+    dataStateBanner,
     requestVolumeGraph,
+    totalRequestsKpi,
+    successRateKpi,
     organisationLabel,
     lastGeneratedAt,
     parseQueryError,
   } = dash;
 
   const requestVolumeSection = overview ? (
-    <RequestVolumeSection graph={requestVolumeGraph} />
+    <RequestVolumeSection
+      graph={requestVolumeGraph}
+      requestHealth={overview.request_health}
+      totalRequests={totalRequestsKpi}
+      successRate={successRateKpi}
+      timeWindow={timeWindow}
+    />
   ) : null;
 
   const showPlatformAdoption =
-    isTenantView === false && Boolean(overview?.platform_adoption);
+    isTenantView === false &&
+    Boolean(overview?.platform_adoption || overview?.active_tenants?.length);
 
   if (isLoading) {
     return (
@@ -70,7 +79,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
         <TenantDashboardHeader organisationLabel={organisationLabel} />
       ) : null}
 
-      <MeteringAlerts errorMessage={primaryError} isDegraded={isDegraded} />
+      <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
 
       {showPlatformAdoption && overview ? (
         <PlatformAdoptionSection data={overview} />
@@ -96,6 +105,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       {isTenantView && overview ? (
         <TenantDashboardPanels
           overview={overview}
+          requestVolumeGraph={requestVolumeGraph}
+          totalRequestsKpi={totalRequestsKpi}
           requestVolumeSection={requestVolumeSection}
           serviceSectionRef={serviceSectionRef}
           serviceQuery={serviceQuery}

@@ -2,11 +2,11 @@ import { Box, Center, Spinner, Text, VStack } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React, { useEffect } from "react";
+import { useToastWithDeduplication } from "../utils/toast";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import TierManagement from "../components/tier-management/TierManagement";
 import { useAuth } from "../hooks/useAuth";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { useAdminTableSurface } from "../components/common/TableControls";
 
 const TierManagementPage: React.FC = () => {

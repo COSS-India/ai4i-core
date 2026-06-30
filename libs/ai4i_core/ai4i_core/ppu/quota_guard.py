@@ -39,6 +39,11 @@ def get_inference_types() -> list[dict]:
     return _cache
 
 
+def get_inference_unit_map() -> dict[str, str]:
+    """Return mapping of inference_name → billing unit (e.g. 'asr' → 'minutes')."""
+    return {it["name"]: it["unit"] for it in get_inference_types()}
+
+
 def load_inference_types(app: FastAPI) -> None:
     """
     Read inference_types.yaml once at startup and store a name→endpoint_pattern
