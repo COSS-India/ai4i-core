@@ -1,7 +1,13 @@
 import {
   Box,
+  Button,
+  Checkbox,
   Flex,
   HStack,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Progress,
   Tbody,
   Td,
@@ -11,7 +17,8 @@ import {
   Tr,
   VStack,
 } from "@chakra-ui/react";
-import React, { useMemo } from "react";
+import { ChevronDownIcon } from "@chakra-ui/icons";
+import React, { useEffect, useMemo, useState } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
 import { formatTenantLabel } from "../../utils/meteringFormatters";
@@ -25,27 +32,62 @@ import {
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
-
-type HeatmapServiceMeta = (typeof METERING.HEATMAP.SERVICES)[number];
+import SegmentedTabBar from "./SegmentedTabBar";
 
 interface TenantServiceHeatmapSectionProps {
   rows: TenantServiceRow[];
-  /** Service columns to render — selection is owned by the Tenant Ranking header. */
-  visibleServices: ReadonlyArray<HeatmapServiceMeta>;
   topN: MeteringTopN;
+  onTopNChange: (n: MeteringTopN) => void;
+  onServicesFilterChange?: (services: string[] | null) => void;
   windowLabel: string;
   tenantOrganisationById?: Record<string, string>;
 }
 
 const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = ({
   rows,
-  visibleServices,
   topN,
+  onTopNChange,
+  onServicesFilterChange,
   windowLabel,
   tenantOrganisationById = {},
 }) => {
+  const availableServiceKeys = useMemo(() => {
+    const fromData = new Set<string>();
+    rows.forEach((row) => {
+      Object.keys(row.services).forEach((k) => fromData.add(k));
+    });
+    return METERING.HEATMAP.SERVICES.filter(
+      (s) => fromData.size === 0 || fromData.has(s.key),
+    );
+  }, [rows]);
+
   const heatmap = METERING.HEATMAP;
   const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
+
+  const [selectedServices, setSelectedServices] = useState<Set<string>>(() =>
+    new Set(availableServiceKeys.map((s) => s.key)),
+  );
+
+  useEffect(() => {
+    if (availableServiceKeys.length === 0) return;
+    setSelectedServices((prev) => {
+      if (prev.size > 0) return prev;
+      return new Set(availableServiceKeys.map((s) => s.key));
+    });
+  }, [availableServiceKeys]);
+
+  const notifyServicesFilter = (next: Set<string>) => {
+    if (!onServicesFilterChange) return;
+    const allKeys = availableServiceKeys.map((s) => s.key);
+    const isAllSelected =
+      allKeys.length > 0 && allKeys.every((key) => next.has(key));
+    onServicesFilterChange(isAllSelected ? null : Array.from(next).sort((a, b) => a.localeCompare(b)));
+  };
+
+  const visibleServices = useMemo(
+    () => availableServiceKeys.filter((s) => selectedServices.has(s.key)),
+    [availableServiceKeys, selectedServices],
+  );
 
   const maxCellValue = useMemo(() => {
     let max = 0;
@@ -63,12 +105,67 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
     [rows],
   );
 
+  const toggleService = (key: string) => {
+    setSelectedServices((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        if (next.size > 1) next.delete(key);
+      } else {
+        next.add(key);
+      }
+      notifyServicesFilter(next);
+      return next;
+    });
+  };
+
+  const topNControls = (
+    <SegmentedTabBar
+      options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
+      activeId={String(topN)}
+      onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
+    />
+  );
+
+  const serviceFilter = (
+    <Menu closeOnSelect={false}>
+      <MenuButton
+        as={Button}
+        size="sm"
+        variant="outline"
+        rightIcon={<ChevronDownIcon />}
+        bg="white"
+        fontWeight="normal"
+      >
+        Select services ({selectedServices.size})
+      </MenuButton>
+      <MenuList maxH="320px" overflowY="auto" minW="220px">
+        {availableServiceKeys.map((svc) => (
+          <MenuItem key={svc.key} onClick={() => toggleService(svc.key)}>
+            <Checkbox
+              isChecked={selectedServices.has(svc.key)}
+              pointerEvents="none"
+              mr={2}
+              colorScheme="orange"
+            />
+            {svc.displayName}
+          </MenuItem>
+        ))}
+      </MenuList>
+    </Menu>
+  );
+
   if (!rows.length) {
     return (
       <MeteringSectionCard
         title={heatmap.TITLE}
         subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
         sectionLabel
+        action={
+          <HStack spacing={3} flexWrap="wrap">
+            {topNControls}
+            {serviceFilter}
+          </HStack>
+        }
       >
         <Flex h="200px" align="center" justify="center">
           <Text color="gray.500" fontSize="sm">
@@ -84,6 +181,12 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
       title={heatmap.TITLE}
       subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
       sectionLabel
+      action={
+        <HStack spacing={3} flexWrap="wrap" justify="flex-end">
+          {topNControls}
+          {serviceFilter}
+        </HStack>
+      }
     >
       <MeteringDataTable>
         <Thead>
