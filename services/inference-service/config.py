@@ -66,9 +66,6 @@ class Settings(BaseSettings):
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
     # Telemetry/Observability
-    OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
-        None, description="OpenTelemetry OTLP exporter endpoint"
-    )
     # Off by default — only the logging/streaming compose profiles bring Kafka
     # up. When false, the trace exporter ships spans to stdout only and never
     # imports kafka-python, avoiding the bootstrap retry storm on services

@@ -162,7 +162,7 @@ field on `GenericInferenceRequest`. `GenericInferenceResponse` is the response m
 | LLM proxy | `LLM_DEFAULT_ENDPOINT`, `LLM_MODEL_ENDPOINTS` (JSON map), `LLM_INFERENCE_TIMEOUT` |
 | Backend | `DEFAULT_TRITON_TIMEOUT` |
 | Cache / DB | `REDIS_URL`, `REDIS_PASSWORD`, `CACHE_TTL_SECONDS`; `DATABASE_URL`, `POSTGRES_*` (optional) |
-| Telemetry | `ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Telemetry | `ENABLE_TELEMETRY`, `KAFKA_ENABLED`, `KAFKA_SERVER`, `KAFKA_TOPIC_OTEL_TRACE` |
 | Kafka (trace export) | `KAFKA_TOPIC_OTEL_TRACE`, `KAFKA_SERVER` — read directly in `trace/setup.py`, not in `config.py` |
 
 > Config source of truth: `services/inference-service/config.py` (except the Kafka trace

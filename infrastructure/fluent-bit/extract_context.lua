@@ -51,13 +51,6 @@ function extract_context_fields(tag, timestamp, record)
         if context["correlation_id"] ~= nil then
             record["correlationId"] = context["correlation_id"]
         end
-        -- Extract jaeger_trace_url from context if it exists
-        -- This ensures it's available at top level for OpenSearch Dashboards
-        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
-            record["jaeger_trace_url"] = context["jaeger_trace_url"]
-            -- Also ensure it's in context.jaeger_trace_url for nested access
-            record["context"]["jaeger_trace_url"] = context["jaeger_trace_url"]
-        end
     end
     
     -- Flatten nested req.* fields if they exist
@@ -150,45 +143,6 @@ function extract_context_fields(tag, timestamp, record)
         end
         if output_details["token_count"] ~= nil then
             record["outputTokenCount"] = output_details["token_count"]
-        end
-    end
-    
-    return 1, timestamp, record
-end
-
--- Function to add Jaeger trace URL to logs
-function add_jaeger_url(tag, timestamp, record)
-    -- First, check if jaeger_trace_url already exists at top level (from nest filter or extract_context_fields)
-    -- If it exists and is not empty, preserve it and return
-    if record["jaeger_trace_url"] ~= nil and record["jaeger_trace_url"] ~= "" then
-        -- Ensure it's also in context for consistency
-        if record["context"] == nil then
-            record["context"] = {}
-        end
-        if type(record["context"]) == "table" then
-            record["context"]["jaeger_trace_url"] = record["jaeger_trace_url"]
-        end
-        return 1, timestamp, record
-    end
-    
-    -- If not at top level, check if it exists in context
-    if record["context"] ~= nil and type(record["context"]) == "table" then
-        local context = record["context"]
-        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
-            record["jaeger_trace_url"] = context["jaeger_trace_url"]
-            return 1, timestamp, record
-        end
-    end
-    
-    -- Only add jaeger_trace_url if it doesn't already exist (fallback: construct from trace_id)
-    if record["jaeger_trace_url"] == nil or record["jaeger_trace_url"] == "" then
-        -- Check if trace_id exists
-        if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
-            local trace_id = record["trace_id"]
-            -- Store only the trace_id in jaeger_trace_url field
-            -- OpenSearch Dashboards will use URL template to construct: http://localhost:16686/trace/{trace_id}
-            -- This ensures the URL is treated as external absolute URL, not relative path
-            record["jaeger_trace_url"] = trace_id
         end
     end
     
