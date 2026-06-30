@@ -4,6 +4,7 @@ import signal
 from confluent_kafka import KafkaException
 from confluent_kafka.aio import AIOConsumer
 
+from ai4i_core.bootstrap import init_redis
 from ai4i_core.logging import configure_logging, get_logger
 
 configure_logging(service_name="aiokafka-consumer")
@@ -56,6 +57,12 @@ async def main() -> None:
         redis_cfg.REDIS_TIMEOUT,
         redis_cfg.REDIS_MAX_CONNECTIONS,
     )
+
+    try:
+        await init_redis(settings.redis_settings.get_redis_url())
+    except Exception as exc:
+        logger.critical("Failed to initialise redis connection| error=%s", exc)
+        raise
 
     # ── Kafka ──
     registry = KafkaRegistry(TOPIC_REGISTRY)
