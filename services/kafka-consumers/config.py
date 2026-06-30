@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings
 
 class Topics(BaseSettings):
     TOPIC_PAY_PER_USE: str = Field(
-        "traces", # Currently 1 topic only.
         description="Kafka topic for pay-per-use usage events",
     )
 
@@ -20,9 +19,9 @@ class Topics(BaseSettings):
 
 class DatabaseSettings(BaseSettings):
     """PostgreSQL connection settings."""
-    POSTGRES_USER: Optional[str] = Field(None, description="PostgreSQL username")
-    POSTGRES_PASSWORD: Optional[str] = Field(None, description="PostgreSQL password")
-    POSTGRES_HOST: str = Field("localhost", description="PostgreSQL host")
+    POSTGRES_USER: str = Field(description="PostgreSQL username")
+    POSTGRES_PASSWORD: str = Field(description="PostgreSQL password")
+    POSTGRES_HOST: str = Field(description="PostgreSQL host")
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
     INFERENCE_DB: str = Field(description="Database name for the inference service")
     PLATFORM_CORE_DB: str = Field(description="Database name for the platform core service")
@@ -44,7 +43,7 @@ class DatabaseSettings(BaseSettings):
 class RedisSettings(BaseSettings):
     """Redis connection settings."""
 
-    REDIS_HOST: str = Field("localhost", description="Redis host")
+    REDIS_HOST: str = Field(description="Redis host")
     REDIS_PORT: int = Field(6379, description="Redis port")
     REDIS_PASSWORD: Optional[str] = Field(None, description="Redis password")
     REDIS_DB: int = Field(0, description="Redis logical database index (0–15)")
@@ -66,7 +65,6 @@ class KafkaSettings(BaseSettings):
     """Kafka connection settings loaded from environment variables."""
 
     KAFKA_SERVER: str = Field(
-        "localhost:9093",
         description="Bootstrap broker address (host:port)",
     )
     KAFKA_AUTO_OFFSET_RESET: str = Field(
@@ -89,6 +87,10 @@ class KafkaSettings(BaseSettings):
         1.0,
         description="Seconds to block on each Consumer.poll() call",
     )
+    AUTH_SERVICE_URL: str = Field(
+        description="Base URL of auth-service for internal PPU state updates",
+    )
+
     topics: Topics = Field(default_factory=Topics)
     db_settings: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis_settings: RedisSettings = Field(default_factory=RedisSettings)

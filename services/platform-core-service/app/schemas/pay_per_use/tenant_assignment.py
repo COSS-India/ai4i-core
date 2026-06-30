@@ -12,6 +12,17 @@ class TierAssignRequest(BaseModel):
     effective_to: datetime = Field(..., description="Assignment end date (UTC)")
 
 
+class TopUpRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant to top up")
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=4, description="Amount to add in INR")
+
+
+class TopUpResponse(BaseModel):
+    tenant_id: str
+    added: Decimal
+    available_balance: Decimal
+
+
 class TierAssignResponse(BaseModel):
     tenant_id: str
     tier_id: str
