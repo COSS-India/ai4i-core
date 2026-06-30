@@ -63,16 +63,21 @@ class OpenAIProxyService:
         The caller (route) owns the outer request span.
         """
         # Extract before forwarding — upstream LLM API doesn't accept this field.
-        service_id = ""
+        # Mirror orchestrator: check config block first, then top-level.
         if isinstance(payload, dict):
-            service_id = payload.pop("serviceId", "") or ""
+            config_block = payload.get("config") or {}
+            service_id = (
+                config_block.get("serviceId") if isinstance(config_block, dict) else None
+            ) or payload.pop("serviceId", "") or ""
+        else:
+            service_id = ""
 
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
             model_attrs["model_name"] = payload.get("model", "unknown") if isinstance(payload, dict) else "unknown"
             model_attrs["model_version"] = "unknown"
-            model_attrs["service_id"] = service_id
             model_attrs.update(get_context_attributes())
+            model_attrs["service_id"] = service_id
 
             async with traced_inference(payload, "LLM", logger) as infer_attrs:
                 status_code, body = await self.proxy(path=path, payload=payload)
@@ -82,6 +87,7 @@ class OpenAIProxyService:
                     infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
                     infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
                     infer_attrs["output_type"] = "text"
+                    infer_attrs["service_id"] = service_id
 
         return status_code, body
 
@@ -134,7 +140,17 @@ class OpenAIProxyService:
         Any 4xx/5xx the upstream itself returns is passed through; we trust
         upstream to be OpenAI-spec conformant for these audio routes.
         """
-        model = (data or {}).get("model")
+        data = dict(data or {})
+        service_id = data.pop("serviceId", "") or ""
+        model = data.get("model")
+
+        with traced_span("model") as model_attrs:
+            model_attrs["task_type"] = "LLM"
+            model_attrs["model_name"] = model or "unknown"
+            model_attrs["model_version"] = "unknown"
+            model_attrs.update(get_context_attributes())
+            model_attrs["service_id"] = service_id
+
         try:
             url = self.resolve_upstream_url(model=model, path=path)
         except ValueError as exc:
@@ -146,7 +162,7 @@ class OpenAIProxyService:
         logger.info("LLM proxy (multipart) -> %s (model=%s)", url, model)
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, files=files, data=data or {})
+                response = await client.post(url, files=files, data=data)
         except httpx.RequestError as exc:
             logger.warning(
                 "LLM upstream request failed (path=%s): %s", path, exc

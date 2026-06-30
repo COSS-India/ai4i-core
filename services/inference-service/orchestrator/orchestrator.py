@@ -155,6 +155,7 @@ class Orchestrator:
                     f"No serviceId in payload, SMR resolved to: {serviceId}"
                 )
 
+            attrs["service_id"] = serviceId
             self.logger.debug(f"Resolving service: {serviceId}")
             try:
                 service_info = await self.inference_server_resolver.resolve_service(serviceId)
@@ -177,7 +178,6 @@ class Orchestrator:
                 ) from e
 
             adapter_cfg = service_info.get("adapter_config") or {}
-            attrs["service_id"] = serviceId
             attrs["model_name"] = service_info.get("name", "")
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
