@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ai4i_core.observability import setup_observability
 from ai4i_core.logging import RequestMiddleware
-from ai4i_core.ppu import load_inference_types
 from routes import router
 from config import settings
 from trace.setup import setup_tracing
@@ -24,7 +23,6 @@ _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
-    load_inference_types(app)
     logger.info("✓ Inference service started")
     yield
     from opentelemetry import trace
