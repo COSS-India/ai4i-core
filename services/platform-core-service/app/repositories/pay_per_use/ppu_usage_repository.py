@@ -2,21 +2,18 @@
 from sqlalchemy import case, func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.ppu import get_inference_types
+from ai4i_core.ppu import get_inference_unit_map
 from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 
-# Maps inference_name ('asr', 'nmt', 'llm') → billing_unit_type ('minutes', 'characters', 'tokens')
-_INFERENCE_TO_UNIT: dict[str, str] = {
-    it["name"]: it["unit"] for it in get_inference_types()
-}
+_INFERENCE_TO_UNIT: dict[str, str] = get_inference_unit_map()
 
 
 def _inference_name_to_billing_unit(col):
     """SQLAlchemy CASE expression: inference_name → billing_unit_type (case-insensitive)."""
-    return case(_INFERENCE_TO_UNIT, value=func.lower(col), else_=func.lower(col))
+    return case(*_INFERENCE_TO_UNIT.items(), value=func.lower(col), else_=null())
 
 
 def _pricing_subquery():

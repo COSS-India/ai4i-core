@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.ppu import get_inference_types
+from ai4i_core.ppu import get_inference_unit_map
 from app.core.exceptions import EntityNotFoundError
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
@@ -21,10 +21,7 @@ from app.schemas.pay_per_use.usage import (
     UsageSummaryResponse,
 )
 
-_UNIT_LABELS: dict[str, str] = {
-    it["name"]: it["unit"]
-    for it in get_inference_types()
-}
+_UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
 _DEFAULT_UNIT_SIZE = 1_000_000
 
@@ -146,6 +143,7 @@ class PPUUsageService:
         inference_types: set[str] = set()
         type_unit_sizes: dict[str, int] = {}
 
+        raw: list[dict] = []
         for row in breakdown_rows:
             units = int(row.total_units or 0)
             unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
@@ -169,19 +167,23 @@ class PPUUsageService:
                 row_quota_limit = None
                 row_remaining = None
 
-            breakdown.append(TenantUsageBreakdown(
+            raw.append(dict(
                 modelTaskType=row.inference_name,
                 consumptionToDate=consumption,
                 unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
                 spend=spend,
-                percentage=0.0,
                 quotaLimit=row_quota_limit,
                 remainingQuota=row_remaining,
             ))
 
-        total_spend = sum(item.spend for item in breakdown)
-        for item in breakdown:
-            item.percentage = round(item.spend / total_spend * 100, 1) if total_spend > 0 else 0.0
+        total_spend = sum(r["spend"] for r in raw)
+        breakdown = [
+            TenantUsageBreakdown(
+                **r,
+                percentage=round(r["spend"] / total_spend * 100, 1) if total_spend > 0 else 0.0,
+            )
+            for r in raw
+        ]
 
         # Use the specific unit label only when all usage is from one inference type;
         # fall back to "Units" when the tenant uses multiple service types.
