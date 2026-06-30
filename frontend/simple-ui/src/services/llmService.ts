@@ -8,6 +8,12 @@ import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
 export const LLM_CHAT_MODEL = 'google/gemma-4-E4B-it';
 export const AGRINET_MODEL = 'agrinet-model';
 
+/** serviceId (from platform-core service registry) keyed by model name. */
+export const MODEL_SERVICE_IDS: Record<string, string> = {
+  [LLM_CHAT_MODEL]: '8e588907767a26835acbf29d83de9e31',
+  [AGRINET_MODEL]: '30622e0a5b1cfb70dd008281adfd7d8c',
+};
+
 export const LLM_CHAT_MODELS = [LLM_CHAT_MODEL, AGRINET_MODEL] as const;
 
 export const isLlmChatService = (id?: string): boolean =>
@@ -82,17 +88,20 @@ export const performLLMChat = async (
     const inputLanguage = config.inputLanguage ?? '';
     const outputLanguage = config.outputLanguage ?? '';
     const content = buildTranslationPrompt(text, inputLanguage, outputLanguage);
+    const serviceId = MODEL_SERVICE_IDS[model] ?? '';
 
     const isAgrinet = model === AGRINET_MODEL;
     const payload = isAgrinet
       ? {
           model: AGRINET_MODEL,
+          serviceId,
           messages: [{ role: 'user', content }],
           max_tokens: 200,
           chat_template_kwargs: { enable_thinking: false },
         }
       : {
           model: LLM_CHAT_MODEL,
+          serviceId,
           messages: [{ role: 'user', content }],
           stream: false,
         };
