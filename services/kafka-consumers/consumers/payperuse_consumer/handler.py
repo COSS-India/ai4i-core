@@ -10,5 +10,4 @@ async def handle_ppu_usage(msg: Message) -> None:
     # TODO: process payload
     print(payload)
 
-    # raise UltimatelyDLQException("Example DLQ push")
 

@@ -1,13 +1,12 @@
 import asyncio
 import signal
 
-from confluent_kafka.aio import AIOConsumer, AIOProducer
 from confluent_kafka import KafkaException
-from ai4i_core.logging import get_logger
+from confluent_kafka.aio import AIOConsumer
 
 import consumers.payperuse_consumer  # noqa: F401 — side-effect import: populates TOPIC_REGISTRY
-
-from config import settings, build_consumer_config, build_producer_config
+from ai4i_core.logging import get_logger
+from config import settings, build_consumer_config
 from consumers.registry import KafkaRegistry, TOPIC_REGISTRY
 
 logger = get_logger(__name__)
@@ -19,8 +18,7 @@ KAFKA_GROUP_ID = "aio-python-consumers"
 # ===============
 
 async def main() -> None:
-    dlq_producer = AIOProducer(build_producer_config(settings))
-    registry = KafkaRegistry(TOPIC_REGISTRY, dlq_producer)
+    registry = KafkaRegistry(TOPIC_REGISTRY)
 
     consumer = AIOConsumer(build_consumer_config(KAFKA_GROUP_ID, settings))
 

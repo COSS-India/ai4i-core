@@ -42,22 +42,17 @@ def kafka_topic(topic: str):
         return fn
     return decorator
 
-class ConsumerRegistry:
-    def __init__(self):
-        self.handlers: dict[str, Coroutine] = TOPIC_REGISTRY
+class KafkaRegistry:
+    def __init__(self, topic_registry: dict):
+        self.handlers: dict[str, Coroutine] = topic_registry
 
     def topics(self) -> list[str]:
         return list(self.handlers.keys())
 
     async def dispatch(self, topic: str, msg, consumer) -> None:
-        try:
-            await self.handlers[topic](msg)
-            await consumer.commit(message=msg)
-        except UltimatelyDLQException as exc:
-            # handler has declared the message unrecoverable; forward to DLQ
-            await producer.produce(topic=f"{topic}__dlq", value=msg.value(), key=msg.key())
-            await consumer.commit(message=msg)
-        # any other exception: offset not committed → message is redelivered on restart
+        await self.handlers[topic](msg)
+        await consumer.commit(message=msg)
+        # on exception: offset not committed → message is redelivered on restart
 ```
 
 ### `services/kafka-consumers/consumers/<name>/`
@@ -116,24 +111,17 @@ Kafka Broker
     │
     │  (all subscribed topics on one connection)
     ▼
-AIOKafkaConsumer  (single consumer, single group_id)
+AIOConsumer  (single consumer, single group_id)
     │
     │  msg.topic → TOPIC_REGISTRY lookup
     ▼
-ConsumerRegistry.dispatch()
+KafkaRegistry.dispatch()
     │
     ├── "ppu.usage.recorded"  →  handle_ppu_usage(msg)  ──► success → commit offset
-    │                                                     └► UltimatelyDLQException
-    │                                                              │
-    │                                                              ▼
-    │                                                    produce to "ppu.usage.recorded__dlq"
-    │                                                              │
-    │                                                              ▼
-    │                                                          commit offset
+    │                                                     └► exception → offset not committed
+    │                                                                     (redelivered on restart)
     ├── "other.topic"         →  handle_other(msg)
     └── ...
-
-DLQ topic naming convention: <original_topic>__dlq
 ```
 
 ---
@@ -157,8 +145,6 @@ No changes to `ConsumerRegistry` or the poll loop are needed.
 | Explicit side-effect imports in `main.py` | Makes the set of active consumers visible and auditable without scanning the filesystem |
 | `ConsumerRegistry` wraps the global map | Keeps `main.py` decoupled from the global; easier to test by injecting a mock registry |
 | `aiokafka` over confluent-kafka | All handlers are I/O-bound (DB writes, HTTP calls); async avoids blocking the poll loop |
-| DLQ topic pattern `<topic>__dlq` | Double underscore avoids collisions with dot-separated topic hierarchies; derived at runtime so no DLQ topic config is needed per handler |
-| `UltimatelyDLQException` signals DLQ routing | Keeps DLQ logic out of handlers — a handler raises the exception, `dispatch` owns the produce + commit |
 
 ---
 
@@ -169,6 +155,5 @@ No changes to `ConsumerRegistry` or the poll loop are needed.
 This service takes a different approach: **async, multi-topic, decorator-routed**. The shared lib contributes:
 
 - `KafkaSettings` / `build_consumer_config` — reused for connection config
-- `UltimatelyDLQException` (`libs/ai4i_core/ai4i_core/kafka/exceptions.py`) — raised by any handler to signal that a message is unrecoverable and must be forwarded to its DLQ topic
 
-The `@kafka_topic` decorator and `TOPIC_REGISTRY` global live in `consumers/registry.py` within this service, not in the shared lib.
+The `@kafka_listener` decorator and `TOPIC_REGISTRY` global live in `consumers/registry.py` within this service, not in the shared lib.
