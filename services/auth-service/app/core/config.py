@@ -139,10 +139,25 @@ class AuthSettings(BaseSettings):
     # Per-email rate limit for /auth/forgot-password
     reset_request_limit_per_hour: int = 3
 
+    # ── Platform Core DB (read-only, for tier lookup on list-tenants) ──
+    # Set PLATFORM_CORE_DB_NAME to the platform-core database name (e.g. ai4iplatform_core).
+    # Connection uses the same host/port/credentials as the primary auth DB.
+    platform_core_db_name: Optional[str] = None
+
     # ── External services ──
     platform_core_url: Optional[str] = None
 
     # ── Derived helpers ──
+
+    def get_platform_core_db_url(self) -> Optional[str]:
+        if not self.platform_core_db_name:
+            return None
+        user = self.auth_db_user or self.postgres_user or "postgres"
+        raw_pw = self.auth_db_password or self.postgres_password
+        password = raw_pw.get_secret_value() if raw_pw else ""
+        host = self.auth_db_host or self.postgres_host
+        port = self.auth_db_port or self.postgres_port
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{self.platform_core_db_name}"
 
     def get_database_url(self) -> str:
         if self.auth_database_url:

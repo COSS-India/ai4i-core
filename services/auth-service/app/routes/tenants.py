@@ -45,10 +45,13 @@ async def list_tenants(
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    tenants = await svc.list_tenants(current_user, offset, limit, status_filter)
-    return success_response(
-        data=[mask_pii_in_dict(to_response(t, TenantResponse)) for t in tenants]
-    )
+    tenant_tiers = await svc.list_tenants(current_user, offset, limit, status_filter)
+    data = []
+    for tenant, tier_id in tenant_tiers:
+        tenant_dict = mask_pii_in_dict(to_response(tenant, TenantResponse))
+        tenant_dict["tier_id"] = str(tier_id) if tier_id else None
+        data.append(tenant_dict)
+    return success_response(data=data)
 
 
 @router.get("/{tenant_id}")

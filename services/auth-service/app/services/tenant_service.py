@@ -15,6 +15,9 @@ from uuid import UUID
 
 import httpx
 
+from sqlalchemy import Column, DateTime, MetaData, String, Table, func, select
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+
 from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
@@ -69,6 +72,52 @@ from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
+
+# ── Platform-core tier assignment table (minimal Core definition, no ORM) ───
+# Avoids importing platform-core models; only the columns we query are declared.
+_ppu_tier_assignment = Table(
+    "ppu_tenant_tier_assignments",
+    MetaData(),
+    Column("tenant_id", String),
+    Column("tier_id", PGUUID(as_uuid=True)),
+    Column("effective_from", DateTime(timezone=True)),
+    Column("effective_to", DateTime(timezone=True)),
+)
+
+
+async def _fetch_tier_ids(
+    platform_core_db: Optional[AsyncSession],
+    tenant_ids: list[int],
+) -> dict[int, UUID]:
+    """Return {tenant_id: tier_id} for currently active tier assignments.
+
+    Queries ppu_tenant_tier_assignments on the platform-core DB. Returns an
+    empty dict when the DB is not configured or no tenants are provided.
+    """
+    if platform_core_db is None or not tenant_ids:
+        return {}
+    try:
+        stmt = (
+            select(
+                _ppu_tier_assignment.c.tenant_id,
+                _ppu_tier_assignment.c.tier_id,
+                _ppu_tier_assignment.c.effective_from,
+            )
+            .where(_ppu_tier_assignment.c.tenant_id.in_([str(tid) for tid in tenant_ids]))
+            .where(_ppu_tier_assignment.c.effective_from <= func.now())
+            .where(_ppu_tier_assignment.c.effective_to >= func.now())
+            .order_by(_ppu_tier_assignment.c.effective_from.desc())
+        )
+        result = await platform_core_db.execute(stmt)
+        tier_map: dict[int, UUID] = {}
+        for row in result.all():
+            tid = int(row.tenant_id)
+            if tid not in tier_map:  # first row = most recent effective_from
+                tier_map[tid] = row.tier_id
+        return tier_map
+    except Exception:
+        logger.exception("Failed to fetch tier_ids from platform_core_db; returning empty map")
+        return {}
 
 
 async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
@@ -139,6 +188,7 @@ class TenantService:
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
         refresh_token_repo: Optional[RefreshTokenRepository] = None,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -149,6 +199,7 @@ class TenantService:
         self._email = email_client
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
+        self._platform_core_db = platform_core_db
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -464,7 +515,7 @@ class TenantService:
         offset: int,
         limit: int,
         status_filter: Optional[TenantStatus],
-    ) -> list[Tenant]:
+    ) -> list[tuple[Tenant, Optional[UUID]]]:
         # Only ADMIN may list all tenants. MODERATOR and TENANT ADMIN both hold
         # the gateway-level tenant.read permission (needed for GET by ID and
         # tenant-user endpoints), so they reach this method — but listing every
@@ -478,7 +529,9 @@ class TenantService:
                     "message": "Only administrators can list all tenants.",
                 },
             )
-        return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
+        tenants = await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
+        tier_map = await _fetch_tier_ids(self._platform_core_db, [t.id for t in tenants])
+        return [(t, tier_map.get(t.id)) for t in tenants]
 
     async def get_tenant(self, current_user: User, tenant_id: int) -> Tenant:
         await self.enforce_scope(current_user, tenant_id)

@@ -20,7 +20,12 @@ from app.core.permission_checker import PermissionChecker, set_global_endpoint_p
 from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
-from app.core.database import close_database, init_database
+from app.core.database import (
+    close_database,
+    close_platform_core_database,
+    init_database,
+    init_platform_core_database,
+)
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
 from app.core.security import key_manager
@@ -52,6 +57,7 @@ async def lifespan(app: FastAPI):
         max_overflow=settings.db_max_overflow,
         echo=settings.debug,
     )
+    init_platform_core_database()
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
@@ -66,6 +72,7 @@ async def lifespan(app: FastAPI):
 
     await role_permission_cache.stop()
     await close_redis()
+    await close_platform_core_database()
     await close_database()
     logger.info("Shutdown complete.")
 

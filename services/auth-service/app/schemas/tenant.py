@@ -185,6 +185,7 @@ class TenantResponse(BaseSchema):
     email: str
     phone_number: Optional[str] = None
     status: TenantStatus
+    tier_id: Optional[UUID] = None
 
     @field_serializer("status")
     def _status_as_api_value(self, value: Union[TenantStatus, str]) -> str:

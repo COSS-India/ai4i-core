@@ -6,6 +6,7 @@ This is the ONLY place where repositories are imported and wired into services.
 """
 
 from functools import lru_cache
+from typing import Optional
 
 from ai4i_core.email import EmailClient
 from ai4i_core.email.providers.factory import build_provider
@@ -15,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
 
-from app.core.database import get_db
+from app.core.database import get_db, get_platform_core_db
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.credentials_repository import CredentialsRepository
@@ -99,6 +100,7 @@ def get_auth_service(
 
 def get_tenant_service(
     db: AsyncSession = Depends(get_db),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
@@ -120,6 +122,7 @@ def get_tenant_service(
         email_client=email_client,
         api_key_service=api_key_service,
         refresh_token_repo=RefreshTokenRepository(db),
+        platform_core_db=platform_core_db,
     )
 
 
