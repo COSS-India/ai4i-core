@@ -62,6 +62,14 @@ class OpenAIProxyService:
         Orchestrator + BaseTaskService pattern used by Triton-backed services.
         The caller (route) owns the outer request span.
         """
+        from opentelemetry import trace as _otel_trace
+        from trace.billing import compute_and_emit_billing
+
+        # Extract billing fields before forwarding — upstream doesn't know about them.
+        service_id = ""
+        if isinstance(payload, dict):
+            service_id = payload.pop("serviceId", "") or ""
+
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
             model_attrs["model_name"] = payload.get("model", "unknown") if isinstance(payload, dict) else "unknown"
@@ -76,6 +84,27 @@ class OpenAIProxyService:
                     infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
                     infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
                     infer_attrs["output_type"] = "text"
+
+                # Capture span context for billing correlation while span is live.
+                _sctx = _otel_trace.get_current_span().get_span_context()
+                _billing_trace_id = f"0x{_sctx.trace_id:032x}"
+                _billing_span_id = f"0x{_sctx.span_id:016x}"
+
+        # Fire billing after inference.
+        if status_code == 200 and service_id:
+            _ctx = get_context_attributes()
+            logger.info("LLM billing: triggering for service_id=%s tokens=%s+%s",
+                        service_id, infer_attrs.get("input_tokens", 0), infer_attrs.get("output_tokens", 0))
+            await compute_and_emit_billing(
+                service_id=service_id,
+                input_tokens=infer_attrs.get("input_tokens", 0),
+                output_tokens=infer_attrs.get("output_tokens", 0),
+                task_name="LLMTaskService",
+                user_id=_ctx.get("userId", ""),
+                tenant_id=_ctx.get("tenantId", ""),
+                trace_id=_billing_trace_id,
+                span_id=_billing_span_id,
+            )
 
         return status_code, body
 

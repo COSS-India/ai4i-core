@@ -12,6 +12,7 @@ Cost formula:
     else           → cost = (units_consumed / unit_size) × cost_per_unit
 """
 
+import asyncio
 import json
 import logging
 
@@ -56,6 +57,8 @@ async def compute_and_emit_billing(
         from trace.setup import get_kafka_producer
         from config import settings
 
+        logger.info("BILLING: started for service_id=%s input=%s output=%s", service_id, input_tokens, output_tokens)
+
         if not service_id:
             return
 
@@ -99,7 +102,7 @@ async def compute_and_emit_billing(
                 "task_name": task_name,
                 "billing_unit_type": billing_unit_type,
                 "units_consumed": units_consumed,
-                "cost": round(cost, 6),
+                "cost": float(f"{cost:.6f}"),
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "userId": user_id,
@@ -109,9 +112,15 @@ async def compute_and_emit_billing(
 
         producer = get_kafka_producer()
         if producer is not None:
-            producer.send(settings.KAFKA_TOPIC_OTEL_TRACE, value=billing_event)
+            topic = settings.KAFKA_TOPIC_OTEL_TRACE
+
+            def _send():
+                producer.send(topic, value=billing_event)
+                producer.flush(timeout=5)
+
+            await asyncio.get_event_loop().run_in_executor(None, _send)
         else:
             logger.info("billing_event: %s", json.dumps(billing_event, default=str))
 
     except Exception:
-        logger.debug("Billing computation failed (non-critical)", exc_info=True)
+        logger.warning("Billing computation failed (non-critical)", exc_info=True)
