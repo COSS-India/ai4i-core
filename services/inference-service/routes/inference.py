@@ -641,6 +641,19 @@ async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "message": "Inference service is operational"}
 
 
+@router.get("/inference/ping", include_in_schema=False)
+async def ping() -> Dict[str, str]:
+    """
+    Do-nothing endpoint for gateway/auth load testing.
+
+    Kept separate from the health checks on purpose: APISIX applies forward-auth
+    to this path (like a real inference call), while k8s probes keep using the
+    unauthenticated health endpoints. The handler does no work, so the measured
+    latency is almost entirely gateway + /auth/validate overhead, not the model.
+    """
+    return {"status": "ok"}
+
+
 @router.get(
     "/inference/tasks",
     summary="List Available Tasks",
