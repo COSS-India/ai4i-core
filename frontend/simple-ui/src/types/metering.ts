@@ -133,14 +133,14 @@ export interface ServiceConsumptionSummary {
 
 export interface ServiceRow {
   service: string;
-  metering_unit: string;
+  metering_unit?: string;
   requests: number;
   percentage?: number;
   native_units?: number | null;
   native_unit_suffix: string;
   success_pct: number;
   failure_rate_pct?: number;
-  failed: number;
+  failed?: number;
   vs_prev_period_pct?: number | null;
 }
 
