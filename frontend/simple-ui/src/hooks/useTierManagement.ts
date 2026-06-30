@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 import { useDisclosure } from "@chakra-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToastWithDeduplication } from "./useToastWithDeduplication";
 import { useSessionExpiry } from "./useSessionExpiry";
+import { useToastWithDeduplication } from "../utils/toast";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { MODEL_TASK_TYPE_LIST } from "../config/constants";
 import {
@@ -82,8 +82,8 @@ export function useTierManagement() {
     if (filterTaskType) {
       result = result.filter((t) =>
         t.quotas.some(
-          (q) => q.modelTaskType.toLowerCase() === filterTaskType.toLowerCase()
-        )
+          (q) => q.modelTaskType.toLowerCase() === filterTaskType.toLowerCase(),
+        ),
       );
     }
     const q = searchQuery.trim().toLowerCase();

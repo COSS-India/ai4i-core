@@ -2,10 +2,10 @@
  * Centralized toast notifications — single API for all notification types.
  * Mount `GlobalToastRegistrar` once in `_app.tsx`.
  */
-import { useEffect, useCallback, useRef } from 'react';
-import { useToast, type UseToastOptions } from '@chakra-ui/react';
+import { useEffect, useCallback, useRef } from "react";
+import { useToast, type UseToastOptions } from "@chakra-ui/react";
 
-export type ToastType = 'success' | 'error' | 'warning' | 'info';
+export type ToastType = "success" | "error" | "warning" | "info";
 
 export interface ShowToastOptions {
   type: ToastType;
@@ -17,21 +17,21 @@ export interface ShowToastOptions {
 
 const TOAST_PRESETS: Record<
   ToastType,
-  Pick<UseToastOptions, 'status' | 'duration'> & { title: string }
+  Pick<UseToastOptions, "status" | "duration"> & { title: string }
 > = {
-  success: { status: 'success', title: 'Success', duration: 5000 },
-  error: { status: 'error', title: 'Error', duration: 7000 },
-  warning: { status: 'warning', title: 'Warning', duration: 5000 },
-  info: { status: 'info', title: 'Info', duration: 4000 },
+  success: { status: "success", title: "Success", duration: 5000 },
+  error: { status: "error", title: "Error", duration: 7000 },
+  warning: { status: "warning", title: "Warning", duration: 5000 },
+  info: { status: "info", title: "Info", duration: 4000 },
 };
 
 const DEFAULT_OPTIONS: Partial<UseToastOptions> = {
-  position: 'bottom',
+  position: "bottom",
   isClosable: true,
 };
 
 const DEDUPE_MS = 3000;
-let lastDedupeKey = '';
+let lastDedupeKey = "";
 let lastDedupeAt = 0;
 
 type ToastFn = (options: UseToastOptions) => unknown;
@@ -40,10 +40,10 @@ let globalToast: ToastFn | null = null;
 const pendingToasts: UseToastOptions[] = [];
 
 function getToastDedupeKey(options: UseToastOptions): string {
-  if (options.status === 'error' && options.description) {
+  if (options.status === "error" && options.description) {
     return `error:${options.description}`;
   }
-  return `${options.status ?? 'info'}:${options.title ?? ''}:${options.description ?? ''}`;
+  return `${options.status ?? "info"}:${options.title ?? ""}:${options.description ?? ""}`;
 }
 
 function shouldSkipDuplicateToast(key: string): boolean {
@@ -55,7 +55,7 @@ function shouldSkipDuplicateToast(key: string): boolean {
 }
 
 function showGlobalToast(options: UseToastOptions): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   const merged = { ...DEFAULT_OPTIONS, ...options };
   const dedupeKey = getToastDedupeKey(merged);
   if (shouldSkipDuplicateToast(dedupeKey)) return;
@@ -76,7 +76,7 @@ export function showToast({
   messageOnly = false,
   silent = false,
 }: ShowToastOptions): void {
-  if (typeof window === 'undefined' || silent || !message.trim()) return;
+  if (typeof window === "undefined" || silent || !message.trim()) return;
 
   const preset = TOAST_PRESETS[type];
   showGlobalToast({
@@ -93,15 +93,18 @@ function registerGlobalToast(toast: ToastFn | null): void {
   pendingToasts.splice(0).forEach((options) => toast(options));
 }
 
-function useToastWithDeduplication() {
+export function useToastWithDeduplication() {
   const toast = useToast();
   const activeKeysRef = useRef(new Set<string>());
-  const timeoutRefsRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const timeoutRefsRef = useRef(
+    new Map<string, ReturnType<typeof setTimeout>>(),
+  );
 
   return useCallback(
     (options: UseToastOptions) => {
       const key = getToastDedupeKey(options);
-      if (activeKeysRef.current.has(key) || shouldSkipDuplicateToast(key)) return '';
+      if (activeKeysRef.current.has(key) || shouldSkipDuplicateToast(key))
+        return "";
 
       activeKeysRef.current.add(key);
       const originalOnCloseComplete = options.onCloseComplete;
@@ -115,12 +118,17 @@ function useToastWithDeduplication() {
         originalOnCloseComplete?.();
       };
 
-      const toastId = toast({ ...DEFAULT_OPTIONS, ...options, onCloseComplete: cleanup });
-      const toastDuration = options.duration ?? DEFAULT_OPTIONS.duration ?? 5000;
+      const toastId = toast({
+        ...DEFAULT_OPTIONS,
+        ...options,
+        onCloseComplete: cleanup,
+      });
+      const toastDuration =
+        options.duration ?? DEFAULT_OPTIONS.duration ?? 5000;
       timeoutRefsRef.current.set(key, setTimeout(cleanup, toastDuration + 300));
       return toastId;
     },
-    [toast]
+    [toast],
   );
 }
 

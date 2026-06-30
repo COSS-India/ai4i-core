@@ -36,6 +36,7 @@ export const METERING = {
     OVERVIEW: "overview",
     TENANT: "tenant",
     SERVICE: "service",
+    USAGE_SPEND: "usage-spend",
   } as const,
   KPI: {
     KEYS: {
@@ -88,6 +89,7 @@ export const METERING = {
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
     { id: "service", label: "Service Consumption" },
+    { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
