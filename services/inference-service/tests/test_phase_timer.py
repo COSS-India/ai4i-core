@@ -53,11 +53,11 @@ def test_disabled_is_a_noop():
         settings.PHASE_TIMING_ENABLED = previous
 
 
-def test_start_root_phases_seeds_pre_handler(timing_on):
-    """A prior entry stamp yields pre_handler_ms on the fresh accumulator."""
-    phase_timer.mark_request_entry()
+def test_start_root_phases_resets_accumulator(timing_on):
+    """start_root_phases clears any prior phases for the new request."""
+    phase_timer.add_ms("triton_ms", 5.0)
     phase_timer.start_root_phases()
-    assert "pre_handler_ms" in phase_timer.collect_phases()
+    assert phase_timer.collect_phases() == {}
 
 
 @pytest.mark.asyncio
@@ -82,3 +82,23 @@ async def test_phases_merge_onto_root_span(timing_on):
 
     assert "postprocess_ms" in captured
     assert "total_time_ms" in captured
+
+
+def test_format_timing_summary_nests_subphases():
+    """The TIMING line nests sub-phases under their parent and skips absent keys."""
+    from trace.request_span import format_timing_summary
+
+    line = format_timing_summary({
+        "total_time_ms": 145.2,
+        "resolve_ms": 1.1, "mms_http_ms": 0.9,
+        "validate_ms": 2.0,
+        "run_inference_ms": 140.1, "triton_ms": 130.4, "input_tokens_ms": 1.0,
+        "postprocess_ms": 1.0,
+        "cache_hit": False,
+    })
+
+    assert line.startswith("TIMING total=145.2ms")
+    assert "resolve=1.1 (mms_http=0.9)" in line
+    assert "run_inference=140.1 (input_tokens=1.0 triton=130.4)" in line
+    assert "preprocess" not in line  # absent key omitted
+    assert "cache_hit=false" in line

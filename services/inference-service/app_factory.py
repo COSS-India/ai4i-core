@@ -1,4 +1,4 @@
-"""
+F"""
 Main FastAPI application factory for inference service.
 Creates and configures the unified inference service with all components.
 """
@@ -42,13 +42,6 @@ def _setup_middleware(app: FastAPI) -> None:
     # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so
     # inference spans carry attributes.tenantId (read via get_context_attributes).
     app.add_middleware(RequestMiddleware)
-
-    # Phase-timing middleware — stamps request entry to feed pre_handler_ms on
-    # the request span. Added just inside CORS (CORS must stay outermost, below),
-    # so it captures RequestMiddleware + observability + routing, excluding only
-    # CORS's thin wrapper. No-op unless PHASE_TIMING_ENABLED. See phase_timer.py.
-    from trace.phase_timer import PhaseTimingMiddleware
-    app.add_middleware(PhaseTimingMiddleware)
 
     # CORS middleware — added last so it is outermost and applies headers
     # even when inner middleware short-circuits the request.
@@ -160,7 +153,7 @@ def create_inference_app() -> FastAPI:
         description="Unified inference endpoint for NMT, ASR, OCR, NER, LLM and other task services",
         version="1.0.0",
         # API docs are opt-out: keep enabled for dev, disable in production
-        # via ENABLE_DOCS=false (OWASP API8 — security misconfiguration).
+        # via ENABLE_DOCS=falseF (OWASP API8 — security misconfiguration).
         docs_url="/docs" if settings.ENABLE_DOCS else None,
         redoc_url="/redoc" if settings.ENABLE_DOCS else None,
         openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,

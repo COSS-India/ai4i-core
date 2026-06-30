@@ -138,7 +138,12 @@ class Orchestrator:
         Raises:
             RuntimeError: If the service cannot be resolved
         """
-        with traced_span("model") as attrs:
+        # resolve_ms wraps the same scope as the model span so the request-span
+        # breakdown (resolve_ms) reconciles 1:1 with the model span total_time_ms.
+        # mms_http_ms (set inside the resolver) is its sub-metric.
+        from trace.phase_timer import timed_phase
+
+        with traced_span("model") as attrs, timed_phase("resolve_ms"):
             attrs["task_type"] = payload.get("task_type", "").upper()
             attrs.update(get_context_attributes())
 
