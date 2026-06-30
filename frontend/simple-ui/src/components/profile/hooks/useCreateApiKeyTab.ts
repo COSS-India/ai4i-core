@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { showError } from "../../../utils/errorHandler";
+import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
 import { cacheCreatedApiKeyHex } from "../../../utils/apiKeyUtils";
@@ -9,7 +10,6 @@ export interface UseCreateApiKeyTabOptions {
 }
 
 export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOptions) {
-  const toast = useToastWithDeduplication();
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
   const [apiKeyForm, setApiKeyForm] = useState<{
@@ -29,13 +29,7 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
       const allPermissions = await authService.getAllPermissions();
       setPermissions(Array.isArray(allPermissions) ? allPermissions : []);
     } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to load permissions",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsLoadingPermissions(false);
     }
@@ -48,23 +42,11 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
 
   const handleCreateApiKey = async () => {
     if (!apiKeyForm.key_name.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Please enter a key name",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Please enter a key name" });
       return;
     }
     if (selectedPermissions.length === 0) {
-      toast({
-        title: "Validation Error",
-        description: "Please select at least one permission",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
     if (
@@ -72,12 +54,9 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
       apiKeyForm.expires_days < 1 ||
       apiKeyForm.expires_days > 365
     ) {
-      toast({
-        title: "Validation Error",
-        description: "Please enter a valid expiry (days) between 1 and 365",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Please enter a valid expiry (days) between 1 and 365",
       });
       return;
     }
@@ -100,23 +79,14 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
           createdKey.id ?? createdKey.key_id,
         );
       }
-      toast({
-        title: "API Key Created",
-        description: `API key "${createdKey.key_name}" was created. Copy it now — it won't be shown again.`,
-        status: "success",
-        duration: 8000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `API key "${createdKey.key_name}" was created. Copy it now — it won't be shown again.`,
       });
       setApiKeyForm({ key_name: "", expires_days: 30 });
       setSelectedPermissions([]);
     } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to create API key",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsCreating(false);
     }

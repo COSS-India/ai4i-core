@@ -103,6 +103,7 @@ export const performTransliterationInference = async (
 
     const response = await apiService.post(apiEndpoints.transliteration.inference, payload, {
       responseSchema: transliterationInferenceResponseSchema,
+      errorService: 'transliteration',
     });
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

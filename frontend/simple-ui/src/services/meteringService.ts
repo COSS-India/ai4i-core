@@ -84,10 +84,14 @@ export async function fetchMeteringTenantConsumption(
   timeWindow: MeteringWindow,
   limit: MeteringTopN,
   services?: string[] | null,
+  tenantId?: string | null,
 ): Promise<TenantConsumptionResponse> {
   const extra: Record<string, string> = { limit: String(limit) };
   if (services?.length) {
     extra.services = services.join(",");
+  }
+  if (tenantId?.trim()) {
+    extra.tenant_id = tenantId.trim();
   }
   const params = new URLSearchParams({ window: timeWindow, ...extra });
   const { data } = await apiService.get<TenantConsumptionResponse>(

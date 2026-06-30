@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { Box, Spinner, Text, VStack, Alert, AlertIcon, AlertTitle, AlertDescription } from '@chakra-ui/react';
 import authService from '../../services/authService';
+import { UI_ERROR_MESSAGES } from '../../config/constants';
 import { getRememberMeFromStorage } from '../../utils/tokenStorage';
 
 const OAuthCallback = () => {
@@ -44,7 +45,7 @@ const OAuthCallback = () => {
 
         // Validate required tokens after exchange/legacy handling
         if (!nextAccessToken || !nextRefreshToken) {
-          setError('Missing authentication tokens. Please try again.');
+          setError(UI_ERROR_MESSAGES.AUTH_TOKENS_MISSING);
           setIsProcessing(false);
           setTimeout(() => {
             router.push('/');
@@ -78,7 +79,7 @@ const OAuthCallback = () => {
         }
       } catch (err) {
         console.error('OAuth callback error:', err);
-        setError('An error occurred during authentication. Please try again.');
+        setError(UI_ERROR_MESSAGES.AUTH_CALLBACK_FAILED);
         setIsProcessing(false);
         setTimeout(() => {
           router.push('/');
@@ -88,7 +89,14 @@ const OAuthCallback = () => {
 
     // Only process if router is ready
     if (router.isReady) {
-      handleOAuthCallback();
+      void handleOAuthCallback().catch((err) => {
+        console.error('OAuth callback error:', err);
+        setError(UI_ERROR_MESSAGES.AUTH_CALLBACK_FAILED);
+        setIsProcessing(false);
+        setTimeout(() => {
+          router.push('/');
+        }, 3000);
+      });
     }
   }, [router.isReady, router.query, router]);
 
@@ -130,6 +138,3 @@ const OAuthCallback = () => {
 };
 
 export default OAuthCallback;
-
-
-

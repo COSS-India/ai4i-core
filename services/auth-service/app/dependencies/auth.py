@@ -110,7 +110,7 @@ class UserContext(NamedTuple):
     tenant_id: str | None
 
 
-async def get_user_context(request: Request) -> UserContext:
+def get_user_context(request: Request) -> UserContext:
     """Read X-User-ID + X-Tenant-ID headers only. No DB call."""
     user_id = get_current_user_id(request)
     tenant_id = request.headers.get("X-Tenant-ID")

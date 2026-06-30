@@ -58,15 +58,29 @@ export function buildRequestVolumeChartData(
   }));
 }
 
+/** Parse a Prometheus duration step (e.g. "10m", "4h", "1d") into seconds. */
+function meteringStepSeconds(step: string): number {
+  const match = /^(\d+)([smhd])$/.exec(step.trim());
+  if (!match) return 0;
+  const unitSeconds: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
+  return Number(match[1]) * (unitSeconds[match[2]] ?? 0);
+}
+
+/**
+ * Label a chart bucket based on its step width, so the axis matches the window:
+ *   - day-or-larger buckets (7d → 1d, 30d-as-weekly → 7d): date only ("17 Jun")
+ *   - 6h buckets (30d window): date + time, since they span many days ("25 Jun, 16:36")
+ *   - intraday buckets (1h → 10m, 24h → 4h): time of day ("18:12")
+ * Keying off the step's duration (not exact string match) keeps labels correct even
+ * for steps not enumerated in METERING.GRAPH.STEP, including stale cached responses.
+ */
 export function formatMeteringTimestamp(ts: number, step: string): string {
   const d = new Date(ts * 1000);
-  if (
-    step === METERING.GRAPH.STEP.FIVE_MINUTES ||
-    step === METERING.GRAPH.STEP.ONE_HOUR
-  ) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const stepSeconds = meteringStepSeconds(step);
+  if (stepSeconds >= 86_400) {
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
   }
-  if (step === METERING.GRAPH.STEP.SIX_HOURS) {
+  if (stepSeconds >= 6 * 3_600) {
     return d.toLocaleString([], {
       month: "short",
       day: "numeric",
@@ -75,7 +89,7 @@ export function formatMeteringTimestamp(ts: number, step: string): string {
       hour12: false,
     });
   }
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 /** Format throughput / RPS values (supports sub-unit rates from API). */

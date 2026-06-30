@@ -48,7 +48,7 @@ def is_jwt_strict(token: str) -> bool:
         return False
 
 
-async def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
+def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
     """Look up the permission required for X-Original-Method:X-Original-URI.
 
     Returns:
@@ -73,7 +73,7 @@ async def _check_endpoint_permission(request: Request, permission_ids: list[int]
     Allow when: gateway didn't signal an endpoint (direct call), OR the
     endpoint is public, OR the caller holds the required permission.
     """
-    looked_up, required = await _required_endpoint_permission(request)
+    looked_up, required = _required_endpoint_permission(request)
     if not looked_up:
         return True
     return required is None or required in permission_ids
@@ -92,7 +92,7 @@ def _extract_token(request: Request) -> str:
 
 async def _validate_anonymous(request: Request) -> Response:
     """No token: allow only when X-Original-* point at a public endpoint."""
-    looked_up, required = await _required_endpoint_permission(request)
+    looked_up, required = _required_endpoint_permission(request)
     if looked_up and required is None:
         resp = JSONResponse(
             content=TokenValidationResponse(valid=True).model_dump(),

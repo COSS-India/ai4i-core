@@ -16,7 +16,7 @@ import {
 } from '@chakra-ui/react';
 import { FaCopy, FaDownload } from 'react-icons/fa';
 import { ASRResultsProps } from '../../types/asr';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { showToast } from '../../utils/toast';
 
 const ASRResults: React.FC<ASRResultsProps> = ({
   transcript,
@@ -30,18 +30,11 @@ const ASRResults: React.FC<ASRResultsProps> = ({
 }) => {
   // For backward compatibility, use wordCount if responseWordCount is not provided
   const finalResponseWordCount = responseWordCount ?? wordCount ?? 0;
-  const toast = useToastWithDeduplication();
 
   const handleCopy = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(transcript).then(() => {
-        toast({
-          title: 'Copied to Clipboard',
-          description: 'Transcript copied to clipboard.',
-          status: 'success',
-          duration: 2000,
-          isClosable: true,
-        });
+        showToast({ type: "success", message: "Transcript copied to clipboard." });
         onCopy?.();
       }).catch(() => {
         fallbackCopy();
@@ -58,21 +51,15 @@ const ASRResults: React.FC<ASRResultsProps> = ({
     textArea.select();
     try {
       document.execCommand('copy');
-      toast({
-        title: 'Copied to Clipboard',
-        description: 'Transcript copied to clipboard.',
-        status: 'success',
-        duration: 2000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Transcript copied to clipboard.",
       });
       onCopy?.();
     } catch (err) {
-      toast({
-        title: 'Copy Failed',
-        description: 'Failed to copy transcript to clipboard.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Failed to copy transcript to clipboard.",
       });
     }
     document.body.removeChild(textArea);
@@ -89,24 +76,15 @@ const ASRResults: React.FC<ASRResultsProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
-      toast({
-        title: 'Download Started',
-        description: 'Transcript downloaded successfully.',
-        status: 'success',
-        duration: 2000,
-        isClosable: true,
+
+      showToast({
+        type: "success",
+        message: "Transcript downloaded successfully.",
       });
       onDownload?.();
     } catch (error) {
       console.error('Download error:', error);
-      toast({
-        title: 'Download Failed',
-        description: 'Failed to download transcript.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to download transcript." });
     }
   };
 

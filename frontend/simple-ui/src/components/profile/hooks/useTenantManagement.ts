@@ -2,10 +2,10 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
-import { extractErrorInfo } from "../../../utils/errorHandler";
+import { showError } from "../../../utils/errorHandler";
 import {
   collectTenantContactEmails,
   collectUserEmails,
@@ -77,7 +77,6 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const toast = useToastWithDeduplication();
   const isTenantAdmin = Boolean(user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)));
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantScopedUser = isTenantAdmin && !isAdmin;
@@ -249,8 +248,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownTenantEmails(collectTenantContactEmails(rows));
     } catch (err) {
       console.error("Failed to fetch tenants:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err);
       setTenants([]);
     } finally {
       setIsLoadingTenants(false);
@@ -265,12 +263,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleFetchTenantUsers = async (tenantIdOverride?: string) => {
     const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
     if (!tenantId) {
-      toast({
-        title: "Tenant context missing",
-        description: "Unable to load users because no tenant ID is available.",
-        status: "warning",
-        isClosable: true,
-        duration: 5000,
+      showToast({
+        type: "warning",
+        message: "Unable to load users because no tenant ID is available.",
       });
       setTenantUsers([]);
       return;
@@ -282,8 +277,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownUserEmails(collectUserEmails(users));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err);
       setTenantUsers([]);
     } finally {
       setIsLoadingTenantUsers(false);
@@ -646,19 +640,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         email: tenantForm.email.trim(),
         phone_number: tenantForm.phone_number.trim() || undefined,
       });
-      toast({
-        title: "Tenant created",
-        description: `${created.organisation} is pending activation. The contact will receive a setup link by email.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${created.organisation} is pending activation. The contact will receive a setup link by email.`,
       });
       closeTenantModal();
       await refreshTenantAndUserLists(created.tenant_id);
     } catch (err) {
       console.error("Failed to register tenant:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err);
     } finally {
       setIsSubmittingTenant(false);
     }
@@ -733,19 +723,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: userForm.phone_number.trim() || undefined,
         role: userForm.role,
       });
-      toast({
-        title: "User added",
-        description: "User provisioned under tenant. The username is auto-generated from email.",
-        status: "success",
-        duration: 4000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "User provisioned under tenant. The username is auto-generated from email.",
       });
       closeUserModal();
       await refreshTenantAndUserLists(tenantId);
     } catch (err) {
       console.error("Failed to register user:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 8000 });
+      showError(err);
     } finally {
       setIsSubmittingUser(false);
     }
@@ -825,8 +811,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownUserEmails(collectUserEmails(users));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     }
   };
 
@@ -881,24 +866,20 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: editTenantForm.phone_number,
       });
       if (emailChanged) {
-        toast({
-          title: "Verification required",
-          description:
+        showToast({
+          type: "info",
+          message:
             "A verification link was sent to the new contact email. The tenant contact email will update after it is verified.",
-          status: "info",
-          isClosable: true,
-          duration: 8000,
         });
       } else {
-        toast({ title: "Tenant updated", status: "success", isClosable: true, duration: 4000 });
+        showToast({ type: "success", message: "Tenant updated" });
       }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
       await refreshTenantAndUserLists(editTenantForm.tenant_id);
     } catch (err) {
       console.error("Failed to update tenant:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     } finally {
       setIsSubmittingEditTenant(false);
     }
@@ -957,31 +938,24 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleResendTenantVerificationEmail = async (t: TenantView) => {
     const email = t.email?.trim();
     if (!email) {
-      toast({
-        title: "Email required",
-        description: "This tenant has no contact email to resend verification.",
-        status: "warning",
-        isClosable: true,
-        duration: 5000,
+      showToast({
+        type: "warning",
+        message: "This tenant has no contact email to resend verification.",
       });
       return;
     }
     setResendVerificationTenantId(t.tenant_id);
     try {
       const res = await authService.resendSetupLink({ email }, { withAuth: true });
-      toast({
-        title: "Verification email sent",
-        description:
+      showToast({
+        type: "success",
+        message:
           res?.message ??
           `A new activation link was sent to ${email} if the account is not yet activated.`,
-        status: "success",
-        isClosable: true,
-        duration: 8000,
       });
     } catch (err) {
       console.error("Failed to resend tenant verification email:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     } finally {
       setResendVerificationTenantId(null);
     }
@@ -992,17 +966,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       setResendVerificationUserId(u.user_id);
       await authService.resendVerification({ email: u.email });
-      toast({
-        title: "Verification email sent",
-        description: `A new verification link was sent to ${u.email}.`,
-        status: "success",
-        isClosable: true,
-        duration: 5000,
+      showToast({
+        type: "success",
+        message: `A new verification link was sent to ${u.email}.`,
       });
     } catch (err) {
       console.error("Failed to resend tenant user verification:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     } finally {
       setResendVerificationUserId(null);
     }
@@ -1035,7 +1005,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           tenant_id: statusUpdateTarget.tenant_id,
           status: statusUpdateNewStatus as TenantStatus,
         });
-        toast({ title: "Tenant status updated", status: "success", isClosable: true });
+        showToast({ type: "success", message: "Tenant status updated" });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
         const isActive = statusUpdateNewStatus === TENANT.USER_STATUS.ACTIVE;
@@ -1045,7 +1015,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           is_active: isActive,
           is_tenant_active: isActive,
         });
-        toast({ title: "User status updated", status: "success", isClosable: true });
+        showToast({ type: "success", message: "User status updated" });
 
         const ended = !isActive;
         const isCurrentTenantAdmin =
@@ -1054,13 +1024,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           statusUpdateTarget.user_id === userIdStr &&
           (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) || isTenantAdmin);
         if (isCurrentTenantAdmin) {
-          toast({
-            title: "Signed out",
-            description:
+          showToast({
+            type: "warning",
+            message:
               "Your tenant admin account is no longer active. Sign in again when it is reactivated.",
-            status: "warning",
-            isClosable: true,
-            duration: 6000,
           });
           forceFrontendSessionEnd();
           return;
@@ -1071,8 +1038,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setStatusUpdateTarget(null);
     } catch (err) {
       console.error("Failed to update status:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     } finally {
       setIsSubmittingStatus(false);
     }
@@ -1129,14 +1095,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: editUserForm.phone_number?.trim(),
         role: editUserForm.role,
       });
-      toast({ title: "User updated", status: "success", isClosable: true });
+      showToast({ type: "success", message: "User updated" });
       setIsEditUserModalOpen(false);
       setEditUserRow(null);
       await refreshTenantAndUserLists(editUserForm.tenant_id);
     } catch (err) {
       console.error("Failed to update user:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     } finally {
       setIsSubmittingEditUser(false);
     }
@@ -1166,14 +1131,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         tenant_id: deleteUserTarget.tenant_id,
         user_id: deleteUserTarget.user_id,
       });
-      toast({ title: "User deleted", status: "success", isClosable: true });
+      showToast({ type: "success", message: "User deleted" });
       setIsDeleteUserDialogOpen(false);
       setDeleteUserTarget(null);
       await refreshTenantAndUserLists(deleteUserTarget.tenant_id);
     } catch (err) {
       console.error("Failed to delete user:", err);
-      const { title, message } = extractErrorInfo(err);
-      toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
+      showError(err);
     } finally {
       setIsDeletingUser(false);
     }

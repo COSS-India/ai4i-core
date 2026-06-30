@@ -112,10 +112,10 @@ class TestServiceBreakdownConfig:
         assert "audio_language_detection" in SERVICE_BREAKDOWN_CONFIG
 
     def test_window_step_values(self):
-        assert WINDOW_STEP["1h"] == "30s"
-        assert WINDOW_STEP["24h"] == "5m"
-        assert WINDOW_STEP["7d"] == "1h"
-        assert WINDOW_STEP["30d"] == "6h"
+        assert WINDOW_STEP["1h"] == "10m"
+        assert WINDOW_STEP["24h"] == "4h"
+        assert WINDOW_STEP["7d"] == "1d"
+        assert WINDOW_STEP["30d"] == "7d"
 
 
 # ── PrometheusClient tests ────────────────────────────────────────────────────

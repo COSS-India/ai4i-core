@@ -104,7 +104,7 @@ export const performLanguageDetectionInference = async (
     const response = await apiService.post(
       apiEndpoints['language-detection'].inference,
       payload,
-      { responseSchema: languageDetectionInferenceResponseSchema }
+      { responseSchema: languageDetectionInferenceResponseSchema, errorService: 'language-detection' }
     );
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

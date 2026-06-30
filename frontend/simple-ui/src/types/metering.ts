@@ -72,9 +72,6 @@ export interface OverviewResponse {
   request_volume?: MeteringGraph | null;
   degraded?: boolean;
   generated_at: string;
-  refresh_interval_seconds?: number;
-  data_state?: string;
-  is_stale?: boolean;
 }
 
 export interface ServiceEntry {
@@ -98,9 +95,6 @@ export interface TenantConsumptionResponse {
   usage_by_service: TenantServiceRow[];
   degraded?: boolean;
   generated_at: string;
-  refresh_interval_seconds?: number;
-  data_state?: string;
-  is_stale?: boolean;
 }
 
 export interface ServiceConsumptionSummary {
@@ -124,7 +118,4 @@ export interface ServiceConsumptionResponse {
   service_breakdown: ServiceRow[];
   degraded?: boolean;
   generated_at: string;
-  refresh_interval_seconds?: number;
-  data_state?: string;
-  is_stale?: boolean;
 }

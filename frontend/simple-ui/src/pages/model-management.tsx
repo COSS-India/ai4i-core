@@ -23,7 +23,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  useToast,
   Textarea,
   SimpleGrid,
   Grid,
@@ -52,8 +51,8 @@ import { listServices as listServicesForModels } from "../services/servicesManag
 import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError, showError } from "../utils/errorHandler";
+import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
@@ -123,7 +122,6 @@ const ModelManagementPage: React.FC = () => {
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const toast = useToastWithDeduplication();
   const { user } = useAuth();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   /** View tab index shifts when the create/register tab is hidden (tenant admin read-only). */
@@ -135,16 +133,13 @@ const ModelManagementPage: React.FC = () => {
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
     if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
-      toast({
-        title: "Access Denied",
-        description: "You do not have access to Model Management.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "You do not have access to Model Management.",
       });
       router.push('/');
     }
-  }, [user, router, toast]);
+  }, [user, router]);
 
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
@@ -174,19 +169,12 @@ const ModelManagementPage: React.FC = () => {
       setModels(result.items as unknown as Model[]);
     } catch (error: any) {
       console.error("Failed to fetch models:", error);
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
       setModels([]);
     } finally {
       setIsLoading(false);
     }
-  }, [filterTaskType, filterVersionStatus, toast]);
+  }, [filterTaskType, filterVersionStatus]);
 
   useEffect(() => { fetchModels(); }, [fetchModels]);
 
@@ -438,12 +426,9 @@ const ModelManagementPage: React.FC = () => {
       setUploadedModelData(createdModel);
       setParsedModelData(null);
 
-      toast({
-        title: "Model Created",
-        description: "Model has been created successfully from JSON file",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Model has been created successfully from JSON file",
       });
 
       // Refresh models list
@@ -455,17 +440,8 @@ const ModelManagementPage: React.FC = () => {
       }
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-
+      const { message: errorMessage } = parseError(error);
       setUploadError(errorMessage);
-
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setIsUploading(false);
     }
@@ -527,27 +503,15 @@ const ModelManagementPage: React.FC = () => {
       setValidationErrors([]);
       setUploadError(null);
 
-      toast({
-        title: "File Validated",
-        description: "JSON file has been validated successfully. Review the data below and click 'Register Model' to proceed.",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "JSON file has been validated successfully. Review the data below and click 'Register Model' to proceed.",
       });
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-
+      const { message: errorMessage } = parseError(error);
       setUploadError(errorMessage);
       setValidationErrors([]);
-
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setIsValidating(false);
     }
@@ -569,12 +533,9 @@ const ModelManagementPage: React.FC = () => {
       setActiveTab(viewTabIndex);
       router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
     } catch (error) {
-      toast({
-        title: "Failed to Load Model",
-        description: error instanceof Error ? error.message : "Failed to fetch model details",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to fetch model details",
       });
     }
   };
@@ -601,12 +562,9 @@ const ModelManagementPage: React.FC = () => {
 
       await updateModel(updateData);
 
-      toast({
-        title: "Model Updated",
-        description: "Model has been updated successfully",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Model has been updated successfully",
       });
 
       // Refresh models list and selected model
@@ -616,12 +574,9 @@ const ModelManagementPage: React.FC = () => {
       setUpdateFormData(updatedModel as unknown as Partial<Model>);
       setIsEditingModel(false);
     } catch (error) {
-      toast({
-        title: "Update Failed",
-        description: error instanceof Error ? error.message : "Failed to update model",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update model",
       });
     } finally {
       setIsUpdating(false);
@@ -633,12 +588,9 @@ const ModelManagementPage: React.FC = () => {
     if (!checkSessionExpiry()) return;
 
     if (!model.modelId || !model.version) {
-      toast({
-        title: "Deprecate Failed",
-        description: "Model ID and version are required",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Model ID and version are required",
       });
       return;
     }
@@ -652,12 +604,9 @@ const ModelManagementPage: React.FC = () => {
         versionStatus: MODEL_VERSION.STATUS.DEPRECATED,
       });
 
-      toast({
-        title: "Model deprecated",
-        description: `${model.name || model.modelId} has been deprecated successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${model.name || model.modelId} has been deprecated successfully.`,
       });
 
       // Refresh models list and selected model
@@ -668,14 +617,7 @@ const ModelManagementPage: React.FC = () => {
         setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setUpdatingModelId(null);
     }
@@ -686,12 +628,9 @@ const ModelManagementPage: React.FC = () => {
     if (!checkSessionExpiry()) return;
 
     if (!model.modelId || !model.version) {
-      toast({
-        title: "Activate Failed",
-        description: "Model ID and version are required",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Model ID and version are required",
       });
       return;
     }
@@ -705,12 +644,9 @@ const ModelManagementPage: React.FC = () => {
         versionStatus: MODEL_VERSION.STATUS.ACTIVE,
       });
 
-      toast({
-        title: "Model activated",
-        description: `${model.name || model.modelId} has been activated successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${model.name || model.modelId} has been activated successfully.`,
       });
 
       // Refresh models list and selected model
@@ -721,14 +657,7 @@ const ModelManagementPage: React.FC = () => {
         setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setUpdatingModelId(null);
     }

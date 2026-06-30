@@ -117,9 +117,6 @@ class OverviewResponse(BaseModel):
     request_volume: Optional[Graph] = None
     degraded: bool = False
     generated_at: str
-    refresh_interval_seconds: int = 60
-    data_state: str = "ok"
-    is_stale: bool = False
 
 
 class TenantConsumptionResponse(BaseModel):
@@ -128,9 +125,6 @@ class TenantConsumptionResponse(BaseModel):
     usage_by_service: list[TenantServiceRow]
     degraded: bool = False
     generated_at: str
-    refresh_interval_seconds: int = 60
-    data_state: str = "ok"
-    is_stale: bool = False
 
 
 class ServiceConsumptionResponse(BaseModel):
@@ -139,6 +133,3 @@ class ServiceConsumptionResponse(BaseModel):
     service_breakdown: list[ServiceRow]
     degraded: bool = False
     generated_at: str
-    refresh_interval_seconds: int = 60
-    data_state: str = "ok"
-    is_stale: bool = False

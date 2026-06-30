@@ -33,17 +33,16 @@ import {
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
-import { extractErrorInfo } from "../utils/errorHandler";
+import { parseError } from "../utils/errorHandler";
 import {
   isSafeUserImageUrl,
   sanitizeImagePreviewUrl,
 } from "../utils/safeImageUrl";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("ocr");
 
 const OCRPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const { copy } = useCopyToClipboard();
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUri, setImageUri] = useState("");
@@ -93,13 +92,7 @@ const OCRPage: React.FC = () => {
 
   const processFile = (file: File) => {
     if (!selectedServiceId?.trim()) {
-      toast({
-        title: "Service Required",
-        description: "Please select an OCR service before uploading an image.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select an OCR service before uploading an image." });
       return;
     }
     // Validate file type
@@ -108,39 +101,21 @@ const OCRPage: React.FC = () => {
 
     if (!isJPG && !isPNG) {
       const err = OCR_ERRORS.INVALID_FORMAT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
     // Validate file size
     if (file.size > MAX_IMAGE_FILE_SIZE) {
       const err = OCR_ERRORS.FILE_TOO_LARGE;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
     // Validate file is not empty
     if (file.size === 0) {
       const err = OCR_ERRORS.EMPTY_FILE;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
@@ -165,13 +140,7 @@ const OCRPage: React.FC = () => {
     e.preventDefault();
     setIsDragging(false);
     if (!selectedServiceId?.trim()) {
-      toast({
-        title: "Service Required",
-        description: "Please select an OCR service before uploading an image.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select an OCR service before uploading an image." });
       return;
     }
     const file = e.dataTransfer.files?.[0];
@@ -179,13 +148,7 @@ const OCRPage: React.FC = () => {
       processFile(file);
     } else {
       const err = OCR_ERRORS.INVALID_FORMAT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
     }
   };
 
@@ -214,12 +177,9 @@ const OCRPage: React.FC = () => {
       } else {
         // Clear preview and show error for unsafe URLs
         setPreviewUrl(null);
-        toast({
-          title: "Invalid URL",
-          description: "Please provide a valid image URL (http://, https://, or data:image/*).",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "Please provide a valid image URL (http://, https://, or data:image/*).",
         });
       }
     } else {
@@ -241,25 +201,13 @@ const OCRPage: React.FC = () => {
 
   const handleProcess = async () => {
     if (!selectedServiceId?.trim()) {
-      toast({
-        title: "Service Required",
-        description: "Please select an OCR service before extracting text.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select an OCR service before extracting text." });
       return;
     }
 
     if (!imageFile && !imageUri?.trim()) {
       const err = OCR_ERRORS.FILE_REQUIRED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: err.description });
       return;
     }
 
@@ -281,24 +229,14 @@ const OCRPage: React.FC = () => {
           const error = err?.message === 'EMPTY_FILE'
             ? OCR_ERRORS.EMPTY_FILE
             : OCR_ERRORS.INVALID_FILE;
-          toast({
-            title: error.title,
-            description: error.description,
-            status: 'error',
-            duration: 3000,
-            isClosable: true,
-          });
+          showToast({ type: "error", message: error.description });
           setFetching(false);
           return;
         }
       } else if (!isSafeUserImageUrl(imageUri)) {
-        toast({
-          title: "Invalid URL",
-          description:
-            "Please provide a valid image URL (http://, https://, or data:image/*).",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "Please provide a valid image URL (http://, https://, or data:image/*).",
         });
         setFetching(false);
         return;
@@ -327,16 +265,9 @@ const OCRPage: React.FC = () => {
       setFetched(true);
     } catch (err: any) {
       // Use centralized error handler (ocr context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ocr');
+      const { message: errorMessage } = parseError(err, { service: 'ocr' });
 
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

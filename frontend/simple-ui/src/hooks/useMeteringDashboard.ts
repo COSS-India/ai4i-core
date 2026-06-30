@@ -116,8 +116,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       timeWindow,
       topN,
       tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      queryTenantId,
     ),
-    queryFn: () => fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices),
+    queryFn: () =>
+      fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices, queryTenantId),
     enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
     ...meteringQueryDefaults,
   });
@@ -142,6 +144,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   useEffect(() => {
     if (!tenantOverviewEnabled) return;
     const el = serviceSectionRef.current;
+    // `overview` is in the deps so this re-runs once the overview loads: the
+    // service-section <Box> (and its ref) only mounts after that, so on the
+    // first run the ref is still null. Without re-running, the observer would
+    // never attach and the service query would never enable.
     if (!el) return;
 
     const observer = new IntersectionObserver(
@@ -154,7 +160,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [tenantOverviewEnabled]);
+  }, [tenantOverviewEnabled, overview]);
 
   const isDegraded = Boolean(
     overview?.degraded || tenantQuery.data?.degraded || serviceQuery.data?.degraded,

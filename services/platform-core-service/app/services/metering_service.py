@@ -73,18 +73,24 @@ class MeteringService:
         success_rate_vs_prev: Optional[float] = None
         avg_rps_vs_prev: Optional[float] = None
         prev_total_v: Optional[int] = None
+        prev_success_rate_v: Optional[float] = None
+        prev_avg_rps_v: Optional[float] = None
 
         if window:
             prev_total = max(0, round(_float(raw[3])))
             prev_success = max(0, round(_float(raw[4])))
             prev_avg_rps = _float(raw[5])
             prev_total_v = prev_total
+            prev_avg_rps_v = round(prev_avg_rps, 2)
+            # Previous success rate is undefined without prior traffic → report 0.
+            prev_success_rate_v = (
+                round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
+            )
 
             if prev_total > 0:
                 total_vs_prev = round((total_v - prev_total) / prev_total * 100, 1)
-                prev_success_rate = round(prev_success / prev_total * 100, 2)
                 # pp change so that "97.35 → 97.45" reports as +0.1
-                success_rate_vs_prev = round(success_rate - prev_success_rate, 2)
+                success_rate_vs_prev = round(success_rate - prev_success_rate_v, 2)
 
             if prev_avg_rps > 0:
                 avg_rps_vs_prev = round((avg_rps_v - prev_avg_rps) / prev_avg_rps * 100, 1)
@@ -95,14 +101,19 @@ class MeteringService:
                 "formatted": self._format_count(total_v),
                 "vs_previous_pct": total_vs_prev,
                 "previous_count": prev_total_v,
+                "previous_formatted": (
+                    self._format_count(prev_total_v) if prev_total_v is not None else None
+                ),
             },
             "success_rate": {
                 "rate_pct": success_rate,
                 "vs_previous_pct": success_rate_vs_prev,
+                "previous_rate_pct": prev_success_rate_v,
             },
             "avg_rps": {
                 "value": avg_rps_v,
                 "vs_previous_pct": avg_rps_vs_prev,
+                "previous_value": prev_avg_rps_v,
             },
             "filters": {
                 "inference_only": inference_only,
@@ -262,13 +273,13 @@ class MeteringService:
             parts = [f'tenant="{tenant}"'] if tenant else []
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
-            if window:
-                q = (
-                    f"(sum({native_metric}{sel}) or vector(0))"
-                    f" - (sum({native_metric}{sel} offset {window}) or vector(0))"
-                )
-            else:
-                q = f"sum({native_metric}{sel})"
+            # Use increase()-based counting (via sum_over_window), NOT a raw
+            # `sum(now) - sum(offset)` delta. The histogram _sum is a counter that
+            # resets on pod restart; a raw delta goes negative across a restart and
+            # gets dropped by the `v > 0` guard, so native units flicker in and out
+            # ("sometimes shows, sometimes not"). increase() is reset-aware and also
+            # handles brand-new series — matching how request counts are computed.
+            q = sum_over_window(f"{native_metric}{sel}", time_range)
             native_tasks.append(task)
             native_coros.append(self._client.scalar(q))
 
@@ -324,8 +335,10 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
-    async def tenant_ranking(self, limit: int, time_range: Optional[str]) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+    async def tenant_ranking(
+        self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
+    ) -> dict:
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
         # Offset subtraction avoids increase() extrapolation errors on short-lived series.
         # increase() scales down the raw counter by (observed_duration / window_duration),
         # so a series that's only a few hours old in a 7d query returns ~0 instead of its
@@ -374,16 +387,19 @@ class MeteringService:
         limit: int,
         time_range: Optional[str],
         services: Optional[list[str]],
+        tenant: Optional[str] = None,
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
         Uses a single sum by(tenant, endpoint) query with offset subtraction
         (same approach as service_breakdown) to avoid increase() extrapolation errors.
+        When ``tenant`` is given, the matrix is scoped to that single tenant.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        base_sel = '{' + _ep + ',tenant!="unknown"}'
+        _tenant_sel = f',tenant="{tenant}"' if tenant else ''
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 

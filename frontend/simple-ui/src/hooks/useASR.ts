@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { showToast } from '../utils/toast';
 import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
 import { getAsrTranscriptText } from '../types/inference';
-import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from '../config/constants';
-import { extractErrorInfo } from '../utils/errorHandler';
+import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
+import { parseError } from '../utils/errorHandler';
 
 // MediaRecorder is a standard Web API, no need to extend Window
 
@@ -43,9 +43,6 @@ export const useASR = (): UseASRReturn => {
   const performInferenceRef = useRef<((audioContent: string) => Promise<void>) | null>(null);
   const recordingDurationRef = useRef<number>(0);
 
-  // Toast hook
-  const toast = useToastWithDeduplication();
-
   // Initialize audio stream on mount
   useEffect(() => {
     const initializeAudioStream = async () => {
@@ -61,12 +58,9 @@ export const useASR = (): UseASRReturn => {
       } catch (err) {
         console.error('Error accessing microphone:', err);
         setError('Microphone access is required to record audio. Please allow microphone permissions in your browser settings.');
-        toast({
-          title: 'Microphone Access Denied',
-          description: 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: 'error',
+          message: 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
         });
       }
     };
@@ -85,7 +79,7 @@ export const useASR = (): UseASRReturn => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // Only run once on mount, don't include audioStream
+  }, []); // Only run once on mount, don't include audioStream
 
 
   // Timer effect
@@ -97,13 +91,7 @@ export const useASR = (): UseASRReturn => {
           if (newTimer >= MAX_RECORDING_DURATION && stopRecordingRef.current) {
             stopRecordingRef.current();
             const err = RECORDING_ERRORS.REC_TOO_LONG;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'warning',
-              duration: 3000,
-              isClosable: true,
-            });
+            showToast({ type: 'warning', message: err.description });
           }
           recordingDurationRef.current = newTimer;
           return newTimer;
@@ -121,7 +109,7 @@ export const useASR = (): UseASRReturn => {
         clearInterval(timerRef.current);
       }
     };
-  }, [recording, timer, toast]);
+  }, [recording, timer]);
 
   // ASR inference mutation - recreate when language, sampleRate, or serviceId changes
   const asrMutation = useMutation({
@@ -194,20 +182,13 @@ export const useASR = (): UseASRReturn => {
         console.log('✓ Error accepted - languages match, showing error');
 
         // Use centralized error handler (asr context so backend message shown as default when no specific mapping)
-        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'asr');
+        const { message: errorMessage } = parseError(error, { service: 'asr' });
 
         setError(errorMessage);
         setFetching(false);
         setFetched(false);
         setAudioText('');
         setResponseWordCount(0);
-        toast({
-          title: showOnlyMessage ? undefined : errorTitle,
-          description: errorMessage,
-          status: 'error',
-          duration: 7000,
-          isClosable: true,
-        });
       } else {
         console.log('✗ Error ignored - language mismatch or cancelled');
         console.log('  Request language:', currentRequestLanguageRef.current);
@@ -233,14 +214,11 @@ export const useASR = (): UseASRReturn => {
       } catch (err: any) {
         console.error('Error reinitializing audio stream:', err);
         const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
-        toast({
-          title: isNotFoundError ? 'No Microphone Detected' : 'Recording Error',
-          description: isNotFoundError
+        showToast({
+          type: 'error',
+          message: isNotFoundError
             ? 'No microphone detected. Please connect a microphone and try again.'
             : 'Audio stream not available. Please check microphone permissions.',
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
         });
         return;
       }
@@ -261,14 +239,11 @@ export const useASR = (): UseASRReturn => {
       } catch (err: any) {
         console.error('Error reinitializing audio stream:', err);
         const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
-        toast({
-          title: isNotFoundError ? 'No Microphone Detected' : 'Microphone Access Denied',
-          description: isNotFoundError
+        showToast({
+          type: 'error',
+          message: isNotFoundError
             ? 'No microphone detected. Please connect a microphone and try again.'
             : 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
         });
         return;
       }
@@ -277,13 +252,7 @@ export const useASR = (): UseASRReturn => {
     // Check if MediaRecorder is supported
     if (!window.MediaRecorder) {
       const err = RECORDING_ERRORS.BROWSER_NOT_SUPPORTED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
@@ -299,13 +268,7 @@ export const useASR = (): UseASRReturn => {
       if (audioTracks.length === 0 || audioTracks.every(track => track.readyState !== 'live')) {
         console.error('No active audio tracks available');
         const err = RECORDING_ERRORS.REC_START_FAILED;
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
         setRecording(false);
         return;
       }
@@ -357,13 +320,7 @@ export const useASR = (): UseASRReturn => {
             const err = RECORDING_ERRORS.REC_TOO_SHORT;
             setError(err.description);
             setRecording(false);
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
             return;
           }
 
@@ -373,13 +330,7 @@ export const useASR = (): UseASRReturn => {
             const err = RECORDING_ERRORS.NO_AUDIO_DETECTED;
             setError(err.description);
             setRecording(false);
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
             return;
           }
 
@@ -400,15 +351,9 @@ export const useASR = (): UseASRReturn => {
             }
           } catch (convertErr) {
             console.error('WAV conversion failed:', convertErr);
-            setError('Failed to convert audio to WAV format. Please try again.');
+            setError(UI_ERROR_MESSAGES.AUDIO_WAV_CONVERT_FAILED);
             setRecording(false);
-            toast({
-              title: 'Audio Conversion Error',
-              description: 'Failed to convert recorded audio. Please try again.',
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: UI_ERROR_MESSAGES.AUDIO_CONVERT_FAILED });
             return;
           }
 
@@ -445,13 +390,7 @@ export const useASR = (): UseASRReturn => {
         const err = RECORDING_ERRORS.REC_INTERRUPTED;
         setError(err.description);
         setRecording(false);
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
       };
 
       mediaRecorderRef.current = mediaRecorder;
@@ -473,27 +412,15 @@ export const useASR = (): UseASRReturn => {
         });
       }, 1000);
 
-      toast({
-        title: 'Recording started',
-        description: 'Speak into your microphone',
-        status: 'info',
-        duration: 2000,
-        isClosable: true,
-      });
+      showToast({ type: 'info', message: 'Speak into your microphone' });
     } catch (err) {
       console.error('Error starting recording:', err);
       const recErr = RECORDING_ERRORS.REC_START_FAILED;
       setError(recErr.description);
       setRecording(false);
-      toast({
-        title: recErr.title,
-        description: recErr.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: recErr.description });
     }
-  }, [audioStream, toast]);
+  }, [audioStream]);
 
   // Perform inference
   const performInference = useCallback(async (audioContent: string) => {
@@ -501,12 +428,9 @@ export const useASR = (): UseASRReturn => {
       const currentServiceId = serviceIdRef.current;
       const currentLanguage = languageRef.current;
       if (!currentServiceId || !currentLanguage) {
-        toast({
-          title: 'Selection required',
-          description: 'Please select an ASR service and language before recording or uploading.',
-          status: 'warning',
-          duration: 4000,
-          isClosable: true,
+        showToast({
+          type: 'warning',
+          message: 'Please select an ASR service and language before recording or uploading.',
         });
         return;
       }
@@ -544,7 +468,7 @@ export const useASR = (): UseASRReturn => {
       // State and toast are already handled by the mutation's onError; only update state
       // here in case onError was skipped (e.g. language mismatch). Do not show a second toast.
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
-        const { message: errorMessage } = extractErrorInfo(err, 'asr');
+        const { message: errorMessage } = parseError(err, { service: 'asr' });
         setError(errorMessage);
         setFetching(false);
         setFetched(false);
@@ -554,7 +478,7 @@ export const useASR = (): UseASRReturn => {
         console.log('Ignoring error - language changed during request');
       }
     }
-  }, [asrMutation, language, toast]);
+  }, [asrMutation, language]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
@@ -590,13 +514,7 @@ export const useASR = (): UseASRReturn => {
 
       setRecording(false);
 
-      toast({
-        title: 'Recording stopped',
-        description: 'Processing audio...',
-        status: 'info',
-        duration: 2000,
-        isClosable: true,
-      });
+      showToast({ type: 'info', message: 'Processing audio...' });
 
       // Stop audio tracks after a short delay to allow MediaRecorder to finalize
       // The onstop handler will process the blob, then we can safely stop tracks
@@ -622,7 +540,7 @@ export const useASR = (): UseASRReturn => {
         audioStream.getTracks().forEach(track => track.stop());
       }
     }
-  }, [toast, audioStream]);
+  }, [audioStream]);
 
   // Update refs whenever functions change
   useEffect(() => {
@@ -638,13 +556,7 @@ export const useASR = (): UseASRReturn => {
     if (!file) {
       console.log('handleFileUpload: No file provided');
       const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       setError(err.description);
       return;
     }
@@ -654,13 +566,7 @@ export const useASR = (): UseASRReturn => {
     // Validate file size
     if (file.size > MAX_AUDIO_FILE_SIZE) {
       const err = UPLOAD_ERRORS.FILE_TOO_LARGE;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       setError(err.description);
       return;
     }
@@ -671,13 +577,7 @@ export const useASR = (): UseASRReturn => {
 
     if (!isMP3 && !isWAV) {
       const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       setError(err.description);
       return;
     }
@@ -744,13 +644,7 @@ export const useASR = (): UseASRReturn => {
               err = UPLOAD_ERRORS.INVALID_FILE;
               break;
           }
-          toast({
-            title: err.title,
-            description: err.description,
-            status: 'error',
-            duration: 5000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: err.description });
           setError(err.description);
           return;
         }
@@ -782,20 +676,14 @@ export const useASR = (): UseASRReturn => {
               performInference(base64Data);
             } catch (err) {
               console.error('Error processing file result:', err);
-              setError('Failed to process file. Please try again.');
+              setError(UI_ERROR_MESSAGES.FILE_PROCESS_FAILED);
             }
           };
 
           reader.onerror = (error) => {
             console.error('FileReader error:', error);
             const err = UPLOAD_ERRORS.INVALID_FILE;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 3000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
             setError(err.description);
           };
 
@@ -808,29 +696,17 @@ export const useASR = (): UseASRReturn => {
         } catch (err) {
           console.error('Error processing file upload:', err);
           const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
-          toast({
-            title: uploadErr.title,
-            description: uploadErr.description,
-            status: 'error',
-            duration: 3000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: uploadErr.description });
           setError(uploadErr.description);
         }
       })
       .catch((error) => {
         console.error('Error validating audio duration:', error);
         const err = UPLOAD_ERRORS.INVALID_FILE;
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
         setError(err.description);
       });
-  }, [performInference, toast]);
+  }, [performInference]);
 
   // Clear results
   const clearResults = useCallback(() => {
