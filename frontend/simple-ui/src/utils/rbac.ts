@@ -53,6 +53,18 @@ export function isTenantAdminOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !canAccessPlatformMetering(roles);
 }
 
+/**
+ * Profile self-service account deletion — available to tenant-scoped USER and
+ * TENANT ADMIN roles. Hidden for platform ADMIN, Adopter Admin (MODERATOR), and GUEST.
+ */
+export function canSelfDeleteAccount(roles?: string[]): boolean {
+  if (!roles?.length) return false;
+  if (isPlatformAdminUser(roles)) return false;
+  if (isAdopterAdminUser(roles)) return false;
+  if (userHasRole(roles, "GUEST")) return false;
+  return userHasRole(roles, "USER") || isTenantAdminUser(roles);
+}
+
 export type MeteringRoleView = "adopter" | "tenant";
 
 export interface MeteringRoleViewConfig {
