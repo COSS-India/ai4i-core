@@ -13,6 +13,7 @@ class Cell(BaseModel):
     value: Any
     previous: Optional[Any] = None
     pct_change: Optional[float] = None
+    helper: Optional[str] = None       # optional dynamic sub-text (e.g. "97.40% success rate")
 
 
 class GraphPoint(BaseModel):
@@ -81,6 +82,7 @@ class ServiceEntry(BaseModel):
     display_name: str
     requests: int
     formatted_requests: str
+    percentage: float = 0.0       # this service's share of the tenant's total (row %)
 
 
 class TenantServiceRow(BaseModel):
@@ -89,6 +91,7 @@ class TenantServiceRow(BaseModel):
     services: dict[str, ServiceEntry]
     total: int
     formatted_total: str
+    percentage: float = 0.0       # this tenant's share of all tenants' total (grand %)
 
 
 class MostUsedService(BaseModel):
@@ -121,6 +124,7 @@ class OverviewResponse(BaseModel):
 
 class TenantConsumptionResponse(BaseModel):
     scope: Scope
+    avg_requests_per_tenant: Optional[Cell] = None   # KPI card shown above the ranking
     tenant_ranking: list[TenantRow]
     usage_by_service: list[TenantServiceRow]
     degraded: bool = False

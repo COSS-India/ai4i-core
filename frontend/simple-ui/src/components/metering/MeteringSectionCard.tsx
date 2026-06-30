@@ -83,6 +83,7 @@ interface KpiCardProps {
   pctChange?: number | null;
   helper?: string;
   accent?: string;
+  invertTrend?: boolean;   // true = an increase is "bad" (red), e.g. Failed
 }
 
 export const KpiCard: React.FC<KpiCardProps> = ({
@@ -91,6 +92,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   pctChange,
   helper,
   accent = "orange",
+  invertTrend = false,
 }) => (
   <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" h="full">
     <CardBody>
@@ -103,8 +105,12 @@ export const KpiCard: React.FC<KpiCardProps> = ({
         </Box>
         {pctChange == null ? null : (
           <HStack spacing={1}>
-            <Badge colorScheme={pctChange >= 0 ? "green" : "red"} fontSize="xs" borderRadius="md">
-              {pctChange >= 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
+            <Badge
+              colorScheme={pctChange === 0 ? "gray" : (pctChange > 0) !== invertTrend ? "green" : "red"}
+              fontSize="xs"
+              borderRadius="md"
+            >
+              {pctChange === 0 ? "→" : pctChange > 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
             </Badge>
           </HStack>
         )}

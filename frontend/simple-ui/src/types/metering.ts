@@ -1,7 +1,7 @@
 /** Metering & Usage Dashboard API types (matches platform-core-service contract). */
 
 export type MeteringWindow = "1h" | "24h" | "7d" | "30d";
-export type MeteringTopN = 5 | 10 | 25;
+export type MeteringTopN = 10 | 25;
 export type MeteringDataState = "ok" | "error" | "empty" | "no_history";
 
 /** Top-level fields present on every metering dashboard API response. */
@@ -19,6 +19,7 @@ export interface MeteringCell {
   value: number | string | null;
   previous?: number | string | null;
   pct_change?: number | null;
+  helper?: string | null;        // optional dynamic sub-text (e.g. "97.40% success rate")
 }
 
 export interface MeteringGraphPoint {
@@ -106,6 +107,7 @@ export interface ServiceEntry {
   display_name: string;
   requests: number;
   formatted_requests: string;
+  percentage: number;          // this service's share of the tenant's total (row %)
 }
 
 export interface TenantServiceRow {
@@ -115,10 +117,12 @@ export interface TenantServiceRow {
   services: Record<string, ServiceEntry>;
   total: number;
   formatted_total: string;
+  percentage: number;          // this tenant's share of all tenants' total (grand %)
 }
 
 export interface TenantConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
+  avg_requests_per_tenant?: MeteringCell | null;   // KPI card shown above the ranking
   tenant_ranking: TenantRow[];
   usage_by_service: TenantServiceRow[];
   throughput?: ThroughputData;

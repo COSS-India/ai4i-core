@@ -47,15 +47,20 @@ export const METERING = {
   KPI: {
     KEYS: {
       TOTAL_REQUESTS: "total_requests",
+      SUCCESSFUL: "successful",
+      FAILED: "failed",
+      // Legacy key still referenced by the value formatter / hook; no KPI card
+      // uses it now (the rate is shown as sub-text on the Successful/Failed cards).
       SUCCESS_RATE: "success_rate",
       AVG_RPS: "avg_rps",
-      AVG_REQUESTS_PER_TENANT: "avg_requests_per_tenant",
     },
+    // Static fallback sub-text. Successful/Failed receive a dynamic helper
+    // (the live success/failure rate %) from the API, which overrides these.
     HELPERS: {
       total_requests: "across selected window",
-      success_rate: "of all requests",
+      successful: "of all requests",
+      failed: "of all requests",
       avg_rps: "requests per second",
-      avg_requests_per_tenant: "across active tenants",
     },
   },
   GRAPH: {
@@ -78,9 +83,8 @@ export const METERING = {
     "7d": "last 7 days",
     "30d": "last 30 days",
   } as const satisfies Record<MeteringWindow, string>,
-  TOP_N_OPTIONS: [5, 10, 25] as const satisfies readonly MeteringTopN[],
+  TOP_N_OPTIONS: [10, 25] as const satisfies readonly MeteringTopN[],
   TOP_N_SEGMENT_OPTIONS: [
-    { id: "5", label: "Top 5" },
     { id: "10", label: "Top 10" },
     { id: "25", label: "Top 25" },
   ] as const,
