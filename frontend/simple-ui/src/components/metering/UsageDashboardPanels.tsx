@@ -5,6 +5,7 @@ import type { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections";
 import ServiceConsumptionTab from "./ServiceConsumptionTab";
 import TenantConsumptionTab from "./TenantConsumptionTab";
+import UsageAndSpendTab from "./UsageAndSpendTab";
 
 type MeteringDashboardState = ReturnType<typeof useMeteringDashboard>;
 
@@ -112,5 +113,6 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         errorMessage={parseQueryError(serviceQuery.error)}
       />
     )}
+    {subTab === METERING.SUB_TAB.USAGE_SPEND && <UsageAndSpendTab />}
   </Box>
 );
