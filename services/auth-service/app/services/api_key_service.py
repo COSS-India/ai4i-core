@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
+from ai4i_core.ppu import get_inference_types
+
 from app.core.config import settings
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
@@ -108,8 +110,8 @@ class APIKeyService:
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
                 "tier_id": "",
-                "budget_exhausted": "false",
-                "quota_exhausted": "",
+                "budget-exhausted": "0",
+                **{f"quota-{entry['name']}": "0" for entry in get_inference_types()},
             },
         )
 
@@ -257,8 +259,8 @@ class APIKeyService:
                     "user_id": str(user_id),
                     "tenant_id": tenant_id,
                     "tier_id": "",
-                    "budget_exhausted": "false",
-                    "quota_exhausted": "",
+                    "budget-exhausted": "0",
+                    **{f"quota-{entry['name']}": "0" for entry in get_inference_types()},
                 },
             )
 
@@ -278,13 +280,9 @@ class APIKeyService:
             raise InvalidAPIKeyError()
 
         return {
+            **cached,
             "valid": True,
-            "user_id": cached.get("user_id"),
             "permission_ids": cached.get("permissions", []),
-            "tenant_id": cached.get("tenant_id"),
-            "tier_id": cached.get("tier_id", ""),
-            "budget_exhausted": cached.get("budget_exhausted", "false"),
-            "quota_exhausted": cached.get("quota_exhausted", ""),
         }
 
     async def revoke_api_key(
