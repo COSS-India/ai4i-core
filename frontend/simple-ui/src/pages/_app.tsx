@@ -39,6 +39,7 @@ const layoutRoutes = [
   '/traces',
   '/alerts-management',
   '/pii-management',
+  '/tier-management',
   '/policy-management',
 ];
 
