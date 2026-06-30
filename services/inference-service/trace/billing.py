@@ -86,7 +86,7 @@ async def compute_and_emit_billing(
         elif billing_unit_type == "minutes":
             # Audio services: input_tokens encodes 100 tokens/sec (see span_attributes._count_audio_tokens)
             # → divide by 6000 to get minutes, round up to at least 0.001
-            units_consumed = max(round(input_tokens / 6000.0, 4), 0.001) if input_tokens else 0.001
+            units_consumed = max(round(input_tokens / 6000.0, 4), 0.001) if input_tokens else 0
         elif billing_unit_type == "characters":
             # Text services (NMT, TTS, NER, etc.): input_tokens = word count ≈ character proxy
             units_consumed = input_tokens
@@ -122,7 +122,7 @@ async def compute_and_emit_billing(
                 producer.send(topic, value=billing_event)
                 producer.flush(timeout=5)
 
-            await asyncio.get_event_loop().run_in_executor(None, _send)
+            await asyncio.get_running_loop().run_in_executor(None, _send)
         else:
             logger.info("billing_event: %s", json.dumps(billing_event, default=str))
 

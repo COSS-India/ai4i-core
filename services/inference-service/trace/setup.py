@@ -123,13 +123,13 @@ class LoggerSpanExporter(SpanExporter):
         return True
 
 def setup_tracing() -> None:
-    global _span_exporter
     """
     Initialize OpenTelemetry tracing for inference service.
 
     Sets up the tracer that will be used throughout the service
     for distributed tracing of inference requests.
     """
+    global _span_exporter
     try:
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
