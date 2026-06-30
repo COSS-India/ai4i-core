@@ -155,6 +155,7 @@ class Orchestrator:
                     f"No serviceId in payload, SMR resolved to: {serviceId}"
                 )
 
+            attrs["service_id"] = serviceId
             self.logger.debug(f"Resolving service: {serviceId}")
             try:
                 service_info = await self.inference_server_resolver.resolve_service(serviceId)
