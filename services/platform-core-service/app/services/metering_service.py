@@ -69,6 +69,13 @@ class MeteringService:
         avg_rps_v = round(_float(raw[2]), 2)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
         failed_v = max(0, total_v - success_v)
+        if total_v - success_v < 0:
+            # Independent total/success queries can skew across a scrape boundary,
+            # making success briefly exceed total. Clamp to 0 but flag it.
+            logger.warning(
+                "Failed-count clamp: success(%s) > total(%s) — Prometheus query skew; reporting 0 failed.",
+                success_v, total_v,
+            )
 
         total_vs_prev: Optional[float] = None
         success_rate_vs_prev: Optional[float] = None
@@ -186,6 +193,27 @@ class MeteringService:
         promql = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
         try:
             return int(round(float(await self._client.scalar(promql))))
+        except Exception:
+            return None
+
+    async def avg_per_active_tenant_previous(
+        self, time_range: Optional[str], tenant: Optional[str] = None
+    ) -> Optional[int]:
+        """Avg requests per active tenant in the PREVIOUS window (offset by one
+        window) — same offset pattern as request_total's prev counts. Drives the
+        Avg-Requests-Per-Tenant trend. None when unbounded or no prior activity."""
+        window = TIME_RANGES.get(time_range or "all")
+        if not window:
+            return None
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        total_q = f"sum(increase({metric}[{window}] offset {window}))"
+        active_q = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
+        try:
+            total, active = await asyncio.gather(
+                self._client.scalar(total_q), self._client.scalar(active_q)
+            )
+            total, active = float(total), float(active)
+            return round(total / active) if active > 0 else None
         except Exception:
             return None
 

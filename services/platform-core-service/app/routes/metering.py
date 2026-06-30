@@ -435,11 +435,12 @@ async def get_tenant_consumption(
 
     degraded = False
 
-    ranking_result, heatmap_result = await asyncio.gather(
+    ranking_result, heatmap_result, prev_avg_result = await asyncio.gather(
         svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant),
         svc.usage_by_tenant_service(
             limit=limit, time_range=window, services=service_filter, tenant=scope_tenant
         ),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant),
         return_exceptions=True,
     )
 
@@ -469,11 +470,17 @@ async def get_tenant_consumption(
     # Avg requests per active tenant — KPI card shown above the ranking.
     avg_per_tenant_cell = None
     if ranking and ranking.get("total_tenant_count"):
+        prev_avg = _ok(prev_avg_result)
+        cur_avg = ranking.get("avg_per_active_tenant")
+        pct = (
+            round((cur_avg - prev_avg) / prev_avg * 100, 1)
+            if (prev_avg and cur_avg is not None) else None
+        )
         avg_per_tenant_cell = Cell(
             key="avg_requests_per_tenant",
             label="Avg Requests Per Active Tenant",
             value=ranking["formatted_avg_per_active_tenant"],
-            pct_change=None,
+            pct_change=pct,
         )
 
     response = TenantConsumptionResponse(

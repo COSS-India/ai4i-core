@@ -105,8 +105,12 @@ export const KpiCard: React.FC<KpiCardProps> = ({
         </Box>
         {pctChange == null ? null : (
           <HStack spacing={1}>
-            <Badge colorScheme={(pctChange >= 0) !== invertTrend ? "green" : "red"} fontSize="xs" borderRadius="md">
-              {pctChange >= 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
+            <Badge
+              colorScheme={pctChange === 0 ? "gray" : (pctChange > 0) !== invertTrend ? "green" : "red"}
+              fontSize="xs"
+              borderRadius="md"
+            >
+              {pctChange === 0 ? "→" : pctChange > 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
             </Badge>
           </HStack>
         )}

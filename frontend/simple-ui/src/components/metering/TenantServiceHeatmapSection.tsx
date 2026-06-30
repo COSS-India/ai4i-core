@@ -123,7 +123,12 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
               </Th>
             ))}
             <Th fontSize="xs" textTransform="uppercase" color="gray.500" bg="gray.50" isNumeric minW="100px">
-              {heatmap.TABLE_TOTAL}
+              <VStack spacing={0} align="flex-end">
+                <Text>{heatmap.TABLE_TOTAL}</Text>
+                <Text fontSize="2xs" fontWeight="normal" textTransform="none" color="gray.400">
+                  % of platform
+                </Text>
+              </VStack>
             </Th>
           </Tr>
         </Thead>
