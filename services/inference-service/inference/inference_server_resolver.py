@@ -37,19 +37,21 @@ class InferenceServerResolver:
             LookupError: If the service does not exist in MMS
             ConnectionError: If MMS is unreachable/unhealthy
         """
-        from trace.phase_timer import record_attr, timed_phase
+        # resolve_ms is timed one level up (Orchestrator) so it matches the
+        # model span scope. Here we only record cache_hit and time the MMS
+        # round-trip (mms_http_ms, inside _query_model_management_service).
+        from trace.phase_timer import record_attr
 
-        async with timed_phase("resolve_ms"):
-            cached = self._memory_cache.get(service_id)
-            if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
-                logger.debug(f"Cache hit for service {service_id}")
-                record_attr("cache_hit", True)
-                return cached[0]
+        cached = self._memory_cache.get(service_id)
+        if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
+            logger.debug(f"Cache hit for service {service_id}")
+            record_attr("cache_hit", True)
+            return cached[0]
 
-            record_attr("cache_hit", False)
-            service_info = await self._query_model_management_service(service_id)
-            self._memory_cache[service_id] = (service_info, time.time())
-            return service_info
+        record_attr("cache_hit", False)
+        service_info = await self._query_model_management_service(service_id)
+        self._memory_cache[service_id] = (service_info, time.time())
+        return service_info
 
     async def resolve_smr_service(self, payload: Dict[str, Any]) -> str:
         """

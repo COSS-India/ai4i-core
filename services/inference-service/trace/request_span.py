@@ -67,6 +67,39 @@ def compute_total_time_ms(start_time: float) -> float:
     return round((time.time() - start_time) * 1000, 2)
 
 
+# Ordered phase groups for the human-readable "TIMING" line. Sub-phases render
+# in parentheses under their parent so the line mirrors the request tree. Only
+# keys actually present are shown, so this stays correct as phases change.
+_TIMING_TOP = [
+    "resolve_ms", "validate_ms", "preprocess_ms", "run_inference_ms", "postprocess_ms",
+]
+_TIMING_SUB = {
+    "resolve_ms": ["mms_http_ms"],
+    "run_inference_ms": [
+        "build_payload_ms", "input_tokens_ms", "triton_ms",
+        "output_convert_ms", "output_tokens_ms",
+    ],
+}
+
+
+def format_timing_summary(attrs: dict) -> str:
+    """Build the one-line 'TIMING ...' summary from the merged phase attrs on
+    the root request span (companion to the span JSON, for humans reading logs).
+    """
+    parts = [f"total={attrs.get('total_time_ms', 0)}ms"]
+    for key in _TIMING_TOP:
+        if key not in attrs:
+            continue
+        entry = f"{key[:-3]}={attrs[key]}"
+        subs = [f"{s[:-3]}={attrs[s]}" for s in _TIMING_SUB.get(key, []) if s in attrs]
+        if subs:
+            entry += " (" + " ".join(subs) + ")"
+        parts.append(entry)
+    if "cache_hit" in attrs:
+        parts.append(f"cache_hit={str(attrs['cache_hit']).lower()}")
+    return "TIMING " + " ".join(parts)
+
+
 def log_span_attributes(span_name: str, span, attributes: dict) -> None:
     """
     Log span attributes in OpenTelemetry standard JSON format.
@@ -167,7 +200,13 @@ def _finalize_traced(
         attrs.setdefault("status_code", 200)
     if root:
         from trace.phase_timer import collect_phases
-        attrs.update(collect_phases())
+        phases = collect_phases()
+        attrs.update(phases)
+        # Companion to the span JSON: one human-readable timing line per request.
+        # Only when phases were collected (timing enabled), so it never spams a
+        # bare "TIMING total=..." line.
+        if phases:
+            logger.info(format_timing_summary(attrs))
     finalize_span(span, span_name, attrs, error=error, ok=(mark_ok and error is None))
 
 

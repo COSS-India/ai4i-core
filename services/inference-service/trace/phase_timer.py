@@ -3,24 +3,20 @@ Per-block phase timing for the inference pipeline.
 
 A lightweight companion to the OTel spans in request_span.py. Where traced_span
 gives the coarse request / model / ai-inference timings, this module records the
-fine-grained per-stage costs (preprocess, build_payload, output_convert, ...) and
-merges them onto the existing root request span as `<stage>_ms` attributes. No new
-spans and no new log lines: the cost is one contextvar dict per request.
+fine-grained per-stage costs (resolve, validate, preprocess, build_payload,
+triton, output_convert, ...) and merges them onto the existing root request span
+as `<stage>_ms` attributes. The root span finalize also emits a single
+human-readable "TIMING ..." line built from these values (see request_span.py).
 
 Mechanism:
   - timed_phase("build_payload_ms") accumulates a perf_counter delta into a
     per-request contextvar dict. Accumulates (+=) so per-item loops (audio/TTS)
     sum across iterations under one key.
-  - PhaseTimingMiddleware (outermost ASGI layer) stamps request entry so the root
-    span can derive pre_handler_ms (middleware + routing + body-parse overhead).
   - The root traced_span resets the dict on entry and merges it on finalize.
 
 Everything is gated by settings.PHASE_TIMING_ENABLED. When off, timed_phase is a
-no-op and nothing touches the contextvars, so production overhead is zero.
-
-Implemented as raw ASGI middleware (not Starlette BaseHTTPMiddleware) so the
-contextvars set on entry propagate into the handler task — the same approach
-ai4icore_core.RequestMiddleware relies on.
+no-op and nothing touches the contextvar, so the overhead is zero. The dict is
+per-request (contextvar), so concurrent requests never share an accumulator.
 """
 
 import time
@@ -33,10 +29,6 @@ from config import settings
 # Default None so a missing reset (e.g. a direct unit call) is detectable.
 _phases: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
     "inference_phases", default=None
-)
-# perf_counter stamped by the middleware at the very top of the request.
-_entry_time: ContextVar[Optional[float]] = ContextVar(
-    "inference_entry_time", default=None
 )
 
 
@@ -118,25 +110,14 @@ def timed_phase(name: str) -> _PhaseTimer:
     return _PhaseTimer(name)
 
 
-def mark_request_entry() -> None:
-    """Stamp request entry time (called by the outermost middleware)."""
-    if _enabled():
-        _entry_time.set(time.perf_counter())
-
-
 def start_root_phases() -> None:
     """Begin a fresh per-request accumulator (called on root span entry).
 
-    Sets a new dict in this request's context (isolating concurrent requests)
-    and seeds pre_handler_ms from the middleware entry stamp when available.
+    Sets a new dict in this request's context, isolating concurrent requests.
     """
     if not _enabled():
         return
-    d: Dict[str, Any] = {}
-    entry = _entry_time.get()
-    if entry is not None:
-        d["pre_handler_ms"] = _round_ms(time.perf_counter() - entry)
-    _phases.set(d)
+    _phases.set({})
 
 
 def collect_phases() -> Dict[str, Any]:
@@ -145,19 +126,3 @@ def collect_phases() -> Dict[str, Any]:
     if not _enabled():
         return {}
     return dict(_phases.get() or {})
-
-
-class PhaseTimingMiddleware:
-    """Outermost ASGI middleware: stamps request entry for pre_handler_ms.
-
-    Pure ASGI (not BaseHTTPMiddleware) so the contextvar reaches the handler.
-    Never short-circuits, so inner middleware (CORS, etc.) keep their behaviour.
-    """
-
-    def __init__(self, app: Any) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") == "http" and _enabled():
-            mark_request_entry()
-        await self.app(scope, receive, send)
