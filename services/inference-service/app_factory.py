@@ -25,12 +25,19 @@ _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", 
 async def _lifespan(app: FastAPI):
     """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
     load_inference_types(app)
+    if settings.REDIS_URL:
+        from ai4i_core.bootstrap.redis import init_redis
+        await init_redis(settings.REDIS_URL)
+        logger.info("✓ Redis connected for PPU billing")
     logger.info("✓ Inference service started")
     yield
     from opentelemetry import trace
     provider = trace.get_tracer_provider()
     if hasattr(provider, "shutdown"):
         provider.shutdown()  # flushes the Kafka span exporter
+    if settings.REDIS_URL:
+        from ai4i_core.bootstrap.redis import close_redis
+        await close_redis()
     logger.info("✓ Inference service shutting down")
 
 

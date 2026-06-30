@@ -82,6 +82,11 @@ class Settings(BaseSettings):
         "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"
     )
 
+    # Redis — used for PPU billing pricing lookup (ppu:svc:{service_id})
+    REDIS_URL: Optional[str] = Field(
+        None, description="Redis URL for PPU billing pricing (e.g. redis://localhost:6379/0)"
+    )
+
     # Security — user-supplied audio/image URI downloads (SSRF guard)
     ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
         False,

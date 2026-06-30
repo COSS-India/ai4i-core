@@ -239,10 +239,11 @@ class BaseTaskService:
         back happens in postprocess_output — this method stays generic.
         """
         # Lazy import — trace setup happens at app init, after this module loads.
-        from trace.request_span import traced_inference
+        from trace.request_span import traced_inference, get_context_attributes
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
+        from trace.billing import compute_and_emit_billing
+        from opentelemetry import trace as _otel_trace
 
-        
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
@@ -267,6 +268,11 @@ class BaseTaskService:
         groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
         response_data = []
+        _total_input_tokens = 0
+        _total_output_tokens = 0
+        _billing_trace_id = ""
+        _billing_span_id = ""
+
         for group in groups:
             triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
                 group, config_data
@@ -274,6 +280,10 @@ class BaseTaskService:
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
             async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
                 span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
+                # Capture span context for billing correlation while span is still live.
+                _sctx = _otel_trace.get_current_span().get_span_context()
+                _billing_trace_id = f"0x{_sctx.trace_id:032x}"
+                _billing_span_id = f"0x{_sctx.span_id:016x}"
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
@@ -285,7 +295,22 @@ class BaseTaskService:
                 )
                 span_ctx["output_type"] = get_output_type(response_data)
                 span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
-    
+            _total_input_tokens += span_ctx.get("input_tokens", 0)
+            _total_output_tokens += span_ctx.get("output_tokens", 0)
+
+        # Fire billing asynchronously — response is already on its way back to the caller.
+        _ctx_attrs = get_context_attributes()
+        asyncio.create_task(compute_and_emit_billing(
+            service_id=payload.get("serviceId", ""),
+            input_tokens=_total_input_tokens,
+            output_tokens=_total_output_tokens,
+            task_name=self.task_name,
+            user_id=_ctx_attrs.get("userId", ""),
+            tenant_id=_ctx_attrs.get("tenantId", ""),
+            trace_id=_billing_trace_id,
+            span_id=_billing_span_id,
+        ))
+
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,

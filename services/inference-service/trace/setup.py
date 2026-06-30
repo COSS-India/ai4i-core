@@ -1,11 +1,24 @@
 import logging
 import json
+from typing import Optional
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# Module-level ref to the LoggerSpanExporter created by setup_tracing().
+# Exposed via get_kafka_producer() so billing.py can reuse the same producer
+# without creating a second Kafka connection.
+_span_exporter: Optional["LoggerSpanExporter"] = None
+
+
+def get_kafka_producer():
+    """Return the shared Kafka producer (None if Kafka is disabled or not yet initialised)."""
+    if _span_exporter is not None and _span_exporter._kafka_enabled:
+        return _span_exporter._producer
+    return None
 
 
 class LoggerSpanExporter(SpanExporter):
@@ -110,6 +123,7 @@ class LoggerSpanExporter(SpanExporter):
         return True
 
 def setup_tracing() -> None:
+    global _span_exporter
     """
     Initialize OpenTelemetry tracing for inference service.
 
@@ -139,7 +153,8 @@ def setup_tracing() -> None:
                 endpoint=endpoint,
                 insecure=True,  # Set to False if using TLS
             )
-            tracer_provider.add_span_processor(BatchSpanProcessor(LoggerSpanExporter()))
+            _span_exporter = LoggerSpanExporter()
+            tracer_provider.add_span_processor(BatchSpanProcessor(_span_exporter))
             logger.info("✓ OpenTelemetry tracing configured with Logger exporter")
         except Exception as e:
             logger.warning(f"Could not configure OTLP exporter: {e}")
