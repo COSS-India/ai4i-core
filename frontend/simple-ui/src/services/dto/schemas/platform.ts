@@ -29,7 +29,14 @@ export const modelsListSchema = withPlatformEnvelope(z.array(modelDetailsSchema)
 
 export const modelSingleSchema = withPlatformEnvelope(modelDetailsSchema);
 
-export const servicesListSchema = withPlatformEnvelope(z.array(serviceRecordSchema));
+export const servicesListSchema = z.preprocess((raw: unknown) => {
+  let data = unwrapPlatformDataEnvelope(raw);
+  // API wraps the service list under { services: [...] }
+  if (data && typeof data === 'object' && !Array.isArray(data) && 'services' in data) {
+    data = (data as Record<string, unknown>).services;
+  }
+  return data;
+}, z.array(serviceRecordSchema));
 
 export const serviceSingleSchema = withPlatformEnvelope(serviceRecordSchema);
 
