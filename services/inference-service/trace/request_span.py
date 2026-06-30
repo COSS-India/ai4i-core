@@ -92,8 +92,8 @@ def format_timing_summary(attrs: dict) -> str:
 
 def log_span_attributes(span_name: str, span, attributes: dict) -> None:
     """
-    Log span attributes in OpenTelemetry standard JSON format.
-    Reuses the same format as inference_span._log_span_attributes.
+    Log span attributes in OpenTelemetry standard JSON format
+    (trace_id, span_id, kind, attributes), shared by all span finalizers.
     """
     import json
     try:
