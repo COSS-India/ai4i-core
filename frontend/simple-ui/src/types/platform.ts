@@ -249,6 +249,10 @@ export interface ServiceLegacyFields {
   modelName?: string;
   /** UI-only: derived from model submittedOn (not sent to API). */
   modelSubmissionDate?: string;
+  /** Pay-per-use tier names assigned to this service. */
+  tiers?: string[];
+  /** Legacy single-tier field from mm_services.tier column. */
+  tier?: string | null;
 }
 
 /** Service row as consumed by registry UI and inference adapters. */
