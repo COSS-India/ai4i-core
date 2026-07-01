@@ -7,7 +7,6 @@ import {
   FormLabel,
   HStack,
   Input,
-  Select,
   Text,
   Tabs,
   TabList,
@@ -18,8 +17,8 @@ import {
   IconButton,
   Icon,
 } from "@chakra-ui/react";
-import React, { useState, useRef, useEffect, useMemo } from "react";
-import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
+import React, { useState, useRef, useMemo } from "react";
+import { AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -32,8 +31,10 @@ import {
 } from "../components/service-page";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
+import type { OCRInferenceResponse } from "../types/inference";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
 import { parseError } from "../utils/errorHandler";
+import { parseOCRResponse } from "../utils/ocrResponseUtils";
 import {
   isSafeUserImageUrl,
   sanitizeImagePreviewUrl,
@@ -50,11 +51,10 @@ const OCRPage: React.FC = () => {
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<OCRInferenceResponse | null>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -282,14 +282,13 @@ const OCRPage: React.FC = () => {
     setError(null);
   };
 
-  const extractedText = result?.output?.[0]?.source || "";
-  const characterCount = extractedText.length;
-
-  const handleCopy = () => {
-    copy(extractedText, "Text copied to clipboard");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const ocrParseResult = useMemo(
+    () => (result ? parseOCRResponse(result.output?.[0]?.source) : null),
+    [result]
+  );
+  const extractedText = ocrParseResult?.ok ? ocrParseResult.text : "";
+  const ocrParseError =
+    fetched && ocrParseResult && !ocrParseResult.ok ? ocrParseResult.error : null;
 
   return (
     <ServicePageLayout
@@ -472,47 +471,27 @@ const OCRPage: React.FC = () => {
         <ResponseContainer
           fetching={fetching}
           fetchingLabel="Processing image..."
-          error={error}
+          error={error || ocrParseError}
           fetched={fetched}
           hasResult={!!extractedText}
+          resultTitle="Extracted Text"
+          resultContent={extractedText}
           metadata={
-            fetched
-              ? [
-                  ...buildResponseMetadata({ responseTimeMs: responseTime * 1000 }),
-                  { label: "Characters extracted", value: characterCount },
-                ]
+            fetched && extractedText
+              ? buildResponseMetadata({ responseTimeMs: responseTime * 1000 })
               : []
           }
-          result={
-            fetched && extractedText ? (
-              <Box>
-                <HStack justify="space-between" mb={2}>
-                  <Text fontSize="sm" fontWeight="semibold">
-                    Extracted Text:
-                  </Text>
-                  <IconButton
-                    aria-label="Copy text"
-                    icon={copied ? <CheckIcon /> : <CopyIcon />}
-                    size="sm"
-                    onClick={handleCopy}
-                    colorScheme={copied ? "green" : "gray"}
-                  />
-                </HStack>
-                <Box
-                  p={4}
-                  bg="white"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="gray.300"
-                  maxH="300px"
-                  overflowY="auto"
-                >
-                  <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
-                    {extractedText}
-                  </Text>
-                </Box>
-              </Box>
-            ) : undefined
+          actions={
+            fetched && extractedText
+              ? [
+                  {
+                    id: "copy",
+                    label: "Copy",
+                    kind: "copy",
+                    onClick: () => copy(extractedText, "OCR text copied to clipboard."),
+                  },
+                ]
+              : []
           }
           onClear={clearResults}
         />
