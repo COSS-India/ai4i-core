@@ -118,6 +118,7 @@ const SERVICE_BASE_PATHS = [
   apiEndpoints.policy.base,
   apiEndpoints.tiers.base,
   apiEndpoints.usage.base,
+  apiEndpoints.platform.inferenceTypes,
 ];
 
 const extractErrorMessage = (data: any, fallback: string): string => {

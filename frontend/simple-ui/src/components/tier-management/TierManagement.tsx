@@ -27,24 +27,8 @@ import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
-import {
-  MODEL_TASK_TYPE_LIST,
-  formatModelTaskTypeLabel,
-} from "../../config/constants";
-
-const TIER_UNITS_BY_TASK: Record<string, string> = {
-  llm: "M Tokens",
-  nmt: "M Characters",
-  asr: "Audio minutes",
-  tts: "Characters",
-  ocr: "Pages",
-  transliteration: "Characters",
-  ner: "Requests",
-  "language-detection": "Requests",
-  "speaker-diarization": "Audio minutes",
-  "audio-lang-detection": "Audio minutes",
-  "language-diarization": "Audio minutes",
-};
+import { formatModelTaskTypeLabel } from "../../config/constants";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
@@ -186,9 +170,16 @@ function makeTierActionsColumn(
 interface QuotaEditorProps {
   readonly quotas: TierFormQuota[];
   readonly onChange: (quotas: TierFormQuota[]) => void;
+  readonly taskTypeNames: string[];
+  readonly unitByTaskType: Record<string, string>;
 }
 
-function QuotaEditor({ quotas, onChange }: QuotaEditorProps) {
+function QuotaEditor({
+  quotas,
+  onChange,
+  taskTypeNames,
+  unitByTaskType,
+}: QuotaEditorProps) {
   const handleQuotaChange = (
     idx: number,
     field: keyof TierFormQuota,
@@ -200,7 +191,7 @@ function QuotaEditor({ quotas, onChange }: QuotaEditorProps) {
         return {
           ...q,
           modelTaskType: value,
-          unit: TIER_UNITS_BY_TASK[value] ?? "",
+          unit: unitByTaskType[value] ?? "",
         };
       }
       return { ...q, [field]: value };
@@ -209,13 +200,12 @@ function QuotaEditor({ quotas, onChange }: QuotaEditorProps) {
   };
 
   const addQuota = () => {
-    const defaultType = MODEL_TASK_TYPE_LIST[0];
     onChange([
       ...quotas,
       {
         _key: crypto.randomUUID(),
-        modelTaskType: defaultType,
-        unit: TIER_UNITS_BY_TASK[defaultType] ?? "",
+        modelTaskType: "",
+        unit: "",
         limit: "",
       },
     ]);
@@ -241,75 +231,94 @@ function QuotaEditor({ quotas, onChange }: QuotaEditorProps) {
         </Button>
       </HStack>
 
-      {quotas.map((quota, idx) => (
-        <Box
-          key={quota._key ?? `${quota.modelTaskType}-${idx}`}
-          p={3}
-          borderWidth="1px"
-          borderRadius="md"
-          borderColor="gray.200"
-          bg="gray.50"
-        >
-          <HStack align="flex-end" spacing={3} flexWrap="wrap">
-            <FormControl w={{ base: "full", sm: "160px" }} isRequired>
-              <FormLabel fontSize="xs" mb={1}>
-                Model Task Type
-              </FormLabel>
-              <Select
-                size="sm"
-                value={quota.modelTaskType}
-                onChange={(e) =>
-                  handleQuotaChange(idx, "modelTaskType", e.target.value)
-                }
-              >
-                {MODEL_TASK_TYPE_LIST.map((t) => (
-                  <option key={t} value={t}>
-                    {formatModelTaskTypeLabel(t)}
-                  </option>
-                ))}
-              </Select>
-            </FormControl>
+      <Box maxH="340px" overflowY="auto" pr={1}>
+        <VStack align="stretch" spacing={3}>
+          {quotas.map((quota, idx) => (
+            <Box
+              key={quota._key ?? `${quota.modelTaskType}-${idx}`}
+              p={3}
+              borderWidth="1px"
+              borderRadius="md"
+              borderColor="gray.200"
+              bg="gray.50"
+            >
+              <HStack align="flex-end" spacing={3} flexWrap="wrap">
+                <FormControl w={{ base: "full", sm: "160px" }} isRequired>
+                  <FormLabel fontSize="xs" mb={1}>
+                    Model Task Type
+                  </FormLabel>
+                  <Select
+                    size="sm"
+                    value={quota.modelTaskType}
+                    onChange={(e) =>
+                      handleQuotaChange(idx, "modelTaskType", e.target.value)
+                    }
+                  >
+                    <option value="" disabled>
+                      Select model task type
+                    </option>
+                    {taskTypeNames
+                      .filter((t) => {
+                        const selectedElsewhere = quotas
+                          .filter((_, i) => i !== idx)
+                          .map((q) => q.modelTaskType);
+                        return (
+                          !selectedElsewhere.includes(t) ||
+                          t === quota.modelTaskType
+                        );
+                      })
+                      .map((t) => (
+                        <option key={t} value={t}>
+                          {formatModelTaskTypeLabel(t)}
+                        </option>
+                      ))}
+                  </Select>
+                </FormControl>
 
-            <FormControl w={{ base: "full", sm: "130px" }}>
-              <FormLabel fontSize="xs" mb={1}>
-                Unit
-              </FormLabel>
-              <Input
-                size="sm"
-                value={quota.unit}
-                onChange={(e) => handleQuotaChange(idx, "unit", e.target.value)}
-                placeholder="e.g. M Tokens"
-              />
-            </FormControl>
+                <FormControl w={{ base: "full", sm: "130px" }}>
+                  <FormLabel fontSize="xs" mb={1}>
+                    Unit
+                  </FormLabel>
+                  <Input
+                    size="sm"
+                    value={quota.unit}
+                    isReadOnly
+                    placeholder="-"
+                    bg="gray.50"
+                    cursor="default"
+                  />
+                </FormControl>
 
-            <FormControl w={{ base: "full", sm: "120px" }} isRequired>
-              <FormLabel fontSize="xs" mb={1}>
-                Limit
-              </FormLabel>
-              <NumberInput
-                size="sm"
-                min={0}
-                value={quota.limit}
-                onChange={(v) => handleQuotaChange(idx, "limit", v)}
-              >
-                <NumberInputField placeholder="50000" />
-              </NumberInput>
-            </FormControl>
+                <FormControl w={{ base: "full", sm: "120px" }} isRequired>
+                  <FormLabel fontSize="xs" mb={1}>
+                    Limit
+                  </FormLabel>
+                  <NumberInput
+                    size="sm"
+                    min={0}
+                    value={quota.limit}
+                    onChange={(v) => handleQuotaChange(idx, "limit", v)}
+                  >
+                    <NumberInputField placeholder="e.g. 10000" />
+                  </NumberInput>
+                </FormControl>
 
-            {quotas.length > 1 && (
-              <IconButton
-                aria-label="Remove quota"
-                icon={<DeleteIcon />}
-                size="sm"
-                variant="ghost"
-                colorScheme="red"
-                onClick={() => removeQuota(idx)}
-                alignSelf="flex-end"
-              />
-            )}
-          </HStack>
-        </Box>
-      ))}
+                {quotas.length > 1 && (
+                  <IconButton
+                    aria-label="Remove quota"
+                    icon={<DeleteIcon />}
+                    size="sm"
+                    variant="ghost"
+                    colorScheme="red"
+                    onClick={() => removeQuota(idx)}
+                    alignSelf="flex-end"
+                  />
+                )}
+              </HStack>
+            </Box>
+          ))}
+        </VStack>
+      </Box>
     </VStack>
   );
 }
@@ -317,9 +326,16 @@ function QuotaEditor({ quotas, onChange }: QuotaEditorProps) {
 interface TierFormProps {
   readonly formData: TierFormData;
   readonly onChange: (data: TierFormData) => void;
+  readonly taskTypeNames: string[];
+  readonly unitByTaskType: Record<string, string>;
 }
 
-function TierForm({ formData, onChange }: TierFormProps) {
+function TierForm({
+  formData,
+  onChange,
+  taskTypeNames,
+  unitByTaskType,
+}: TierFormProps) {
   return (
     <VStack align="stretch" spacing={4}>
       <FormControl isRequired>
@@ -347,6 +363,8 @@ function TierForm({ formData, onChange }: TierFormProps) {
       <QuotaEditor
         quotas={formData.quotas}
         onChange={(quotas) => onChange({ ...formData, quotas })}
+        taskTypeNames={taskTypeNames}
+        unitByTaskType={unitByTaskType}
       />
     </VStack>
   );
@@ -355,6 +373,8 @@ function TierForm({ formData, onChange }: TierFormProps) {
 // ─── Page component ───────────────────────────────────────────────────────────
 
 const TierManagement: React.FC = () => {
+  const { taskTypeNames, unitByTaskType } = useInferenceTypes();
+
   const {
     searchQuery,
     setSearchQuery,
@@ -468,7 +488,7 @@ const TierManagement: React.FC = () => {
               selectProps={{ size: "sm" }}
             >
               <option value="">Filter by Model Task Type - All</option>
-              {MODEL_TASK_TYPE_LIST.map((t) => (
+              {taskTypeNames.map((t) => (
                 <option key={t} value={t}>
                   {formatModelTaskTypeLabel(t)}
                 </option>
@@ -504,11 +524,22 @@ const TierManagement: React.FC = () => {
         isOpen={isCreateOpen}
         onClose={onCreateClose}
         title="Create Tier"
-        size="lg"
+        size="xl"
         closeOnOverlayClick={!isSubmitting}
         footer={tierFormFooter}
+        contentProps={{
+          maxH: "85vh",
+          display: "flex",
+          flexDirection: "column",
+        }}
+        bodyProps={{ overflowY: "auto", flex: 1 }}
       >
-        <TierForm formData={formData} onChange={setFormData} />
+        <TierForm
+          formData={formData}
+          onChange={setFormData}
+          taskTypeNames={taskTypeNames}
+          unitByTaskType={unitByTaskType}
+        />
       </StandardModal>
 
       {/* Edit Tier modal */}
@@ -516,11 +547,22 @@ const TierManagement: React.FC = () => {
         isOpen={isEditOpen}
         onClose={onEditClose}
         title={`Edit Tier: ${editingTier?.name ?? ""}`}
-        size="lg"
+        size="xl"
         closeOnOverlayClick={!isSubmitting}
         footer={tierFormFooter}
+        contentProps={{
+          maxH: "85vh",
+          display: "flex",
+          flexDirection: "column",
+        }}
+        bodyProps={{ overflowY: "auto", flex: 1 }}
       >
-        <TierForm formData={formData} onChange={setFormData} />
+        <TierForm
+          formData={formData}
+          onChange={setFormData}
+          taskTypeNames={taskTypeNames}
+          unitByTaskType={unitByTaskType}
+        />
       </StandardModal>
 
       {/* View Tier modal */}
