@@ -156,6 +156,33 @@ function extract_context_fields(tag, timestamp, record)
     return 1, timestamp, record
 end
 
+-- Function to add Jaeger trace URL to logs
+function add_jaeger_url(tag, timestamp, record)
+    if record["jaeger_trace_url"] ~= nil and record["jaeger_trace_url"] ~= "" then
+        if record["context"] == nil then
+            record["context"] = {}
+        end
+        if type(record["context"]) == "table" then
+            record["context"]["jaeger_trace_url"] = record["jaeger_trace_url"]
+        end
+        return 1, timestamp, record
+    end
+
+    if record["context"] ~= nil and type(record["context"]) == "table" then
+        local context = record["context"]
+        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
+            record["jaeger_trace_url"] = context["jaeger_trace_url"]
+            return 1, timestamp, record
+        end
+    end
+
+    if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
+        record["jaeger_trace_url"] = record["trace_id"]
+    end
+
+    return 1, timestamp, record
+end
+
 -- Drop plain-text uvicorn lines; keep JSON logs that have a service field.
 function keep_structured_log(tag, timestamp, record)
     local service = record["service"]
