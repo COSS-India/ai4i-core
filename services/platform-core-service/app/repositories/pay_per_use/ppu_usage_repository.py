@@ -97,7 +97,7 @@ class PPUUsageRepository:
             func.sum(PPUQuotaUsage.units_used).label("total_units"),
         ).where(PPUQuotaUsage.billing_month == billing_month)
         if model_task_type:
-            usage_sq = usage_sq.where(PPUQuotaUsage.inference_name == model_task_type)
+            usage_sq = usage_sq.where(func.lower(PPUQuotaUsage.inference_name) == model_task_type)
         usage_sq = usage_sq.group_by(PPUQuotaUsage.tenant_id).subquery()
 
         # quota_sq and unit_size_col are only meaningful when filtering by a single
@@ -109,7 +109,7 @@ class PPUUsageRepository:
                     PPUTierQuota.tier_id,
                     func.sum(PPUTierQuota.monthly_quota).label("total_quota"),
                 )
-                .where(PPUTierQuota.inference_name == model_task_type)
+                .where(func.lower(PPUTierQuota.inference_name) == model_task_type)
                 .group_by(PPUTierQuota.tier_id)
                 .subquery()
             )
@@ -122,7 +122,7 @@ class PPUUsageRepository:
             unit_size_col = (
                 select(Service.unit_size)
                 .where(
-                    Service.billing_unit_type == _INFERENCE_TO_UNIT.get(model_task_type.lower(), model_task_type.lower()),
+                    func.lower(Service.billing_unit_type) == _INFERENCE_TO_UNIT.get(model_task_type.lower(), model_task_type.lower()),
                     Service.deleted_at.is_(None),
                 )
                 .order_by(Service.created_at.desc())
