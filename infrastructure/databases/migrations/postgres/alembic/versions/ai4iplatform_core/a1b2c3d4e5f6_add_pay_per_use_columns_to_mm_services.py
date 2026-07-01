@@ -4,7 +4,7 @@ Adds cost_per_unit, billing_unit_type, and tier columns to mm_services
 for the pay-per-use billing feature.
 
 Revision ID: a1b2c3d4e5f6
-Revises: 31d7bc3f4379
+Revises: d7b2c4e6f8a1
 Create Date: 2026-06-22 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = 'a1b2c3d4e5f6'
-down_revision: Union[str, Sequence[str], None] = ('31d7bc3f4379', 'd7b2c4e6f8a1')
+down_revision: Union[str, Sequence[str], None] = 'd7b2c4e6f8a1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
