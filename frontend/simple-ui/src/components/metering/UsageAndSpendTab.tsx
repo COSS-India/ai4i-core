@@ -165,9 +165,9 @@ function TenantRow({ row, onRowClick }: TenantRowProps) {
 }
 
 interface SpendByTaskTypePanelProps {
-  isLoading: boolean;
-  errorMessage: string | null;
-  summaryData: UsageSummaryResponse | undefined;
+  readonly isLoading: boolean;
+  readonly errorMessage: string | null;
+  readonly summaryData: UsageSummaryResponse | undefined;
 }
 
 function SpendByTaskTypePanel({
@@ -224,8 +224,8 @@ function SpendByTaskTypePanel({
 }
 
 interface TenantSpendDetailBodyProps {
-  isLoading: boolean;
-  tenant: TenantUsageDetail | null;
+  readonly isLoading: boolean;
+  readonly tenant: TenantUsageDetail | null;
 }
 
 function TenantSpendDetailBody({ isLoading, tenant }: TenantSpendDetailBodyProps) {
