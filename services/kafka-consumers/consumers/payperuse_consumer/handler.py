@@ -113,6 +113,11 @@ async def handle_ppu_usage(msg: Message) -> None:
 
         wallet = await deduct_balance(db, tenant_id, cost)
 
+        if wallet.tier_id is None:
+            # deduct_balance already logged the warning; no active assignment means
+            # nothing was written — skip commit and Redis mark.
+            return
+
         quota_exhausted = False
         if wallet.tier_id and pricing.billing_unit_type:
             quota_exhausted = await update_quota_usage(
