@@ -104,11 +104,10 @@ class APIKeyService:
         # Preserve PPU exhaustion flags from the existing hash so a cache
         # refresh doesn't unblock a tenant whose budget/quota is actually gone.
         existing = await self._cache.get_api_key_cache(db_key.api_key)
-        budget_exhausted = (existing or {}).get("budget-exhausted", "0")
-        preserved_quota = {
+        preserved = {
             k: v
             for k, v in (existing or {}).items()
-            if k.startswith("quota-") and v == "1"
+            if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
         }
         await self._cache.set_api_key_cache(
             db_key.api_key,
@@ -119,8 +118,7 @@ class APIKeyService:
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
                 "tier_id": "",
-                "budget-exhausted": budget_exhausted,
-                **preserved_quota,
+                **preserved,
             },
         )
 
@@ -325,7 +323,6 @@ class APIKeyService:
                     "user_id": str(user_id),
                     "tenant_id": tenant_id,
                     "tier_id": "",
-                    "budget-exhausted": "0",
                 },
             )
 
