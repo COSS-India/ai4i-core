@@ -38,6 +38,8 @@ interface TenantPanelsProps {
   serviceSectionRef: MeteringDashboardState["serviceSectionRef"];
   serviceQuery: MeteringDashboardState["serviceQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
+  tenantId?: string | null;
+  refreshNonce?: number;
 }
 
 export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
@@ -48,6 +50,8 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   serviceSectionRef,
   serviceQuery,
   parseQueryError,
+  tenantId,
+  refreshNonce,
 }) => (
   <>
     <VStack align="stretch" spacing={6}>
@@ -71,6 +75,11 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
         errorMessage={parseQueryError(serviceQuery.error)}
       />
     </Box>
+    <UsageAndSpendTab
+      isTenantView
+      tenantId={tenantId}
+      refreshNonce={refreshNonce}
+    />
   </>
 );
 
@@ -85,6 +94,8 @@ interface AdopterPanelsProps {
   tenantQuery: MeteringDashboardState["tenantQuery"];
   serviceQuery: MeteringDashboardState["serviceQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
+  scopeTenantId?: string | null;
+  refreshNonce?: number;
 }
 
 export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
@@ -98,6 +109,8 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   tenantQuery,
   serviceQuery,
   parseQueryError,
+  scopeTenantId,
+  refreshNonce,
 }) => (
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
@@ -128,6 +141,11 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         errorMessage={parseQueryError(serviceQuery.error)}
       />
     )}
-    {subTab === METERING.SUB_TAB.USAGE_SPEND && <UsageAndSpendTab />}
+    {subTab === METERING.SUB_TAB.USAGE_SPEND && (
+      <UsageAndSpendTab
+        scopeTenantId={scopeTenantId}
+        refreshNonce={refreshNonce}
+      />
+    )}
   </Box>
 );

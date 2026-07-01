@@ -49,6 +49,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     organisationLabel,
     lastGeneratedAt,
     parseQueryError,
+    refreshNonce,
+    effectiveTenantId,
   } = dash;
 
   const requestVolumeSection = overview ? (
@@ -111,6 +113,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           serviceSectionRef={serviceSectionRef}
           serviceQuery={serviceQuery}
           parseQueryError={parseQueryError}
+          tenantId={effectiveTenantId}
+          refreshNonce={refreshNonce}
         />
       ) : null}
 
@@ -126,6 +130,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           tenantQuery={tenantQuery}
           serviceQuery={serviceQuery}
           parseQueryError={parseQueryError}
+          scopeTenantId={scopeTenantId}
+          refreshNonce={refreshNonce}
         />
       )}
     </VStack>

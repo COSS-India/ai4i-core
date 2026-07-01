@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useMemo, useState, useCallback } from "react";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import {
   Badge,
   Box,
@@ -37,7 +37,110 @@ import StandardModal from "../common/StandardModal";
 import type {
   TenantUsageItem,
   TenantUsageDetail,
+  UsageSummaryResponse,
 } from "../../types/usageSpend";
+
+interface UsageAndSpendTabProps {
+  /** Platform admin tenant preview filter from the dashboard header. */
+  scopeTenantId?: string | null;
+  /** Signed-in tenant admin view — uses usage-tenant instead of admin list APIs. */
+  isTenantView?: boolean;
+  tenantId?: string | null;
+  /** Bumped by the parent refresh control to invalidate queries. */
+  refreshNonce?: number;
+}
+
+function matchesTierFilter(tierName: string, filterTier: string): boolean {
+  if (!filterTier) return true;
+  return tierName.trim().toLowerCase() === filterTier.trim().toLowerCase();
+}
+
+function matchesModelTaskType(value: string, filter: string): boolean {
+  if (!filter) return true;
+  return value.trim().toLowerCase() === filter.trim().toLowerCase();
+}
+
+function applyModelTaskTypeToDetail(
+  detail: TenantUsageDetail,
+  modelTaskType: string,
+): TenantUsageDetail {
+  if (!modelTaskType) return detail;
+  const breakdown = (detail.breakdown ?? []).filter((item) =>
+    matchesModelTaskType(item.modelTaskType, modelTaskType),
+  );
+  const match = breakdown[0];
+  if (!match) {
+    return {
+      ...detail,
+      consumptionToDate: 0,
+      remainingQuota: detail.quotaLimit,
+      breakdown: [],
+    };
+  }
+  return {
+    ...detail,
+    consumptionToDate: match.consumptionToDate,
+    remainingQuota: match.remainingQuota ?? detail.remainingQuota,
+    quotaLimit: match.quotaLimit ?? detail.quotaLimit,
+    quotaUnit: match.unit,
+    breakdown,
+  };
+}
+
+function summaryFromTenantDetail(detail: TenantUsageDetail): UsageSummaryResponse {
+  const breakdown = detail.breakdown ?? [];
+  const spendItems = breakdown.map((item) => ({
+    modelTaskType: item.modelTaskType,
+    unit: item.unit,
+    consumption: item.consumptionToDate,
+    spend: item.spend,
+    percentage: 0,
+  }));
+  const breakdownSpend = spendItems.reduce((sum, item) => sum + item.spend, 0);
+  const totalSpend = breakdownSpend > 0 ? breakdownSpend : detail.spendToDate;
+  return {
+    billingPeriod: new Date().toISOString().slice(0, 7),
+    totalSpend,
+    currency: detail.currency,
+    spendByModelTaskType: spendItems.map((item) => ({
+      ...item,
+      percentage:
+        totalSpend > 0 ? Number(((item.spend / totalSpend) * 100).toFixed(1)) : 0,
+    })),
+  };
+}
+
+function detailToListItem(detail: TenantUsageDetail): TenantUsageItem {
+  const { breakdown: _breakdown, ...item } = detail;
+  return item;
+}
+
+function filterTenantList(
+  rows: TenantUsageItem[],
+  filterTier: string,
+): TenantUsageItem[] {
+  return rows.filter((row) => matchesTierFilter(row.tier, filterTier));
+}
+
+function filterUsageSummary(
+  summary: UsageSummaryResponse | undefined,
+  filterTaskType: string,
+): UsageSummaryResponse | undefined {
+  if (!summary || !filterTaskType) return summary;
+  const spendByModelTaskType = summary.spendByModelTaskType.filter((item) =>
+    matchesModelTaskType(item.modelTaskType, filterTaskType),
+  );
+  const totalSpend = spendByModelTaskType.reduce((sum, item) => sum + item.spend, 0);
+  return {
+    ...summary,
+    totalSpend,
+    spendByModelTaskType: spendByModelTaskType.map((item) => ({
+      ...item,
+      percentage:
+        totalSpend > 0 ? Number(((item.spend / totalSpend) * 100).toFixed(1)) : 0,
+    })),
+  };
+}
 
 const AVATAR_BG_COLORS = [
   "green.500",
@@ -169,7 +272,12 @@ function TenantRow({ row, onRowClick }: TenantRowProps) {
   );
 }
 
-const UsageAndSpendTab: React.FC = () => {
+const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
+  scopeTenantId = null,
+  isTenantView = false,
+  tenantId = null,
+  refreshNonce = 0,
+}) => {
   const [filterTier, setFilterTier] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
   const [selectedTenant, setSelectedTenant] =
@@ -180,6 +288,11 @@ const UsageAndSpendTab: React.FC = () => {
     onOpen: onDetailOpen,
     onClose: onDetailClose,
   } = useDisclosure();
+
+  const scopedTenantId = isTenantView
+    ? tenantId?.trim() || null
+    : scopeTenantId?.trim() || null;
+  const isScopedView = Boolean(scopedTenantId);
 
   const handleTenantClick = useCallback(
     async (row: TenantUsageItem) => {
@@ -198,43 +311,151 @@ const UsageAndSpendTab: React.FC = () => {
   );
 
   const summaryQuery = useQuery({
-    queryKey: ["usage-summary"],
+    queryKey: ["usage-summary", refreshNonce],
     queryFn: () => fetchUsageSummary(),
+    enabled: !isScopedView,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const scopedTenantQuery = useQuery({
+    queryKey: ["usage-tenant", scopedTenantId, refreshNonce],
+    queryFn: () => fetchTenantUsageById(scopedTenantId!),
+    enabled: isScopedView,
     staleTime: 60_000,
     retry: 1,
   });
 
   const tenantsQuery = useQuery({
-    queryKey: ["usage-tenants", filterTier, filterTaskType],
-    queryFn: () =>
-      fetchTenantUsageList({
-        tier: filterTier || undefined,
-        modelTaskType: filterTaskType || undefined,
-      }),
+    queryKey: ["usage-tenants", refreshNonce],
+    queryFn: () => fetchTenantUsageList(),
+    enabled: !isScopedView,
     staleTime: 60_000,
     retry: 1,
   });
 
+  const tierFilteredTenantIds = useMemo(() => {
+    if (isScopedView || !filterTaskType) return [];
+    return (tenantsQuery.data?.data ?? [])
+      .filter((row) => matchesTierFilter(row.tier, filterTier))
+      .map((row) => row.tenantId);
+  }, [isScopedView, filterTaskType, filterTier, tenantsQuery.data?.data]);
+
+  const tenantBreakdownQueries = useQueries({
+    queries: tierFilteredTenantIds.map((tenantId) => ({
+      queryKey: ["usage-tenant-breakdown", tenantId, refreshNonce],
+      queryFn: () => fetchTenantUsageById(tenantId),
+      enabled: !isScopedView && !!filterTaskType,
+      staleTime: 60_000,
+      retry: 1,
+    })),
+  });
+
   const tiersQuery = useQuery({
-    queryKey: ["tiers"],
+    queryKey: ["tiers", refreshNonce],
     queryFn: () => fetchTiers(),
     staleTime: 5 * 60_000,
     retry: 1,
   });
 
-  const summaryData = summaryQuery.data;
-  const tenants = tenantsQuery.data?.data ?? [];
+  const scopedTenantDetail = useMemo(() => {
+    if (!scopedTenantQuery.data) return null;
+    let detail = scopedTenantQuery.data;
+    if (!matchesTierFilter(detail.tier, filterTier)) return null;
+    detail = applyModelTaskTypeToDetail(detail, filterTaskType);
+    return detail;
+  }, [scopedTenantQuery.data, filterTier, filterTaskType]);
+
+  const summaryData = isScopedView
+    ? scopedTenantDetail
+      ? summaryFromTenantDetail(scopedTenantDetail)
+      : undefined
+    : filterUsageSummary(summaryQuery.data, filterTaskType);
+
+  const taskTypeOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: string[] = [];
+    const addOption = (taskType: string) => {
+      const normalized = taskType.trim();
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      options.push(normalized);
+    };
+
+    MODEL_TASK_TYPE_LIST.forEach(addOption);
+    (summaryQuery.data?.spendByModelTaskType ?? []).forEach((item) =>
+      addOption(item.modelTaskType),
+    );
+    (scopedTenantQuery.data?.breakdown ?? []).forEach((item) =>
+      addOption(item.modelTaskType),
+    );
+    return options;
+  }, [
+    summaryQuery.data?.spendByModelTaskType,
+    scopedTenantQuery.data?.breakdown,
+  ]);
+
+  const breakdownFilteredTenants = useMemo(() => {
+    if (!filterTaskType) return [];
+    return tenantBreakdownQueries
+      .map((query) => query.data)
+      .filter((detail): detail is TenantUsageDetail => Boolean(detail))
+      .map((detail) => applyModelTaskTypeToDetail(detail, filterTaskType))
+      .filter((detail) => (detail.breakdown?.length ?? 0) > 0)
+      .map(detailToListItem);
+  }, [filterTaskType, tenantBreakdownQueries]);
+
+  const tenants = useMemo(() => {
+    if (isScopedView) {
+      if (
+        !scopedTenantDetail ||
+        (filterTaskType && (scopedTenantDetail.breakdown?.length ?? 0) === 0)
+      ) {
+        return [];
+      }
+      return [detailToListItem(scopedTenantDetail)];
+    }
+    if (filterTaskType) {
+      return breakdownFilteredTenants;
+    }
+    return filterTenantList(tenantsQuery.data?.data ?? [], filterTier);
+  }, [
+    isScopedView,
+    scopedTenantDetail,
+    filterTaskType,
+    filterTier,
+    tenantsQuery.data?.data,
+    breakdownFilteredTenants,
+  ]);
+
   const tierNames = tiersQuery.data?.data?.map((t) => t.name) ?? [];
 
-  const summaryError = summaryQuery.error
-    ? extractErrorInfo(summaryQuery.error).message
-    : null;
-  const tenantsError = tenantsQuery.error
-    ? extractErrorInfo(tenantsQuery.error).message
-    : null;
+  const summaryError = isScopedView
+    ? scopedTenantQuery.error
+      ? extractErrorInfo(scopedTenantQuery.error).message
+      : null
+    : summaryQuery.error
+      ? extractErrorInfo(summaryQuery.error).message
+      : null;
+  const tenantsError = isScopedView
+    ? scopedTenantQuery.error
+      ? extractErrorInfo(scopedTenantQuery.error).message
+      : null
+    : tenantsQuery.error
+      ? extractErrorInfo(tenantsQuery.error).message
+      : null;
+  const isSummaryLoading = isScopedView
+    ? scopedTenantQuery.isLoading
+    : summaryQuery.isLoading;
+  const isTenantsLoading = isScopedView
+    ? scopedTenantQuery.isLoading
+    : filterTaskType
+      ? tenantsQuery.isLoading ||
+        tenantBreakdownQueries.some((query) => query.isLoading)
+      : tenantsQuery.isLoading;
 
   let spendByTaskContent: React.ReactNode;
-  if (summaryQuery.isLoading) {
+  if (isSummaryLoading) {
     spendByTaskContent = (
       <Center h="100px">
         <Spinner color="blue.500" />
@@ -409,7 +630,7 @@ const UsageAndSpendTab: React.FC = () => {
           justifyContent="flex-end"
           minH="160px"
         >
-          {summaryQuery.isLoading ? (
+          {isSummaryLoading ? (
             <Center flex={1}>
               <Spinner color="whiteAlpha.700" />
             </Center>
@@ -481,7 +702,7 @@ const UsageAndSpendTab: React.FC = () => {
             borderRadius="md"
           >
             <option value="">Filter by Model Task Type — All</option>
-            {MODEL_TASK_TYPE_LIST.map((t) => (
+            {taskTypeOptions.map((t) => (
               <option key={t} value={t}>
                 {formatModelTaskTypeLabel(t)}
               </option>
@@ -492,10 +713,14 @@ const UsageAndSpendTab: React.FC = () => {
 
       {/* Tenant usage table */}
       <MeteringAsyncState
-        isLoading={tenantsQuery.isLoading}
-        isEmpty={!tenantsQuery.data}
+        isLoading={isTenantsLoading}
+        isEmpty={!isTenantsLoading && tenants.length === 0}
         errorMessage={tenantsError}
-        emptyMessage="No tenant usage data available."
+        emptyMessage={
+          isScopedView
+            ? "No usage data available for this tenant."
+            : "No tenant usage data available."
+        }
       >
         <MeteringDataTable>
           <Thead bg="gray.50">
