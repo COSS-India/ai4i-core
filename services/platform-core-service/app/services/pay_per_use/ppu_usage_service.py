@@ -23,7 +23,6 @@ from app.schemas.pay_per_use.usage import (
 
 _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
-_DEFAULT_UNIT_SIZE = 1_000_000
 
 
 async def _resolve_tenant_names(
@@ -54,21 +53,20 @@ class PPUUsageService:
 
         items: list[dict] = []
         for row in rows:
-            units = row.total_units or 0
-            unit_size = row.unit_size or _DEFAULT_UNIT_SIZE
-            consumption = round(units / unit_size, 1)
+            units = int(row.total_units or 0)
+            unit_size = int(row.unit_size) if row.unit_size else 1
 
             if row.unit_rate:
                 spend = round(float(units) * float(row.unit_rate), 2)
             elif row.cost_per_unit:
-                spend = round(float(consumption) * float(row.cost_per_unit), 2)
+                spend = round((float(units) / unit_size) * float(row.cost_per_unit), 2)
             else:
                 spend = 0.0
 
             items.append({
                 "modelTaskType": row.inference_name,
                 "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
-                "consumption": consumption,
+                "consumption": units,
                 "spend": spend,
             })
 
@@ -105,9 +103,7 @@ class PPUUsageService:
             remaining_budget = float(row.available_balance)
             total_units = int(row.total_units or 0)
             raw_quota = row.total_quota  # None means unlimited (no quota rows for this tier)
-            unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
-            consumption = round(total_units / unit_size, 1)
-            quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
+            quota_display = int(raw_quota) if raw_quota is not None else None
 
             items.append(TenantUsageItem(
                 tenantId=row.tenant_id,
@@ -118,8 +114,8 @@ class PPUUsageService:
                 remainingBudget=round(remaining_budget, 2),
                 quotaLimit=quota_display,
                 quotaUnit=unit_label,
-                consumptionToDate=consumption,
-                remainingQuota=round(max(0.0, quota_display - consumption), 1) if quota_display is not None else None,
+                consumptionToDate=total_units,
+                remainingQuota=max(0, quota_display - total_units) if quota_display is not None else None,
                 currency=_CURRENCY,
             ))
 
@@ -139,37 +135,36 @@ class PPUUsageService:
         org_map = await _resolve_tenant_names([tenant_id], auth_db)
 
         breakdown: list[TenantUsageBreakdown] = []
-        total_consumption = 0.0
+        total_consumption = 0
         inference_types: set[str] = set()
-        type_unit_sizes: dict[str, int] = {}
+        type_unit_sizes: dict[str, int] = {}  # kept for cost_per_unit billing calc
 
         raw: list[dict] = []
         for row in breakdown_rows:
             units = int(row.total_units or 0)
-            unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
-            consumption = round(units / unit_size, 1)
-            total_consumption += consumption
+            unit_size = int(row.unit_size) if row.unit_size else 1
+            total_consumption += units
             inference_types.add(row.inference_name)
             type_unit_sizes[row.inference_name] = unit_size
 
             if row.unit_rate:
                 spend = round(float(units) * float(row.unit_rate), 2)
             elif row.cost_per_unit:
-                spend = round(float(consumption) * float(row.cost_per_unit), 2)
+                spend = round((float(units) / unit_size) * float(row.cost_per_unit), 2)
             else:
                 spend = 0.0
 
             snap = row.monthly_quota_snap
             if snap is not None:
-                row_quota_limit = round(int(snap) / unit_size, 1)
-                row_remaining = round(max(0.0, row_quota_limit - consumption), 1)
+                row_quota_limit = int(snap)
+                row_remaining = max(0, row_quota_limit - units)
             else:
                 row_quota_limit = None
                 row_remaining = None
 
             raw.append(dict(
                 modelTaskType=row.inference_name,
-                consumptionToDate=consumption,
+                consumptionToDate=units,
                 unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
                 spend=spend,
                 quotaLimit=row_quota_limit,
@@ -195,11 +190,8 @@ class PPUUsageService:
         budget_limit = float(assignment.budget_limit)
         remaining_budget = float(assignment.available_balance)
         raw_quota = assignment.total_quota  # None means unlimited (no quota rows for this tier)
-        # Use the unit_size from the single breakdown type — it's the correct divisor from
-        # _pricing_subquery(). For multi-type tenants quota_display is nulled out below.
         if len(inference_types) == 1 and raw_quota is not None:
-            single_type = next(iter(inference_types))
-            quota_display = round(int(raw_quota) / type_unit_sizes[single_type], 1)
+            quota_display = int(raw_quota)
         else:
             quota_display = None
 
@@ -213,9 +205,9 @@ class PPUUsageService:
             remainingBudget=round(remaining_budget, 2),
             quotaLimit=None if multi_type else quota_display,
             quotaUnit=quota_unit,
-            consumptionToDate=None if multi_type else round(total_consumption, 1),
+            consumptionToDate=None if multi_type else total_consumption,
             remainingQuota=None if multi_type else (
-                round(max(0.0, quota_display - total_consumption), 1) if quota_display is not None else None
+                max(0, quota_display - total_consumption) if quota_display is not None else None
             ),
             currency=_CURRENCY,
             breakdown=breakdown,

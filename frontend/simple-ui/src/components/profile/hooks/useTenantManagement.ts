@@ -30,7 +30,12 @@ import {
   normalizeTenantStatus,
   resolveTenantUserDisplayStatus,
 } from "../../../config/constants";
-import type { TenantStatus, TenantUserStatus, TenantView, TenantUserView } from "../../../types/tenant";
+import type {
+  TenantStatus,
+  TenantUserStatus,
+  TenantView,
+  TenantUserView,
+} from "../../../types/tenant";
 import type {
   TenantFormState,
   TenantUserFormState,
@@ -77,7 +82,9 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const isTenantAdmin = Boolean(user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)));
+  const isTenantAdmin = Boolean(
+    user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)),
+  );
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantScopedUser = isTenantAdmin && !isAdmin;
   const userIdStr = user?.user_id ?? null;
@@ -102,10 +109,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     email: "",
     phone_number: "",
   });
-  const [tenantFormErrors, setTenantFormErrors] = useState<Record<string, string>>({});
+  const [tenantFormErrors, setTenantFormErrors] = useState<
+    Record<string, string>
+  >({});
   const [isSubmittingTenant, setIsSubmittingTenant] = useState(false);
-  const [knownTenantEmails, setKnownTenantEmails] = useState<Set<string>>(() => new Set());
-  const [knownUserEmails, setKnownUserEmails] = useState<Set<string>>(() => new Set());
+  const [knownTenantEmails, setKnownTenantEmails] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [knownUserEmails, setKnownUserEmails] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [isLoadingKnownEmails, setIsLoadingKnownEmails] = useState(false);
 
   // Add user modal
@@ -118,38 +131,55 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     role: DEFAULT_TENANT_USER_ROLE,
   });
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
-  const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
+  const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>(
+    {},
+  );
   /** When set, Add User modal tenant is fixed to this tenant (e.g. tenant detail page). */
-  const [lockedUserFormTenantId, setLockedUserFormTenantId] = useState<string | null>(null);
+  const [lockedUserFormTenantId, setLockedUserFormTenantId] = useState<
+    string | null
+  >(null);
 
   // View user modal (tenant detail uses inline panel via tenantDetailView, not a modal)
-  const [viewUserDetail, setViewUserDetail] = useState<TenantUserView | null>(null);
+  const [viewUserDetail, setViewUserDetail] = useState<TenantUserView | null>(
+    null,
+  );
   const [isViewUserModalOpen, setIsViewUserModalOpen] = useState(false);
 
   // Tenant detail sub-view
-  const [tenantDetailView, setTenantDetailView] = useState<TenantView | null>(null);
-  const [tenantDetailSubTab, setTenantDetailSubTab] = useState<"overview" | "users">("overview");
+  const [tenantDetailView, setTenantDetailView] = useState<TenantView | null>(
+    null,
+  );
+  const [tenantDetailSubTab, setTenantDetailSubTab] = useState<
+    "overview" | "users"
+  >("overview");
 
   // Edit tenant modal
   const [isEditTenantModalOpen, setIsEditTenantModalOpen] = useState(false);
   const [editTenantRow, setEditTenantRow] = useState<TenantView | null>(null);
-  const [editTenantForm, setEditTenantForm] = useState<EditTenantFormState>({ tenant_id: "" });
-  const [editTenantFormErrors, setEditTenantFormErrors] = useState<Record<string, string>>({});
+  const [editTenantForm, setEditTenantForm] = useState<EditTenantFormState>({
+    tenant_id: "",
+  });
+  const [editTenantFormErrors, setEditTenantFormErrors] = useState<
+    Record<string, string>
+  >({});
   const [isSubmittingEditTenant, setIsSubmittingEditTenant] = useState(false);
 
   // Status update confirmation
-  const [statusUpdateTarget, setStatusUpdateTarget] = useState<StatusUpdateTargetUnion | null>(null);
-  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>(
-    TENANT.STATUS.ACTIVE
-  );
+  const [statusUpdateTarget, setStatusUpdateTarget] =
+    useState<StatusUpdateTargetUnion | null>(null);
+  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<
+    TenantStatus | TenantUserStatus
+  >(TENANT.STATUS.ACTIVE);
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
 
-  const [resendVerificationTenantId, setResendVerificationTenantId] = useState<string | null>(
-    null
-  );
+  const [resendVerificationTenantId, setResendVerificationTenantId] = useState<
+    string | null
+  >(null);
 
-  const [resendVerificationUserId, setResendVerificationUserId] = useState<string | null>(null);
+  const [resendVerificationUserId, setResendVerificationUserId] = useState<
+    string | null
+  >(null);
 
   // Edit user modal
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
@@ -159,11 +189,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     user_id: "",
     role: DEFAULT_TENANT_USER_ROLE,
   });
-  const [editUserFormErrors, setEditUserFormErrors] = useState<Record<string, string>>({});
+  const [editUserFormErrors, setEditUserFormErrors] = useState<
+    Record<string, string>
+  >({});
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
 
   // Delete user confirmation
-  const [deleteUserTarget, setDeleteUserTarget] = useState<DeleteUserTarget | null>(null);
+  const [deleteUserTarget, setDeleteUserTarget] =
+    useState<DeleteUserTarget | null>(null);
   const [isDeleteUserDialogOpen, setIsDeleteUserDialogOpen] = useState(false);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
 
@@ -173,13 +206,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenants.filter((t) => {
         if (
           tenantFilterStatus !== "all" &&
-          normalizeTenantStatus(t.status) !== normalizeTenantStatus(tenantFilterStatus)
+          normalizeTenantStatus(t.status) !==
+            normalizeTenantStatus(tenantFilterStatus)
         ) {
           return false;
         }
         return tenantMatchesSearch(t, tenantSearch);
       }),
-    [tenants, tenantFilterStatus, tenantSearch]
+    [tenants, tenantFilterStatus, tenantSearch],
   );
 
   const activeUserListTenant = useMemo(() => {
@@ -196,7 +230,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         if (userFilterStatus !== "all") {
           const displayStatus = resolveTenantUserDisplayStatus(
             u,
-            activeUserListTenant?.status
+            activeUserListTenant?.status,
           );
           if (displayStatus !== userFilterStatus) return false;
         }
@@ -208,12 +242,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         }
         return true;
       }),
-    [tenantUsers, userFilterStatus, userFilterRole, userSearch, activeUserListTenant?.status]
+    [
+      tenantUsers,
+      userFilterStatus,
+      userFilterRole,
+      userSearch,
+      activeUserListTenant?.status,
+    ],
   );
 
   const isDefaultTenantUsersView = useMemo(
     () => activeUserListTenant != null && isDefaultTenant(activeUserListTenant),
-    [activeUserListTenant]
+    [activeUserListTenant],
   );
 
   const tenantUserRoleFilterOptions = useMemo(
@@ -221,7 +261,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       isDefaultTenantUsersView
         ? DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST
         : TENANT_USER_ROLE_FILTER_LIST,
-    [isDefaultTenantUsersView]
+    [isDefaultTenantUsersView],
   );
 
   useEffect(() => {
@@ -255,13 +295,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const loadTenantUsersForTenant = async (tenantId: string): Promise<TenantUserView[]> => {
+  const loadTenantUsersForTenant = async (
+    tenantId: string,
+  ): Promise<TenantUserView[]> => {
     const res = await tenantService.listUsers(tenantId);
     return normalizeTenantUserRoles(res.users ?? []);
   };
 
   const handleFetchTenantUsers = async (tenantIdOverride?: string) => {
-    const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
+    const tenantId =
+      tenantIdOverride ??
+      tenantDetailView?.tenant_id ??
+      user?.tenant_id ??
+      null;
     if (!tenantId) {
       showToast({
         type: "warning",
@@ -288,7 +334,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (isAdmin) {
       await handleFetchTenants();
     }
-    const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
+    const tenantId =
+      tenantIdOverride ??
+      tenantDetailView?.tenant_id ??
+      user?.tenant_id ??
+      null;
     if (tenantId) {
       await handleFetchTenantUsers(tenantId);
     }
@@ -313,7 +363,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setKnownTenantEmails(collectTenantContactEmails(tenantRows));
       setKnownUserEmails(collectUserEmails(userRows));
     },
-    []
+    [],
   );
 
   /** Load tenant contact + user emails for client-side uniqueness checks. */
@@ -335,7 +385,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
       let offset = 0;
       for (;;) {
-        const batch = await authService.listUsersPage(offset, USER_EMAIL_PAGE_SIZE);
+        const batch = await authService.listUsersPage(
+          offset,
+          USER_EMAIL_PAGE_SIZE,
+        );
         for (const u of batch) {
           const e = (u.email ?? "").trim().toLowerCase();
           if (e) userEmailSet.add(e);
@@ -352,23 +405,41 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     } finally {
       setIsLoadingKnownEmails(false);
     }
-  }, [isAdmin, user?.tenant_id, tenants, tenantUsers, syncKnownEmailsFromLists]);
+  }, [
+    isAdmin,
+    user?.tenant_id,
+    tenants,
+    tenantUsers,
+    syncKnownEmailsFromLists,
+  ]);
 
-  const patchTenantFormError = useCallback((field: string, error: string | undefined) => {
-    setTenantFormErrors((prev) => setFieldError(prev, field, error));
-  }, []);
+  const patchTenantFormError = useCallback(
+    (field: string, error: string | undefined) => {
+      setTenantFormErrors((prev) => setFieldError(prev, field, error));
+    },
+    [],
+  );
 
-  const patchUserFormError = useCallback((field: string, error: string | undefined) => {
-    setUserFormErrors((prev) => setFieldError(prev, field, error));
-  }, []);
+  const patchUserFormError = useCallback(
+    (field: string, error: string | undefined) => {
+      setUserFormErrors((prev) => setFieldError(prev, field, error));
+    },
+    [],
+  );
 
-  const patchEditTenantFormError = useCallback((field: string, error: string | undefined) => {
-    setEditTenantFormErrors((prev) => setFieldError(prev, field, error));
-  }, []);
+  const patchEditTenantFormError = useCallback(
+    (field: string, error: string | undefined) => {
+      setEditTenantFormErrors((prev) => setFieldError(prev, field, error));
+    },
+    [],
+  );
 
-  const patchEditUserFormError = useCallback((field: string, error: string | undefined) => {
-    setEditUserFormErrors((prev) => setFieldError(prev, field, error));
-  }, []);
+  const patchEditUserFormError = useCallback(
+    (field: string, error: string | undefined) => {
+      setEditUserFormErrors((prev) => setFieldError(prev, field, error));
+    },
+    [],
+  );
 
   const knownEmailRecheckKey = isLoadingKnownEmails
     ? "loading"
@@ -380,7 +451,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantEmails: knownTenantEmails,
       userEmails: knownUserEmails,
     }),
-    [knownTenantEmails, knownUserEmails]
+    [knownTenantEmails, knownUserEmails],
   );
 
   const getAddUserEmailCheckOptions = useCallback(
@@ -389,32 +460,29 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantEmails: knownTenantEmails,
       userEmails: knownUserEmails,
     }),
-    [knownTenantEmails, knownUserEmails]
+    [knownTenantEmails, knownUserEmails],
   );
 
-  const getEditTenantEmailCheckOptions = useCallback(
-    () => {
-      const current = editTenantForm.email ?? "";
-      const unchanged =
-        normalizeEmail(current) === normalizeEmail(editTenantRow?.email ?? "");
-      return {
-        mode: "tenant_contact" as const,
-        tenantEmails: knownTenantEmails,
-        userEmails: knownUserEmails,
-        exclusions: {
-          excludeTenantEmail: editTenantRow?.email,
-          excludeUserEmail: editTenantRow?.email,
-        },
-        skipRemoteCheck: unchanged,
-      };
-    },
-    [
-      knownTenantEmails,
-      knownUserEmails,
-      editTenantForm.email,
-      editTenantRow?.email,
-    ]
-  );
+  const getEditTenantEmailCheckOptions = useCallback(() => {
+    const current = editTenantForm.email ?? "";
+    const unchanged =
+      normalizeEmail(current) === normalizeEmail(editTenantRow?.email ?? "");
+    return {
+      mode: "tenant_contact" as const,
+      tenantEmails: knownTenantEmails,
+      userEmails: knownUserEmails,
+      exclusions: {
+        excludeTenantEmail: editTenantRow?.email,
+        excludeUserEmail: editTenantRow?.email,
+      },
+      skipRemoteCheck: unchanged,
+    };
+  }, [
+    knownTenantEmails,
+    knownUserEmails,
+    editTenantForm.email,
+    editTenantRow?.email,
+  ]);
 
   const createTenantEmailAvailability = useEmailAvailabilityField({
     enabled: isTenantModalOpen,
@@ -442,7 +510,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // ----- Create tenant -----
   const openTenantModal = () => {
-    setTenantForm({ organisation: "", contact_name: "", email: "", phone_number: "" });
+    setTenantForm({
+      organisation: "",
+      contact_name: "",
+      email: "",
+      phone_number: "",
+    });
     setTenantFormErrors({});
     createTenantEmailAvailability.clear();
     setIsTenantModalOpen(true);
@@ -467,12 +540,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     patchTenantFormError(
       "organisation",
-      validateOrganisationUnique(organisation, tenants)
+      validateOrganisationUnique(organisation, tenants),
     );
   };
 
   const handleTenantContactNameChange = (contact_name: string) => {
     setTenantForm((prev) => ({ ...prev, contact_name }));
+    patchTenantFormError("contact_name", validateContactName(contact_name));
+  };
+
+  const handleTenantContactNameBlur = (contact_name: string) => {
     patchTenantFormError("contact_name", validateContactName(contact_name));
   };
 
@@ -503,7 +580,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleEditTenantOrganisationChange = (organisation: string) => {
     setEditTenantForm((prev) => ({ ...prev, organisation }));
-    patchEditTenantFormError("organisation", validateOrganisation(organisation));
+    patchEditTenantFormError(
+      "organisation",
+      validateOrganisation(organisation),
+    );
   };
 
   const handleEditTenantOrganisationBlur = (organisation: string) => {
@@ -514,13 +594,20 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     patchEditTenantFormError(
       "organisation",
-      validateOrganisationUnique(organisation, tenants, editTenantForm.tenant_id)
+      validateOrganisationUnique(
+        organisation,
+        tenants,
+        editTenantForm.tenant_id,
+      ),
     );
   };
 
   const handleEditTenantContactNameChange = (contact_name: string) => {
     setEditTenantForm((prev) => ({ ...prev, contact_name }));
-    patchEditTenantFormError("contact_name", validateOptionalPersonName(contact_name));
+    patchEditTenantFormError(
+      "contact_name",
+      validateOptionalPersonName(contact_name),
+    );
   };
 
   const handleEditTenantEmailChange = (email: string) => {
@@ -548,7 +635,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const orgError = validateOrganisation(tenantForm.organisation);
     if (orgError) errors.organisation = orgError;
     else {
-      const dupError = validateOrganisationUnique(tenantForm.organisation, tenants);
+      const dupError = validateOrganisationUnique(
+        tenantForm.organisation,
+        tenants,
+      );
       if (dupError) errors.organisation = dupError;
     }
     const contactError = validateContactName(tenantForm.contact_name);
@@ -556,7 +646,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const emailError = validateTenantContactEmail(
       tenantForm.email,
       knownTenantEmails,
-      knownUserEmails
+      knownUserEmails,
     );
     if (emailError) errors.email = emailError;
     const phoneError = validateE164Phone(tenantForm.phone_number);
@@ -573,7 +663,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const emailError = validateTenantUserEmail(
       userForm.email,
       knownTenantEmails,
-      knownUserEmails
+      knownUserEmails,
     );
     if (emailError) errors.email = emailError;
     const phoneError = validateE164Phone(userForm.phone_number);
@@ -589,11 +679,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       const dupError = validateOrganisationUnique(
         editTenantForm.organisation ?? "",
         tenants,
-        editTenantForm.tenant_id
+        editTenantForm.tenant_id,
       );
       if (dupError) errors.organisation = dupError;
     }
-    const contactError = validateOptionalPersonName(editTenantForm.contact_name ?? "");
+    const contactError = validateOptionalPersonName(
+      editTenantForm.contact_name ?? "",
+    );
     if (contactError) errors.contact_name = contactError;
     const emailError = validateTenantContactEmail(
       editTenantForm.email ?? "",
@@ -602,7 +694,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       {
         excludeTenantEmail: editTenantRow?.email,
         excludeUserEmail: editTenantRow?.email,
-      }
+      },
     );
     if (emailError) errors.email = emailError;
     const phoneError = validateE164Phone(editTenantForm.phone_number ?? "");
@@ -612,10 +704,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const collectEditUserErrors = (): Record<string, string> => {
     const errors: Record<string, string> = {};
-    if (!editUserForm.username?.trim() || editUserForm.username.trim().length < 3) {
+    if (
+      !editUserForm.username?.trim() ||
+      editUserForm.username.trim().length < 3
+    ) {
       errors.username = "Username must be at least 3 characters.";
     }
-    const fullNameError = validateOptionalPersonName(editUserForm.full_name ?? "");
+    const fullNameError = validateOptionalPersonName(
+      editUserForm.full_name ?? "",
+    );
     if (fullNameError) errors.full_name = fullNameError;
     const phoneError = validateE164Phone(editUserForm.phone_number ?? "");
     if (phoneError) errors.phone_number = phoneError;
@@ -725,7 +822,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       showToast({
         type: "success",
-        message: "User provisioned under tenant. The username is auto-generated from email.",
+        message:
+          "User provisioned under tenant. The username is auto-generated from email.",
       });
       closeUserModal();
       await refreshTenantAndUserLists(tenantId);
@@ -748,7 +846,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const emailAvailabilityConfirmed = (
     email: string,
-    status: typeof createTenantEmailAvailability.status
+    status: typeof createTenantEmailAvailability.status,
   ) => {
     if (!email.trim()) return false;
     if (validateEmailFormatOnly(email)) return false;
@@ -760,7 +858,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (createTenantEmailAvailability.status === "checking") return false;
     if (
       tenantForm.email.trim() &&
-      !emailAvailabilityConfirmed(tenantForm.email, createTenantEmailAvailability.status)
+      !emailAvailabilityConfirmed(
+        tenantForm.email,
+        createTenantEmailAvailability.status,
+      )
     ) {
       return false;
     }
@@ -783,7 +884,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (addUserEmailAvailability.status === "checking") return false;
     if (
       userForm.email.trim() &&
-      !emailAvailabilityConfirmed(userForm.email, addUserEmailAvailability.status)
+      !emailAvailabilityConfirmed(
+        userForm.email,
+        addUserEmailAvailability.status,
+      )
     ) {
       return false;
     }
@@ -930,7 +1034,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // ----- Status update -----
   const handleOpenTenantStatus = (t: TenantView, newStatus: TenantStatus) => {
-    setStatusUpdateTarget({ type: "tenant", tenant_id: t.tenant_id, currentStatus: t.status });
+    setStatusUpdateTarget({
+      type: "tenant",
+      tenant_id: t.tenant_id,
+      currentStatus: t.status,
+    });
     setStatusUpdateNewStatus(newStatus);
     setIsStatusDialogOpen(true);
   };
@@ -946,7 +1054,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     setResendVerificationTenantId(t.tenant_id);
     try {
-      const res = await authService.resendSetupLink({ email }, { withAuth: true });
+      const res = await authService.resendSetupLink(
+        { email },
+        { withAuth: true },
+      );
       showToast({
         type: "success",
         message:
@@ -978,14 +1089,20 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantUserStatus) => {
+  const handleOpenUserStatus = (
+    u: TenantUserView,
+    newStatus: TenantUserStatus,
+  ) => {
     if (
       newStatus !== TENANT.USER_STATUS.ACTIVE &&
       newStatus !== TENANT.USER_STATUS.SUSPENDED
     ) {
       return;
     }
-    const currentStatus = resolveTenantUserDisplayStatus(u, activeUserListTenant?.status);
+    const currentStatus = resolveTenantUserDisplayStatus(
+      u,
+      activeUserListTenant?.status,
+    );
     setStatusUpdateTarget({
       type: "user",
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -1022,7 +1139,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           ended &&
           userIdStr != null &&
           statusUpdateTarget.user_id === userIdStr &&
-          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) || isTenantAdmin);
+          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) ||
+            isTenantAdmin);
         if (isCurrentTenantAdmin) {
           showToast({
             type: "warning",
@@ -1055,7 +1173,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleOpenEditUser = (u: TenantUserView) => {
     const normalizedRole = (u.role ?? u.roles?.[0] ?? "").trim().toUpperCase();
     const role =
-      normalizedRole === "TENANT ADMIN" ? "TENANT ADMIN" : DEFAULT_TENANT_USER_ROLE;
+      normalizedRole === "TENANT ADMIN"
+        ? "TENANT ADMIN"
+        : DEFAULT_TENANT_USER_ROLE;
     setEditUserRow(u);
     setEditUserForm({
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -1074,7 +1194,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const trimmed = username.trim();
     patchEditUserFormError(
       "username",
-      !trimmed || trimmed.length < 3 ? "Username must be at least 3 characters." : undefined
+      !trimmed || trimmed.length < 3
+        ? "Username must be at least 3 characters."
+        : undefined,
     );
   };
 
@@ -1193,6 +1315,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleTenantOrganisationChange,
     handleTenantOrganisationBlur,
     handleTenantContactNameChange,
+    handleTenantContactNameBlur,
     handleTenantEmailChange,
     handleTenantPhoneChange,
     tenantEmailStatus: createTenantEmailAvailability.status,

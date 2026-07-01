@@ -1,13 +1,15 @@
 """Tier Management and Tenant Assignment endpoints for Pay-Per-Use."""
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db, get_db
-from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse
+from app.schemas.common import SuccessResponse
+from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse, TopUpRequest, TopUpResponse
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
+from ai4i_core.exceptions.responses import success_response
 
 
 router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
@@ -61,16 +63,30 @@ async def delete_tier(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/tenant/tier", response_model=TierAssignResponse)
-async def get_tenant_tier(
-    tenant_id: str = Query(..., description="tenant ID"),
+@router.get("/tenant/tier", response_model=SuccessResponse[List[TierAssignResponse]])
+async def list_tenant_tiers(
+    tier_id: Optional[str] = Query(None, description="Filter by tier UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the currently active PPU tier assignment for a tenant.
+    """List all active PPU tenant-tier assignments, optionally filtered by tier_id."""
+    data = await tenant_assignment_service.list_tenant_tiers(db, tier_id=tier_id)
+    return success_response(data=data)
 
-    Returns 404 if the tenant has no active assignment.
-    """
-    return await tenant_assignment_service.get_tenant_tier(tenant_id, db)
+
+@router.post("/tenant/top-up", response_model=TopUpResponse)
+async def top_up_tenant_budget(
+    request: Request,
+    body: TopUpRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Add budget to a tenant's active tier assignment and reset the budget-exhausted flag."""
+    from app.core.config import settings
+    return await tenant_assignment_service.top_up_budget(
+        body,
+        db,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )
 
 
 @router.post("/tenant/tier", response_model=TierAssignResponse)

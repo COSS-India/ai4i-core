@@ -1,6 +1,6 @@
 // Tenant Management tab — backed by auth-service tenant endpoints.
 
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   AlertDescription,
@@ -11,6 +11,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Center,
   FormControl,
   FormErrorMessage,
   FormHelperText,
@@ -19,6 +20,8 @@ import {
   Heading,
   IconButton,
   Input,
+  InputGroup,
+  InputLeftAddon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -40,9 +43,19 @@ import {
   Text,
   Tooltip,
   VStack,
+  useDisclosure,
 } from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
+import { useToast } from "@chakra-ui/react";
+import {
+  fetchTiers,
+  assignTenantTier,
+  fetchTenantTiers,
+  type TenantTierAssignment,
+} from "../../services/tierManagementService";
 import {
   FiArrowLeft,
+  FiCheckCircle,
   FiEdit2,
   FiMail,
   FiPauseCircle,
@@ -51,7 +64,12 @@ import {
   FiUserPlus,
   FiUsers,
 } from "react-icons/fi";
-import { ChevronDownIcon, DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import {
+  ChevronDownIcon,
+  DeleteIcon,
+  EditIcon,
+  ViewIcon,
+} from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
@@ -92,15 +110,144 @@ export interface TenantManagementTabProps {
   isActive?: boolean;
 }
 
-export default function TenantManagementTab({ isActive = false }: TenantManagementTabProps) {
+const AVATAR_COLORS = [
+  "blue.500",
+  "green.500",
+  "purple.500",
+  "teal.500",
+  "orange.500",
+  "pink.500",
+];
+
+function getTenantInitials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getTenantAvatarBg(name: string): string {
+  let sum = 0;
+  for (let i = 0; i < name.length; i++) sum += name.codePointAt(i) ?? 0;
+  return AVATAR_COLORS[sum % AVATAR_COLORS.length];
+}
+
+export default function TenantManagementTab({
+  isActive = false,
+}: TenantManagementTabProps) {
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
 
-  const isAdmin = Boolean(user?.roles?.includes('ADMIN'));
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const userListTenantStatus = tm.activeUserListTenant?.status ?? null;
 
   const resolveUserDisplayStatus = (u: TenantUserView) =>
     resolveTenantUserDisplayStatus(u, userListTenantStatus);
+
+  const toast = useToast();
+
+  // Assign Tier modal state
+  const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
+    null,
+  );
+  const [assignTierId, setAssignTierId] = useState("");
+  const [assignBudget, setAssignBudget] = useState("");
+  const [assignEffectiveFrom, setAssignEffectiveFrom] = useState("");
+  const [assignEffectiveTo, setAssignEffectiveTo] = useState("");
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [assignTierError, setAssignTierError] = useState<string | null>(null);
+  const {
+    isOpen: isAssignTierOpen,
+    onOpen: onAssignTierOpen,
+    onClose: onAssignTierClose,
+  } = useDisclosure();
+
+  const tiersQuery = useQuery({
+    queryKey: ["tiers"],
+    queryFn: () => fetchTiers(),
+    staleTime: 5 * 60_000,
+  });
+  const tierOptions = tiersQuery.data?.data ?? [];
+
+  const tenantTiersQuery = useQuery({
+    queryKey: ["tenant-tiers"],
+    queryFn: () => fetchTenantTiers(),
+    staleTime: 2 * 60_000,
+    enabled: isAdmin,
+  });
+  const tenantTierAssignments = tenantTiersQuery.data?.data ?? [];
+  const tierAssignedTenantIds = useMemo(
+    () => new Set(tenantTierAssignments.map((a) => String(a.tenant_id))),
+    [tenantTierAssignments],
+  );
+
+  const [viewTierTenant, setViewTierTenant] =
+    useState<TenantTierAssignment | null>(null);
+  const {
+    isOpen: isViewTierOpen,
+    onOpen: onViewTierOpen,
+    onClose: onViewTierClose,
+  } = useDisclosure();
+
+  const handleOpenAssignTier = (t: TenantView) => {
+    setAssignTierTenant(t);
+    setAssignTierId("");
+    setAssignBudget("");
+    setAssignEffectiveFrom("");
+    setAssignEffectiveTo("");
+    setAssignTierError(null);
+    onAssignTierOpen();
+  };
+
+  const handleAssignTierClose = () => {
+    if (isAssigning) return;
+    onAssignTierClose();
+    setAssignTierTenant(null);
+    setAssignEffectiveFrom("");
+    setAssignEffectiveTo("");
+    setAssignTierError(null);
+  };
+
+  const handleAssignTierSubmit = async () => {
+    if (
+      !assignTierTenant ||
+      !assignTierId ||
+      !assignBudget.trim() ||
+      !assignEffectiveFrom ||
+      !assignEffectiveTo
+    )
+      return;
+    setIsAssigning(true);
+    setAssignTierError(null);
+    try {
+      await assignTenantTier({
+        tenant_id: String(assignTierTenant.tenant_id),
+        tier_id: assignTierId,
+        budget: Number(assignBudget),
+        effective_from: new Date(assignEffectiveFrom).toISOString(),
+        effective_to: new Date(assignEffectiveTo).toISOString(),
+      });
+      toast({
+        title: "Tier assigned",
+        description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      onAssignTierClose();
+      setAssignTierTenant(null);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      const message =
+        (typeof detail === "object" && detail !== null
+          ? detail.message
+          : detail) ??
+        err?.message ??
+        "An error occurred.";
+      setAssignTierError(String(message));
+    } finally {
+      setIsAssigning(false);
+    }
+  };
 
   // Initial fetch when this tab becomes active.
   useEffect(() => {
@@ -124,8 +271,26 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     return [
       {
         id: "organisation",
-        header: "Organisation",
-        cell: (t) => t.organisation,
+        header: "Tenant",
+        cell: (t) => (
+          <HStack spacing={3}>
+            <Center
+              w={8}
+              h={8}
+              borderRadius="full"
+              bg={getTenantAvatarBg(t.organisation)}
+              color="white"
+              fontSize="xs"
+              fontWeight="bold"
+              flexShrink={0}
+            >
+              {getTenantInitials(t.organisation)}
+            </Center>
+            <Text fontWeight="medium" fontSize="sm">
+              {t.organisation}
+            </Text>
+          </HStack>
+        ),
       },
       { id: "contact", header: "Contact", cell: (t) => dash(t.contact_name) },
       { id: "email", header: "Email", cell: (t) => dash(t.email) },
@@ -138,16 +303,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           </Badge>
         ),
       },
-      { id: "created", header: "Created", cell: (t) => fmtDate(t.created_at) },
+      {
+        id: "created",
+        header: "Onboarded",
+        cell: (t) => fmtDate(t.created_at),
+      },
       {
         id: "actions",
-        header: "",
+        header: "Actions",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (t) => renderTenantRowActions(t),
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm]);
+  }, [tm, tierOptions]);
 
   const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
     return [
@@ -167,7 +336,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         id: "status",
         header: "Status",
         cell: (u) => (
-          <Badge colorScheme={getTenantStatusColorScheme(resolveUserDisplayStatus(u))}>
+          <Badge
+            colorScheme={getTenantStatusColorScheme(
+              resolveUserDisplayStatus(u),
+            )}
+          >
             {formatTenantUserStatusLabel(resolveUserDisplayStatus(u))}
           </Badge>
         ),
@@ -203,6 +376,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       {renderViewUserModal()}
       {renderStatusConfirmDialog()}
       {renderDeleteUserDialog()}
+      {renderAssignTierModal()}
+      {renderViewTierModal()}
     </Box>
   );
 
@@ -406,7 +581,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         <CardBody>
           <Tabs
             index={tm.tenantDetailSubTab === "overview" ? 0 : 1}
-            onChange={(idx) => tm.setTenantDetailSubTab(idx === 0 ? "overview" : "users")}
+            onChange={(idx) =>
+              tm.setTenantDetailSubTab(idx === 0 ? "overview" : "users")
+            }
           >
             <TabList>
               <Tab>Overview</Tab>
@@ -418,12 +595,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             <TabPanels>
               <TabPanel px={0}>
                 {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
-                  <Alert status="info" variant="left-accent" borderRadius="md" mb={4}>
+                  <Alert
+                    status="info"
+                    variant="left-accent"
+                    borderRadius="md"
+                    mb={4}
+                  >
                     <AlertIcon />
                     <Box flex="1">
                       <AlertDescription fontSize="sm">
-                        This tenant is awaiting activation. The contact must complete the email
-                        verification link. If the link expired or was not received, resend it below.
+                        This tenant is awaiting activation. The contact must
+                        complete the email verification link. If the link
+                        expired or was not received, resend it below.
                       </AlertDescription>
                       <Button
                         mt={3}
@@ -431,9 +614,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         leftIcon={<FiMail />}
                         colorScheme="blue"
                         variant="outline"
-                        isLoading={tm.resendVerificationTenantId === t.tenant_id}
+                        isLoading={
+                          tm.resendVerificationTenantId === t.tenant_id
+                        }
                         loadingText="Sending..."
-                        onClick={() => void tm.handleResendTenantVerificationEmail(t)}
+                        onClick={() =>
+                          void tm.handleResendTenantVerificationEmail(t)
+                        }
                       >
                         Resend Verification Email
                       </Button>
@@ -507,7 +694,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         />
         <MenuList minW="auto" w="auto" py={1}>
           {items.map((item) => (
-            <Tooltip key={item.key} label={item.label} placement="left" hasArrow openDelay={300}>
+            <Tooltip
+              key={item.key}
+              label={item.label}
+              placement="left"
+              hasArrow
+              openDelay={300}
+            >
               <MenuItem
                 aria-label={item.label}
                 color={item.color}
@@ -549,7 +742,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           {
             key: "deactivate",
             label: "Deactivate",
-            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
+            onSelect: () =>
+              tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
@@ -562,7 +756,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           {
             key: "suspend",
             label: "Suspend",
-            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.SUSPENDED),
+            onSelect: () =>
+              tm.handleOpenTenantStatus(t, TENANT.STATUS.SUSPENDED),
             color: "orange.600",
             hoverBg: "orange.50",
             icon: <FiPauseCircle size={16} />,
@@ -570,7 +765,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           {
             key: "deactivate",
             label: "Deactivate",
-            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
+            onSelect: () =>
+              tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
@@ -591,7 +787,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           {
             key: "deactivate",
             label: "Deactivate",
-            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
+            onSelect: () =>
+              tm.handleOpenTenantStatus(t, TENANT.STATUS.DEACTIVATED),
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
@@ -638,6 +835,50 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             tm.handleOpenEditTenant(t);
           }}
         />
+        {tierAssignedTenantIds.has(String(t.tenant_id)) ? (
+          <Tooltip label="View Tier">
+            <IconButton
+              aria-label="View tier"
+              icon={<FiCheckCircle size={14} />}
+              size="xs"
+              w={4}
+              h={4}
+              minW={4}
+              variant="outline"
+              colorScheme="green"
+              borderRadius="full"
+              _hover={{ bg: "green.50" }}
+              onClick={(e) => {
+                stopRowClick(e);
+                const assignment =
+                  tenantTierAssignments.find(
+                    (a) => String(a.tenant_id) === String(t.tenant_id),
+                  ) ?? null;
+                setViewTierTenant(assignment);
+                onViewTierOpen();
+              }}
+            />
+          </Tooltip>
+        ) : (
+          <Tooltip label="Assign Tier">
+            <IconButton
+              aria-label="Assign tier"
+              icon={<FiPlus size={8} />}
+              size="xs"
+              w={4}
+              h={4}
+              minW={4}
+              variant="outline"
+              colorScheme="blue"
+              borderRadius="full"
+              _hover={{ bg: "blue.50" }}
+              onClick={(e) => {
+                stopRowClick(e);
+                handleOpenAssignTier(t);
+              }}
+            />
+          </Tooltip>
+        )}
 
         {renderOverflowActionMenu(items, stopRowClick, "Tenant actions")}
       </HStack>
@@ -679,7 +920,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           {
             key: "suspend",
             label: "Suspend",
-            onSelect: () => tm.handleOpenUserStatus(u, TENANT.USER_STATUS.SUSPENDED),
+            onSelect: () =>
+              tm.handleOpenUserStatus(u, TENANT.USER_STATUS.SUSPENDED),
             color: "orange.600",
             hoverBg: "orange.50",
             icon: <FiPauseCircle size={16} />,
@@ -751,31 +993,57 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   // ── Modals ─────────────────────────────────────────────────────────────
   function renderCreateTenantModal() {
     return (
-      <Modal isOpen={tm.isTenantModalOpen} onClose={tm.closeTenantModal} size="md">
+      <Modal
+        isOpen={tm.isTenantModalOpen}
+        onClose={tm.closeTenantModal}
+        size="md"
+      >
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Create Tenant</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
-              <FormControl isInvalid={Boolean(tm.tenantFormErrors.organisation)} isRequired>
+              <FormControl
+                isInvalid={Boolean(tm.tenantFormErrors.organisation)}
+                isRequired
+              >
                 <FormLabel>Organisation</FormLabel>
                 <Input
                   value={tm.tenantForm.organisation}
-                  onChange={(e) => tm.handleTenantOrganisationChange(e.target.value)}
-                  onBlur={(e) => tm.handleTenantOrganisationBlur(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleTenantOrganisationChange(e.target.value)
+                  }
+                  onBlur={(e) =>
+                    tm.handleTenantOrganisationBlur(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.tenantFormErrors.organisation}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.tenantFormErrors.organisation}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl isInvalid={Boolean(tm.tenantFormErrors.contact_name)} isRequired>
+              <FormControl
+                isInvalid={Boolean(tm.tenantFormErrors.contact_name)}
+                isRequired
+              >
                 <FormLabel>Contact Name</FormLabel>
                 <Input
                   value={tm.tenantForm.contact_name}
-                  onChange={(e) => tm.handleTenantContactNameChange(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleTenantContactNameChange(e.target.value)
+                  }
+                  onBlur={(e) =>
+                    tm.handleTenantContactNameBlur(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.tenantFormErrors.contact_name}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.tenantFormErrors.contact_name}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl isInvalid={Boolean(tm.tenantFormErrors.email)} isRequired>
+              <FormControl
+                isInvalid={Boolean(tm.tenantFormErrors.email)}
+                isRequired
+              >
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
@@ -783,20 +1051,30 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   onChange={(e) => tm.handleTenantEmailChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
-                {tm.tenantEmailStatus === "checking" && !tm.tenantFormErrors.email && (
-                  <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
-                )}
-                {tm.tenantEmailStatus === "available" && !tm.tenantFormErrors.email && (
-                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
-                )}
+                {tm.tenantEmailStatus === "checking" &&
+                  !tm.tenantFormErrors.email && (
+                    <FormHelperText color="gray.500">
+                      Checking if email exists…
+                    </FormHelperText>
+                  )}
+                {tm.tenantEmailStatus === "available" &&
+                  !tm.tenantFormErrors.email && (
+                    <FormHelperText color="green.600">
+                      {EMAIL_AVAILABLE_MSG}
+                    </FormHelperText>
+                  )}
               </FormControl>
-              <FormControl isInvalid={Boolean(tm.tenantFormErrors.phone_number)}>
+              <FormControl
+                isInvalid={Boolean(tm.tenantFormErrors.phone_number)}
+              >
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.tenantForm.phone_number}
                   onChange={(e) => tm.handleTenantPhoneChange(e.target.value)}
                 />
-                <FormErrorMessage>{tm.tenantFormErrors.phone_number}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.tenantFormErrors.phone_number}
+                </FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -838,45 +1116,76 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Organisation</FormLabel>
                 <Input
                   value={tm.editTenantForm.organisation ?? ""}
-                  onChange={(e) => tm.handleEditTenantOrganisationChange(e.target.value)}
-                  onBlur={(e) => tm.handleEditTenantOrganisationBlur(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleEditTenantOrganisationChange(e.target.value)
+                  }
+                  onBlur={(e) =>
+                    tm.handleEditTenantOrganisationBlur(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.editTenantFormErrors.organisation}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.editTenantFormErrors.organisation}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl isInvalid={Boolean(tm.editTenantFormErrors.contact_name)}>
+              <FormControl
+                isInvalid={Boolean(tm.editTenantFormErrors.contact_name)}
+              >
                 <FormLabel>Contact Name</FormLabel>
                 <Input
                   value={tm.editTenantForm.contact_name ?? ""}
-                  onChange={(e) => tm.handleEditTenantContactNameChange(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleEditTenantContactNameChange(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.editTenantFormErrors.contact_name}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.editTenantFormErrors.contact_name}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl isRequired isInvalid={Boolean(tm.editTenantFormErrors.email)}>
+              <FormControl
+                isRequired
+                isInvalid={Boolean(tm.editTenantFormErrors.email)}
+              >
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
                   value={tm.editTenantForm.email ?? ""}
-                  onChange={(e) => tm.handleEditTenantEmailChange(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleEditTenantEmailChange(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.editTenantFormErrors.email}</FormErrorMessage>
-                {tm.editTenantEmailStatus === "checking" && !tm.editTenantFormErrors.email && (
-                  <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
-                )}
-                {tm.editTenantEmailStatus === "available" && !tm.editTenantFormErrors.email && (
-                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
-                )}
+                <FormErrorMessage>
+                  {tm.editTenantFormErrors.email}
+                </FormErrorMessage>
+                {tm.editTenantEmailStatus === "checking" &&
+                  !tm.editTenantFormErrors.email && (
+                    <FormHelperText color="gray.500">
+                      Checking if email exists…
+                    </FormHelperText>
+                  )}
+                {tm.editTenantEmailStatus === "available" &&
+                  !tm.editTenantFormErrors.email && (
+                    <FormHelperText color="green.600">
+                      {EMAIL_AVAILABLE_MSG}
+                    </FormHelperText>
+                  )}
                 <FormHelperText>
-                  If you change the contact email, the update takes effect only after the new
-                  address is verified.
+                  If you change the contact email, the update takes effect only
+                  after the new address is verified.
                 </FormHelperText>
               </FormControl>
-              <FormControl isInvalid={Boolean(tm.editTenantFormErrors.phone_number)}>
+              <FormControl
+                isInvalid={Boolean(tm.editTenantFormErrors.phone_number)}
+              >
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.editTenantForm.phone_number ?? ""}
-                  onChange={(e) => tm.handleEditTenantPhoneChange(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleEditTenantPhoneChange(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.editTenantFormErrors.phone_number}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.editTenantFormErrors.phone_number}
+                </FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -908,7 +1217,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalBody>
             <VStack spacing={3} align="stretch">
               {isAdmin && tm.lockedUserFormTenantId && (
-                <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
+                <FormControl
+                  isRequired
+                  isInvalid={Boolean(tm.userFormErrors.tenant_id)}
+                >
                   <FormLabel>Tenant</FormLabel>
                   <Input
                     value={tm.getLockedUserFormTenantLabel()}
@@ -917,11 +1229,16 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     _dark={{ bg: "whiteAlpha.100" }}
                     cursor="not-allowed"
                   />
-                  <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
+                  <FormErrorMessage>
+                    {tm.userFormErrors.tenant_id}
+                  </FormErrorMessage>
                 </FormControl>
               )}
               {isAdmin && !tm.lockedUserFormTenantId && (
-                <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
+                <FormControl
+                  isRequired
+                  isInvalid={Boolean(tm.userFormErrors.tenant_id)}
+                >
                   <FormLabel>Tenant</FormLabel>
                   <Select
                     value={tm.userForm.tenant_id}
@@ -934,10 +1251,15 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       </option>
                     ))}
                   </Select>
-                  <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
+                  <FormErrorMessage>
+                    {tm.userFormErrors.tenant_id}
+                  </FormErrorMessage>
                 </FormControl>
               )}
-              <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.email)}>
+              <FormControl
+                isRequired
+                isInvalid={Boolean(tm.userFormErrors.email)}
+              >
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
@@ -945,20 +1267,31 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   onChange={(e) => tm.handleUserEmailChange(e.target.value)}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
-                {tm.userEmailStatus === "checking" && !tm.userFormErrors.email && (
-                  <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
-                )}
-                {tm.userEmailStatus === "available" && !tm.userFormErrors.email && (
-                  <FormHelperText color="green.600">{EMAIL_AVAILABLE_MSG}</FormHelperText>
-                )}
+                {tm.userEmailStatus === "checking" &&
+                  !tm.userFormErrors.email && (
+                    <FormHelperText color="gray.500">
+                      Checking if email exists…
+                    </FormHelperText>
+                  )}
+                {tm.userEmailStatus === "available" &&
+                  !tm.userFormErrors.email && (
+                    <FormHelperText color="green.600">
+                      {EMAIL_AVAILABLE_MSG}
+                    </FormHelperText>
+                  )}
               </FormControl>
-              <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.full_name)}>
+              <FormControl
+                isRequired
+                isInvalid={Boolean(tm.userFormErrors.full_name)}
+              >
                 <FormLabel>Full Name</FormLabel>
                 <Input
                   value={tm.userForm.full_name}
                   onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
                 />
-                <FormErrorMessage>{tm.userFormErrors.full_name}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.userFormErrors.full_name}
+                </FormErrorMessage>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -984,7 +1317,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   value={tm.userForm.phone_number}
                   onChange={(e) => tm.handleUserPhoneChange(e.target.value)}
                 />
-                <FormErrorMessage>{tm.userFormErrors.phone_number}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.userFormErrors.phone_number}
+                </FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1019,13 +1354,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
-              <FormControl isRequired isInvalid={Boolean(tm.editUserFormErrors.username)}>
+              <FormControl
+                isRequired
+                isInvalid={Boolean(tm.editUserFormErrors.username)}
+              >
                 <FormLabel>Username</FormLabel>
                 <Input
                   value={tm.editUserForm.username ?? ""}
-                  onChange={(e) => tm.handleEditUserUsernameChange(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleEditUserUsernameChange(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.editUserFormErrors.username}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.editUserFormErrors.username}
+                </FormErrorMessage>
               </FormControl>
               <FormControl>
                 <FormLabel>Email</FormLabel>
@@ -1033,17 +1375,21 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   {dash(tm.editUserRow?.email)}
                 </Text>
                 <Text fontSize="xs" color="gray.500" mt={1}>
-                  Email cannot be changed. Suspend or delete the account if the user has left the
-                  organisation.
+                  Email cannot be changed. Suspend or delete the account if the
+                  user has left the organisation.
                 </Text>
               </FormControl>
               <FormControl isInvalid={Boolean(tm.editUserFormErrors.full_name)}>
                 <FormLabel>Full Name</FormLabel>
                 <Input
                   value={tm.editUserForm.full_name ?? ""}
-                  onChange={(e) => tm.handleEditUserFullNameChange(e.target.value)}
+                  onChange={(e) =>
+                    tm.handleEditUserFullNameChange(e.target.value)
+                  }
                 />
-                <FormErrorMessage>{tm.editUserFormErrors.full_name}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.editUserFormErrors.full_name}
+                </FormErrorMessage>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Role</FormLabel>
@@ -1063,13 +1409,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   ))}
                 </Select>
               </FormControl>
-              <FormControl isInvalid={Boolean(tm.editUserFormErrors.phone_number)}>
+              <FormControl
+                isInvalid={Boolean(tm.editUserFormErrors.phone_number)}
+              >
                 <FormLabel>Phone Number</FormLabel>
                 <Input
                   value={tm.editUserForm.phone_number ?? ""}
                   onChange={(e) => tm.handleEditUserPhoneChange(e.target.value)}
                 />
-                <FormErrorMessage>{tm.editUserFormErrors.phone_number}</FormErrorMessage>
+                <FormErrorMessage>
+                  {tm.editUserFormErrors.phone_number}
+                </FormErrorMessage>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1094,7 +1444,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   function renderViewUserModal() {
     const u = tm.viewUserDetail;
     return (
-      <Modal isOpen={tm.isViewUserModalOpen} onClose={tm.closeViewUserModal} size="md">
+      <Modal
+        isOpen={tm.isViewUserModalOpen}
+        onClose={tm.closeViewUserModal}
+        size="md"
+      >
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>User Details</ModalHeader>
@@ -1124,13 +1478,21 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </Box>
                 <Box>
                   <Text fontWeight="semibold">Status</Text>
-                  <Badge colorScheme={getTenantStatusColorScheme(resolveUserDisplayStatus(u))}>
+                  <Badge
+                    colorScheme={getTenantStatusColorScheme(
+                      resolveUserDisplayStatus(u),
+                    )}
+                  >
                     {formatTenantUserStatusLabel(resolveUserDisplayStatus(u))}
                   </Badge>
                 </Box>
                 <Box>
                   <Text fontWeight="semibold">Roles</Text>
-                  <TenantUserRoleBadges role={u.role} roles={u.roles} badgeFontSize="sm" />
+                  <TenantUserRoleBadges
+                    role={u.role}
+                    roles={u.roles}
+                    badgeFontSize="sm"
+                  />
                 </Box>
               </VStack>
             ) : (
@@ -1147,7 +1509,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   function formatStatusConfirmLabel(
     targetType: "tenant" | "user" | undefined,
-    status: string
+    status: string,
   ): string {
     if (targetType === "user") {
       return formatTenantUserStatusLabel(status);
@@ -1159,7 +1521,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     const target = tm.statusUpdateTarget;
     const isOpen = tm.isStatusDialogOpen && Boolean(target);
     const targetLabel = target?.type === "tenant" ? "tenant" : "user";
-    const statusLabel = formatStatusConfirmLabel(target?.type, tm.statusUpdateNewStatus);
+    const statusLabel = formatStatusConfirmLabel(
+      target?.type,
+      tm.statusUpdateNewStatus,
+    );
     return (
       <ConfirmDialog
         isOpen={isOpen}
@@ -1187,6 +1552,210 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
         confirmColorScheme="red"
         isConfirmLoading={tm.isDeletingUser}
       />
+    );
+  }
+
+  function renderAssignTierModal() {
+    const tenant = assignTierTenant;
+    const canAssign =
+      !!assignTierId &&
+      !!assignBudget.trim() &&
+      !!assignEffectiveFrom &&
+      !!assignEffectiveTo;
+    return (
+      <Modal
+        isOpen={isAssignTierOpen}
+        onClose={handleAssignTierClose}
+        isCentered
+        size="xl"
+      >
+        <ModalOverlay />
+        <ModalContent minH="350px">
+          <ModalHeader fontSize="md" fontWeight="semibold" pb={1}>
+            Assign Tier{tenant ? ` — ${tenant.organisation}` : ""}
+          </ModalHeader>
+          <ModalCloseButton isDisabled={isAssigning} />
+          <ModalBody pb={6}>
+            <VStack align="stretch" spacing={5}>
+              {assignTierError && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  <AlertDescription fontSize="sm">
+                    {assignTierError}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm">
+                  Tier
+                </FormLabel>
+                <Select
+                  value={assignTierId}
+                  onChange={(e) => setAssignTierId(e.target.value)}
+                  placeholder="Select a tier"
+                  size="sm"
+                  isDisabled={isAssigning}
+                >
+                  {tierOptions.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm">
+                  Budget
+                </FormLabel>
+                <InputGroup size="sm">
+                  <InputLeftAddon>₹</InputLeftAddon>
+                  <Input
+                    value={assignBudget}
+                    onChange={(e) => setAssignBudget(e.target.value)}
+                    placeholder="e.g. 500000"
+                    type="number"
+                    min={0}
+                    isDisabled={isAssigning}
+                  />
+                </InputGroup>
+              </FormControl>
+
+              <HStack spacing={4} align="flex-start">
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm">
+                    Effective From
+                  </FormLabel>
+                  <Input
+                    type="date"
+                    size="sm"
+                    value={assignEffectiveFrom}
+                    onChange={(e) => setAssignEffectiveFrom(e.target.value)}
+                    isDisabled={isAssigning}
+                  />
+                </FormControl>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm">
+                    Effective To
+                  </FormLabel>
+                  <Input
+                    type="date"
+                    size="sm"
+                    value={assignEffectiveTo}
+                    min={assignEffectiveFrom}
+                    onChange={(e) => setAssignEffectiveTo(e.target.value)}
+                    isDisabled={isAssigning}
+                  />
+                </FormControl>
+              </HStack>
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              variant="ghost"
+              mr={3}
+              onClick={handleAssignTierClose}
+              isDisabled={isAssigning}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme="blue"
+              isDisabled={!canAssign}
+              isLoading={isAssigning}
+              loadingText="Assigning..."
+              onClick={handleAssignTierSubmit}
+            >
+              Assign
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    );
+  }
+
+  function renderViewTierModal() {
+    const a = viewTierTenant;
+    return (
+      <Modal
+        isOpen={isViewTierOpen}
+        onClose={() => {
+          onViewTierClose();
+          setViewTierTenant(null);
+        }}
+        isCentered
+        size="md"
+      >
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader fontSize="md" fontWeight="semibold">
+            Tier Details
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody pb={6}>
+            {a ? (
+              <VStack align="stretch" spacing={3}>
+                <SimpleGrid columns={2} spacing={3}>
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
+                      Tier Name
+                    </Text>
+                    <Text fontSize="sm">{a.tier_name}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
+                      Tenant ID
+                    </Text>
+                    <Text fontSize="sm" fontFamily="mono">
+                      {a.tenant_id}
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
+                      Budget Limit
+                    </Text>
+                    <Text fontSize="sm">
+                      ₹ {parseFloat(a.budget_limit).toLocaleString()}
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
+                      Available Balance
+                    </Text>
+                    <Text fontSize="sm">
+                      ₹ {parseFloat(a.available_balance).toLocaleString()}
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
+                      Effective From
+                    </Text>
+                    <Text fontSize="sm">{fmtDate(a.effective_from)}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
+                      Effective To
+                    </Text>
+                    <Text fontSize="sm">{fmtDate(a.effective_to)}</Text>
+                  </Box>
+                </SimpleGrid>
+              </VStack>
+            ) : (
+              <Text>No tier data available.</Text>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              onClick={() => {
+                onViewTierClose();
+                setViewTierTenant(null);
+              }}
+            >
+              Close
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     );
   }
 }

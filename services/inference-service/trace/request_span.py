@@ -20,24 +20,31 @@ tracer = trace.get_tracer("inference-service")
 
 def get_context_attributes() -> dict:
     """
-    Resolve userId and tenantId for span attributes from ai4i_core ContextVars.
+    Resolve userId, tenantId, and the request correlation ID for span attributes
+    from ai4i_core ContextVars.
 
-    RequestMiddleware (ai4i_core.logging) populates these contextvars from
-    the gateway-injected X-Tenant-Id / X-User-ID headers before handlers run;
-    contextvars set in middleware propagate into the handler task, so they are
-    the single source of truth here — no header re-reading.
+    RequestMiddleware (ai4i_core.logging) populates these contextvars from the
+    gateway-injected headers before handlers run; contextvars propagate into the
+    handler task, so they are the single source of truth — no header re-reading.
+
+    correlation_id must be captured here (request context) and stored as a span
+    attribute so that LoggerSpanExporter can read it from the span later on the
+    background exporter thread, where get_trace_id() would return None.
 
     Returns dict with available values (skips None).
     """
     attrs = {}
     try:
-        from ai4i_core.context import get_user_id, get_tenant_id
+        from ai4i_core.context import get_user_id, get_tenant_id, get_trace_id
         user_id = get_user_id()
         tenant_id = get_tenant_id()
+        correlation_id = get_trace_id()
         if user_id:
             attrs["userId"] = user_id
         if tenant_id:
             attrs["tenantId"] = tenant_id
+        if correlation_id:
+            attrs["correlation_id"] = correlation_id
     except Exception as e:
         logger.debug(f"Could not read context attributes: {e}")
     return attrs
@@ -60,15 +67,21 @@ def compute_total_time_ms(start_time: float) -> float:
 def log_span_attributes(span_name: str, span, attributes: dict) -> None:
     """
     Log span attributes in OpenTelemetry standard JSON format.
-    Reuses the same format as inference_span._log_span_attributes.
+
+    Uses the request correlation_id (seeded by RequestMiddleware from
+    X-Correlation-ID) as context.trace_id so OpenSearch queries from
+    platform-core correlate correctly. The OTel SDK trace ID is preserved
+    as context.otel_trace_id for cross-service OTel joins.
     """
     import json
     try:
         span_context = span.get_span_context()
+        correlation_id = attributes.get("correlation_id")
         otel_format = {
             "name": span_name,
             "context": {
-                "trace_id": f"0x{span_context.trace_id:032x}",
+                "trace_id": correlation_id or f"0x{span_context.trace_id:032x}",
+                "otel_trace_id": f"0x{span_context.trace_id:032x}",
                 "span_id": f"0x{span_context.span_id:016x}",
                 "trace_state": str(span_context.trace_state or "")
             },

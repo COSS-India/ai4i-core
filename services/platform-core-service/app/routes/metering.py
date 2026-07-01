@@ -8,7 +8,7 @@ import math
 import re
 import time as _time
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -78,9 +78,15 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
 
 
-def _validate_scope_tenant(tenant_id: Optional[str]) -> Optional[str]:
-    if tenant_id is not None and not re.fullmatch(r"[0-9]+", tenant_id):
-        raise HTTPException(status_code=400, detail="tenant_id must be a positive integer")
+def _validate_scope_tenant(tenant_id: Optional[Union[str, int]]) -> Optional[str]:
+    if tenant_id is None:
+        return None
+    if isinstance(tenant_id, int):
+        # Query param path: already validated ge=1 by FastAPI — just coerce to str.
+        return str(tenant_id)
+    # Header path (X-Tenant-Id from gateway JWT): guard against malformed values.
+    if not re.fullmatch(r"[0-9]+", tenant_id):
+        raise HTTPException(status_code=422, detail="tenant_id must be a positive integer")
     return tenant_id
 
 
@@ -248,7 +254,7 @@ WindowParam = Literal["1h", "24h", "7d", "30d"]
 async def get_overview(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
-    tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
+    tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -401,7 +407,7 @@ async def get_tenant_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
-    tenant_id: Optional[str] = Query(None, description="Scope to a single tenant (admin only)"),
+    tenant_id: Optional[int] = Query(None, ge=1, description="Scope to a single tenant (admin only)"),
     services: Optional[str] = Query(
         None, description="Comma-separated service keys for the heatmap columns (default: all)"
     ),
@@ -516,7 +522,7 @@ async def get_tenant_consumption(
 async def get_service_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
-    tenant_id: Optional[str] = Query(None, description="Narrow to a specific tenant (admin only)"),
+    tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
