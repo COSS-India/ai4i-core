@@ -53,10 +53,17 @@ class LoggerSpanExporter(SpanExporter):
                 parent_span_id = (
                     f"0x{span.parent.span_id:016x}" if span.parent else None
                 )
+                # correlation_id was stored as a span attribute by get_context_attributes()
+                # while still in request context. Reading it here (background thread,
+                # request context gone) is the only safe path — get_trace_id() returns None.
+                span_attrs = dict(span.attributes) if span.attributes else {}
+                correlation_id = span_attrs.get("correlation_id")
+                otel_trace_id = f"0x{span_context.trace_id:032x}"
                 span_data = {
                     "name": span.name,
                     "context": {
-                        "trace_id": f"0x{span_context.trace_id:032x}",
+                        "trace_id": correlation_id or otel_trace_id,
+                        "otel_trace_id": otel_trace_id,
                         "span_id": f"0x{span_context.span_id:016x}",
                         "parent_span_id": parent_span_id,
                         "trace_state": str(span_context.trace_state or ""),
@@ -64,7 +71,7 @@ class LoggerSpanExporter(SpanExporter):
                     "kind": str(span.kind),
                     "start_time": span.start_time,
                     "end_time": span.end_time,
-                    "attributes": dict(span.attributes) if span.attributes else {},
+                    "attributes": span_attrs,
                     "status": {
                         "status_code": str(span.status.status_code),
                         "description": span.status.description,
