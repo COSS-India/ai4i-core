@@ -1,19 +1,31 @@
 """PPU usage repository — reads usage and pricing data."""
-from sqlalchemy import func, null, select
+from sqlalchemy import case, func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai4i_core.ppu import get_inference_unit_map
 from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 
+_INFERENCE_TO_UNIT: dict[str, str] = get_inference_unit_map()
+
+
+def _inference_name_to_billing_unit(col):
+    """CASE expression: lower(inference_name) → billing_unit_type (e.g. 'llm' → 'tokens')."""
+    lower_col = func.lower(col)
+    return case(
+        *[(lower_col == k, v) for k, v in _INFERENCE_TO_UNIT.items()],
+        else_=null(),
+    )
+
 
 def _pricing_subquery():
     """
-    One pricing row per billing_unit_type (inference type name, e.g. "llm"),
-    choosing the most recently created non-deleted Service row.
-    Prevents double-counting when multiple Service rows share the same
-    billing_unit_type (e.g. several LLM services).
+    One pricing row per billing_unit_type, choosing the most recently created
+    non-deleted Service row. Prevents double-counting when multiple Service
+    rows share the same billing_unit_type (e.g. several LLM services all
+    billed as 'tokens').
     """
     inner = (
         select(
@@ -63,7 +75,7 @@ class PPUUsageRepository:
             )
             .outerjoin(
                 pricing_sq,
-                pricing_sq.c.billing_unit_type == func.lower(PPUQuotaUsage.inference_name),
+                pricing_sq.c.billing_unit_type == _inference_name_to_billing_unit(PPUQuotaUsage.inference_name),
             )
             .where(PPUQuotaUsage.billing_month == billing_month)
             .group_by(
@@ -110,7 +122,7 @@ class PPUUsageRepository:
             unit_size_col = (
                 select(Service.unit_size)
                 .where(
-                    Service.billing_unit_type == model_task_type.lower(),
+                    Service.billing_unit_type == _INFERENCE_TO_UNIT.get(model_task_type.lower(), model_task_type.lower()),
                     Service.deleted_at.is_(None),
                 )
                 .order_by(Service.created_at.desc())
@@ -195,7 +207,7 @@ class PPUUsageRepository:
             )
             .outerjoin(
                 pricing_sq,
-                pricing_sq.c.billing_unit_type == func.lower(PPUQuotaUsage.inference_name),
+                pricing_sq.c.billing_unit_type == _inference_name_to_billing_unit(PPUQuotaUsage.inference_name),
             )
             .where(
                 PPUQuotaUsage.tenant_id == tenant_id,
