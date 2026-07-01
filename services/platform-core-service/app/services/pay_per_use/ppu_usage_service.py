@@ -23,7 +23,6 @@ from app.schemas.pay_per_use.usage import (
 
 _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
-_DEFAULT_UNIT_SIZE = 1_000_000
 
 
 async def _resolve_tenant_names(
@@ -55,7 +54,7 @@ class PPUUsageService:
         items: list[dict] = []
         for row in rows:
             units = row.total_units or 0
-            unit_size = row.unit_size or _DEFAULT_UNIT_SIZE
+            unit_size = int(row.unit_size) if row.unit_size else 1
             consumption = round(units / unit_size, 1)
 
             if row.unit_rate:
@@ -105,7 +104,7 @@ class PPUUsageService:
             remaining_budget = float(row.available_balance)
             total_units = int(row.total_units or 0)
             raw_quota = row.total_quota  # None means unlimited (no quota rows for this tier)
-            unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
+            unit_size = int(row.unit_size) if row.unit_size else 1
             consumption = round(total_units / unit_size, 1)
             quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
 
@@ -146,7 +145,7 @@ class PPUUsageService:
         raw: list[dict] = []
         for row in breakdown_rows:
             units = int(row.total_units or 0)
-            unit_size = int(row.unit_size or _DEFAULT_UNIT_SIZE)
+            unit_size = int(row.unit_size) if row.unit_size else 1
             consumption = round(units / unit_size, 1)
             total_consumption += consumption
             inference_types.add(row.inference_name)
