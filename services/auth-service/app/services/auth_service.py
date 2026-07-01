@@ -58,6 +58,7 @@ from app.services.email_helpers import (
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
+from app.utils.masking import looks_masked, mask_email
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
@@ -604,6 +605,32 @@ class AuthService:
     async def check_email_exists(self, email: str) -> bool:
         return await self._users.email_exists(email.lower().strip())
 
+    async def _resolve_setup_link_user(self, email: str) -> Optional[User]:
+        """Resolve the onboarding user for a setup-link resend request.
+
+        Direct lookup handles set-password page retries with the real address.
+        Tenant Management echoes masked contact emails from list/detail APIs
+        (``j***@e***.com``); match those against pending tenants and load the
+        provisioned contact admin via the stored plaintext email.
+        """
+        user = await self._users.get_by_email(email)
+        if user:
+            return user
+        if not looks_masked(email):
+            return None
+
+        pending = await self._tenants.list_all(status=TenantStatus.PENDING, limit=500)
+        matches = [t for t in pending if mask_email(t.email) == email]
+        if len(matches) != 1:
+            if len(matches) > 1:
+                logger.warning(
+                    "resend_setup_link: masked email %r matched %d pending tenants; skipping",
+                    email,
+                    len(matches),
+                )
+            return None
+        return await self._users.get_by_email(matches[0].email)
+
     async def resend_setup_link(
         self,
         email: str,
@@ -619,7 +646,7 @@ class AuthService:
         token-type scoping and credentials-already-set guard stay in lockstep
         with the tenant email-update flow (see ``TenantService.update_tenant``).
         """
-        user = await self._users.get_by_email(email)
+        user = await self._resolve_setup_link_user(email)
         if not user:
             return  # anti-enumeration: silent no-op
 

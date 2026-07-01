@@ -149,9 +149,71 @@ class TestResendSetupLinkSilentNoOp:
         """resend_setup_link must return None for an unknown email — anti-enumeration."""
         from app.services.auth_service import AuthService
 
+        svc = MagicMock()
+        svc._resolve_setup_link_user = AsyncMock(return_value=None)
+
+        result = await AuthService.resend_setup_link(
+            svc, email="nobody@tenant.invalid"
+        )
+        assert result is None
+
+
+class TestResolveSetupLinkUser:
+    @pytest.mark.asyncio
+    async def test_direct_user_lookup(self) -> None:
+        from app.services.auth_service import AuthService
+
+        user = MagicMock()
+        svc = MagicMock(spec=AuthService)
+        svc._users = MagicMock()
+        svc._users.get_by_email = AsyncMock(return_value=user)
+
+        resolved = await AuthService._resolve_setup_link_user(
+            svc, email="admin@example.com"
+        )
+        assert resolved is user
+        svc._users.get_by_email.assert_awaited_once_with("admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_masked_email_resolves_pending_tenant_contact(self) -> None:
+        from app.models.tenant import Tenant, TenantStatus
+        from app.services.auth_service import AuthService
+        from app.utils.masking import mask_email
+
+        admin = MagicMock()
+        tenant = Tenant(
+            id=7,
+            name="Contact",
+            organisation="Acme",
+            email="admin@example.com",
+            status=TenantStatus.PENDING,
+        )
+        masked = mask_email(tenant.email)
+
+        svc = MagicMock(spec=AuthService)
+        svc._users = MagicMock()
+        svc._users.get_by_email = AsyncMock(side_effect=[None, admin])
+        svc._tenants = MagicMock()
+        svc._tenants.list_all = AsyncMock(return_value=[tenant])
+
+        resolved = await AuthService._resolve_setup_link_user(svc, email=masked)
+        assert resolved is admin
+        svc._tenants.list_all.assert_awaited_once_with(
+            status=TenantStatus.PENDING, limit=500
+        )
+        svc._users.get_by_email.assert_any_await("admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_masked_email_no_match_is_silent(self) -> None:
+        from app.services.auth_service import AuthService
+
         svc = MagicMock(spec=AuthService)
         svc._users = MagicMock()
         svc._users.get_by_email = AsyncMock(return_value=None)
+        svc._tenants = MagicMock()
+        svc._tenants.list_all = AsyncMock(return_value=[])
 
-        result = await AuthService.resend_setup_link(svc, email="nobody@tenant.invalid")
-        assert result is None
+        resolved = await AuthService._resolve_setup_link_user(
+            svc, email="z***@n***.invalid"
+        )
+        assert resolved is None
