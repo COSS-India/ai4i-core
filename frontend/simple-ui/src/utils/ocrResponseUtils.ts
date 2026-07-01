@@ -7,7 +7,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 export function cleanOCRText(text: string): string {
   return text
-    .replace(/<br\s*\/?>/gi, "\n")
+    .replaceAll(/<br\s*\/?>/gi, "\n")
     .split("\n")
     .map((line) => line.trimEnd())
     .join("\n")

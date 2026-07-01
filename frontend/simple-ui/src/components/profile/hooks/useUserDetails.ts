@@ -2,6 +2,38 @@ import { useState, useEffect } from "react";
 import { showToast } from "../../../utils/toast";
 import type { User, UserUpdateRequest } from "../../../types/auth";
 
+const INDIAN_MOBILE_RE = /^[6-9]\d{9}$/;
+const INVALID_PHONE_MSG =
+  "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
+
+function cleanPhoneNumber(phoneNumber: string): string {
+  return phoneNumber.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
+}
+
+function extractIndianMobileDigits(cleanedPhone: string): string | null {
+  if (cleanedPhone.startsWith("+91")) {
+    const digits = cleanedPhone.slice(3);
+    return digits.length === 10 && INDIAN_MOBILE_RE.test(digits) ? digits : null;
+  }
+  if (cleanedPhone.startsWith("91") && cleanedPhone.length === 12) {
+    const digits = cleanedPhone.slice(2);
+    return INDIAN_MOBILE_RE.test(digits) ? digits : null;
+  }
+  if (cleanedPhone.startsWith("0") && cleanedPhone.length === 11) {
+    const digits = cleanedPhone.slice(1);
+    return INDIAN_MOBILE_RE.test(digits) ? digits : null;
+  }
+  if (cleanedPhone.length === 10 && INDIAN_MOBILE_RE.test(cleanedPhone)) {
+    return cleanedPhone;
+  }
+  return null;
+}
+
+function isValidIndianPhone(phoneNumber: string): boolean {
+  if (!phoneNumber.trim() || phoneNumber.includes("*")) return true;
+  return extractIndianMobileDigits(cleanPhoneNumber(phoneNumber)) !== null;
+}
+
 export interface UseUserDetailsOptions {
   user: User | null;
   updateUser: (data: Partial<User>) => Promise<User>;
@@ -31,57 +63,16 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
   }, [user]);
 
   const validatePhoneNumber = (phoneNumber: string): string | null => {
-    if (!phoneNumber || phoneNumber.trim().length === 0) return null;
-    // API returns masked phone; skip validation when echoed back unchanged.
-    if (phoneNumber.includes("*")) return null;
-    const cleanedPhone = phoneNumber.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
-    let digits = "";
-    if (cleanedPhone.startsWith("+91")) {
-      digits = cleanedPhone.substring(3);
-      if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) return null;
-    } else if (cleanedPhone.startsWith("91") && cleanedPhone.length === 12) {
-      digits = cleanedPhone.substring(2);
-      if (/^[6-9]\d{9}$/.test(digits)) return null;
-    } else if (cleanedPhone.startsWith("0") && cleanedPhone.length === 11) {
-      digits = cleanedPhone.substring(1);
-      if (/^[6-9]\d{9}$/.test(digits)) return null;
-    } else if (cleanedPhone.length === 10) {
-      digits = cleanedPhone;
-      if (/^[6-9]\d{9}$/.test(digits)) return null;
-    }
-    if (cleanedPhone.length > 3) {
-      return "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
-    }
-    return null;
+    if (!phoneNumber.trim() || phoneNumber.includes("*")) return null;
+    const cleaned = cleanPhoneNumber(phoneNumber);
+    if (extractIndianMobileDigits(cleaned)) return null;
+    return cleaned.length > 3 ? INVALID_PHONE_MSG : null;
   };
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
-    if (
-      userFormData.phone_number &&
-      userFormData.phone_number.length > 0 &&
-      !userFormData.phone_number.includes("*")
-    ) {
-      const cleanedPhone = userFormData.phone_number.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
-      let isValid = false;
-      let digits = "";
-      if (cleanedPhone.startsWith("+91")) {
-        digits = cleanedPhone.substring(3);
-        isValid = digits.length === 10 && /^[6-9]\d{9}$/.test(digits);
-      } else if (cleanedPhone.startsWith("91") && cleanedPhone.length === 12) {
-        digits = cleanedPhone.substring(2);
-        isValid = /^[6-9]\d{9}$/.test(digits);
-      } else if (cleanedPhone.startsWith("0") && cleanedPhone.length === 11) {
-        digits = cleanedPhone.substring(1);
-        isValid = /^[6-9]\d{9}$/.test(digits);
-      } else if (cleanedPhone.length === 10) {
-        digits = cleanedPhone;
-        isValid = /^[6-9]\d{9}$/.test(digits);
-      }
-      if (!isValid) {
-        newErrors.phone_number =
-          "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
-      }
+    if (userFormData.phone_number && !isValidIndianPhone(userFormData.phone_number)) {
+      newErrors.phone_number = INVALID_PHONE_MSG;
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
