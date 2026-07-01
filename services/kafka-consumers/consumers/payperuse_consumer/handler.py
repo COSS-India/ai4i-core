@@ -153,7 +153,7 @@ async def handle_ppu_usage(msg: Message) -> None:
                 units=total_tokens,
             )
             logger.info(
-                "Quota usage updated | tenant=%s inference=%s billing_month=%s"
+                "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
                 " units=%d quota_exhausted=%s",
                 tenant_id, pricing.billing_unit_type, billing_month, total_tokens, quota_exhausted,
             )
