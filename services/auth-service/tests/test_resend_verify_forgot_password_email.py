@@ -164,7 +164,7 @@ class TestResolveSetupLinkUser:
         from app.services.auth_service import AuthService
 
         user = MagicMock()
-        svc = MagicMock(spec=AuthService)
+        svc = MagicMock()
         svc._users = MagicMock()
         svc._users.get_by_email = AsyncMock(return_value=user)
 
@@ -175,7 +175,23 @@ class TestResolveSetupLinkUser:
         svc._users.get_by_email.assert_awaited_once_with("admin@example.com")
 
     @pytest.mark.asyncio
-    async def test_masked_email_resolves_pending_tenant_contact(self) -> None:
+    async def test_masked_email_requires_tenant_id_without_auth(self) -> None:
+        from app.services.auth_service import AuthService
+
+        svc = MagicMock()
+        svc._users = MagicMock()
+        svc._users.get_by_email = AsyncMock(return_value=None)
+        svc._tenants = MagicMock()
+        svc._tenants.list_all = AsyncMock()
+
+        resolved = await AuthService._resolve_setup_link_user(
+            svc, email="a***@e***.com"
+        )
+        assert resolved is None
+        svc._tenants.list_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_masked_email_with_tenant_id_works_without_auth(self) -> None:
         from app.models.tenant import Tenant, TenantStatus
         from app.services.auth_service import AuthService
         from app.utils.masking import mask_email
@@ -190,30 +206,123 @@ class TestResolveSetupLinkUser:
         )
         masked = mask_email(tenant.email)
 
-        svc = MagicMock(spec=AuthService)
+        svc = MagicMock()
         svc._users = MagicMock()
-        svc._users.get_by_email = AsyncMock(side_effect=[None, admin])
+        svc._users.get_by_email = AsyncMock(return_value=admin)
+        svc._tenants = MagicMock()
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+
+        resolved = await AuthService._resolve_masked_setup_user_by_tenant_id(
+            svc, masked, 7
+        )
+        assert resolved is admin
+        svc._tenants.get_by_id.assert_awaited_once_with(7)
+
+    @pytest.mark.asyncio
+    async def test_masked_email_resolves_by_tenant_id(self) -> None:
+        from app.models.tenant import Tenant, TenantStatus
+        from app.services.auth_service import AuthService
+        from app.utils.masking import mask_email
+
+        admin = MagicMock()
+        caller = MagicMock()
+        tenant = Tenant(
+            id=7,
+            name="Contact",
+            organisation="Acme",
+            email="admin@example.com",
+            status=TenantStatus.PENDING,
+        )
+        masked = mask_email(tenant.email)
+
+        svc = MagicMock()
+        svc._users = MagicMock()
+        svc._users.get_by_email = AsyncMock(return_value=admin)
+        svc._tenants = MagicMock()
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc._caller_may_access_tenant_for_setup_resend = AsyncMock(return_value=True)
+
+        resolved = await AuthService._resolve_masked_setup_user_by_tenant_id(
+            svc, masked, 7, caller
+        )
+        assert resolved is admin
+        svc._tenants.get_by_id.assert_awaited_once_with(7)
+
+    @pytest.mark.asyncio
+    async def test_masked_email_platform_staff_scans_pending_tenants(self) -> None:
+        from app.models.tenant import Tenant, TenantStatus
+        from app.services.auth_service import AuthService
+        from app.utils.masking import mask_email
+
+        admin = MagicMock()
+        caller = MagicMock()
+        tenant = Tenant(
+            id=7,
+            name="Contact",
+            organisation="Acme",
+            email="admin@example.com",
+            status=TenantStatus.PENDING,
+        )
+        masked = mask_email(tenant.email)
+
+        svc = MagicMock()
+        svc._users = MagicMock()
+        svc._users.get_by_email = AsyncMock(return_value=admin)
         svc._tenants = MagicMock()
         svc._tenants.list_all = AsyncMock(return_value=[tenant])
 
-        resolved = await AuthService._resolve_setup_link_user(svc, email=masked)
+        resolved = await AuthService._resolve_masked_setup_user_by_scan(
+            svc, masked, caller
+        )
         assert resolved is admin
         svc._tenants.list_all.assert_awaited_once_with(
-            status=TenantStatus.PENDING, limit=500
+            status=TenantStatus.PENDING, offset=0, limit=100
         )
-        svc._users.get_by_email.assert_any_await("admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_masked_email_tenant_admin_uses_own_tenant_only(self) -> None:
+        from app.models.tenant import Tenant, TenantStatus
+        from app.services.auth_service import AuthService
+        from app.utils.masking import mask_email
+
+        admin = MagicMock()
+        caller = MagicMock()
+        caller.tenant_id = 7
+        tenant = Tenant(
+            id=7,
+            name="Contact",
+            organisation="Acme",
+            email="admin@example.com",
+            status=TenantStatus.PENDING,
+        )
+        masked = mask_email(tenant.email)
+
+        svc = MagicMock()
+        svc._users = MagicMock()
+        svc._users.get_by_email = AsyncMock(return_value=None)
+        svc._is_platform_staff = AsyncMock(return_value=False)
+        svc._resolve_masked_setup_user_by_tenant_id = AsyncMock(return_value=admin)
+
+        resolved = await AuthService._resolve_setup_link_user(
+            svc, email=masked, caller=caller
+        )
+        assert resolved is admin
+        svc._resolve_masked_setup_user_by_tenant_id.assert_awaited_once_with(
+            masked, 7, caller
+        )
 
     @pytest.mark.asyncio
     async def test_masked_email_no_match_is_silent(self) -> None:
         from app.services.auth_service import AuthService
 
-        svc = MagicMock(spec=AuthService)
+        caller = MagicMock()
+        svc = MagicMock()
         svc._users = MagicMock()
         svc._users.get_by_email = AsyncMock(return_value=None)
-        svc._tenants = MagicMock()
-        svc._tenants.list_all = AsyncMock(return_value=[])
+        svc._is_platform_staff = AsyncMock(return_value=True)
+        svc._resolve_masked_setup_user_by_scan = AsyncMock(return_value=None)
 
         resolved = await AuthService._resolve_setup_link_user(
-            svc, email="z***@n***.invalid"
+            svc, email="z***@n***.invalid", caller=caller
         )
         assert resolved is None

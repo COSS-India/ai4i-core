@@ -80,6 +80,14 @@ class SetPasswordRequest(BaseSchema):
 
 class ResendSetupLinkRequest(BaseSchema):
     email: _AnyEmail
+    tenant_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Pending tenant ID. Required with masked contact emails from Tenant "
+            "Management; resolves the contact admin directly without auth."
+        ),
+    )
 
 
 class VerifyEmailRequest(BaseSchema):

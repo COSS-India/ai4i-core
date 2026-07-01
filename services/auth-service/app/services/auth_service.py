@@ -63,6 +63,8 @@ from app.utils.username import allocate_unique_username, derive_username_from_em
 
 logger = logging.getLogger(__name__)
 
+_PENDING_TENANT_PAGE_SIZE = 100
+
 
 def assert_tenant_allows_authentication(tenant: Optional[Tenant]) -> None:
     """Reject sign-in when the tenant is not ACTIVE."""
@@ -605,13 +607,95 @@ class AuthService:
     async def check_email_exists(self, email: str) -> bool:
         return await self._users.email_exists(email.lower().strip())
 
-    async def _resolve_setup_link_user(self, email: str) -> Optional[User]:
+    async def _is_platform_staff(self, user: User) -> bool:
+        roles = await self._roles.get_user_roles(user.id)
+        return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
+
+    async def _caller_may_access_tenant_for_setup_resend(
+        self, caller: User, tenant: Tenant
+    ) -> bool:
+        if await self._is_platform_staff(caller):
+            return True
+        return caller.tenant_id == tenant.id
+
+    async def _resolve_masked_setup_user_by_tenant_id(
+        self,
+        masked_email: str,
+        tenant_id: int,
+        caller: Optional[User] = None,
+    ) -> Optional[User]:
+        tenant = await self._tenants.get_by_id(tenant_id)
+        if not tenant or tenant.status != TenantStatus.PENDING:
+            return None
+        if caller is not None and not await self._caller_may_access_tenant_for_setup_resend(
+            caller, tenant
+        ):
+            return None
+        if mask_email(tenant.email) != masked_email:
+            return None
+        return await self._users.get_by_email(tenant.email)
+
+    async def _resolve_masked_setup_user_by_scan(
+        self,
+        masked_email: str,
+        caller: User,
+    ) -> Optional[User]:
+        """Platform staff only: paginate all pending tenants (no silent cap)."""
+        matches: list[Tenant] = []
+        offset = 0
+        pages = 0
+        while True:
+            batch = await self._tenants.list_all(
+                status=TenantStatus.PENDING,
+                offset=offset,
+                limit=_PENDING_TENANT_PAGE_SIZE,
+            )
+            pages += 1
+            if not batch:
+                break
+            for tenant in batch:
+                if mask_email(tenant.email) == masked_email:
+                    matches.append(tenant)
+                    if len(matches) > 1:
+                        break
+            if len(matches) > 1:
+                break
+            if len(batch) < _PENDING_TENANT_PAGE_SIZE:
+                break
+            offset += _PENDING_TENANT_PAGE_SIZE
+
+        if pages > 1:
+            logger.info(
+                "resend_setup_link: scanned %d page(s) of pending tenants for masked email",
+                pages,
+            )
+
+        if len(matches) != 1:
+            if len(matches) > 1:
+                # mask_email is lossy; refuse rather than send to the wrong tenant.
+                logger.warning(
+                    "resend_setup_link: masked email %r matched %d pending tenants; "
+                    "pass tenant_id to disambiguate",
+                    masked_email,
+                    len(matches),
+                )
+            return None
+        return await self._users.get_by_email(matches[0].email)
+
+    async def _resolve_setup_link_user(
+        self,
+        email: str,
+        *,
+        tenant_id: Optional[int] = None,
+        caller: Optional[User] = None,
+    ) -> Optional[User]:
         """Resolve the onboarding user for a setup-link resend request.
 
         Direct lookup handles set-password page retries with the real address.
-        Tenant Management echoes masked contact emails from list/detail APIs
-        (``j***@e***.com``); match those against pending tenants and load the
-        provisioned contact admin via the stored plaintext email.
+        Masked contact emails (``j***@e***.com``) require ``tenant_id``: the
+        backend loads that pending tenant directly (no table scan, no auth).
+        Authenticated callers without ``tenant_id`` fall back to a paginated
+        pending-tenant scan (platform staff) or their own tenant (tenant admin).
         """
         user = await self._users.get_by_email(email)
         if user:
@@ -619,22 +703,27 @@ class AuthService:
         if not looks_masked(email):
             return None
 
-        pending = await self._tenants.list_all(status=TenantStatus.PENDING, limit=500)
-        matches = [t for t in pending if mask_email(t.email) == email]
-        if len(matches) != 1:
-            if len(matches) > 1:
-                logger.warning(
-                    "resend_setup_link: masked email %r matched %d pending tenants; skipping",
-                    email,
-                    len(matches),
-                )
+        if tenant_id is not None:
+            return await self._resolve_masked_setup_user_by_tenant_id(
+                email, tenant_id, caller
+            )
+        if caller is None:
             return None
-        return await self._users.get_by_email(matches[0].email)
+        if await self._is_platform_staff(caller):
+            return await self._resolve_masked_setup_user_by_scan(email, caller)
+        if caller.tenant_id is None:
+            return None
+        return await self._resolve_masked_setup_user_by_tenant_id(
+            email, caller.tenant_id, caller
+        )
 
     async def resend_setup_link(
         self,
         email: str,
         background_tasks: Optional[BackgroundTasks] = None,
+        *,
+        tenant_id: Optional[int] = None,
+        caller: Optional[User] = None,
     ) -> None:
         """Invalidate old setup tokens and issue a new welcome/set-password email.
 
@@ -646,7 +735,9 @@ class AuthService:
         token-type scoping and credentials-already-set guard stay in lockstep
         with the tenant email-update flow (see ``TenantService.update_tenant``).
         """
-        user = await self._resolve_setup_link_user(email)
+        user = await self._resolve_setup_link_user(
+            email, tenant_id=tenant_id, caller=caller
+        )
         if not user:
             return  # anti-enumeration: silent no-op
 
