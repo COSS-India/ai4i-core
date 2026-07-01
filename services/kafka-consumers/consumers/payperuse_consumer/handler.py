@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import httpx
 from confluent_kafka.cimpl import Message
 
+from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
 from config import settings
 from consumers.registry import kafka_listener
@@ -18,6 +19,9 @@ from consumers.payperuse_consumer._billing import (
 )
 
 logger = get_logger(__name__)
+
+_BILLED_KEY_PREFIX = "ppu:billed:"
+_BILLED_KEY_TTL = 86400  # 24 hours — longer than any realistic Kafka redelivery window
 
 
 @kafka_listener(settings.topics.TOPIC_PAY_PER_USE)
@@ -45,6 +49,26 @@ async def handle_ppu_usage(msg: Message) -> None:
     span_name = data.get("name", "")
     if span_name != "ai-inference":
         return
+
+    # Deduplicate using the OTel span_id — unique per inference span.
+    # Guards against double-billing when Kafka redelivers after a rebalance.
+    span_id: str = (data.get("context") or {}).get("span_id", "").strip()
+    if span_id:
+        try:
+            redis = get_redis_client()
+            billed_key = f"{_BILLED_KEY_PREFIX}{span_id}"
+            already_billed = await redis.exists(billed_key)
+            if already_billed:
+                logger.warning(
+                    "Duplicate span detected — skipping billing offset=%d span_id=%s",
+                    msg.offset(), span_id,
+                )
+                return
+        except Exception as exc:
+            # Redis unavailable: log and continue — billing correctness relies on
+            # at-most-one consumer instance when Redis is down.
+            logger.warning("Redis dedup check failed — proceeding without dedup: %s", exc)
+            span_id = ""  # don't attempt the post-commit SET either
 
     attrs = data.get("attributes") or {}
 
@@ -103,6 +127,15 @@ async def handle_ppu_usage(msg: Message) -> None:
         # Commit DB changes before any HTTP calls to avoid holding row locks
         # across slow or failing auth-service requests.
         await db.commit()
+
+    # Mark span as billed in Redis after DB commit so a crash before this point
+    # causes a retry (over-billing risk) rather than silent data loss.
+    if span_id:
+        try:
+            redis = get_redis_client()
+            await redis.set(billed_key, "1", ex=_BILLED_KEY_TTL)
+        except Exception as exc:
+            logger.warning("Failed to set Redis dedup key for span_id=%s: %s", span_id, exc)
 
     logger.info(
         "Billing applied | tenant=%s service=%s tokens=%d cost=%s exhausted=%s",
