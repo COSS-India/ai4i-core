@@ -242,66 +242,65 @@ function QuotaEditor({
               borderColor="gray.200"
               bg="gray.50"
             >
-              <HStack align="flex-end" spacing={3} flexWrap="wrap">
-                <FormControl w={{ base: "full", sm: "160px" }} isRequired>
-                  <FormLabel fontSize="xs" mb={1}>
-                    Model Task Type
-                  </FormLabel>
-                  <Select
-                    size="sm"
-                    value={quota.modelTaskType}
-                    onChange={(e) =>
-                      handleQuotaChange(idx, "modelTaskType", e.target.value)
-                    }
-                  >
-                    <option value="" disabled>
-                      Select model task type
-                    </option>
-                    {taskTypeNames
-                      .filter((t) => {
-                        const selectedElsewhere = quotas
-                          .filter((_, i) => i !== idx)
-                          .map((q) => q.modelTaskType);
-                        return (
-                          !selectedElsewhere.includes(t) ||
-                          t === quota.modelTaskType
-                        );
-                      })
-                      .map((t) => (
-                        <option key={t} value={t}>
-                          {formatModelTaskTypeLabel(t)}
-                        </option>
-                      ))}
-                  </Select>
-                </FormControl>
+              <HStack align="flex-end" spacing={3}>
+                <HStack align="flex-end" spacing={3} flexWrap="wrap" flex={1}>
+                  <FormControl w={{ base: "full", sm: "220px" }} isRequired>
+                    <FormLabel fontSize="xs" mb={1}>
+                      Model Task Type
+                    </FormLabel>
+                    <Select
+                      size="sm"
+                      value={quota.modelTaskType}
+                      onChange={(e) =>
+                        handleQuotaChange(idx, "modelTaskType", e.target.value)
+                      }
+                    >
+                      {taskTypeNames
+                        ?.filter((t) => {
+                          const selectedElsewhere = quotas
+                            .filter((_, i) => i !== idx)
+                            .map((q) => q.modelTaskType);
+                          return (
+                            !selectedElsewhere.includes(t) ||
+                            t === quota.modelTaskType
+                          );
+                        })
+                        .map((t) => (
+                          <option key={t} value={t}>
+                            {formatModelTaskTypeLabel(t)}
+                          </option>
+                        ))}
+                    </Select>
+                  </FormControl>
 
-                <FormControl w={{ base: "full", sm: "130px" }}>
-                  <FormLabel fontSize="xs" mb={1}>
-                    Unit
-                  </FormLabel>
-                  <Input
-                    size="sm"
-                    value={quota.unit}
-                    isReadOnly
-                    placeholder="-"
-                    bg="gray.50"
-                    cursor="default"
-                  />
-                </FormControl>
+                  <FormControl w={{ base: "full", sm: "150px" }}>
+                    <FormLabel fontSize="xs" mb={1}>
+                      Unit
+                    </FormLabel>
+                    <Input
+                      size="sm"
+                      value={quota.unit}
+                      isReadOnly
+                      placeholder="-"
+                      bg="gray.50"
+                      cursor="default"
+                    />
+                  </FormControl>
 
-                <FormControl w={{ base: "full", sm: "120px" }} isRequired>
-                  <FormLabel fontSize="xs" mb={1}>
-                    Limit
-                  </FormLabel>
-                  <NumberInput
-                    size="sm"
-                    min={0}
-                    value={quota.limit}
-                    onChange={(v) => handleQuotaChange(idx, "limit", v)}
-                  >
-                    <NumberInputField placeholder="e.g. 10000" />
-                  </NumberInput>
-                </FormControl>
+                  <FormControl w={{ base: "full", sm: "140px" }} isRequired>
+                    <FormLabel fontSize="xs" mb={1}>
+                      Limit
+                    </FormLabel>
+                    <NumberInput
+                      size="sm"
+                      min={0}
+                      value={quota.limit}
+                      onChange={(v) => handleQuotaChange(idx, "limit", v)}
+                    >
+                      <NumberInputField placeholder="e.g. 10000" />
+                    </NumberInput>
+                  </FormControl>
+                </HStack>
 
                 {quotas.length > 1 && (
                   <IconButton
@@ -524,7 +523,7 @@ const TierManagement: React.FC = () => {
         isOpen={isCreateOpen}
         onClose={onCreateClose}
         title="Create Tier"
-        size="xl"
+        size="2xl"
         closeOnOverlayClick={!isSubmitting}
         footer={tierFormFooter}
         contentProps={{
@@ -547,7 +546,7 @@ const TierManagement: React.FC = () => {
         isOpen={isEditOpen}
         onClose={onEditClose}
         title={`Edit Tier: ${editingTier?.name ?? ""}`}
-        size="xl"
+        size="2xl"
         closeOnOverlayClick={!isSubmitting}
         footer={tierFormFooter}
         contentProps={{
