@@ -32,6 +32,8 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
 
   const validatePhoneNumber = (phoneNumber: string): string | null => {
     if (!phoneNumber || phoneNumber.trim().length === 0) return null;
+    // API returns masked phone; skip validation when echoed back unchanged.
+    if (phoneNumber.includes("*")) return null;
     const cleanedPhone = phoneNumber.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
     let digits = "";
     if (cleanedPhone.startsWith("+91")) {
@@ -55,7 +57,11 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
-    if (userFormData.phone_number && userFormData.phone_number.length > 0) {
+    if (
+      userFormData.phone_number &&
+      userFormData.phone_number.length > 0 &&
+      !userFormData.phone_number.includes("*")
+    ) {
       const cleanedPhone = userFormData.phone_number.trim().replaceAll(/\s+/g, "").replaceAll(/[-\s()]/g, "");
       let isValid = false;
       let digits = "";

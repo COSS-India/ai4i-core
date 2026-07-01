@@ -4,15 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { useToastWithDeduplication } from "../utils/toast";
 import { extractErrorInfo } from "../utils/errorHandler";
-import { MODEL_TASK_TYPE_LIST } from "../config/constants";
 import {
   fetchTiers,
-  getTierById,
   createTier,
   updateTier,
   deleteTier,
   type Tier,
 } from "../services/tierManagementService";
+import { useInferenceTypes } from "./useInferenceTypes";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 
 const TIER_QUERY_KEY = "tiers";
@@ -20,7 +19,7 @@ const TIER_QUERY_KEY = "tiers";
 function newQuota(): TierFormQuota {
   return {
     _key: crypto.randomUUID(),
-    modelTaskType: MODEL_TASK_TYPE_LIST[0],
+    modelTaskType: "",
     unit: "",
     limit: "",
   };
@@ -34,8 +33,8 @@ export function useTierManagement() {
   const toast = useToastWithDeduplication();
   const queryClient = useQueryClient();
   const { checkSessionExpiry } = useSessionExpiry();
+  const { unitByTaskType } = useInferenceTypes();
   const cancelRef = useRef<HTMLButtonElement>(null);
-
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
 
@@ -43,7 +42,7 @@ export function useTierManagement() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [viewTier, setViewTier] = useState<Tier | null>(null);
-  const [formData, setFormData] = useState<TierFormData>(defaultFormData());
+  const [formData, setFormData] = useState<TierFormData>(defaultFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingTier, setEditingTier] = useState<Tier | null>(null);
 
@@ -212,23 +211,17 @@ export function useTierManagement() {
   }, [checkSessionExpiry, formData, toast, onCreateClose, refreshTiers]);
 
   const handleOpenEdit = useCallback(
-    async (tier: Tier) => {
+    (tier: Tier) => {
       if (!checkSessionExpiry()) return;
-      let fullTier = tier;
-      try {
-        fullTier = await getTierById(tier.id);
-      } catch {
-        // fall back to list-level data
-      }
-      setEditingTier(fullTier);
+      setEditingTier(tier);
       setFormData({
-        name: fullTier.name,
-        description: fullTier.description ?? "",
-        quotas: fullTier.quotas?.length
-          ? fullTier.quotas.map((q) => ({
+        name: tier.name,
+        description: tier.description ?? "",
+        quotas: tier.quotas?.length
+          ? tier.quotas.map((q) => ({
               _key: crypto.randomUUID(),
               modelTaskType: q.modelTaskType,
-              unit: q.unit ?? "",
+              unit: q.unit || unitByTaskType[q.modelTaskType] || "",
               limit: String(q.limit),
             }))
           : [newQuota()],
@@ -288,14 +281,8 @@ export function useTierManagement() {
   }, [checkSessionExpiry, formData, toast, onEditClose, refreshTiers]);
 
   const handleViewClick = useCallback(
-    async (tier: Tier) => {
-      let fullTier = tier;
-      try {
-        fullTier = await getTierById(tier.id);
-      } catch {
-        // fall back
-      }
-      setViewTier(fullTier);
+    (tier: Tier) => {
+      setViewTier(tier);
       onViewOpen();
     },
     [onViewOpen],

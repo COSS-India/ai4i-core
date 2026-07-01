@@ -1032,6 +1032,9 @@ export default function TenantManagementTab({
                   onChange={(e) =>
                     tm.handleTenantContactNameChange(e.target.value)
                   }
+                  onBlur={(e) =>
+                    tm.handleTenantContactNameBlur(e.target.value)
+                  }
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.contact_name}

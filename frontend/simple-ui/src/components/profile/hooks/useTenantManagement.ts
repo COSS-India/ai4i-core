@@ -549,6 +549,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     patchTenantFormError("contact_name", validateContactName(contact_name));
   };
 
+  const handleTenantContactNameBlur = (contact_name: string) => {
+    patchTenantFormError("contact_name", validateContactName(contact_name));
+  };
+
   const handleTenantEmailChange = (email: string) => {
     setTenantForm((prev) => ({ ...prev, email }));
     createTenantEmailAvailability.handleChange(email);
@@ -1311,6 +1315,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleTenantOrganisationChange,
     handleTenantOrganisationBlur,
     handleTenantContactNameChange,
+    handleTenantContactNameBlur,
     handleTenantEmailChange,
     handleTenantPhoneChange,
     tenantEmailStatus: createTenantEmailAvailability.status,
