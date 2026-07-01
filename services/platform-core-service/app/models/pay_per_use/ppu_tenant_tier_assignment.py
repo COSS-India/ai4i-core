@@ -19,8 +19,8 @@ class PPUTenantTierAssignment(Base):
         nullable=False,
         index=True,
     )
-    budget_limit = Column(Numeric(15, 4), nullable=False)
-    available_balance = Column(Numeric(15, 4), nullable=False)
+    budget_limit = Column(Numeric(15, 8), nullable=False)
+    available_balance = Column(Numeric(15, 8), nullable=False)
     effective_from = Column(DateTime(timezone=True), nullable=False)
     effective_to = Column(DateTime(timezone=True), nullable=False)
     created_by = Column(String(255), nullable=True)
