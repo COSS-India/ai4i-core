@@ -149,7 +149,7 @@ function useUsageAndSpendData(
 
   const summaryQuery = useQuery({
     queryKey: ["usage-summary", refreshNonce],
-    queryFn: fetchUsageSummary,
+    queryFn: () => fetchUsageSummary(),
     enabled: !isScoped,
     staleTime: STALE_MS,
     retry: 1,
@@ -168,7 +168,7 @@ function useUsageAndSpendData(
 
   const tenantsQuery = useQuery({
     queryKey: ["usage-tenants", refreshNonce],
-    queryFn: fetchTenantUsageList,
+    queryFn: () => fetchTenantUsageList(),
     enabled: !isScoped,
     staleTime: STALE_MS,
     retry: 1,
@@ -176,7 +176,7 @@ function useUsageAndSpendData(
 
   const tiersQuery = useQuery({
     queryKey: ["tiers", refreshNonce],
-    queryFn: fetchTiers,
+    queryFn: () => fetchTiers(),
     staleTime: 5 * STALE_MS,
     retry: 1,
   });
