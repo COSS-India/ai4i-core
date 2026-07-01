@@ -23,7 +23,6 @@ class DatabaseSettings(BaseSettings):
     POSTGRES_PASSWORD: str = Field(description="PostgreSQL password")
     POSTGRES_HOST: str = Field(description="PostgreSQL host")
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
-    INFERENCE_DB: str = Field(description="Database name for the inference service")
     PLATFORM_CORE_DB: str = Field(description="Database name for the platform core service")
     DB_POOL_SIZE: int = Field(20, description="SQLAlchemy connection pool size")
     DB_MAX_OVERFLOW: int = Field(10, description="SQLAlchemy max overflow connections")
