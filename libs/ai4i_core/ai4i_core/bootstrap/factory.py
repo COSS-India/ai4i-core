@@ -33,7 +33,6 @@ class ServiceConfig:
     hide_docs_in_production: bool = True
 
     telemetry_enabled: bool = True
-    jaeger_endpoint: Optional[str] = None
 
     log_level: str = "INFO"
 
@@ -71,12 +70,6 @@ def create_service_app(config: Optional[ServiceConfig] = None, **kwargs) -> Fast
 
     # ── 3. OTel instrumentation ──
     if config.telemetry_enabled:
-        try:
-            from ai4i_core.telemetry import setup_tracing
-            setup_tracing(config.service_name, config.jaeger_endpoint)
-        except ImportError:
-            pass
-
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
             FastAPIInstrumentor.instrument_app(

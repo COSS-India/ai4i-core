@@ -51,13 +51,6 @@ function extract_context_fields(tag, timestamp, record)
         if context["correlation_id"] ~= nil then
             record["correlationId"] = context["correlation_id"]
         end
-        -- Extract jaeger_trace_url from context if it exists
-        -- This ensures it's available at top level for OpenSearch Dashboards
-        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
-            record["jaeger_trace_url"] = context["jaeger_trace_url"]
-            -- Also ensure it's in context.jaeger_trace_url for nested access
-            record["context"]["jaeger_trace_url"] = context["jaeger_trace_url"]
-        end
     end
     
     -- Flatten nested req.* fields if they exist

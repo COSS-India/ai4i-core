@@ -1144,7 +1144,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   // durations add up correctly to the total trace duration.
   //
   // Algorithm: build a "displayed tree" where the parent of each displayed
-  // span is its nearest displayed ancestor (walking up the Jaeger parent chain).
+  // span is its nearest displayed ancestor (walking up the parent span chain).
   // Then: effectiveDuration = span.duration − Σ(displayed direct children durations)
   const computeEffectiveDurations = (spanList: ProcessedSpan[]): void => {
     const displayedIds = new Set(spanList.map(p => p.span.spanID));
@@ -1152,7 +1152,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       spanList.map(p => [p.span.spanID, p])
     );
 
-    // For each displayed span, walk up the Jaeger parent chain to find the
+    // For each displayed span, walk up the parent span chain to find the
     // nearest displayed ancestor (which may be a grandparent if the direct
     // parent is not in the displayed list).
     const displayedParentOf = new Map<string, string>(); // childId → parentId

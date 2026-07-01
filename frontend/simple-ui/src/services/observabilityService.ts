@@ -291,7 +291,7 @@ export const searchTelemetryTraces = async (
 };
 
 /**
- * Search traces (Jaeger-style; legacy)
+ * Search traces via platform-core telemetry API
  */
 export const searchTraces = async (
   params: {
@@ -375,7 +375,7 @@ export const getTelemetryTraceById = async (traceId: string): Promise<TelemetryT
 };
 
 /**
- * Get trace by ID (Jaeger-style; legacy)
+ * Get trace by ID via platform-core telemetry API
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
