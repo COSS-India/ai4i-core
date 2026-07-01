@@ -23,13 +23,6 @@ from app.schemas.pay_per_use.usage import (
 
 _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
-_SCALE_PREFIXES = {1_000_000: "M ", 1_000: "K ", 1: ""}
-
-
-def _unit_label(inference_name: str, unit_size: int) -> str:
-    base = _UNIT_LABELS.get(inference_name, inference_name)
-    prefix = _SCALE_PREFIXES.get(unit_size, f"×{unit_size} ")
-    return f"{prefix}{base}"
 
 
 async def _resolve_tenant_names(
@@ -73,7 +66,7 @@ class PPUUsageService:
 
             items.append({
                 "modelTaskType": row.inference_name,
-                "unit": _unit_label(row.inference_name, unit_size),
+                "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
                 "consumption": consumption,
                 "spend": spend,
             })
@@ -103,6 +96,7 @@ class PPUUsageService:
     ) -> TenantUsageListResponse:
         rows = await self._repo.get_tenant_usages(billing_month, tier, model_task_type)
         org_map = await _resolve_tenant_names([row.tenant_id for row in rows], auth_db)
+        unit_label = _UNIT_LABELS.get(model_task_type, "Units") if model_task_type else "Units"
 
         items = []
         for row in rows:
@@ -113,7 +107,6 @@ class PPUUsageService:
             unit_size = int(row.unit_size) if row.unit_size else 1
             consumption = round(total_units / unit_size, 1)
             quota_display = round(int(raw_quota) / unit_size, 1) if raw_quota is not None else None
-            unit_label = _unit_label(model_task_type, unit_size) if model_task_type else "Units"
 
             items.append(TenantUsageItem(
                 tenantId=row.tenant_id,
@@ -176,7 +169,7 @@ class PPUUsageService:
             raw.append(dict(
                 modelTaskType=row.inference_name,
                 consumptionToDate=consumption,
-                unit=_unit_label(row.inference_name, unit_size),
+                unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
                 spend=spend,
                 quotaLimit=row_quota_limit,
                 remainingQuota=row_remaining,
@@ -194,8 +187,7 @@ class PPUUsageService:
         # Use the specific unit label only when all usage is from one inference type;
         # fall back to "Units" when the tenant uses multiple service types.
         if len(inference_types) == 1:
-            single_type = next(iter(inference_types))
-            quota_unit = _unit_label(single_type, type_unit_sizes[single_type])
+            quota_unit = _UNIT_LABELS.get(next(iter(inference_types)), "Units")
         else:
             quota_unit = "Units"
 
