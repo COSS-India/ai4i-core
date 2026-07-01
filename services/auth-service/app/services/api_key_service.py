@@ -120,7 +120,6 @@ class APIKeyService:
                 "tenant_id": tenant_id,
                 "tier_id": "",
                 "budget-exhausted": budget_exhausted,
-                **{f"quota-{entry['name']}": "0" for entry in get_inference_types()},
                 **preserved_quota,
             },
         )
@@ -327,7 +326,6 @@ class APIKeyService:
                     "tenant_id": tenant_id,
                     "tier_id": "",
                     "budget-exhausted": "0",
-                    **{f"quota-{entry['name']}": "0" for entry in get_inference_types()},
                 },
             )
 
