@@ -213,7 +213,7 @@ async def search_traces_opensearch(
         by_task = {}
         for trace in data:
             trace_status = trace.get("status", "unknown")
-            task_type = trace.get("task_type", "unknown")
+            task_type = trace.get("task_type") or "unknown"
 
             by_level[trace_status] = by_level.get(trace_status, 0) + 1
             by_task[task_type] = by_task.get(task_type, 0) + 1
