@@ -255,6 +255,9 @@ function QuotaEditor({
                         handleQuotaChange(idx, "modelTaskType", e.target.value)
                       }
                     >
+                      <option value="" disabled>
+                        Select task type
+                      </option>
                       {taskTypeNames
                         ?.filter((t) => {
                           const selectedElsewhere = quotas

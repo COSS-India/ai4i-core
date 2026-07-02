@@ -71,10 +71,8 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
-import {
-  MODEL_TASK_TYPE_LIST,
-  formatModelTaskTypeLabel,
-} from "../config/constants";
+import { formatModelTaskTypeLabel } from "../config/constants";
+import { useInferenceTypes } from "../hooks/useInferenceTypes";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -117,6 +115,7 @@ const ServicesManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const { taskTypeNames } = useInferenceTypes();
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
     "asc",
@@ -1291,7 +1290,7 @@ const ServicesManagementPage: React.FC = () => {
                                   }}
                                 >
                                   <option value="">All</option>
-                                  {MODEL_TASK_TYPE_LIST.map((t) => (
+                                  {taskTypeNames?.map((t) => (
                                     <option key={t} value={t}>
                                       {formatModelTaskTypeLabel(t)}
                                     </option>
@@ -1454,7 +1453,7 @@ const ServicesManagementPage: React.FC = () => {
                                     placeholder="Select a task type"
                                     bg="white"
                                   >
-                                    {MODEL_TASK_TYPE_LIST.map((t) => (
+                                    {taskTypeNames?.map((t) => (
                                       <option key={t} value={t}>
                                         {formatModelTaskTypeLabel(t)}
                                       </option>

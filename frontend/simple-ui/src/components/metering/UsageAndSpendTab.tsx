@@ -27,10 +27,8 @@ import {
 } from "../../services/usageSpendService";
 import { fetchTiers } from "../../services/tierManagementService";
 import { parseError } from "../../utils/errorHandler";
-import {
-  MODEL_TASK_TYPE_LIST,
-  formatModelTaskTypeLabel,
-} from "../../config/constants";
+import { formatModelTaskTypeLabel } from "../../config/constants";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import StandardModal from "../common/StandardModal";
@@ -121,6 +119,7 @@ const filterSummary = (summary: UsageSummaryResponse | undefined, taskType: stri
 };
 
 const buildTaskTypeOptions = (
+  taskTypeNames: string[],
   summary?: UsageSummaryResponse["spendByModelTaskType"],
   breakdown?: TenantUsageDetail["breakdown"],
 ) => {
@@ -130,7 +129,7 @@ const buildTaskTypeOptions = (
     const n = t.trim();
     if (n && !seen.has(n)) { seen.add(n); out.push(n); }
   };
-  MODEL_TASK_TYPE_LIST.forEach(add);
+  taskTypeNames.forEach(add);
   (summary ?? []).forEach((i) => add(i.modelTaskType));
   (breakdown ?? []).forEach((i) => add(i.modelTaskType));
   return out;
@@ -143,6 +142,7 @@ function useUsageAndSpendData(
   refreshNonce: number,
   filterTier: string,
   filterTaskType: string,
+  taskTypeNames: string[],
 ) {
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const isScoped = Boolean(scopedId);
@@ -250,7 +250,7 @@ function useUsageAndSpendData(
 
   return {
     summaryData,
-    taskTypeOptions: buildTaskTypeOptions(summaryQuery.data?.spendByModelTaskType, scopedQuery.data?.breakdown),
+    taskTypeOptions: buildTaskTypeOptions(taskTypeNames, summaryQuery.data?.spendByModelTaskType, scopedQuery.data?.breakdown),
     tierNames: tiersQuery.data?.data?.map((t) => t.name) ?? [],
     tenants,
     summaryError,
@@ -272,6 +272,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   const [selectedTenant, setSelectedTenant] = useState<TenantUsageDetail | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
+  const { taskTypeNames } = useInferenceTypes();
 
   const data = useUsageAndSpendData(
     scopeTenantId,
@@ -280,6 +281,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     refreshNonce,
     filterTier,
     filterTaskType,
+    taskTypeNames,
   );
 
   const handleTenantClick = useCallback(async (row: TenantUsageItem) => {

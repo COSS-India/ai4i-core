@@ -62,7 +62,6 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
 import {
-  MODEL_TASK_TYPE_LIST,
   MODEL_VERSION,
   MODEL_VERSION_FILTER_LIST,
   formatModelTaskTypeLabel,
@@ -70,6 +69,7 @@ import {
   formatModelVersionStatusLabel,
   isModelVersionStatusActive,
 } from "../config/constants";
+import { useInferenceTypes } from "../hooks/useInferenceTypes";
 
 /** Registry UI model row — requires fields used in forms/tables. */
 type Model = ModelDetails & {
@@ -117,6 +117,7 @@ const ModelManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const { taskTypeNames } = useInferenceTypes();
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
@@ -910,7 +911,7 @@ const ModelManagementPage: React.FC = () => {
                                 formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
                                 <option value="">All</option>
-                                {MODEL_TASK_TYPE_LIST.map((t) => (
+                                {taskTypeNames?.map((t) => (
                                   <option key={t} value={t}>
                                     {formatModelTaskTypeLabel(t)}
                                   </option>
