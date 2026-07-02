@@ -161,3 +161,19 @@ skills/
 # Architecture docs (local ADRs, designs, diagrams), not committed
 arch-docs/
 rough
+
+# Local per-service dev launcher (one service per terminal), not committed
+dev.sh
+
+# Local NMT stub timing runner (fires N requests, parses phase _ms), not committed
+nmt_timings.sh
+
+# NMT timing run outputs (auto-saved tables), not committed
+nmt_timings_*.txt
+
+# Generalized per-task stub timing runner + its outputs, not committed
+timings.sh
+timings_*.txt
+
+# Test assets: sample media + timing output logs, not committed
+test_assets/
