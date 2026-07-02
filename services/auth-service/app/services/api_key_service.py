@@ -448,6 +448,64 @@ class APIKeyService:
         logger.info("API key updated: api_key=%s user=%s", api_key_value, db_key.user_id)
         return db_key
 
+    async def revoke_by_obj(self, db_key: APIKey) -> None:
+        """Revoke a key that has already been fetched and ownership-verified by the caller.
+        Skips the second get_by_api_key lookup that revoke_api_key() would otherwise perform."""
+        await self._repo.revoke(db_key)
+        await self._repo.commit()
+        await self._cache.delete_api_key_cache(db_key.api_key)
+        logger.info("API key revoked: api_key=%s user=%s", db_key.api_key, db_key.user_id)
+
+    async def update_key_by_obj(
+        self,
+        db_key: APIKey,
+        data: dict,
+        user_id: Optional[UUID] = None,
+    ) -> APIKey:
+        """Update a key that has already been fetched and ownership-verified by the caller.
+        Skips the second get_by_api_key lookup that update_key() would otherwise perform."""
+        data = dict(data)  # avoid mutating the caller's dict
+
+        permissions = data.get("permissions")
+        if permissions is not None:
+            await self._validate_permission_ids(permissions)
+
+        expires_days = data.pop("expires_days", None)
+        if expires_days is not None:
+            if not isinstance(expires_days, int) or expires_days < 1:
+                raise ValidationError(
+                    message="Invalid expires_days. Must be a positive integer.",
+                    code="INVALID_EXPIRES_DAYS",
+                )
+            data["expires_at"] = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+        if user_id is not None:
+            data["updated_by"] = str(user_id)
+
+        await self._repo.update(db_key, data)
+        await self._repo.refresh(db_key)
+        await self._repo.commit()
+
+        tenant_id_str: Optional[str] = None
+        if self._users is not None:
+            owner = await self._users.get_by_id(db_key.user_id)
+            tenant = None
+            if owner and owner.tenant_id is not None and self._tenants is not None:
+                tenant = await self._tenants.get_by_id(owner.tenant_id)
+                tenant_id_str = str(owner.tenant_id)
+            if owner:
+                if self.effective_is_active(db_key, owner, tenant):
+                    await self._refresh_redis_cache(db_key, tenant_id_str)
+                else:
+                    await self._cache.delete_api_key_cache(db_key.api_key)
+            else:
+                await self._cache.delete_api_key_cache(db_key.api_key)
+        elif data.get("is_active") is False:
+            await self._cache.delete_api_key_cache(db_key.api_key)
+
+        logger.info("API key updated: api_key=%s user=%s", db_key.api_key, db_key.user_id)
+        return db_key
+
     async def list_by_user(self, user_id: UUID) -> list[APIKey]:
         return await self._repo.list_by_user(user_id)
 
@@ -459,3 +517,6 @@ class APIKeyService:
 
     async def get_by_id(self, key_id: int) -> Optional[APIKey]:
         return await self._repo.get_by_id(key_id)
+
+    async def get_by_id_for_owner(self, key_id: int, user_id: UUID) -> Optional[APIKey]:
+        return await self._repo.get_by_id_for_owner(key_id, user_id)

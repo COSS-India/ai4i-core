@@ -26,6 +26,14 @@ class APIKeyRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_owner(self, key_id: int, user_id: UUID) -> Optional[APIKey]:
+        """Ownership-scoped lookup: returns None whether the key doesn't exist or belongs
+        to a different user, so the caller cannot enumerate valid key IDs."""
+        result = await self._db.execute(
+            select(APIKey).where(APIKey.id == key_id, APIKey.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         result = await self._db.execute(
             select(APIKey).where(APIKey.api_key == api_key_value)

@@ -535,64 +535,36 @@ class AuthService {
     );
   }
 
-  /** Revoke by path token (32-char hex `api_key`, or numeric id on older gateways). */
-  async revokeApiKey(apiKeyToken: string): Promise<{ message: string }> {
-    const encoded = encodeURIComponent(apiKeyToken);
+  /** DELETE `/api-keys/{keyId}` — integer PK in the path. */
+  async revokeApiKey(keyId: number): Promise<{ message: string }> {
     return this.validatedRequest(
-      `${authPath.apiKeys}/${encoded}`,
+      `${authPath.apiKeys}/${keyId}`,
       authUnwrappedSchema(messageResponseSchema),
       { method: 'DELETE' }
     );
   }
 
-  /**
-   * Revoke using every identifier available on the row (hex, then numeric id).
-   * Falls back to PATCH `is_active: false` when DELETE returns 404.
-   */
+  /** Revoke a key from the list response. Throws if the numeric id is missing. */
   async revokeApiKeyRecord(key: APIKeyResponse): Promise<{ message: string }> {
-    const tokens = buildApiKeyRevokePathTokens(key);
-    if (!tokens.length) {
+    const id = key.id ?? key.key_id;
+    if (id == null) {
       throw new Error(
-        'This API key cannot be revoked from the UI. Refresh the list or recreate the key.',
+        'This API key cannot be revoked from the UI. Refresh the list.',
       );
     }
-
-    let lastError: unknown;
-    for (const token of tokens) {
-      try {
-        return await this.revokeApiKey(token);
-      } catch (error: unknown) {
-        lastError = error;
-        const status = (error as { status?: number })?.status;
-        if (status === 404) {
-          try {
-            await this.updateApiKey(token, { is_active: false });
-            return { message: 'API key revoked.' };
-          } catch (patchError) {
-            lastError = patchError;
-          }
-        }
-        if (status === 400 || status === 404) continue;
-        throw error;
-      }
-    }
-
-    const message =
-      lastError instanceof Error ? lastError.message : 'Failed to revoke API key';
-    throw new Error(message);
+    return this.revokeApiKey(id);
   }
 
   /**
-   * PATCH `/api-keys/{api_key}` — hex key in the path (auth-service contract since May 2026).
+   * PATCH `/api-keys/{keyId}` — integer PK in the path.
    * `permissions` must be permission IDs (numbers), not display names.
    */
   async updateApiKey(
-    apiKeyHex: string,
+    keyId: number,
     updateData: { key_name?: string; permissions?: number[]; expires_days?: number; is_active?: boolean },
   ): Promise<APIKeyResponse> {
-    const encoded = encodeURIComponent(apiKeyHex);
     return this.validatedRequest(
-      `${authPath.apiKeys}/${encoded}`,
+      `${authPath.apiKeys}/${keyId}`,
       authUnwrappedSchema(apiKeyResponseSchema),
       {
         method: 'PATCH',
