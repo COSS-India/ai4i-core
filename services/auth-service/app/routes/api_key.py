@@ -85,9 +85,6 @@ async def update_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     from app.core.exceptions import EntityNotFoundError, ValidationError
-    db_key = await svc.get_by_id(key_id)
-    if not db_key:
-        raise EntityNotFoundError("API key")
 
     update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
     if not update_data:
@@ -96,11 +93,13 @@ async def update_api_key(
             code="NOTHING_TO_UPDATE",
         )
 
-    updated_key = await svc.update_key(
-        api_key_value=db_key.api_key,
-        data=update_data,
-        user_id=user_id,
-    )
+    # Ownership-scoped: returns None whether the key doesn't exist or belongs to
+    # another user, so the caller cannot enumerate valid key IDs.
+    db_key = await svc.get_by_id_for_owner(key_id, user_id)
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
+    updated_key = await svc.update_key_by_obj(db_key, update_data, user_id)
     return success_response(data=_key_dict(updated_key))
 
 
@@ -112,16 +111,21 @@ async def revoke_api_key(
     role_svc: RoleService = Depends(get_role_service),
 ):
     from app.core.exceptions import EntityNotFoundError
-    db_key = await svc.get_by_id(key_id)
+
+    roles = await role_svc.get_user_roles(user_id)
+    is_admin = RoleName.ADMIN.value in roles
+
+    # Admins can revoke any key (unscoped); regular users get a uniform 404
+    # whether the key doesn't exist or belongs to someone else.
+    db_key = (
+        await svc.get_by_id(key_id)
+        if is_admin
+        else await svc.get_by_id_for_owner(key_id, user_id)
+    )
     if not db_key:
         raise EntityNotFoundError("API key")
 
-    owner_scoped_user_id = user_id
-    roles = await role_svc.get_user_roles(user_id)
-    if RoleName.ADMIN.value in roles:
-        owner_scoped_user_id = None
-
-    await svc.revoke_api_key(db_key.api_key, user_id=owner_scoped_user_id)
+    await svc.revoke_by_obj(db_key)
     return success_response(data={"message": "API key revoked."})
 
 

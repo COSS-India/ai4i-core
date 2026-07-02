@@ -23,7 +23,6 @@ import {
   mergeApiKeyHexFromCache,
   normalizeApiKeyRecord,
   permissionLabelWithFallback,
-  resolveApiKeyHex,
 } from "../../../utils/apiKeyUtils";
 
 function permissionIdFromRaw(raw: string | number): number | null {
@@ -213,15 +212,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
-    const hex = resolveApiKeyHex(selectedKeyForUpdate);
-    if (!hex) {
-      showToast({
-        type: "error",
-        message:
-          "This row is missing the 32-character api_key. Refresh the list or check the auth service response.",
-      });
-      return;
-    }
     let catalog = permissions;
     if (catalog.length === 0) {
       try {
@@ -242,7 +232,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
     setIsUpdating(true);
     try {
-      await authService.updateApiKey(hex, {
+      await authService.updateApiKey(selectedKeyForUpdate.id, {
         key_name: updateFormData.key_name?.trim(),
         permissions: permissionIds,
       });
@@ -293,18 +283,9 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
 
   const handleRevokeApiKey = async () => {
     if (!keyToRevoke) return;
-    const hex = resolveApiKeyHex(keyToRevoke);
-    if (!hex) {
-      showToast({
-        type: "error",
-        message:
-          "This row is missing the 32-character api_key. Refresh the list or check the auth service response.",
-      });
-      return;
-    }
     setIsRevoking(true);
     try {
-      await authService.revokeApiKey(hex);
+      await authService.revokeApiKey(keyToRevoke.id);
       showToast({ type: "success", message: "API key has been revoked successfully" });
       handleCloseRevokeModal();
       await handleFetchAllApiKeys();
