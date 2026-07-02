@@ -256,7 +256,7 @@ function QuotaEditor({
                       }
                     >
                       <option value="" disabled>
-                        Select task type
+                        Select model task type
                       </option>
                       {taskTypeNames
                         ?.filter((t) => {
