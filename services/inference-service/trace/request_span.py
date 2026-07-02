@@ -35,16 +35,19 @@ def get_context_attributes() -> dict:
     """
     attrs = {}
     try:
-        from ai4i_core.context import get_user_id, get_tenant_id, get_trace_id
+        from ai4i_core.context import get_user_id, get_tenant_id, get_trace_id, get_auth_type
         user_id = get_user_id()
         tenant_id = get_tenant_id()
         correlation_id = get_trace_id()
+        auth_type = get_auth_type()
         if user_id:
             attrs["userId"] = user_id
         if tenant_id:
             attrs["tenantId"] = tenant_id
         if correlation_id:
             attrs["correlation_id"] = correlation_id
+        if auth_type:
+            attrs["authType"] = auth_type
     except Exception as e:
         logger.debug(f"Could not read context attributes: {e}")
     return attrs

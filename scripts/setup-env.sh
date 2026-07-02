@@ -32,6 +32,20 @@ read_env_var() {
     echo "${value:-}"
 }
 
+# Generate a 64-byte AES-256-SIV key (base64-encoded), matching auth-service docs.
+gen_pii_encryption_key() {
+    if command -v python3.11 >/dev/null 2>&1; then
+        python3.11 -c 'import base64, os; print(base64.b64encode(os.urandom(64)).decode())'
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import base64, os; print(base64.b64encode(os.urandom(64)).decode())'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 64 | tr -d '\n'
+    else
+        echo "ERROR: need python3 or openssl to generate PII_ENCRYPTION_KEY" >&2
+        exit 1
+    fi
+}
+
 POSTGRES_USER="$(read_env_var POSTGRES_USER)"
 POSTGRES_PASSWORD="$(read_env_var POSTGRES_PASSWORD)"
 POSTGRES_HOST="$(read_env_var POSTGRES_HOST)"
@@ -74,6 +88,26 @@ add_sed_replacement "YOUR_REDIS_PASSWORD" "${REDIS_PASSWORD}"
 add_sed_replacement "ALEMBIC_DB_HOST" "${ALEMBIC_DB_HOST}"
 add_sed_replacement "ALEMBIC_DB_PORT" "${ALEMBIC_DB_PORT}"
 add_sed_replacement "YOUR_LLM_UPSTREAM_BASE_URL" "${LLM_UPSTREAM_BASE_URL}"
+
+# ── 3b. PII encryption key (auth-service) ────────────────────────────────────
+# Resolve in order: root .env override → existing auth-service/.env → generate.
+# Re-running setup-env.sh must not rotate an already-generated key (encrypted
+# rows would become unreadable).
+AUTH_ENV="$ROOT_DIR/services/auth-service/.env"
+PII_ENCRYPTION_KEY="$(read_env_var PII_ENCRYPTION_KEY)"
+
+if [ -z "${PII_ENCRYPTION_KEY}" ] || [ "${PII_ENCRYPTION_KEY}" = "<PII_ENCRYPTION_KEY>" ]; then
+    if [ -f "$AUTH_ENV" ]; then
+        PII_ENCRYPTION_KEY="$(grep -m1 '^PII_ENCRYPTION_KEY=' "$AUTH_ENV" 2>/dev/null | cut -d'=' -f2- || true)"
+    fi
+fi
+
+if [ -z "${PII_ENCRYPTION_KEY}" ] || [ "${PII_ENCRYPTION_KEY}" = "<PII_ENCRYPTION_KEY>" ]; then
+    PII_ENCRYPTION_KEY="$(gen_pii_encryption_key)"
+    echo "  GEN   PII_ENCRYPTION_KEY (new random key for auth-service)"
+fi
+
+add_sed_replacement "PII_ENCRYPTION_KEY" "${PII_ENCRYPTION_KEY}"
 
 # ── 4. Process every env.template ────────────────────────────────────────────
 generated=0
