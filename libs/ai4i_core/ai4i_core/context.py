@@ -16,6 +16,7 @@ _trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("t
 _tenant_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("tenant_id", default=None)
 _user_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("user_id", default=None)
 _endpoint_path_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("endpoint_path", default=None)
+_auth_type_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("auth_type", default=None)
 
 
 def generate_trace_id() -> str:
@@ -65,3 +66,11 @@ def get_user_id() -> Optional[str]:
 
 def reset_user_id(token: contextvars.Token) -> None:
     _user_id_var.reset(token)
+
+
+def set_auth_type(auth_type: str) -> contextvars.Token:
+    return _auth_type_var.set(auth_type)
+
+
+def get_auth_type() -> Optional[str]:
+    return _auth_type_var.get()
