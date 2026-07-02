@@ -85,6 +85,7 @@ class OpenAIProxyService:
                 # for the PPU Kafka consumer (which only reads this span).
                 infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
                 infer_attrs["service_id"] = service_id
+                infer_attrs["authType"] = model_attrs.get("authType", "")
 
                 status_code, body = await self.proxy(path=path, payload=payload)
 

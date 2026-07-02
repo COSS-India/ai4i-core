@@ -73,6 +73,18 @@ async def handle_ppu_usage(msg: Message) -> None:
 
     attrs = data.get("attributes") or {}
 
+    # Skip billing for JWT / non-API-key requests. authType is set by RequestMiddleware
+    # from the X-Auth-Type header injected by APISIX after token validation.
+    # Only "api_key" requests are subject to PPU billing. If authType is absent
+    # (older spans without this attribute), billing proceeds as before.
+    auth_type: str = str(attrs.get("authType") or "").strip()
+    if auth_type and auth_type != "api_key":
+        logger.info(
+            "Skipping billing for non-API-key request | auth_type=%r offset=%d span_id=%s",
+            auth_type, msg.offset(), span_id,
+        )
+        return
+
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
