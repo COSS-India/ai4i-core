@@ -49,15 +49,10 @@ export const METERING = {
       TOTAL_REQUESTS: "total_requests",
       SUCCESSFUL: "successful",
       FAILED: "failed",
-      // Legacy key still referenced by the value formatter / hook; no KPI card
-      // uses it now (the rate is shown as sub-text on the Successful/Failed cards).
-      SUCCESS_RATE: "success_rate",
       AVG_RPS: "avg_rps",
     },
-    // Static fallback sub-text. Successful/Failed receive a dynamic helper
-    // (the live success/failure rate %) from the API, which overrides these.
     HELPERS: {
-      total_requests: "across selected window",
+      total_requests: "across all services and tenants",
       successful: "of all requests",
       failed: "of all requests",
       avg_rps: "requests per second",
@@ -65,9 +60,8 @@ export const METERING = {
   },
   GRAPH: {
     SERIES_KEYS: {
-      REQUESTS: "requests",
-      REQUEST_RATE: "request_rate",
-      FAILURE_RATE: "failure_rate",
+      SUCCESSFUL: "successful",
+      FAILED: "failed",
     },
     EMPTY_VALUE: "—",
   },
@@ -106,8 +100,6 @@ export const METERING = {
   },
   TENANT_VIEW: {
     TITLE: "My Usage",
-    TOTAL_REQUESTS_LABEL: "Total requests",
-    TOTAL_REQUESTS_HELPER: "across selected window",
   },
   COLORS: {
     RANK: [
@@ -158,7 +150,8 @@ export const METERING = {
       AXIS: "#A0AEC0",
       PRIMARY_STROKE: "#3182CE",
       PRIMARY_FILL: "#BEE3F8",
-      FAILURE_STROKE: "#E53E3E",
+      SUCCESS_FILL: "#4ADE80",
+      FAILURE_STROKE: "#F87171",
       TOOLTIP_BORDER: "#E2E8F0",
       DONUT_STROKE: "#FFFFFF",
     } as const,
@@ -195,7 +188,6 @@ export const METERING = {
     TENANT_CONSUMPTION: "No tenant consumption data available.",
     SERVICE_CONSUMPTION: "No service consumption data available.",
     CHART: "No chart data available for the selected window.",
-    REQUEST_RATE: "Request rate trend is not available for the selected window.",
   },
   REFRESH: {
     JUST_NOW: "just now",
@@ -224,35 +216,14 @@ export const METERING = {
     TENANT_RANKING: {
       TITLE: "Tenant ranking",
       SUBTITLE_PREFIX: "By request volume ·",
-      RANKED_REQUESTS_LABEL: "Ranked tenant requests",
-      RANKED_REQUESTS_HELPER: "across listed tenants",
-    },
-    THROUGHPUT: {
-      TITLE: "Throughput & load",
-      SUBTITLE_PREFIX: "Request rate over the selected window ·",
-      AVG_RPS: "Avg RPS",
-      AVG_RPS_HELPER: "requests per second",
-      PEAK_RPS: "Peak RPS",
-      PEAK_RPS_HELPER: "highest in window",
-      PEAK_AT: "Peak at",
-      PEAK_AT_HELPER: "time bucket of peak load",
-      CHART_TITLE: "Request rate trend",
     },
     REQUEST_VOLUME: {
       TITLE: "Request volume & health",
-      SUBTITLE_WITH_FAILURE: "Total requests and failure rate over the selected period",
-      SUBTITLE_RPS: "Request rate (RPS) over the selected period",
-      TOTAL: "Total requests",
+      SUBTITLE: "Request volume over the selected time window",
       SUCCESSFUL: "Successful",
       FAILED: "Failed",
-      SUCCESS_RATE_SUFFIX: "success rate",
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
-      Y_AXIS_RPS: "RPS",
-      Y_AXIS_FAILURE: "FAILURE RATE %",
-      SERIES_RPS: "RPS",
-      SERIES_REQUESTS: "Requests",
-      SERIES_FAILURE: "Failure rate %",
     },
     SERVICE: {
       TITLE: "Service consumption",
@@ -261,8 +232,6 @@ export const METERING = {
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Services",
-      ACTIVE_SERVICES: "Active services",
-      ACTIVE_SERVICES_HELPER: "with requests in selected window",
       MOST_USED: "Most used service",
       HIGHEST_FAILURE: "Highest failure rate",
       REQUESTS_SUFFIX: "requests",

@@ -17,11 +17,11 @@ interface OverviewKpiCardsProps {
 }
 
 // Value colour per KPI: successful = green, failed = red, others neutral.
-const KPI_ACCENT: Record<string, string> = {
-  total_requests: "gray",
-  successful: "green",
-  failed: "red",
-  avg_rps: "gray",
+const KPI_VALUE_COLORS: Record<string, string> = {
+  total_requests: "gray.800",
+  successful: "green.500",
+  failed: "red.500",
+  avg_rps: "gray.800",
 };
 
 /** Top-row summary KPI cards (Total, Successful, Failed, Avg RPS). */
@@ -33,7 +33,7 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({ data }) => (
         label={kpi.label}
         value={formatMeteringKpiValue(kpi.key, kpi.value)}
         pctChange={kpi.pct_change}
-        accent={KPI_ACCENT[kpi.key] ?? "gray"}
+        valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
         invertTrend={kpi.key === "failed"}
         helper={kpi.helper ?? METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS]}
       />
@@ -158,7 +158,7 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
               }
               pctChange={activeCell?.pct_change}
               helper={card.helper}
-              accent="teal"
+              valueColor="gray.800"
             />
           );
         })}

@@ -15,7 +15,6 @@ import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
-import ThroughputLoadSection from "./ThroughputLoadSection";
 
 interface ServiceConsumptionTabProps {
   data?: ServiceConsumptionResponse;
@@ -31,24 +30,10 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   const section = METERING.SECTIONS.SERVICE;
   const breakdown = data?.service_breakdown ?? [];
 
-  const { slices } = useMemo(
-    () => buildServiceBreakdownChart(breakdown),
-    [breakdown],
-  );
-
+  const { slices } = useMemo(() => buildServiceBreakdownChart(breakdown), [breakdown]);
   const insights = useMemo(
     () => deriveServiceInsights(data?.summary, breakdown),
     [data?.summary, breakdown],
-  );
-
-  const pieData = useMemo(
-    () => slices.map(({ name, value, color }) => ({ name, value, color })),
-    [slices],
-  );
-
-  const legendItems = useMemo(
-    () => slices.map(({ name, color, pct }) => ({ name, color, pct })),
-    [slices],
   );
 
   return (
@@ -61,13 +46,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-              <KpiCard
-                label={section.ACTIVE_SERVICES}
-                value={insights.activeCount}
-                helper={section.ACTIVE_SERVICES_HELPER}
-                accent="gray"
-              />
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               <KpiCard
                 label={section.MOST_USED}
                 value={
@@ -77,7 +56,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                   </HStack>
                 }
                 helper={`${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`}
-                accent="gray"
+                valueColor="gray.800"
               />
               <KpiCard
                 label={section.HIGHEST_FAILURE}
@@ -90,21 +69,15 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                   </HStack>
                 }
                 helper={`${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`}
-                accent="gray"
+                valueColor="gray.800"
               />
             </SimpleGrid>
           ) : null}
 
-          <ThroughputLoadSection
-            throughput={data.throughput}
-            timeWindow={data.scope.window}
-            requestVolumeGraph={data.request_volume}
-          />
-
           <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
             <MeteringDonutChart
-              data={pieData}
-              legendItems={legendItems}
+              data={slices.map(({ name, value, color }) => ({ name, value, color }))}
+              legendItems={slices.map(({ name, color, pct }) => ({ name, color, pct }))}
               height={300}
               innerRadius={70}
               outerRadius={110}
