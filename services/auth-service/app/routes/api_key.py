@@ -29,7 +29,7 @@ router = APIRouter(prefix="/auth", tags=["API Keys"])
 
 def _key_dict(k) -> dict:
     return {
-        "api_key": k.api_key,
+        "id": k.id,
         "key_name": k.key_name,
         "user_id": str(k.user_id),
         "permissions": k.permissions or [],
@@ -71,50 +71,51 @@ async def list_api_keys(
     return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
 
 
-@router.patch("/api-keys/{api_key}")
+@router.patch("/api-keys/{key_id}")
 async def update_api_key(
-    api_key: str,
+    key_id: int,
     body: UpdateAPIKeyRequest,
     user_id: UUID = Depends(get_current_user_id),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    # Only allow updating if at least one field is provided
+    from app.core.exceptions import EntityNotFoundError, ValidationError
+    db_key = await svc.get_by_id(key_id)
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
     update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
     if not update_data:
-        from app.core.exceptions import ValidationError
         raise ValidationError(
             message="No fields to update. Provide at least one of: key_name, permissions, expires_days.",
             code="NOTHING_TO_UPDATE",
         )
 
     updated_key = await svc.update_key(
-        api_key_value=api_key,
+        api_key_value=db_key.api_key,
         data=update_data,
         user_id=user_id,
     )
-    return success_response(data={
-        "api_key": updated_key.api_key,
-        "key_name": updated_key.key_name,
-        "user_id": str(updated_key.user_id),
-        "permissions": updated_key.permissions or [],
-        "expires_at": updated_key.expires_at.isoformat() if updated_key.expires_at else None,
-        "is_active": updated_key.is_active,
-    })
+    return success_response(data=_key_dict(updated_key))
 
 
-@router.delete("/api-keys/{api_key}")
+@router.delete("/api-keys/{key_id}")
 async def revoke_api_key(
-    api_key: str,
+    key_id: int,
     user_id: UUID = Depends(get_current_user_id),
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
 ):
+    from app.core.exceptions import EntityNotFoundError
+    db_key = await svc.get_by_id(key_id)
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
     owner_scoped_user_id = user_id
     roles = await role_svc.get_user_roles(user_id)
     if RoleName.ADMIN.value in roles:
         owner_scoped_user_id = None
 
-    await svc.revoke_api_key(api_key, user_id=owner_scoped_user_id)
+    await svc.revoke_api_key(db_key.api_key, user_id=owner_scoped_user_id)
     return success_response(data={"message": "API key revoked."})
 
 
