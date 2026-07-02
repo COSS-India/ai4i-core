@@ -47,18 +47,6 @@ export function formatMeteringTooltipLabel(ts: number, window: MeteringWindow): 
   });
 }
 
-/**
- * Build x-axis labels for metering charts.
- * Buckets come from Prometheus query_range and may not align to round clock times,
- * so label every point (datasets are small: ~4–7 buckets per window).
- */
-export function buildMeteringAxisLabels(
-  timestamps: number[],
-  window: MeteringWindow,
-): string[] {
-  return timestamps.map((ts) => formatMeteringAxisLabel(ts, window));
-}
-
 /** Map graph series points by timestamp for aligned multi-series charts. */
 export function indexMeteringSeriesByTs(
   series?: MeteringGraph["series"][number] | null,
@@ -86,21 +74,24 @@ export function buildRequestVolumeChartData(
   if (!successfulSeries?.points?.length || !failedSeries?.points?.length) return [];
 
   const failedByTs = indexMeteringSeriesByTs(failedSeries);
-  const timestamps = successfulSeries.points.map((p) => p.ts);
-  const axisLabels = buildMeteringAxisLabels(timestamps, timeWindow);
 
-  return successfulSeries.points.map((p, index) => {
+  return successfulSeries.points.map((p) => {
     const successful = Math.round(p.value);
     const failed = Math.round(failedByTs.get(p.ts) ?? 0);
+    const ts = p.ts;
 
     return {
-      ts: p.ts,
-      label: axisLabels[index] ?? "",
+      ts,
+      label: formatMeteringAxisLabel(ts, timeWindow),
       requests: successful + failed,
       successful,
       failed,
     };
   });
+}
+
+export function formatMeteringYTick(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(0)}K` : String(value);
 }
 
 /** Format throughput / RPS values (supports sub-unit rates from API). */

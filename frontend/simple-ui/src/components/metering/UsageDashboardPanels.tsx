@@ -30,9 +30,9 @@ export const TenantDashboardHeader: React.FC<TenantHeaderProps> = ({
 );
 
 interface TenantPanelsProps {
-  overview: NonNullable<MeteringDashboardState["overview"]>;
+  subTab: MeteringDashboardState["subTab"];
+  overview: MeteringDashboardState["overview"];
   requestVolumeSection: React.ReactNode;
-  serviceSectionRef: MeteringDashboardState["serviceSectionRef"];
   serviceQuery: MeteringDashboardState["serviceQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
   tenantId?: string | null;
@@ -40,32 +40,36 @@ interface TenantPanelsProps {
 }
 
 export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
+  subTab,
   overview,
   requestVolumeSection,
-  serviceSectionRef,
   serviceQuery,
   parseQueryError,
   tenantId,
   refreshNonce,
 }) => (
-  <>
-    <VStack align="stretch" spacing={6}>
-      <OverviewKpiCards data={overview} />
-      {requestVolumeSection}
-    </VStack>
-    <Box ref={serviceSectionRef}>
+  <Box pt={2}>
+    {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
+      <VStack align="stretch" spacing={6}>
+        <OverviewKpiCards data={overview} />
+        {requestVolumeSection}
+      </VStack>
+    ) : null}
+    {subTab === METERING.SUB_TAB.SERVICE && (
       <ServiceConsumptionTab
         data={serviceQuery.data}
         isLoading={serviceQuery.isLoading}
         errorMessage={parseQueryError(serviceQuery.error)}
       />
-    </Box>
-    <UsageAndSpendTab
-      isTenantView
-      tenantId={tenantId}
-      refreshNonce={refreshNonce}
-    />
-  </>
+    )}
+    {subTab === METERING.SUB_TAB.USAGE_SPEND && (
+      <UsageAndSpendTab
+        isTenantView
+        tenantId={tenantId}
+        refreshNonce={refreshNonce}
+      />
+    )}
+  </Box>
 );
 
 interface AdopterPanelsProps {

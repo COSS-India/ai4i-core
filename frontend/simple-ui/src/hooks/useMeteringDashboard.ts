@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { listTenants } from "../services/tenantService";
 import type {
@@ -44,17 +44,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
   const [tenantHeatmapServices, setTenantHeatmapServices] = useState<string[] | null>(null);
-  const [serviceSectionVisible, setServiceSectionVisible] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const serviceSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setTenantHeatmapServices(null);
   }, [subTab, timeWindow, topN]);
-
-  useEffect(() => {
-    setServiceSectionVisible(false);
-  }, [timeWindow, scopeTenantId]);
 
   const tenantsQuery = useQuery({
     queryKey: meteringQueryKey(METERING.QUERY.SCOPES.TENANT_DIRECTORY),
@@ -130,8 +124,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   });
 
   const serviceQueryEnabled =
-    (isAdopterView && subTab === METERING.SUB_TAB.SERVICE) ||
-    (tenantOverviewEnabled && serviceSectionVisible);
+    subTab === METERING.SUB_TAB.SERVICE &&
+    (isAdopterView || tenantOverviewEnabled);
 
   const serviceQuery = useQuery({
     queryKey: meteringQueryKey(
@@ -146,32 +140,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     ...meteringQueryDefaults,
   });
 
-  useEffect(() => {
-    if (!tenantOverviewEnabled) return;
-    const el = serviceSectionRef.current;
-    // `overview` is in the deps so this re-runs once the overview loads: the
-    // service-section <Box> (and its ref) only mounts after that, so on the
-    // first run the ref is still null. Without re-running, the observer would
-    // never attach and the service query would never enable.
-    if (!el) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting) {
-          setServiceSectionVisible(true);
-        }
-      },
-      { rootMargin: METERING.QUERY.SCROLL_ROOT_MARGIN },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [tenantOverviewEnabled, overview]);
-
   const primaryMeteringResponse = useMemo((): MeteringResponseMeta | null => {
     if (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.data) {
       return tenantQuery.data;
     }
-    if (isAdopterView && subTab === METERING.SUB_TAB.SERVICE && serviceQuery.data) {
+    if (subTab === METERING.SUB_TAB.SERVICE && serviceQuery.data) {
       return serviceQuery.data;
     }
     return overview ?? null;
@@ -193,7 +166,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const isLoading =
     (isAdopterView && overviewQuery.isLoading) ||
-    (isTenantView && overviewQuery.isLoading && tenantOverviewEnabled);
+    (isTenantView &&
+      subTab !== METERING.SUB_TAB.USAGE_SPEND &&
+      overviewQuery.isLoading &&
+      tenantOverviewEnabled);
 
   // Request Volume chart is an Overview-only section now.
   const requestVolumeGraph = overview?.request_volume ?? null;
@@ -250,7 +226,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     scopeTenantId,
     setScopeTenantId,
     setTenantHeatmapServices,
-    serviceSectionRef,
     isAdopterView,
     isTenantView,
     previewTenants,
