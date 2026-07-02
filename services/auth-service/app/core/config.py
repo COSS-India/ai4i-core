@@ -141,6 +141,23 @@ class AuthSettings(BaseSettings):
 
     # ── External services ──
     platform_core_url: Optional[str] = None
+    platform_core_db_name: Optional[str] = None
+    # Dedicated credentials for the platform-core Postgres instance.
+    # Falls back to the shared POSTGRES_* vars when unset (single-instance deployments).
+    platform_core_db_user: Optional[str] = None
+    platform_core_db_password: Optional[SecretStr] = None
+    platform_core_db_host: Optional[str] = None
+    platform_core_db_port: Optional[int] = None
+
+    def get_platform_core_db_url(self) -> Optional[str]:
+        if not self.platform_core_db_name:
+            return None
+        user = self.platform_core_db_user or self.postgres_user or "postgres"
+        raw_pw = self.platform_core_db_password or self.postgres_password
+        password = raw_pw.get_secret_value() if raw_pw else ""
+        host = self.platform_core_db_host or self.postgres_host
+        port = self.platform_core_db_port if self.platform_core_db_port is not None else self.postgres_port
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{self.platform_core_db_name}"
 
     # ── Derived helpers ──
 
