@@ -50,6 +50,7 @@ class UpdateAPIKeyRequest(BaseSchema):
 # ── Responses ──
 
 class CreateAPIKeyResponse(BaseSchema):
+    id: int
     api_key: str = Field(..., description="32-char hex key. Store securely — shown only once.")
     key_name: str
     permissions: list[int]
