@@ -104,14 +104,11 @@ class APIKeyService:
             ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
         if ttl <= 0:
             return
-        # Preserve PPU flags from the existing hash so a cache refresh doesn't
-        # unblock a tenant whose budget/quota is actually gone, and doesn't
-        # wipe the tier_id that was pushed by platform-core on tier assignment.
         existing = await self._cache.get_api_key_cache(db_key.api_key)
         preserved = {
             k: v
             for k, v in (existing or {}).items()
-            if (k == "tier_id" and v) or (v == "1" and (k == "budget-exhausted" or k.startswith("quota-")))
+            if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
         }
         await self._cache.set_api_key_cache(
             db_key.api_key,
@@ -121,7 +118,6 @@ class APIKeyService:
                 "permissions": db_key.permissions or [],
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
-                "tier_id": "",
                 **preserved,
             },
         )

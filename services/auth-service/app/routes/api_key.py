@@ -5,6 +5,7 @@ Route definitions only — no business logic, no DB/Redis calls.
 All operations are delegated to APIKeyService.
 """
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -48,7 +49,7 @@ async def create_api_key(
     body: CreateAPIKeyRequest,
     ctx = Depends(get_user_context),
     svc: APIKeyService = Depends(get_api_key_service),
-    platform_core_db: AsyncSession = Depends(get_platform_core_db),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     raw_key, api_key = await svc.create_api_key(
         user_id=ctx.user_id,
