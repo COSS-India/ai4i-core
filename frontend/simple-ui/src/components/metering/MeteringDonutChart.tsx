@@ -119,7 +119,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
       overflow="visible"
       sx={{ "& .recharts-wrapper": { overflow: "visible" } }}
     >
-      <MeteringChartPanel height={height} minWidth={240} bare>
+      <MeteringChartPanel height={height} minWidth={240}>
         {(size) => (
           <PieChart width={size.width} height={size.height}>
             <Pie

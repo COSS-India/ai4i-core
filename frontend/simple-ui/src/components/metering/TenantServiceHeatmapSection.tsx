@@ -30,6 +30,7 @@ import {
   meteringServiceColor,
 } from "../../utils/meteringColors";
 import MeteringDataTable from "./MeteringDataTable";
+import { MeteringEmptyState } from "./MeteringChartPanel";
 import MeteringSectionCard from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -167,11 +168,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
           </HStack>
         }
       >
-        <Flex h="200px" align="center" justify="center">
-          <Text color="gray.500" fontSize="sm">
-            {heatmap.EMPTY}
-          </Text>
-        </Flex>
+        <MeteringEmptyState height={200} message={heatmap.EMPTY} />
       </MeteringSectionCard>
     );
   }

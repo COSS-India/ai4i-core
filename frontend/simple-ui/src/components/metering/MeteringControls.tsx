@@ -32,6 +32,7 @@ interface MeteringControlsProps {
   subTab?: MeteringSubTab;
   onSubTabChange?: (tab: MeteringSubTab) => void;
   showSubTabs?: boolean;
+  subTabs?: ReadonlyArray<{ id: MeteringSubTab; label: string }>;
 }
 
 const MeteringControls: React.FC<MeteringControlsProps> = ({
@@ -50,6 +51,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   subTab,
   onSubTabChange,
   showSubTabs = false,
+  subTabs = METERING.SUB_TABS,
 }) => {
   const isUsageSpend = subTab === METERING.SUB_TAB.USAGE_SPEND;
 
@@ -93,7 +95,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
 
         {showSubTabs && subTab && onSubTabChange ? (
           <SegmentedTabBar
-            options={[...METERING.SUB_TABS]}
+            options={[...subTabs]}
             activeId={subTab}
             onChange={onSubTabChange}
           />

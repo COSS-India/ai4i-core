@@ -88,6 +88,11 @@ export const METERING = {
     { id: "service", label: "Service Consumption" },
     { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
+  TENANT_SUB_TABS: [
+    { id: "overview", label: "Overview" },
+    { id: "service", label: "Service Consumption" },
+    { id: "usage-spend", label: "Usage and Spend" },
+  ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
     tenant: "Tenant Admin",
@@ -187,7 +192,7 @@ export const METERING = {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: "No tenant consumption data available.",
     SERVICE_CONSUMPTION: "No service consumption data available.",
-    CHART: "No chart data available for the selected window.",
+    CHART: "No data available for the selected time window.",
   },
   REFRESH: {
     JUST_NOW: "just now",

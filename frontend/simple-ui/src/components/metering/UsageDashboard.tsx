@@ -31,7 +31,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     scopeTenantId,
     setScopeTenantId,
     setTenantHeatmapServices,
-    serviceSectionRef,
     isTenantView,
     previewTenants,
     tenantOrganisationById,
@@ -92,18 +91,19 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
         tenantOptions={previewTenants.map((t) => ({ id: t.id, label: t.organisation }))}
         selectedTenantId={scopeTenantId}
         onTenantChange={setScopeTenantId}
-        showSubTabs={isTenantView === false}
+        showSubTabs
+        subTabs={isTenantView ? METERING.TENANT_SUB_TABS : METERING.SUB_TABS}
         subTab={subTab}
         onSubTabChange={setSubTab}
         topN={topN}
         onTopNChange={setTopN}
       />
 
-      {isTenantView && overview ? (
+      {isTenantView ? (
         <TenantDashboardPanels
+          subTab={subTab}
           overview={overview}
           requestVolumeSection={requestVolumeSection}
-          serviceSectionRef={serviceSectionRef}
           serviceQuery={serviceQuery}
           parseQueryError={parseQueryError}
           tenantId={effectiveTenantId}
