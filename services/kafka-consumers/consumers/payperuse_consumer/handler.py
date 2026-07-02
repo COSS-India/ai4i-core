@@ -51,27 +51,34 @@ async def handle_ppu_usage(msg: Message) -> None:
         logger.debug("Skipping non-billing span | span_name=%r offset=%d", span_name, msg.offset())
         return
 
-    # Deduplicate using the OTel span_id — unique per inference span.
-    # Guards against double-billing when Kafka redelivers after a rebalance.
     span_id: str = (data.get("context") or {}).get("span_id", "").strip()
-    if span_id:
+
+    # Deduplicate using correlation_id — the application-level request identifier
+    # injected by RequestMiddleware and stored as a span attribute.  It is unique
+    # per request and stable across Kafka redeliveries, so it makes a reliable
+    # dedup key.  We deliberately avoid span_id: OTel may emit 0x000…0 for spans
+    # with an invalid OTel context, and every span sharing that value would map to
+    # the same Redis key — poisoning the dedup set after the first hit.
+    attrs = data.get("attributes") or {}
+    correlation_id: str = str(attrs.get("correlation_id") or "").strip()
+    billed_key: str = f"{_BILLED_KEY_PREFIX}{correlation_id}" if correlation_id else ""
+
+    if billed_key:
         try:
             redis = get_redis_client()
-            billed_key = f"{_BILLED_KEY_PREFIX}{span_id}"
             already_billed = await redis.exists(billed_key)
             if already_billed:
                 logger.warning(
-                    "Duplicate span detected — skipping billing offset=%d span_id=%s",
-                    msg.offset(), span_id,
+                    "Duplicate span detected — skipping billing offset=%d"
+                    " correlation_id=%s span_id=%s",
+                    msg.offset(), correlation_id, span_id,
                 )
                 return
         except Exception as exc:
             # Redis unavailable: log and continue — billing correctness relies on
             # at-most-one consumer instance when Redis is down.
             logger.warning("Redis dedup check failed — proceeding without dedup: %s", exc)
-            span_id = ""  # don't attempt the post-commit SET either
-
-    attrs = data.get("attributes") or {}
+            billed_key = ""  # don't attempt the post-commit SET either
 
     # Skip billing for JWT / non-API-key requests. authType is set by RequestMiddleware
     # from the X-Auth-Type header injected by APISIX after token validation.
@@ -182,12 +189,15 @@ async def handle_ppu_usage(msg: Message) -> None:
 
     # Mark span as billed in Redis after DB commit so a crash before this point
     # causes a retry (over-billing risk) rather than silent data loss.
-    if span_id:
+    if billed_key:
         try:
             redis = get_redis_client()
             await redis.set(billed_key, "1", ex=_BILLED_KEY_TTL)
         except Exception as exc:
-            logger.warning("Failed to set Redis dedup key for span_id=%s: %s", span_id, exc)
+            logger.warning(
+                "Failed to set Redis dedup key for correlation_id=%s: %s",
+                correlation_id, exc,
+            )
 
     logger.info(
         "Billing applied | tenant=%s service=%s tokens=%d cost=%s exhausted=%s",

@@ -70,6 +70,13 @@ class LoggerSpanExporter(SpanExporter):
                 if not correlation_id:
                     continue
 
+                # Drop spans where the OTel SDK failed to assign a real span_id
+                # (span_id=0 means NonRecordingSpan / un-initialised tracer).
+                # Such spans share a single span_id value, which would poison
+                # the PPU consumer's Redis dedup set on the first hit.
+                if span_context.span_id == 0:
+                    continue
+
                 span_data = {
                     "name": span.name,
                     "context": {
