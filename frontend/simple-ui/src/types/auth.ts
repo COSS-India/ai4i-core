@@ -124,10 +124,11 @@ export interface APIKeyCreate {
 }
 
 export interface APIKeyResponse {
-  id: number;
+  /** Present on some responses; list endpoints identify keys by `api_key` (hex). */
+  id?: number;
   key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  /** Only present immediately after creation — never returned by list endpoints. */
+  /** 32-char hex public identifier; required for PATCH/DELETE on current auth API. */
   api_key?: string;
   permissions: number[];
   is_active?: boolean;

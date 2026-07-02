@@ -20,12 +20,6 @@ class APIKeyRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
 
-    async def get_by_id(self, key_id: int) -> Optional[APIKey]:
-        result = await self._db.execute(
-            select(APIKey).where(APIKey.id == key_id)
-        )
-        return result.scalar_one_or_none()
-
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         result = await self._db.execute(
             select(APIKey).where(APIKey.api_key == api_key_value)
