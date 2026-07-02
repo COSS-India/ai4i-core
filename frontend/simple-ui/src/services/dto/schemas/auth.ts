@@ -100,6 +100,7 @@ export const setPasswordStatusResponseSchema = z.object({
 /** POST /api-keys — raw key shown once; no list metadata. */
 export const createApiKeyResponseSchema = z
   .object({
+    id: z.coerce.number(),
     api_key: z.string(),
     key_name: z.string(),
     permissions: z.array(z.coerce.number()),

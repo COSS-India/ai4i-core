@@ -60,6 +60,7 @@ async def create_api_key(
         platform_core_db=platform_core_db,
     )
     return success_response(data=CreateAPIKeyResponse(
+        id=api_key.id,
         api_key=raw_key,
         key_name=api_key.key_name,
         permissions=api_key.permissions or [],
