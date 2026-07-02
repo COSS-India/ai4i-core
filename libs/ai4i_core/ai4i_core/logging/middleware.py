@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .config import get_default_config
 from ai4i_core.context import (
     generate_trace_id,
+    set_auth_type,
     set_tenant_id,
     set_trace_id,
 )
@@ -77,6 +78,10 @@ class RequestMiddleware(BaseHTTPMiddleware):
         if tenant_id:
             set_tenant_id(tenant_id)
             request.state.tenant_id = tenant_id
+
+        auth_type = (request.headers.get("X-Auth-Type") or "").strip()
+        if auth_type:
+            set_auth_type(auth_type)
 
         start = time.time()
         response = await call_next(request)

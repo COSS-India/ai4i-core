@@ -212,11 +212,12 @@ async def search_traces_opensearch(
         by_level = {}
         by_task = {}
         for trace in data:
-            trace_status = trace.get("status", "unknown")
-            task_type = trace.get("task_type") or "unknown"
+            # .get(..., "unknown") does not help when the value is explicitly None
+            trace_status = trace.get("status") or "unknown"
+            task_type_key = trace.get("task_type") or "unknown"
 
             by_level[trace_status] = by_level.get(trace_status, 0) + 1
-            by_task[task_type] = by_task.get(task_type, 0) + 1
+            by_task[task_type_key] = by_task.get(task_type_key, 0) + 1
 
         return SearchTracesResponse(
             
