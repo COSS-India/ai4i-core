@@ -81,9 +81,12 @@ class OpenAIProxyService:
             model_attrs["service_id"] = service_id
 
             async with traced_inference(payload, "LLM", logger) as infer_attrs:
-                # service_id is not in context vars — copy it explicitly.
-                # tenantId/authType are already seeded by traced_inference via get_context_attributes().
+                # service_id is not in context vars — must be copied explicitly.
+                # tenantId is also set explicitly: the PPU Kafka consumer reads only
+                # the ai-inference span for billing, so it must always be present
+                # even if the contextvar is None (get_context_attributes skips None).
                 infer_attrs["service_id"] = service_id
+                infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
 
                 status_code, body = await self.proxy(path=path, payload=payload)
 
