@@ -16,6 +16,7 @@ class LoggerSpanExporter(SpanExporter):
     """
 
     KAFKA_TOPIC = settings.KAFKA_TOPIC_OTEL_TRACE
+    _NULL_TRACE_ID = "0x" + "0" * 32
 
     def __init__(self):
         self._producer = None
@@ -59,10 +60,19 @@ class LoggerSpanExporter(SpanExporter):
                 span_attrs = dict(span.attributes) if span.attributes else {}
                 correlation_id = span_attrs.get("correlation_id")
                 otel_trace_id = f"0x{span_context.trace_id:032x}"
+
+                # Spans with no real trace context (e.g. ASGI background tasks
+                # outside a request) carry the all-zeros null trace ID.  They
+                # have no correlation_id either, so there is no meaningful trace
+                # to attach them to — drop them rather than polluting OpenSearch.
+                effective_trace_id = correlation_id or otel_trace_id
+                if effective_trace_id == self._NULL_TRACE_ID:
+                    continue
+
                 span_data = {
                     "name": span.name,
                     "context": {
-                        "trace_id": correlation_id or otel_trace_id,
+                        "trace_id": effective_trace_id,
                         "otel_trace_id": otel_trace_id,
                         "span_id": f"0x{span_context.span_id:016x}",
                         "parent_span_id": parent_span_id,
@@ -76,6 +86,7 @@ class LoggerSpanExporter(SpanExporter):
                         "status_code": str(span.status.status_code),
                         "description": span.status.description,
                     },
+                    "service_name": settings.SERVICE_NAME,
                 }
 
                 # Log to Python logger
@@ -201,7 +212,6 @@ class FilteringSpanExporter(SpanExporter):
     ]
 
     def __init__(self, base_exporter: SpanExporter, service_name: str = None):
-        """Initialize the filtering exporter with a base exporter."""
         self.base_exporter = base_exporter
         self.service_name = service_name
         # Always include send/receive spans for inference service
