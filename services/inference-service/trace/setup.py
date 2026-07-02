@@ -61,18 +61,19 @@ class LoggerSpanExporter(SpanExporter):
                 correlation_id = span_attrs.get("correlation_id")
                 otel_trace_id = f"0x{span_context.trace_id:032x}"
 
-                # Spans with no real trace context (e.g. ASGI background tasks
-                # outside a request) carry the all-zeros null trace ID.  They
-                # have no correlation_id either, so there is no meaningful trace
-                # to attach them to — drop them rather than polluting OpenSearch.
-                effective_trace_id = correlation_id or otel_trace_id
-                if effective_trace_id == self._NULL_TRACE_ID:
+                # Only export spans that carry a correlation_id — the
+                # application-level request identifier written by RequestMiddleware.
+                # Spans without one (ASGI background tasks, lifespan hooks) have
+                # no meaningful trace context and must not reach OpenSearch.
+                # Falling back to the raw OTel trace ID would index them under a
+                # key that no query matches, polluting the traces-* index.
+                if not correlation_id:
                     continue
 
                 span_data = {
                     "name": span.name,
                     "context": {
-                        "trace_id": effective_trace_id,
+                        "trace_id": correlation_id,
                         "otel_trace_id": otel_trace_id,
                         "span_id": f"0x{span_context.span_id:016x}",
                         "parent_span_id": parent_span_id,
