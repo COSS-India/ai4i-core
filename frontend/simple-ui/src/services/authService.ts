@@ -62,7 +62,6 @@ import {
   clearTokenStorage,
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
-import { buildApiKeyRevokePathTokens } from '../utils/apiKeyUtils';
 
 const authPath = apiEndpoints.auth.paths;
 
@@ -544,16 +543,6 @@ class AuthService {
     );
   }
 
-  /** Revoke a key from the list response. Throws if the numeric id is missing. */
-  async revokeApiKeyRecord(key: APIKeyResponse): Promise<{ message: string }> {
-    const id = key.id ?? key.key_id;
-    if (id == null) {
-      throw new Error(
-        'This API key cannot be revoked from the UI. Refresh the list.',
-      );
-    }
-    return this.revokeApiKey(id);
-  }
 
   /**
    * PATCH `/api-keys/{keyId}` — integer PK in the path.
