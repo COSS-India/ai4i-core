@@ -2,7 +2,6 @@
 Base class defining the contract and shared pipeline for all inference task services.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from tarfile import HeaderError
@@ -212,12 +211,10 @@ class BaseTaskService:
         normalise config first (call super) — see ASR / diarization."""
         from services.base.config_mapper import GenericTritonMapper
         mapper = GenericTritonMapper(self._adapter_config)
-        context_builder = self._triton_context_builder()
-        return await asyncio.to_thread(
-            mapper.compose_triton_kserve_v2_payload,
-            input_data,
-            config,
-            context_builder,
+        return mapper.compose_triton_kserve_v2_payload(
+            input_data=input_data,
+            config=config,
+            context_builder=self._triton_context_builder(),
         )
 
     async def convert_triton_output_to_task_format(self, triton_output):

@@ -1,6 +1,5 @@
 """ASR TaskService — Automatic Speech Recognition inference."""
 
-import asyncio
 import base64
 from io import BytesIO
 from typing import Any, Dict, List, Tuple
@@ -72,40 +71,30 @@ class ASRTaskService(AudioBase):
           4. _resample to TARGET_SAMPLE_RATE
           5. _equalize_amplitude
         Returns list of item dicts enriched with samples / num_samples / sample_rate.
-
-        CPU-bound decode/resample runs in a worker thread so the event loop stays
-        free for concurrent ASR requests.
         """
         input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
+        items = []
 
-        prepared: List[Tuple[Dict[str, Any], bytes]] = []
         for item in input_data:
-            audio_bytes = await self._get_audio_bytes(item)
-            prepared.append((item, audio_bytes))
+            d = item
 
-        items = await asyncio.to_thread(self._preprocess_audio_items, prepared)
-        payload[self.payload_key] = items
-        return payload
+            audio_bytes             = await self._get_audio_bytes(item)
+            audio_data, sample_rate = await self._decode_audio_bytes(audio_bytes)
+            audio_data              = self._stereo_to_mono(audio_data)
+            audio_data              = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
+            audio_data              = self._equalize_amplitude(audio_data)
 
-    def _preprocess_audio_items(
-        self, prepared: List[Tuple[Dict[str, Any], bytes]]
-    ) -> List[Dict[str, Any]]:
-        items: List[Dict[str, Any]] = []
-        for item, audio_bytes in prepared:
-            d = dict(item)
-            audio_data, sample_rate = self._decode_audio_bytes_sync(audio_bytes)
-            audio_data = self._stereo_to_mono(audio_data)
-            audio_data = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
-            audio_data = self._equalize_amplitude(audio_data)
-
-            # Keep float32 ndarray — config_mapper vectorizes cast/flatten once.
-            d["samples"] = audio_data
-            d["num_samples"] = int(len(audio_data))
+            # samples must be a plain Python list — the config mapper's _cast_dtype
+            # operates on Python lists, not numpy arrays.
+            d["samples"]     = audio_data.tolist()
+            d["num_samples"] = len(audio_data)
             d["sample_rate"] = self.TARGET_SAMPLE_RATE
             items.append(d)
-        return items
+
+        payload[self.payload_key] = items
+        return payload
 
     # ------------------------------------------------------------------
     # Triton format hooks
@@ -141,16 +130,11 @@ class ASRTaskService(AudioBase):
         resolution — populated by preprocess_input before the Triton loop.
         """
         def build(item, index, config):
-            samples = item.get("samples")
-            if samples is None:
-                samples = []
-            num_samples = item.get("num_samples")
-            if num_samples is None:
-                num_samples = len(samples)
+            samples = item.get("samples") or []
             return {
                 "audio": {
                     "samples":     samples,
-                    "num_samples": num_samples,
+                    "num_samples": item.get("num_samples", len(samples)),
                     "sample_rate": item.get("sample_rate"),
                 }
             }
@@ -179,10 +163,6 @@ class ASRTaskService(AudioBase):
         )
 
     async def _decode_audio_bytes(self, audio_bytes: bytes) -> Tuple[Any, int]:
-        """Async wrapper — decode runs synchronously in the caller's thread."""
-        return self._decode_audio_bytes_sync(audio_bytes)
-
-    def _decode_audio_bytes_sync(self, audio_bytes: bytes) -> Tuple[Any, int]:
         """
         Decode raw audio bytes → (float32 numpy array, sample_rate).
         """
