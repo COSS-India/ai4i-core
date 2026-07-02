@@ -14,6 +14,7 @@ export function useMeteringChartColors() {
     axis: getMeteringChartColor("AXIS"),
     primaryStroke: getMeteringChartColor("PRIMARY_STROKE"),
     primaryFill: getMeteringChartColor("PRIMARY_FILL"),
+    successFill: getMeteringChartColor("SUCCESS_FILL"),
     failureStroke: getMeteringChartColor("FAILURE_STROKE"),
     tooltipBorder: getMeteringChartColor("TOOLTIP_BORDER"),
     tooltipBg,

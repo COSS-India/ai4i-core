@@ -17,6 +17,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+
 from ai4i_core.ppu import get_inference_types
 
 from app.core.config import settings
@@ -101,8 +104,6 @@ class APIKeyService:
             ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
         if ttl <= 0:
             return
-        # Preserve PPU exhaustion flags from the existing hash so a cache
-        # refresh doesn't unblock a tenant whose budget/quota is actually gone.
         existing = await self._cache.get_api_key_cache(db_key.api_key)
         preserved = {
             k: v
@@ -117,7 +118,6 @@ class APIKeyService:
                 "permissions": db_key.permissions or [],
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
-                "tier_id": "",
                 **preserved,
             },
         )
@@ -256,6 +256,7 @@ class APIKeyService:
         permissions: list[int],
         expires_days: Optional[int] = None,
         tenant_id: Optional[str] = None,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
@@ -300,6 +301,45 @@ class APIKeyService:
             tenant = await self._tenants.get_by_id(owner.tenant_id)
         owner_active = self.user_may_use_api_keys(owner, tenant)
 
+        if not tenant_id:
+            raise ValidationError(
+                message="A tenant ID is required to create an API key.",
+                code="TENANT_ID_REQUIRED",
+            )
+
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier assignment cannot be verified: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+
+        tier_id = ""
+        try:
+            row = (await platform_core_db.execute(
+                text(
+                    "SELECT tier_id FROM ppu_tenant_tier_assignments"
+                    " WHERE tenant_id = :tenant_id"
+                    "   AND effective_from <= now()"
+                    "   AND effective_to   >  now()"
+                    " LIMIT 1"
+                ),
+                {"tenant_id": tenant_id},
+            )).first()
+            if row:
+                tier_id = str(row.tier_id)
+        except Exception as exc:
+            logger.warning("Failed to fetch tier_id for tenant %s: %s", tenant_id, exc)
+            raise ValidationError(
+                message="Failed to verify tier assignment for the tenant.",
+                code="TIER_LOOKUP_FAILED",
+            ) from exc
+
+        if not tier_id:
+            raise ValidationError(
+                message="API key cannot be created: tenant has no active tier assignment.",
+                code="NO_ACTIVE_TIER",
+            )
+
         api_key = APIKey(
             api_key=raw_key,
             user_id=user_id,
@@ -322,7 +362,7 @@ class APIKeyService:
                     "permissions": permission_ids,
                     "user_id": str(user_id),
                     "tenant_id": tenant_id,
-                    "tier_id": "",
+                    "tier_id": tier_id,
                 },
             )
 
@@ -456,3 +496,6 @@ class APIKeyService:
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         return await self._repo.get_by_api_key(api_key_value)
+
+    async def get_by_id(self, key_id: int) -> Optional[APIKey]:
+        return await self._repo.get_by_id(key_id)

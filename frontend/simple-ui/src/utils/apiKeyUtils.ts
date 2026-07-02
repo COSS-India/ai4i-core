@@ -42,10 +42,7 @@ export function buildApiKeyRevokePathTokens(key: ApiKeyLike): string[] {
 export function formatApiKeyDisplayId(key: ApiKeyLike): string {
   const id = key.id ?? key.key_id ?? key.keyId;
   if (id != null && Number.isFinite(Number(id))) return String(id);
-  const hex = resolveApiKeyHex(key);
-  if (hex) return hex;
-  const raw = (key.api_key ?? key.apiKey)?.trim();
-  return raw || "—";
+  return "—";
 }
 
 export function readApiKeyHexCache(): Record<string, string> {

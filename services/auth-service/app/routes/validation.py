@@ -136,7 +136,7 @@ async def _validate_api_key(
     if user_id:
         response.headers["X-User-ID"] = str(user_id)
     response.headers["X-User-Plan"] = USER_PLAN_APIKEY
-    response.headers["X-Tier-ID"] = result.get("tier_id")
+    response.headers["X-Tier-ID"] = result.get("tier_id") or ""
 
     response.headers["X-Budget-Exhausted"] = "true" if result.get("budget-exhausted") == "1" else "false"
 
