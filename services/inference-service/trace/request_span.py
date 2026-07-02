@@ -183,6 +183,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
+        attrs.update(get_context_attributes())
         attrs.update({
             "input_type": get_input_type(payload),
             "output_type": "unknown",
