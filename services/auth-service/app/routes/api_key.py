@@ -8,6 +8,9 @@ All operations are delegated to APIKeyService.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_platform_core_db
 
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_user, get_current_user_id, get_user_context
@@ -45,6 +48,7 @@ async def create_api_key(
     body: CreateAPIKeyRequest,
     ctx = Depends(get_user_context),
     svc: APIKeyService = Depends(get_api_key_service),
+    platform_core_db: AsyncSession = Depends(get_platform_core_db),
 ):
     raw_key, api_key = await svc.create_api_key(
         user_id=ctx.user_id,
@@ -52,6 +56,7 @@ async def create_api_key(
         permissions=body.permissions,
         expires_days=body.expires_days,
         tenant_id=ctx.tenant_id,
+        platform_core_db=platform_core_db,
     )
     return success_response(data=CreateAPIKeyResponse(
         api_key=raw_key,

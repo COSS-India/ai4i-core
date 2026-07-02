@@ -141,6 +141,17 @@ class AuthSettings(BaseSettings):
 
     # ── External services ──
     platform_core_url: Optional[str] = None
+    platform_core_db_name: Optional[str] = None
+
+    def get_platform_core_db_url(self) -> Optional[str]:
+        if not self.platform_core_db_name:
+            return None
+        user = self.auth_db_user or self.postgres_user or "postgres"
+        raw_pw = self.auth_db_password or self.postgres_password
+        password = raw_pw.get_secret_value() if raw_pw else ""
+        host = self.auth_db_host or self.postgres_host
+        port = self.auth_db_port or self.postgres_port
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{self.platform_core_db_name}"
 
     # ── Derived helpers ──
 
