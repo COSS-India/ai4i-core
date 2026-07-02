@@ -183,6 +183,11 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
+        # Seed correlation_id (and tenantId/authType) so LoggerSpanExporter uses
+        # the same context.trace_id as the sibling request/model spans.  Without
+        # this the ai-inference span lands in OpenSearch under the raw OTel trace
+        # ID (0x…) rather than the correlation ID, making it invisible in the UI.
+        attrs.update(get_context_attributes())
         attrs.update({
             "input_type": get_input_type(payload),
             "output_type": "unknown",
