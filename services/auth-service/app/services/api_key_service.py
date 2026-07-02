@@ -456,3 +456,6 @@ class APIKeyService:
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         return await self._repo.get_by_api_key(api_key_value)
+
+    async def get_by_id(self, key_id: int) -> Optional[APIKey]:
+        return await self._repo.get_by_id(key_id)
