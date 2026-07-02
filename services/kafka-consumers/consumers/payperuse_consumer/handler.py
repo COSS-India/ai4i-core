@@ -48,6 +48,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     # Only process ai-inference spans — the model and request spans are noise for billing.
     span_name = data.get("name", "")
     if span_name != "ai-inference":
+        logger.debug("Skipping non-billing span | span_name=%r offset=%d", span_name, msg.offset())
         return
 
     # Deduplicate using the OTel span_id — unique per inference span.
@@ -80,6 +81,12 @@ async def handle_ppu_usage(msg: Message) -> None:
     total_tokens: int = input_tokens + output_tokens
     end_time_ns = data.get("end_time")
 
+    logger.info(
+        "Billing fields extracted | offset=%d tenant_id=%r service_id=%r"
+        " input_tokens=%d output_tokens=%d total_tokens=%d span_id=%s",
+        msg.offset(), tenant_id, service_id, input_tokens, output_tokens, total_tokens, span_id,
+    )
+
     if not (tenant_id and service_id and total_tokens):
         logger.warning(
             "Missing required billing fields — skipping offset=%d"
@@ -93,6 +100,7 @@ async def handle_ppu_usage(msg: Message) -> None:
         if end_time_ns
         else datetime.now(timezone.utc).strftime("%Y-%m")
     )
+    logger.info("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
     async with db_registry.get_session(settings.db_settings.PLATFORM_CORE_DB) as db:
         pricing: ServicePricing | None = await get_service_pricing(db, service_id)
@@ -103,15 +111,36 @@ async def handle_ppu_usage(msg: Message) -> None:
             )
             return
 
+        logger.info(
+            "Pricing resolved | service_id=%s billing_unit_type=%r"
+            " unit_rate=%s cost_per_unit=%s unit_size=%s",
+            service_id, pricing.billing_unit_type,
+            pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+        )
+
         cost = calculate_cost(total_tokens, pricing)
         if cost == 0:
             logger.warning(
-                "Zero cost for service_id=%s — skipping billing for tenant=%s",
+                "Zero cost for service_id=%s — skipping billing for tenant=%s"
+                " (unit_rate=%s cost_per_unit=%s unit_size=%s)",
                 service_id, tenant_id,
+                pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
             )
             return
 
+        logger.info("Cost calculated | tenant=%s cost=%s tokens=%d", tenant_id, cost, total_tokens)
+
         wallet = await deduct_balance(db, tenant_id, cost)
+
+        if wallet.tier_id is None:
+            # deduct_balance already logged the warning; no active assignment means
+            # nothing was written — skip commit and Redis mark.
+            return
+
+        logger.info(
+            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
+            tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
+        )
 
         quota_exhausted = False
         if wallet.tier_id and pricing.billing_unit_type:
@@ -123,10 +152,21 @@ async def handle_ppu_usage(msg: Message) -> None:
                 tier_id=wallet.tier_id,
                 units=total_tokens,
             )
+            logger.info(
+                "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
+                " units=%d quota_exhausted=%s",
+                tenant_id, pricing.billing_unit_type, billing_month, total_tokens, quota_exhausted,
+            )
+        else:
+            logger.info(
+                "Quota update skipped | tenant=%s tier_id=%s billing_unit_type=%r",
+                tenant_id, wallet.tier_id, pricing.billing_unit_type,
+            )
 
         # Commit DB changes before any HTTP calls to avoid holding row locks
         # across slow or failing auth-service requests.
         await db.commit()
+        logger.info("DB commit successful | tenant=%s offset=%d", tenant_id, msg.offset())
 
     # Mark span as billed in Redis after DB commit so a crash before this point
     # causes a retry (over-billing risk) rather than silent data loss.

@@ -7,17 +7,19 @@ import type {
   UpdateTierPayload,
 } from "../types/tierManagement";
 
-export type { Tier, TiersListResponse, CreateTierPayload, UpdateTierPayload } from "../types/tierManagement";
+export type {
+  Tier,
+  TiersListResponse,
+  CreateTierPayload,
+  UpdateTierPayload,
+} from "../types/tierManagement";
 
-export async function fetchTiers(modelTaskType?: string): Promise<TiersListResponse> {
+export async function fetchTiers(
+  modelTaskType?: string,
+): Promise<TiersListResponse> {
   const params: Record<string, string> = {};
   if (modelTaskType) params.modelTaskType = modelTaskType;
   const response = await apiClient.get(apiEndpoints.tiers.list, { params });
-  return response.data;
-}
-
-export async function getTierById(tierId: string): Promise<Tier> {
-  const response = await apiClient.get(apiEndpoints.tiers.tier(tierId));
   return response.data;
 }
 
@@ -26,7 +28,10 @@ export async function createTier(payload: CreateTierPayload): Promise<Tier> {
   return response.data;
 }
 
-export async function updateTier(tierId: string, payload: UpdateTierPayload): Promise<Tier> {
+export async function updateTier(
+  tierId: string,
+  payload: UpdateTierPayload,
+): Promise<Tier> {
   const response = await apiClient.patch(apiEndpoints.tiers.update, {
     tier_id: tierId,
     ...payload,
@@ -48,7 +53,9 @@ export interface AssignTenantTierPayload {
   effective_to: string;
 }
 
-export async function assignTenantTier(payload: AssignTenantTierPayload): Promise<void> {
+export async function assignTenantTier(
+  payload: AssignTenantTierPayload,
+): Promise<void> {
   await apiClient.post(apiEndpoints.tiers.assignTenant, payload);
 }
 

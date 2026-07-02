@@ -125,7 +125,6 @@ class CoreSettings(BaseSettings):
 
     # ── Logging / Observability ──
     log_level: str = "INFO"
-    jaeger_endpoint: Optional[str] = None
     telemetry_enabled: bool = True
 
     # ── OpenSearch (traces) ──

@@ -154,7 +154,12 @@ async def update_quota_usage(
     )
     snap = snap_result.scalar()
     if snap is None:
-        return False  # no cap for this tier + type
+        logger.warning(
+            "update_quota_usage: no quota cap in ppu_tier_quotas for"
+            " tier_id=%s inference_name=%s — usage not recorded in ppu_quota_usage",
+            tier_id, inference_name,
+        )
+        return False
 
     result = await db.execute(
         text(

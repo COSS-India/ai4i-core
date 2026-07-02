@@ -10,10 +10,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Install service dependencies (ai4i-core pulled from PyPI via requirements.txt) ──
-COPY services/kafka-consumers/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY services/kafka-consumers/ .
+COPY . .
 
 # Run as non-root user for security
 RUN useradd --no-create-home --shell /bin/false appuser \

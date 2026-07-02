@@ -74,7 +74,6 @@ Without Kafka, `inference-service` logs `KafkaConnectionError` and falls back â€
 To view traces from Simple UI, set in `frontend/simple-ui/.env` (from `setup-env.sh`):
 
 - `NEXT_PUBLIC_TELEMETRY_SERVICE_URL`
-- `NEXT_PUBLIC_JAEGER_URL` (if your deployment exposes Jaeger; local stack may use OpenSearch Dashboards instead)
 
 See `frontend/simple-ui/env.template` for defaults.
 

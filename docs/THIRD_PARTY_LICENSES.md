@@ -42,7 +42,6 @@ This document lists all open source third-party libraries used across the servic
 | httpx | >=0.25.0 | BSD-3-Clause |
 | opentelemetry-api | >=1.20.0 | Apache-2.0 |
 | opentelemetry-sdk | >=1.20.0 | Apache-2.0 |
-| opentelemetry-exporter-otlp-proto-grpc | >=1.20.0 | Apache-2.0 |
 | opentelemetry-instrumentation-fastapi | >=0.41b0 | Apache-2.0 |
 | opentelemetry-instrumentation-sqlalchemy | >=0.41b0 | Apache-2.0 |
 | opentelemetry-instrumentation-redis | >=0.41b0 | Apache-2.0 |
@@ -95,7 +94,6 @@ This document lists all open source third-party libraries used across the servic
 | aiofiles | >=23.0.0 | Apache-2.0 |
 | opentelemetry-api | >=1.20.0 | Apache-2.0 |
 | opentelemetry-sdk | >=1.20.0 | Apache-2.0 |
-| opentelemetry-exporter-otlp-proto-grpc | >=1.20.0 | Apache-2.0 |
 | opentelemetry-instrumentation-fastapi | >=0.41b0 | Apache-2.0 |
 | opentelemetry-instrumentation-sqlalchemy | >=0.41b0 | Apache-2.0 |
 | opentelemetry-instrumentation-redis | >=0.41b0 | Apache-2.0 |
@@ -135,7 +133,6 @@ This document lists all open source third-party libraries used across the servic
 | opentelemetry-api | >=1.20.0 | Apache-2.0 |
 | opentelemetry-sdk | >=1.20.0 | Apache-2.0 |
 | opentelemetry-instrumentation-fastapi | >=0.41b0 | Apache-2.0 |
-| opentelemetry-exporter-otlp-proto-grpc | >=1.20.0 | Apache-2.0 |
 | setuptools | >=68.0 | MIT |
 | wheel | — | MIT |
 | pytest | >=7.4.0 | MIT |
@@ -275,7 +272,6 @@ Deduplicated across all services. Where a library appears in multiple components
 | next | 15.5.19 | MIT | simple-ui |
 | numpy | >=1.24.0 | BSD-3-Clause | ai4i_core, inference-service |
 | opentelemetry-api | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
-| opentelemetry-exporter-otlp-proto-grpc | >=1.20.0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
 | opentelemetry-instrumentation-fastapi | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service, ai4i_core |
 | opentelemetry-instrumentation-redis | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service |
 | opentelemetry-instrumentation-sqlalchemy | >=0.41b0 | Apache-2.0 | auth-service, platform-core-service |
@@ -331,7 +327,7 @@ Deduplicated across all services. Where a library appears in multiple components
 | License | Libraries |
 |---|---|
 | MIT | fastapi, pydantic, pydantic-settings, sqlalchemy, alembic, redis, PyJWT, mako, aiosmtplib, jinja2, argon2-cffi, pydub, setuptools, wheel, slowapi, black, flake8, build, pyyaml, faker, factory-boy, python-socketio, pytest, pytest-cov, pytest-mock, pytest-timeout, @chakra-ui/icons, @chakra-ui/react, @emotion/react, @emotion/styled, @tanstack/react-query, @tanstack/react-query-devtools, axios, crypto-js, framer-motion, next, react, react-dom, react-icons, socket.io-client, socket.io-parser, zod, postcss, ws, eslint, ai4i-core |
-| Apache-2.0 | asyncpg, aiokafka, kafka-python, opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-instrumentation-fastapi, opentelemetry-instrumentation-sqlalchemy, opentelemetry-instrumentation-redis, opensearch-py, elasticsearch, aiofiles, python-multipart, bcrypt, playwright, twine, pytest-asyncio, typescript |
+| Apache-2.0 | asyncpg, aiokafka, kafka-python, opentelemetry-api, opentelemetry-sdk, opentelemetry-instrumentation-fastapi, opentelemetry-instrumentation-sqlalchemy, opentelemetry-instrumentation-redis, opensearch-py, elasticsearch, aiofiles, python-multipart, bcrypt, playwright, twine, pytest-asyncio, typescript |
 | Apache-2.0 AND BSD-2-Clause | prometheus-client |
 | Apache-2.0 OR BSD-3-Clause | cryptography |
 | Apache-2.0 OR BSD-2-Clause | packaging |

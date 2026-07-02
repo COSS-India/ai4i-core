@@ -11,7 +11,6 @@ function getAllowedConnectOrigins() {
   const urls = [
     process.env.NEXT_PUBLIC_API_URL,
     process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL,
-    process.env.NEXT_PUBLIC_JAEGER_URL,
     process.env.NEXT_PUBLIC_ASR_STREAM_URL,
     process.env.NEXT_PUBLIC_TTS_STREAM_URL,
   ];
@@ -31,7 +30,6 @@ function getAllowedConnectOrigins() {
       "http://localhost:3000",
       "http://localhost:8084",
       "http://localhost:8107",
-      "http://localhost:16686",
       "ws://localhost:8087",
       "ws://localhost:8088",
     ].forEach((o) => origins.add(o));

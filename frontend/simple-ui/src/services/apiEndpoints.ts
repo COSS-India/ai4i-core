@@ -90,6 +90,7 @@ export const apiEndpoints = {
     tryIt: {
       execute: `${API_V1}/nmt/try-it`,
     },
+    inferenceTypes: `${API_V1}/inference-types`,
   },
 
   telemetry: {
@@ -219,7 +220,6 @@ export const apiEndpoints = {
     list: `${API_V1}/pay-per-use/tiers`,
     create: `${API_V1}/pay-per-use/tier`,
     update: `${API_V1}/pay-per-use/tier`,
-    tier: (tierId: string) => `${API_V1}/pay-per-use/tiers/${tierId}`,
     assignTenant: `${API_V1}/pay-per-use/tenant/tier`,
   },
 

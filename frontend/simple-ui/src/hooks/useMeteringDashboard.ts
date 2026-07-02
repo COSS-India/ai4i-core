@@ -45,6 +45,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const [scopeTenantId, setScopeTenantId] = useState("");
   const [tenantHeatmapServices, setTenantHeatmapServices] = useState<string[] | null>(null);
   const [serviceSectionVisible, setServiceSectionVisible] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const serviceSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -203,6 +204,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     (serviceQueryEnabled && serviceQuery.isFetching);
 
   const handleRefresh = () => {
+    setRefreshNonce((n) => n + 1);
     overviewQuery.refetch();
     if (isAdopterView && subTab === METERING.SUB_TAB.TENANT) {
       tenantQuery.refetch();
@@ -274,5 +276,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     organisationLabel,
     lastGeneratedAt,
     parseQueryError,
+    refreshNonce,
+    effectiveTenantId,
   };
 }
