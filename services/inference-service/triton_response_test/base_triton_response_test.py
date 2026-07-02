@@ -1,8 +1,14 @@
-"""Base class for response-size load testing across inference service types.
+"""Base class for Triton-level response load testing.
 
-Extend this class to add NER, Image, Audio, or Text response tests.
-Each subclass provides its own pre-defined responses and the shared machinery
-(payload classification, timing, reporting) is inherited from here.
+Stubs the raw HTTP JSON that Triton returns so the inference service can be
+load-tested without a live model.  The response format matches the KServe v2
+infer protocol (``{"model_name": ..., "outputs": [...]}``) which is what
+``_call_triton_inference`` receives.
+
+Three size buckets, driven by input payload length (characters or base64 bytes):
+  SMALL  : length  < SMALL_THRESHOLD   (200)
+  MEDIUM : length  < MEDIUM_THRESHOLD  (1000)
+  LARGE  : length >= MEDIUM_THRESHOLD
 """
 
 import time
@@ -17,10 +23,6 @@ class ResponseSize(str, Enum):
     LARGE = "LARGE"
 
 
-# Payload length thresholds (characters).
-# SMALL  : < 200 chars
-# MEDIUM : 200–999 chars
-# LARGE  : >= 1000 chars
 SMALL_THRESHOLD = 200
 MEDIUM_THRESHOLD = 1000
 
@@ -44,19 +46,17 @@ class InferenceMetrics:
         )
 
 
-class BaseResponseTest:
-    """Shared load-test harness for all inference task types.
+class BaseTritonResponseTest:
+    """Shared Triton-stub harness for all inference task types.
 
     Subclasses must implement:
-        - get_response(size: ResponseSize) -> Any
+        get_response(size: ResponseSize) -> dict
     """
 
-    # Override in subclasses if different thresholds are needed.
     small_threshold: int = SMALL_THRESHOLD
     medium_threshold: int = MEDIUM_THRESHOLD
 
     def classify_payload(self, payload: str) -> ResponseSize:
-        """Return the ResponseSize bucket for a given payload string."""
         length = len(payload)
         if length < self.small_threshold:
             return ResponseSize.SMALL
@@ -65,19 +65,13 @@ class BaseResponseTest:
         return ResponseSize.LARGE
 
     def get_response(self, _size: ResponseSize) -> Any:
-        """Return the pre-defined response for *_size*. Must be overridden."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement get_response()"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} must implement get_response()")
 
     def run(self, payload: str) -> tuple[InferenceMetrics, Any]:
-        """Classify the payload, fetch the response, measure elapsed time, and return both."""
         size = self.classify_payload(payload)
-
         start = time.perf_counter() * 1000
         response = self.get_response(size)
         end = time.perf_counter() * 1000
-
         metrics = InferenceMetrics(
             payload_size=len(payload),
             response_size=size,

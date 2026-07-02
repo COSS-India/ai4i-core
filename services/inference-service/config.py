@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     )
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
+    # Per-block phase timing — on by default. When true, each request's root
+    # span gains per-stage *_ms fields (resolve, validate, preprocess,
+    # build_payload, triton, output_convert, output_tokens, postprocess) and a
+    # human-readable "TIMING ..." log line is emitted per request. The fields
+    # ride the existing request span (no new spans). Flip to false to silence.
+    PHASE_TIMING_ENABLED: bool = Field(
+        True, description="Emit per-stage *_ms timings + a TIMING log line per request"
+    )
+
     # Telemetry/Observability
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
         None, description="OpenTelemetry OTLP exporter endpoint"

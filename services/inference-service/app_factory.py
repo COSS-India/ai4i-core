@@ -1,4 +1,4 @@
-"""
+F"""
 Main FastAPI application factory for inference service.
 Creates and configures the unified inference service with all components.
 """
@@ -153,7 +153,7 @@ def create_inference_app() -> FastAPI:
         description="Unified inference endpoint for NMT, ASR, OCR, NER, LLM and other task services",
         version="1.0.0",
         # API docs are opt-out: keep enabled for dev, disable in production
-        # via ENABLE_DOCS=false (OWASP API8 — security misconfiguration).
+        # via ENABLE_DOCS=falseF (OWASP API8 — security misconfiguration).
         docs_url="/docs" if settings.ENABLE_DOCS else None,
         redoc_url="/redoc" if settings.ENABLE_DOCS else None,
         openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,

@@ -57,10 +57,43 @@ def compute_total_time_ms(start_time: float) -> float:
     return round((time.time() - start_time) * 1000, 2)
 
 
+# Ordered phase groups for the human-readable "TIMING" line. Sub-phases render
+# in parentheses under their parent so the line mirrors the request tree. Only
+# keys actually present are shown, so this stays correct as phases change.
+_TIMING_TOP = [
+    "resolve_ms", "validate_ms", "preprocess_ms", "run_inference_ms", "postprocess_ms",
+]
+_TIMING_SUB = {
+    "resolve_ms": ["mms_http_ms"],
+    "run_inference_ms": [
+        "build_payload_ms", "input_tokens_ms", "triton_ms",
+        "output_convert_ms", "output_tokens_ms",
+    ],
+}
+
+
+def format_timing_summary(attrs: dict) -> str:
+    """Build the one-line 'TIMING ...' summary from the merged phase attrs on
+    the root request span (companion to the span JSON, for humans reading logs).
+    """
+    parts = [f"total={attrs.get('total_time_ms', 0)}ms"]
+    for key in _TIMING_TOP:
+        if key not in attrs:
+            continue
+        entry = f"{key[:-3]}={attrs[key]}"
+        subs = [f"{s[:-3]}={attrs[s]}" for s in _TIMING_SUB.get(key, []) if s in attrs]
+        if subs:
+            entry += " (" + " ".join(subs) + ")"
+        parts.append(entry)
+    if "cache_hit" in attrs:
+        parts.append(f"cache_hit={str(attrs['cache_hit']).lower()}")
+    return "TIMING " + " ".join(parts)
+
+
 def log_span_attributes(span_name: str, span, attributes: dict) -> None:
     """
-    Log span attributes in OpenTelemetry standard JSON format.
-    Reuses the same format as inference_span._log_span_attributes.
+    Log span attributes in OpenTelemetry standard JSON format
+    (trace_id, span_id, kind, attributes), shared by all span finalizers.
     """
     import json
     try:
@@ -106,6 +139,12 @@ def traced_span(
         error_attrs: optional fn(attrs, exc) -> attrs to reshape the
             collected attrs on failure (e.g. zero token counts)
     """
+    # Per-block phase timings ride the root span only — child spans (model,
+    # ai-inference) carry their own total_time_ms and must not duplicate them.
+    if root:
+        from trace.phase_timer import start_root_phases
+        start_root_phases()
+
     start_time = time.time()
     context = otel_context.Context() if root else None
     with tracer.start_as_current_span(span_name, context=context) as span:
@@ -115,18 +154,44 @@ def traced_span(
         except Exception as e:
             if error_attrs is not None:
                 attrs = error_attrs(attrs, e)
-            attrs["total_time_ms"] = compute_total_time_ms(start_time)
-            if classify_status:
-                attrs["status"] = "failure"
-                attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
-            finalize_span(span, span_name, attrs, error=e)
+            _finalize_traced(
+                span, span_name, attrs, start_time,
+                classify_status=classify_status, root=root, error=e,
+            )
             raise
         else:
-            attrs["total_time_ms"] = compute_total_time_ms(start_time)
-            if classify_status:
-                attrs.setdefault("status", "success")
-                attrs.setdefault("status_code", 200)
-            finalize_span(span, span_name, attrs, ok=mark_ok)
+            _finalize_traced(
+                span, span_name, attrs, start_time,
+                classify_status=classify_status, root=root, mark_ok=mark_ok,
+            )
+
+
+def _finalize_traced(
+    span, span_name, attrs, start_time, *,
+    classify_status, root, mark_ok=False, error=None,
+):
+    """Stamp total_time_ms + status, merge root phase timings, finalize.
+
+    Shared success/error tail of traced_span — keeps the context manager's
+    branching flat (one call per path).
+    """
+    attrs["total_time_ms"] = compute_total_time_ms(start_time)
+    if classify_status and error is not None:
+        attrs["status"] = "failure"
+        attrs["status_code"] = 400 if isinstance(error, ValueError) else 500
+    elif classify_status:
+        attrs.setdefault("status", "success")
+        attrs.setdefault("status_code", 200)
+    if root:
+        from trace.phase_timer import collect_phases
+        phases = collect_phases()
+        attrs.update(phases)
+        # Companion to the span JSON: one human-readable timing line per request.
+        # Only when phases were collected (timing enabled), so it never spams a
+        # bare "TIMING total=..." line.
+        if phases:
+            logger.info(format_timing_summary(attrs))
+    finalize_span(span, span_name, attrs, error=error, ok=(mark_ok and error is None))
 
 
 def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: bool = False) -> None:

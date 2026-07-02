@@ -81,6 +81,21 @@ class OpenAIProxyService:
 
     async def proxy(self, path: str, payload: Any) -> Tuple[int, Any]:
         """
+        Route a chat request: return the load-test stub when active, otherwise
+        forward to the upstream via _proxy_upstream.
+
+        The stub short-circuits before any upstream call, mirroring
+        BaseTaskService._call_triton_inference. It is OpenAI-shaped, so
+        proxy_traced reads usage for token spans exactly as from a live call.
+        """
+        from triton_response_test.stub_dispatcher import get_llm_stub_response
+        stub = get_llm_stub_response(payload)
+        if stub is not None:
+            return 200, stub
+        return await self._proxy_upstream(path, payload)
+
+    async def _proxy_upstream(self, path: str, payload: Any) -> Tuple[int, Any]:
+        """
         Resolve upstream from ``payload['model']`` and forward.
 
         Maps known failure modes to OpenAI-style error responses:
