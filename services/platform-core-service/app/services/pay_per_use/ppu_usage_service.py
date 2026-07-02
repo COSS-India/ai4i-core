@@ -189,9 +189,12 @@ class PPUUsageService:
 
         budget_limit = float(assignment.budget_limit)
         remaining_budget = float(assignment.available_balance)
-        raw_quota = assignment.total_quota  # None means unlimited (no quota rows for this tier)
-        if len(inference_types) == 1 and raw_quota is not None:
-            quota_display = int(raw_quota)
+        if len(inference_types) == 1:
+            # Use the per-type quota snapshot from the breakdown row.
+            # assignment.total_quota is SUM(monthly_quota) across ALL inference types
+            # in the tier, which is wrong when the tier has quotas for multiple types
+            # (e.g. LLM 1000 + ASR 500 → shows 1500 instead of 1000 for an LLM-only tenant).
+            quota_display = raw[0].get("quotaLimit")
         else:
             quota_display = None
 
