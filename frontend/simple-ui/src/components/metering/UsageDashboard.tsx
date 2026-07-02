@@ -44,8 +44,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     primaryError,
     dataStateBanner,
     requestVolumeGraph,
-    totalRequestsKpi,
-    successRateKpi,
     organisationLabel,
     lastGeneratedAt,
     parseQueryError,
@@ -56,9 +54,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
   const requestVolumeSection = overview ? (
     <RequestVolumeSection
       graph={requestVolumeGraph}
-      requestHealth={overview.request_health}
-      totalRequests={totalRequestsKpi}
-      successRate={successRateKpi}
       timeWindow={timeWindow}
     />
   ) : null;
@@ -107,8 +102,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       {isTenantView && overview ? (
         <TenantDashboardPanels
           overview={overview}
-          requestVolumeGraph={requestVolumeGraph}
-          totalRequestsKpi={totalRequestsKpi}
           requestVolumeSection={requestVolumeSection}
           serviceSectionRef={serviceSectionRef}
           serviceQuery={serviceQuery}

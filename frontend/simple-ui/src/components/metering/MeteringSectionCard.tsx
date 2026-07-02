@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Card,
   CardBody,
@@ -82,7 +81,7 @@ interface KpiCardProps {
   value: React.ReactNode;
   pctChange?: number | null;
   helper?: string;
-  accent?: string;
+  valueColor?: string;
   invertTrend?: boolean;   // true = an increase is "bad" (red), e.g. Failed
 }
 
@@ -91,115 +90,45 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   value,
   pctChange,
   helper,
-  accent = "orange",
-  invertTrend = false,
-}) => (
-  <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" h="full">
-    <CardBody>
-      <VStack align="flex-start" spacing={2}>
-        <Text fontSize="xs" fontWeight="semibold" color="gray.500" textTransform="uppercase" letterSpacing="wide">
-          {label}
-        </Text>
-        <Box fontSize="2xl" fontWeight="bold" color={`${accent}.600`} lineHeight="1.2">
-          {value ?? "—"}
-        </Box>
-        {pctChange == null ? null : (
-          <HStack spacing={1}>
-            <Badge
-              colorScheme={pctChange === 0 ? "gray" : (pctChange > 0) !== invertTrend ? "green" : "red"}
-              fontSize="xs"
-              borderRadius="md"
-            >
-              {pctChange === 0 ? "→" : pctChange > 0 ? "↑" : "↓"} {Math.abs(pctChange)}% vs previous
-            </Badge>
-          </HStack>
-        )}
-        {helper ? (
-          <Text fontSize="xs" color="gray.500">
-            {helper}
-          </Text>
-        ) : null}
-      </VStack>
-    </CardBody>
-  </Card>
-);
-
-interface SummaryMetricCardProps {
-  label: string;
-  value: React.ReactNode;
-  helper?: string;
-  leftBorderColor: string;
-  valueColor?: string;
-  helperColor?: string;
-}
-
-/** KPI card with a coloured left border (request volume & health summary). */
-export const SummaryMetricCard: React.FC<SummaryMetricCardProps> = ({
-  label,
-  value,
-  helper,
-  leftBorderColor,
   valueColor = "gray.800",
-  helperColor = "gray.500",
-}) => (
-  <Box
-    p={5}
-    bg="white"
-    borderRadius="lg"
-    borderWidth="1px"
-    borderColor="gray.200"
-    borderLeftWidth="4px"
-    borderLeftColor={leftBorderColor}
-    shadow="sm"
-    h="full"
-  >
-    <Text
-      fontSize="xs"
-      color="gray.500"
-      fontWeight="semibold"
-      textTransform="uppercase"
-      letterSpacing="wide"
-    >
-      {label}
-    </Text>
-    <Text fontSize="2xl" fontWeight="bold" color={valueColor} mt={2} lineHeight="1.2">
-      {value}
-    </Text>
-    {helper ? (
-      <Text fontSize="sm" color={helperColor} mt={1}>
-        {helper}
-      </Text>
-    ) : null}
-  </Box>
-);
+  invertTrend = false,
+}) => {
+  const trendColor =
+    pctChange == null || pctChange === 0
+      ? "gray.500"
+      : (pctChange > 0) !== invertTrend
+        ? "green.500"
+        : "red.500";
 
-interface InlineMetricCardProps {
-  label: string;
-  value: React.ReactNode;
-  helper?: string;
-  accent?: string;
-  valueSize?: "lg" | "2xl";
-}
-
-/** Compact metric tile used in throughput grids. */
-export const InlineMetricCard: React.FC<InlineMetricCardProps> = ({
-  label,
-  value,
-  helper,
-  accent = "gray.800",
-  valueSize = "2xl",
-}) => (
-  <Box p={4} borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="white" h="full">
-    <Text fontSize="xs" color="gray.500" fontWeight="semibold" textTransform="uppercase">
-      {label}
-    </Text>
-    <Text fontSize={valueSize} fontWeight="bold" color={accent} mt={1}>
-      {value}
-    </Text>
-    {helper ? (
-      <Text fontSize="xs" color="gray.500" mt={1}>
-        {helper}
-      </Text>
-    ) : null}
-  </Box>
-);
+  return (
+    <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" borderRadius="lg" h="full">
+      <CardBody py={5} px={5}>
+        <VStack align="flex-start" spacing={3}>
+          <Text
+            fontSize="xs"
+            fontWeight="semibold"
+            color="gray.500"
+            textTransform="uppercase"
+            letterSpacing="wider"
+          >
+            {label}
+          </Text>
+          <Text fontSize="3xl" fontWeight="bold" color={valueColor} lineHeight="1.1">
+            {value ?? "—"}
+          </Text>
+          {pctChange == null ? null : (
+            <Text fontSize="sm" fontWeight="medium" color={trendColor}>
+              {pctChange === 0 ? "→" : pctChange > 0 ? "↑" : "↓"}{" "}
+              {Math.abs(pctChange).toFixed(1)}% vs previous
+            </Text>
+          )}
+          {helper ? (
+            <Text fontSize="xs" color="gray.500" lineHeight="short">
+              {helper}
+            </Text>
+          ) : null}
+        </VStack>
+      </CardBody>
+    </Card>
+  );
+};

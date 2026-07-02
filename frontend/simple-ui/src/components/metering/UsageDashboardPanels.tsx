@@ -6,7 +6,6 @@ import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections
 import ServiceConsumptionTab from "./ServiceConsumptionTab";
 import TenantConsumptionTab from "./TenantConsumptionTab";
 import UsageAndSpendTab from "./UsageAndSpendTab";
-import ThroughputLoadSection from "./ThroughputLoadSection";
 
 type MeteringDashboardState = ReturnType<typeof useMeteringDashboard>;
 
@@ -32,8 +31,6 @@ export const TenantDashboardHeader: React.FC<TenantHeaderProps> = ({
 
 interface TenantPanelsProps {
   overview: NonNullable<MeteringDashboardState["overview"]>;
-  requestVolumeGraph: MeteringDashboardState["requestVolumeGraph"];
-  totalRequestsKpi: MeteringDashboardState["totalRequestsKpi"];
   requestVolumeSection: React.ReactNode;
   serviceSectionRef: MeteringDashboardState["serviceSectionRef"];
   serviceQuery: MeteringDashboardState["serviceQuery"];
@@ -44,8 +41,6 @@ interface TenantPanelsProps {
 
 export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   overview,
-  requestVolumeGraph,
-  totalRequestsKpi,
   requestVolumeSection,
   serviceSectionRef,
   serviceQuery,
@@ -56,16 +51,6 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   <>
     <VStack align="stretch" spacing={6}>
       <OverviewKpiCards data={overview} />
-      <ThroughputLoadSection
-        throughput={overview.throughput}
-        timeWindow={overview.scope.window}
-        requestVolumeGraph={requestVolumeGraph}
-        fourthMetric={{
-          label: METERING.TENANT_VIEW.TOTAL_REQUESTS_LABEL,
-          value: String(totalRequestsKpi ?? METERING.GRAPH.EMPTY_VALUE),
-          helper: METERING.TENANT_VIEW.TOTAL_REQUESTS_HELPER,
-        }}
-      />
       {requestVolumeSection}
     </VStack>
     <Box ref={serviceSectionRef}>

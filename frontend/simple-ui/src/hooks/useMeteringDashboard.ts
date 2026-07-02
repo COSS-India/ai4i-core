@@ -214,13 +214,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     }
   };
 
-  const totalRequestsKpi = overview?.kpis.find(
-    (k) => k.key === METERING.KPI.KEYS.TOTAL_REQUESTS,
-  )?.value;
-  const successRateKpi = overview?.kpis.find(
-    (k) => k.key === METERING.KPI.KEYS.SUCCESS_RATE,
-  )?.value;
-
   const organisationLabel = overview?.scope.organisation ?? null;
 
   const lastGeneratedAt = useMemo(
@@ -271,8 +264,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     primaryError,
     dataStateBanner,
     requestVolumeGraph,
-    totalRequestsKpi,
-    successRateKpi,
     organisationLabel,
     lastGeneratedAt,
     parseQueryError,
