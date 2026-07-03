@@ -30,6 +30,12 @@ class AuthSettings(BaseSettings):
     environment: str = ENV_DEVELOPMENT
     debug: bool = False
 
+    # ── Server ──
+    host: str = "0.0.0.0"
+    port: int = 8081
+    workers: int = 2
+    log_level: str = "INFO"
+
     # ── Database ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None
