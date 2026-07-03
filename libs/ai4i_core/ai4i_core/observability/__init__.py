@@ -11,7 +11,7 @@ Usage::
 
 from .config import PluginConfig
 from .metrics import MetricsCollector
-from .middleware import ObservabilityMiddleware
+from .middleware import ObservabilityMiddleware, set_inference_payload_metrics
 from .plugin import setup_observability
 
 __all__ = [
@@ -19,4 +19,5 @@ __all__ = [
     "MetricsCollector",
     "PluginConfig",
     "ObservabilityMiddleware",
+    "set_inference_payload_metrics",
 ]
