@@ -321,3 +321,54 @@ class TestLlmUsageExtraction:
     def test_extract_llm_usage_invalid_json_returns_zeros(self):
         mw = ObservabilityMiddleware(MagicMock(), metrics_collector=MetricsCollector())
         assert mw._extract_llm_usage_from_body(b"not-json") == (0, 0, 0, "")
+
+
+class TestDetectServiceType:
+    @pytest.mark.parametrize(
+        "path,expected",
+        [
+            ("/api/v1/nmt/inference", "translation"),
+            ("/api/v1/asr/inference", "asr"),
+            ("/api/v1/tts/inference", "tts"),
+            ("/api/v1/ocr/inference", "ocr"),
+            ("/api/v1/transliteration/inference", "transliteration"),
+            ("/api/v1/audio-lang-detection/inference", "audio_lang_detection"),
+            ("/api/v1/language-detection/inference", "language_detection"),
+            ("/api/v1/language-diarization/inference", "language_diarization"),
+            ("/api/v1/speaker-diarization/inference", "speaker_diarization"),
+            ("/api/v1/ner/inference", "ner"),
+            ("/api/v1/speaker/enrollment", "speaker_verification"),
+            ("/api/v1/chat/completions", "llm"),
+            ("/enterprise/metrics", "enterprise"),
+            ("/docs", "documentation"),
+            ("/api/v1/inference", "unknown"),
+        ],
+    )
+    def test_path_detection(self, path, expected):
+        assert ObservabilityMiddleware._detect_service_type(path) == expected
+
+
+class TestDispatchDisabled:
+    @pytest.mark.asyncio
+    async def test_skips_metrics_when_disabled(self):
+        collector = MetricsCollector()
+        config = PluginConfig(enabled=False)
+
+        async def call_next(request):
+            return StreamingResponse(self._stream_ok(), media_type="text/plain")
+
+        async def app(scope, receive, send):
+            pass
+
+        mw = ObservabilityMiddleware(app, metrics_collector=collector, config=config)
+        request = MagicMock()
+        request.url.path = "/api/v1/asr/inference"
+        request.method = "POST"
+
+        response = await mw.dispatch(request, call_next)
+        assert response.status_code == 200
+        assert "telemetry_obsv_requests_total_count" not in collector.render()
+
+    @staticmethod
+    async def _stream_ok():
+        yield b"ok"

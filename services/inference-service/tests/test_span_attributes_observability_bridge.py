@@ -164,3 +164,64 @@ class TestTracedInferenceIntegration:
         assert metrics["service_type"] == "asr"
         assert metrics["service_id"] == "asr-svc"
         assert metrics["audio_seconds"] == pytest.approx(1.0, rel=0.05)
+
+    @pytest.mark.asyncio
+    async def test_traced_inference_zeros_tokens_on_failure(self):
+        payload = {"task_type": "ASR", "audio": [{"audioContent": _wav_base64(0.5)}]}
+        logger = logging.getLogger("test.trace.failure")
+
+        with pytest.raises(RuntimeError, match="inference failed"):
+            async with traced_inference(payload, "ASRTaskService", logger):
+                raise RuntimeError("inference failed")
+
+        metrics = get_inference_payload_metrics()
+        assert metrics is not None
+        assert metrics["service_type"] == "asr"
+
+
+class TestOutputTypeAndTokens:
+    def test_get_output_type_text_audio_image(self):
+        assert sa.get_output_type([{"target": "hello"}]) == "text"
+        assert sa.get_output_type([{"audio_content": "abc"}]) == "audio"
+        assert sa.get_output_type([{"image_content": "xyz"}]) == "image"
+        assert sa.get_output_type([]) == "unknown"
+
+    def test_count_output_tokens_by_modality(self):
+        assert sa.count_output_tokens([{"target": "one two"}], "text") == 2
+        assert sa.count_output_tokens([{"audio_content": "x" * 200}], "audio") >= 1
+        assert sa.count_output_tokens([{"image_content": "x" * 2000}], "image") >= 1
+
+    def test_audio_input_tokens_from_num_samples(self):
+        items = [{"num_samples": 16000}]
+        assert sa.count_input_tokens(items, "audio") >= 1
+
+
+class TestPayloadShapeVariants:
+    def test_input_data_nested_text(self):
+        payload = {
+            "task_type": "NMT",
+            "inputData": {"input": [{"source": "nested text"}]},
+        }
+        analysis = sa.ensure_payload_analyzed(payload)
+        assert analysis["characters"] == len("nested text")
+
+    def test_service_type_from_task_name_suffix(self):
+        payload = {"task_type": "NMT", "input": [{"source": "x"}]}
+        sa.publish_observability_metrics(payload, {}, "NMTTaskService")
+        assert get_inference_payload_metrics()["service_type"] == "translation"
+
+    def test_publish_swallows_import_errors(self, monkeypatch):
+        monkeypatch.setattr(
+            sa,
+            "ensure_payload_analyzed",
+            lambda _payload: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        sa.publish_observability_metrics({"input": []}, {}, "NER")
+
+
+class TestObservabilityPackageExport:
+    def test_set_inference_payload_metrics_exported(self):
+        from ai4i_core.observability import set_inference_payload_metrics as exported
+
+        exported({"service_type": "ner", "ner_tokens": 1})
+        assert get_inference_payload_metrics()["ner_tokens"] == 1
