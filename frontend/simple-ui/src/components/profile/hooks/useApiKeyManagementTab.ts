@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
 import type {
@@ -23,13 +23,12 @@ import {
   mergeApiKeyHexFromCache,
   normalizeApiKeyRecord,
   permissionLabelWithFallback,
-  resolveApiKeyHex,
 } from "../../../utils/apiKeyUtils";
 
 function permissionIdFromRaw(raw: string | number): number | null {
   if (typeof raw === "number" && Number.isInteger(raw)) return raw;
   const s = String(raw);
-  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  if (/^\d+$/.test(s)) return Number.parseInt(s, 10);
   return null;
 }
 
@@ -51,7 +50,7 @@ function resolvePermissionIds(
       continue;
     }
     if (/^\d+$/.test(s)) {
-      const n = parseInt(s, 10);
+      const n = Number.parseInt(s, 10);
       if (catalog.length === 0 || catalog.some((p) => p.id === n)) {
         ids.add(n);
       }
@@ -81,7 +80,6 @@ function mapKeysToAdminRows(
 }
 
 export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) {
-  const toast = useToastWithDeduplication();
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -168,27 +166,21 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
         setAllApiKeys(mapKeysToAdminRows(keys, user));
         if (!options?.silent) {
-          toast({
-            title: "API Keys Loaded",
-            description: `Loaded ${keys.length} API key(s)`,
-            status: "success",
-            duration: 2000,
-            isClosable: true,
+          showToast({
+            type: "success",
+            message: `Loaded ${keys.length} API key(s)`,
           });
         }
       } catch (error) {
-        toast({
-          title: "Error",
-          description: error instanceof Error ? error.message : "Failed to load API keys",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: error instanceof Error ? error.message : "Failed to load API keys",
         });
       } finally {
         setIsLoadingAllApiKeys(false);
       }
     },
-    [loadPermissionsCatalog, loadTenantContext, permissions, toast, user],
+    [loadPermissionsCatalog, loadTenantContext, permissions, user],
   );
 
   const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
@@ -213,35 +205,11 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const handleUpdateApiKey = async () => {
     if (!selectedKeyForUpdate) return;
     if (!updateFormData.key_name?.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Please enter a key name",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Please enter a key name" });
       return;
     }
     if (!updateFormData.permissions?.length) {
-      toast({
-        title: "Validation Error",
-        description: "Please select at least one permission",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    const hex = resolveApiKeyHex(selectedKeyForUpdate);
-    if (!hex) {
-      toast({
-        title: "Cannot update",
-        description:
-          "This row is missing the 32-character api_key. Refresh the list or check the auth service response.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
     let catalog = permissions;
@@ -250,49 +218,31 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         catalog = await authService.getAllPermissions();
         setPermissions(Array.isArray(catalog) ? catalog : []);
       } catch {
-        toast({
-          title: "Error",
-          description: "Could not load permissions. Try again or open the Permissions tab first.",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: "Could not load permissions. Try again or open the Permissions tab first.",
         });
         return;
       }
     }
     const permissionIds = resolvePermissionIds(updateFormData.permissions ?? [], catalog);
     if (!permissionIds.length) {
-      toast({
-        title: "Validation Error",
-        description: "Select at least one valid permission",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Select at least one valid permission" });
       return;
     }
     setIsUpdating(true);
     try {
-      await authService.updateApiKey(hex, {
+      await authService.updateApiKey(selectedKeyForUpdate.id, {
         key_name: updateFormData.key_name?.trim(),
         permissions: permissionIds,
       });
-      toast({
-        title: "API Key Updated",
-        description: "API key has been updated successfully",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "API key has been updated successfully" });
       handleCloseUpdateModal();
       await handleFetchAllApiKeys();
     } catch (error) {
-      toast({
-        title: "Update Failed",
-        description: error instanceof Error ? error.message : "Failed to update API key",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update API key",
       });
     } finally {
       setIsUpdating(false);
@@ -333,37 +283,16 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
 
   const handleRevokeApiKey = async () => {
     if (!keyToRevoke) return;
-    const hex = resolveApiKeyHex(keyToRevoke);
-    if (!hex) {
-      toast({
-        title: "Cannot revoke",
-        description:
-          "This row is missing the 32-character api_key. Refresh the list or check the auth service response.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
-      return;
-    }
     setIsRevoking(true);
     try {
-      await authService.revokeApiKey(hex);
-      toast({
-        title: "API Key Revoked",
-        description: "API key has been revoked successfully",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      await authService.revokeApiKey(keyToRevoke.id);
+      showToast({ type: "success", message: "API key has been revoked successfully" });
       handleCloseRevokeModal();
       await handleFetchAllApiKeys();
     } catch (error) {
-      toast({
-        title: "Revoke Failed",
-        description: error instanceof Error ? error.message : "Failed to revoke API key",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to revoke API key",
       });
     } finally {
       setIsRevoking(false);

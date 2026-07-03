@@ -1,6 +1,6 @@
 // Custom hook for audio recording functionality
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { showToast } from '../utils/toast';
 import { convertWebmToWav } from '../utils/helpers';
 import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS } from '../config/constants';
 
@@ -11,8 +11,7 @@ interface UseAudioRecorderOptions {
 
 export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
   const { sampleRate = 16000, onRecordingComplete } = options;
-  const toast = useToastWithDeduplication();
-  
+
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState<number>(0);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
@@ -67,7 +66,7 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
 
   const startRecording = useCallback(async () => {
     let streamToUse = audioStream;
-    
+
     if (!streamToUse) {
       try {
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -75,14 +74,11 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
       } catch (err: any) {
         console.error('Error accessing microphone:', err);
         const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
-        toast({
-          title: isNotFoundError ? 'No Microphone Detected' : 'Microphone Access Denied',
-          description: isNotFoundError
+        showToast({
+          type: 'error',
+          message: isNotFoundError
             ? 'No microphone detected. Please connect a microphone and try again.'
             : 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
         });
         return;
       }
@@ -90,13 +86,7 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
 
     if (!window.MediaRecorder) {
       const err = RECORDING_ERRORS.BROWSER_NOT_SUPPORTED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: err.description });
       return;
     }
 
@@ -132,26 +122,14 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
 
           if (duration < MIN_RECORDING_DURATION) {
             const err = RECORDING_ERRORS.REC_TOO_SHORT;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
             setIsRecording(false);
             return;
           }
 
           if (webmBlob.size < 1000) {
             const err = RECORDING_ERRORS.NO_AUDIO_DETECTED;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
             setIsRecording(false);
             return;
           }
@@ -181,25 +159,13 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
           };
           reader.onerror = () => {
             const err = RECORDING_ERRORS.REC_INTERRUPTED;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: 'error',
-              duration: 5000,
-              isClosable: true,
-            });
+            showToast({ type: 'error', message: err.description });
           };
           reader.readAsDataURL(blobToSend);
         } catch (err) {
           console.error('Error processing recording:', err);
           const recErr = RECORDING_ERRORS.REC_INTERRUPTED;
-          toast({
-            title: recErr.title,
-            description: recErr.description,
-            status: 'error',
-            duration: 5000,
-            isClosable: true,
-          });
+          showToast({ type: 'error', message: recErr.description });
         } finally {
           setIsRecording(false);
           setTimer(0);
@@ -209,13 +175,7 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
       mediaRecorder.onerror = (event) => {
         console.error('MediaRecorder error:', event);
         const err = RECORDING_ERRORS.REC_INTERRUPTED;
-        toast({
-          title: err.title,
-          description: err.description,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
+        showToast({ type: 'error', message: err.description });
         setIsRecording(false);
         setTimer(0);
       };
@@ -225,16 +185,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
     } catch (err) {
       console.error('Error starting recording:', err);
       const recErr = RECORDING_ERRORS.REC_START_FAILED;
-      toast({
-        title: recErr.title,
-        description: recErr.description,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
+      showToast({ type: 'error', message: recErr.description });
       setIsRecording(false);
     }
-  }, [audioStream, sampleRate, onRecordingComplete, toast]);
+  }, [audioStream, sampleRate, onRecordingComplete]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -256,4 +210,3 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
     stopRecording,
   };
 };
-

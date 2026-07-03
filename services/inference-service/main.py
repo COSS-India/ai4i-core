@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Configure logging FIRST before importing anything else
-from ai4icore_core.logging import configure_logging
+from ai4i_core.logging import configure_logging
 
 configure_logging(service_name="ai4x-inference", log_level="INFO")
 

@@ -8,6 +8,7 @@ import { nmtInferenceResponseSchema } from './dto/schemas/inference';
 import { tryItServiceListSchema } from './dto/schemas/platform';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import type { Service } from '../types/platform';
+import { UI_ERROR_MESSAGES } from '../config/constants';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 const getTryItHeaders = () => ({
@@ -82,7 +83,7 @@ export const performTryItNMTInference = async (
     );
 
     // Extract response time from headers
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
 
     return {
       data: response.data,
@@ -105,16 +106,16 @@ export const performTryItNMTInference = async (
         rawMessage.toLowerCase().includes('rate') ||
         error?.response?.status === 429
       ) {
-        throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.');
+        throw new Error(UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT);
       }
 
-      throw new Error('Access denied. Please login to access this service.');
+      throw new Error(UI_ERROR_MESSAGES.TRY_IT_LOGIN_REQUIRED);
     }
 
     if (error?.message) {
       throw error;
     }
-    throw new Error('Failed to perform translation. Please try again.');
+    throw new Error(UI_ERROR_MESSAGES.TRY_IT_TRANSLATION_FAILED);
   }
 };
 
@@ -130,8 +131,8 @@ export const shouldWarnAboutRateLimit = (): boolean => {
   if (typeof window === 'undefined') return false;
 
   try {
-    const count = parseInt(sessionStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
+    const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
+    const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
 
@@ -159,8 +160,8 @@ export const trackTryItRequest = (): void => {
   if (typeof window === 'undefined') return;
 
   try {
-    const count = parseInt(sessionStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
+    const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
+    const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
 
@@ -188,8 +189,8 @@ export const getRemainingTryItRequests = (): number => {
   if (typeof window === 'undefined') return limit;
 
   try {
-    const count = parseInt(sessionStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
+    const count = Number.parseInt(sessionStorage.getItem(key) || '0', 10);
+    const firstRequestTime = Number.parseInt(sessionStorage.getItem(timestampKey) || '0', 10);
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
 

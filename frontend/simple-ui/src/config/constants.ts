@@ -1,5 +1,17 @@
 // Configuration constants for Simple UI
 
+import {
+  NETWORK_ERROR_ENTRY,
+  SHARED_AUDIO_UPLOAD_ERRORS,
+  SHARED_MIC_ERRORS,
+  SHARED_SERVICE_ERRORS,
+  modelUnavailable,
+  quotaExceeded,
+  serviceUnavailable,
+} from './errorShared';
+
+export { UI_ERROR_MESSAGES, PARSE_ERROR_MESSAGES } from './errorShared';
+
 // Supported languages with script codes
 export const SUPPORTED_LANGUAGES = [
   { code: "en", label: "English", scriptCode: "Latn" },
@@ -242,51 +254,27 @@ export const ASR_ERRORS = {
     description: 'Uploaded audio language doesn\'t match selected language. Upload audio in selected language.',
     action: 'Select supported language',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'ASR service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('ASR service'),
   PROCESSING_TIMEOUT: {
     title: 'Processing timeout',
     description: 'Audio processing timed out. Please try with a shorter audio file or try again later.',
     action: 'Upload shorter file or retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for ASR service. Please contact your administrator or try again tomorrow.',
-    action: 'Contact admin or wait',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('ASR service', ' or try again tomorrow'),
   MODEL_UNAVAILABLE: {
     title: 'Model not available',
     description: 'The selected ASR model is currently unavailable. Please try a different model or contact support.',
     action: 'Select different model',
   },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   POOR_AUDIO_QUALITY: {
     title: 'Poor audio quality',
     description: 'Audio quality is too poor for accurate transcription. Please provide clearer audio.',
     action: 'Upload better quality audio',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
 } as const;
 
 /** Minimum TTS text length (characters) to be considered valid */
@@ -336,26 +324,14 @@ export const TTS_ERRORS = {
     description: 'The selected voice is not available for this language. Please choose a different voice.',
     action: 'Select different voice',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'TTS service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('TTS service'),
   PROCESSING_FAILED: {
     title: 'Processing failed',
     description: 'Failed to generate speech. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for TTS service. Please contact your administrator or try again tomorrow.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('TTS service', ' or try again tomorrow'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model not available',
     description: 'The selected TTS model is currently unavailable. Please try a different model.',
@@ -366,21 +342,9 @@ export const TTS_ERRORS = {
     description: 'Audio generation failed. Please try again or contact support if the issue persists.',
     action: 'Retry or contact support',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
   // Output errors
   PLAYBACK_FAILED: {
     title: 'Audio playback failed',
@@ -441,46 +405,22 @@ export const NMT_ERRORS = {
     description: 'Translation from {source} to {target} is not supported. Please check available language pairs.',
     action: 'Select supported pair',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Translation service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Translation service'),
   TRANSLATION_FAILED: {
     title: 'Translation failed',
     description: 'Translation failed. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for translation service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('translation service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model not available',
     description: 'The selected translation model is currently unavailable. Please try a different model.',
     action: 'Select different model',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
 } as const;
 
 /** Minimum Transliteration text length (characters) to be considered valid */
@@ -520,26 +460,14 @@ export const TRANSLITERATION_ERRORS = {
     description: 'Input script doesn\'t match the selected source language. Please verify your input.',
     action: 'Verify input script',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Transliteration is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Transliteration'),
   PROCESSING_FAILED: {
     title: 'Processing failed',
     description: 'Transliteration failed. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for transliteration. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('transliteration'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'The selected transliteration model is currently unavailable. Please try another model.',
@@ -577,82 +505,30 @@ export const LANGUAGE_DETECTION_ERRORS = {
     description: 'Cannot detect language from the provided text. Please try with longer or more distinctive text.',
     action: 'Enter longer text',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Language detection service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for language detection service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
-  MODEL_UNAVAILABLE: {
-    title: 'Model unavailable',
-    description: 'Language detection model is currently unavailable. Please try again later.',
-    action: 'Retry later',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Language detection service'),
+  QUOTA_EXCEEDED: quotaExceeded('language detection service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
+  MODEL_UNAVAILABLE: modelUnavailable('Language detection model'),
 } as const;
 
 /** Speaker Diarization error codes and user-facing messages */
 export const SPEAKER_DIARIZATION_ERRORS = {
   // Recording Errors (handled by useAudioRecorder, but included for completeness)
-  MIC_PERMISSION_DENIED: {
-    title: 'Microphone access denied',
-    description: 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
-    action: 'Grant microphone permission',
-  },
-  MIC_NOT_FOUND: {
-    title: 'Microphone not detected',
-    description: 'No microphone detected. Please connect a microphone and try again.',
-    action: 'Connect microphone device',
-  },
-  RECORDING_FAILED: {
-    title: 'Recording failed to start',
-    description: 'Unable to start recording. Please check your microphone connection and try again.',
-    action: 'Check device and retry',
-  },
+  MIC_PERMISSION_DENIED: SHARED_MIC_ERRORS.MIC_PERMISSION_DENIED,
+  MIC_NOT_FOUND: SHARED_MIC_ERRORS.MIC_NOT_FOUND,
+  RECORDING_FAILED: RECORDING_ERRORS.REC_START_FAILED,
   RECORDING_TOO_SHORT: {
     title: 'Recording duration too short',
     description: 'Please provide sufficient audio for speaker diarization.',
     action: 'Record longer audio',
   },
-  RECORDING_TOO_LONG: {
-    title: 'Recording duration exceeds limit',
-    description: `Recording exceeds maximum duration of ${MAX_RECORDING_DURATION} seconds. Please record a shorter audio clip.`,
-    action: 'Record shorter audio',
-  },
+  RECORDING_TOO_LONG: RECORDING_ERRORS.REC_TOO_LONG,
   // Upload Errors (handled by AudioRecorder component, but included for completeness)
-  FILE_REQUIRED: {
-    title: 'No file selected',
-    description: 'Please select an audio file to upload.',
-    action: 'Select a file',
-  },
-  INVALID_FORMAT: {
-    title: 'File format not supported',
-    description: 'File format not supported. Please upload audio files in WAV or MP3 format.',
-    action: 'Convert file format',
-  },
-  FILE_TOO_LARGE: {
-    title: 'File size exceeds limit',
-    description: 'This file is too large to process. Please upload a smaller file.',
-    action: 'Compress or trim file',
-  },
-  INVALID_FILE: {
-    title: 'File corrupted or invalid',
-    description: 'The uploaded file appears to be corrupted or invalid. Please try a different file.',
-    action: 'Upload different file',
-  },
-  UPLOAD_FAILED: {
-    title: 'Upload failed',
-    description: 'File upload failed. Please check your internet connection and try again.',
-    action: 'Retry upload',
-  },
+  FILE_REQUIRED: UPLOAD_ERRORS.NO_FILE_SELECTED,
+  INVALID_FORMAT: SHARED_AUDIO_UPLOAD_ERRORS.INVALID_FORMAT,
+  FILE_TOO_LARGE: SHARED_AUDIO_UPLOAD_ERRORS.FILE_TOO_LARGE,
+  INVALID_FILE: UPLOAD_ERRORS.INVALID_FILE,
+  UPLOAD_FAILED: UPLOAD_ERRORS.UPLOAD_FAILED,
   AUDIO_TOO_SHORT: {
     title: 'File duration too short',
     description: 'This audio file is too short for speaker identification. Please upload a longer recording.',
@@ -663,11 +539,7 @@ export const SPEAKER_DIARIZATION_ERRORS = {
     description: `This audio file is too long to process. Please upload a shorter recording (max ${MAX_RECORDING_DURATION} seconds).`,
     action: 'Upload shorter file',
   },
-  EMPTY_AUDIO: {
-    title: 'Empty audio file',
-    description: 'Unable to detect audio in this file. Please upload a file with audible content.',
-    action: 'Upload valid file',
-  },
+  EMPTY_AUDIO: UPLOAD_ERRORS.EMPTY_AUDIO_FILE,
   // Processing Errors
   NO_SPEAKERS_DETECTED: {
     title: 'No speakers detected',
@@ -679,51 +551,23 @@ export const SPEAKER_DIARIZATION_ERRORS = {
     description: 'Audio quality is too low for accurate speaker diarization. Please provide clearer audio.',
     action: 'Upload better quality audio',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Speaker diarization service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Speaker diarization service'),
   PROCESSING_TIMEOUT: {
     title: 'Processing timeout',
     description: 'Audio processing timed out. Please try with a shorter audio file.',
     action: 'Upload shorter file',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for speaker diarization service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
-  MODEL_UNAVAILABLE: {
-    title: 'Model unavailable',
-    description: 'Speaker diarization model is currently unavailable. Please try again later.',
-    action: 'Retry later',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('speaker diarization service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
+  MODEL_UNAVAILABLE: modelUnavailable('Speaker diarization model'),
 } as const;
 
 /** Audio Language Detection error codes and user-facing messages */
 export const AUDIO_LANGUAGE_DETECTION_ERRORS = {
   // Recording Errors (handled by useAudioRecorder, but included for completeness)
-  MIC_PERMISSION_DENIED: {
-    title: 'Microphone access denied',
-    description: 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
-    action: 'Grant microphone permission',
-  },
-  MIC_NOT_FOUND: {
-    title: 'Microphone not detected',
-    description: 'No microphone detected. Please connect a microphone and try again.',
-    action: 'Connect microphone device',
-  },
-  RECORDING_FAILED: {
-    title: 'Recording failed to start',
-    description: 'Unable to start recording. Please check your microphone connection and try again.',
-    action: 'Check device and retry',
-  },
+  MIC_PERMISSION_DENIED: SHARED_MIC_ERRORS.MIC_PERMISSION_DENIED,
+  MIC_NOT_FOUND: SHARED_MIC_ERRORS.MIC_NOT_FOUND,
+  RECORDING_FAILED: RECORDING_ERRORS.REC_START_FAILED,
   RECORDING_TOO_SHORT: {
     title: 'Recording duration too short',
     description: 'This recording is too short for language detection. Please record a longer audio clip.',
@@ -735,31 +579,11 @@ export const AUDIO_LANGUAGE_DETECTION_ERRORS = {
     action: 'Record shorter audio',
   },
   // Upload Errors (handled by AudioRecorder component, but included for completeness)
-  FILE_REQUIRED: {
-    title: 'No file selected',
-    description: 'Please select an audio file to upload.',
-    action: 'Select a file',
-  },
-  INVALID_FORMAT: {
-    title: 'File format not supported',
-    description: 'File format not supported. Please upload audio files in WAV or MP3 format.',
-    action: 'Convert file format',
-  },
-  FILE_TOO_LARGE: {
-    title: 'File size exceeds limit',
-    description: 'This file is too large to process. Please upload a smaller file.',
-    action: 'Compress or trim file',
-  },
-  INVALID_FILE: {
-    title: 'File corrupted or invalid',
-    description: 'The uploaded file appears to be corrupted or invalid. Please try a different file.',
-    action: 'Upload different file',
-  },
-  UPLOAD_FAILED: {
-    title: 'Upload failed',
-    description: 'File upload failed. Please check your internet connection and try again.',
-    action: 'Retry upload',
-  },
+  FILE_REQUIRED: UPLOAD_ERRORS.NO_FILE_SELECTED,
+  INVALID_FORMAT: SHARED_AUDIO_UPLOAD_ERRORS.INVALID_FORMAT,
+  FILE_TOO_LARGE: SHARED_AUDIO_UPLOAD_ERRORS.FILE_TOO_LARGE,
+  INVALID_FILE: UPLOAD_ERRORS.INVALID_FILE,
+  UPLOAD_FAILED: UPLOAD_ERRORS.UPLOAD_FAILED,
   AUDIO_TOO_SHORT: {
     title: 'File duration too short',
     description: 'This audio file is too short for language detection. Please upload a longer recording.',
@@ -770,11 +594,7 @@ export const AUDIO_LANGUAGE_DETECTION_ERRORS = {
     description: `This audio file is too long to process. Please upload a shorter recording (max ${MAX_RECORDING_DURATION} seconds).`,
     action: 'Upload shorter file',
   },
-  EMPTY_AUDIO: {
-    title: 'Empty audio file',
-    description: 'Unable to detect audio in this file. Please upload a file with audible content.',
-    action: 'Upload valid file',
-  },
+  EMPTY_AUDIO: UPLOAD_ERRORS.EMPTY_AUDIO_FILE,
   // Processing Errors
   NO_SPEECH_DETECTED: {
     title: 'No speech detected',
@@ -796,31 +616,15 @@ export const AUDIO_LANGUAGE_DETECTION_ERRORS = {
     description: 'Audio quality is too low for accurate language detection. Please provide clearer audio.',
     action: 'Upload better quality audio',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Audio language detection service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Audio language detection service'),
   PROCESSING_TIMEOUT: {
     title: 'Processing timeout',
     description: 'Audio processing timed out. Please try with a shorter audio file.',
     action: 'Upload shorter file',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for audio language detection service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
-  MODEL_UNAVAILABLE: {
-    title: 'Model unavailable',
-    description: 'Audio language detection model is currently unavailable. Please try again later.',
-    action: 'Retry later',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('audio language detection service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
+  MODEL_UNAVAILABLE: modelUnavailable('Audio language detection model'),
 } as const;
 
 /** Minimum NER text length (characters) to be considered valid */
@@ -860,36 +664,20 @@ export const NER_ERRORS = {
     description: 'No entities detected in the provided text. Please verify your input text.',
     action: 'Verify input text',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Named entity recognition service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Named entity recognition service'),
   PROCESSING_FAILED: {
     title: 'Processing failed',
     description: 'Entity recognition failed. Please try again.',
     action: 'Retry',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for NER service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('NER service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'The selected NER model is currently unavailable. Please try a different model.',
     action: 'Select different model',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
   // Authentication & Authorization Errors
   AUTHENTICATION_REQUIRED: {
     title: 'Authentication required',
@@ -900,16 +688,6 @@ export const NER_ERRORS = {
     title: 'Invalid credentials',
     description: 'Invalid credentials provided. Please log in again.',
     action: 'Re-authenticate',
-  },
-  SESSION_EXPIRED: {
-    title: 'Session expired',
-    description: 'Your session has expired. Please log in again.',
-    action: 'Log in',
-  },
-  UNAUTHORIZED: {
-    title: 'Unauthorized access',
-    description: 'You don\'t have permission to access this service. Please contact your administrator.',
-    action: 'Contact admin',
   },
   ACCOUNT_LOCKED: {
     title: 'Account locked',
@@ -931,21 +709,9 @@ export const NER_ERRORS = {
 /** Speech-to-Speech Pipeline error codes and user-facing messages */
 export const PIPELINE_ERRORS = {
   // Audio Recording Errors (Source Speech)
-  MIC_ACCESS_DENIED: {
-    title: 'Microphone access denied',
-    description: 'Microphone access is required. Please allow microphone permissions in your browser settings.',
-    action: 'Grant microphone permission',
-  },
-  MIC_NOT_FOUND: {
-    title: 'Microphone not detected',
-    description: 'No microphone detected. Please connect a microphone and try again.',
-    action: 'Connect microphone device',
-  },
-  REC_START_FAILED: {
-    title: 'Recording failed to start',
-    description: 'Unable to start recording. Please check your microphone connection and try again.',
-    action: 'Check device and retry',
-  },
+  MIC_ACCESS_DENIED: SHARED_MIC_ERRORS.MIC_PERMISSION_DENIED,
+  MIC_NOT_FOUND: SHARED_MIC_ERRORS.MIC_NOT_FOUND,
+  REC_START_FAILED: RECORDING_ERRORS.REC_START_FAILED,
   REC_TOO_SHORT: {
     title: 'Recording duration too short',
     description: 'Recording must be at least 1 second for speech-to-speech translation.',
@@ -956,11 +722,7 @@ export const PIPELINE_ERRORS = {
     description: `Recording exceeds maximum duration of ${MAX_RECORDING_DURATION} seconds. Please record a shorter audio clip.`,
     action: 'Record shorter audio',
   },
-  REC_INTERRUPTED: {
-    title: 'Recording interrupted',
-    description: 'Recording was interrupted. Please try recording again.',
-    action: 'Restart recording',
-  },
+  REC_INTERRUPTED: RECORDING_ERRORS.REC_INTERRUPTED,
   NO_SPEECH_DETECTED: {
     title: 'No speech detected',
     description: 'No speech detected in the recording. Please speak clearly and try again.',
@@ -998,36 +760,16 @@ export const PIPELINE_ERRORS = {
     description: 'Speech-to-speech translation from {source} to {target} is not supported.',
     action: 'Select supported pair',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'Speech-to-speech service is temporarily unavailable. Please try again later.',
-    action: 'Retry after some time',
-  },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('Speech-to-speech service', 'later'),
+  QUOTA_EXCEEDED: quotaExceeded('this service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'One or more required models are unavailable. Please try again later.',
     action: 'Retry later',
   },
-  AUTH_FAILED: {
-    title: 'Authentication failed',
-    description: 'Authentication failed. Please log in again.',
-    action: 'Re-authenticate',
-  },
-  TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
-    description: 'Your account access has been suspended. Please contact support.',
-    action: 'Contact support',
-  },
+  AUTH_FAILED: SHARED_SERVICE_ERRORS.AUTH_FAILED,
+  TENANT_SUSPENDED: SHARED_SERVICE_ERRORS.TENANT_SUSPENDED,
   // Output Errors
   PLAYBACK_FAILED: {
     title: 'Audio playback failed',
@@ -1043,11 +785,7 @@ export const PIPELINE_ERRORS = {
 
 /** Common Network and System Errors (All Services) */
 export const COMMON_ERRORS = {
-  NETWORK_ERROR: {
-    title: 'Network connection lost',
-    description: 'Network connection lost. Please check your internet connection and try again.',
-    action: 'Check connection',
-  },
+  NETWORK_ERROR: NETWORK_ERROR_ENTRY,
   INTERNAL_SERVER_ERROR: {
     title: 'Server error',
     description: 'An internal server error occurred. Please try again later or contact support.',
@@ -1103,21 +841,9 @@ export const OCR_ERRORS = {
     description: 'File format not supported. Please upload files in JPG or PNG format.',
     action: 'Convert file format',
   },
-  FILE_TOO_LARGE: {
-    title: 'File size exceeds limit',
-    description: 'File size exceeds maximum limit. Please upload a smaller file.',
-    action: 'Compress file',
-  },
-  INVALID_FILE: {
-    title: 'File corrupted or invalid',
-    description: 'The uploaded file appears to be corrupted or invalid. Please try a different file.',
-    action: 'Upload different file',
-  },
-  UPLOAD_FAILED: {
-    title: 'Upload failed',
-    description: 'File upload failed. Please check your internet connection and try again.',
-    action: 'Retry upload',
-  },
+  FILE_TOO_LARGE: UPLOAD_ERRORS.FILE_TOO_LARGE,
+  INVALID_FILE: UPLOAD_ERRORS.INVALID_FILE,
+  UPLOAD_FAILED: UPLOAD_ERRORS.UPLOAD_FAILED,
   EMPTY_FILE: {
     title: 'Empty file',
     description: 'The uploaded file contains no data. Please upload a valid file.',
@@ -1144,36 +870,20 @@ export const OCR_ERRORS = {
     description: 'Text is too blurry to read accurately. Please use a clearer image.',
     action: 'Upload clearer image',
   },
-  SERVICE_UNAVAILABLE: {
-    title: 'Service unavailable',
-    description: 'OCR service is temporarily unavailable. Please try again in a few minutes.',
-    action: 'Retry after some time',
-  },
+  SERVICE_UNAVAILABLE: serviceUnavailable('OCR service'),
   PROCESSING_TIMEOUT: {
     title: 'Processing timeout',
     description: 'Image processing timed out. Please try with a smaller file.',
     action: 'Upload smaller file',
   },
-  QUOTA_EXCEEDED: {
-    title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for OCR service. Please contact your administrator.',
-    action: 'Contact admin or wait',
-  },
-  RATE_LIMIT_EXCEEDED: {
-    title: 'Rate limit exceeded',
-    description: 'Too many requests. Please wait before trying again.',
-    action: 'Wait and retry',
-  },
+  QUOTA_EXCEEDED: quotaExceeded('OCR service'),
+  RATE_LIMIT_EXCEEDED: SHARED_SERVICE_ERRORS.RATE_LIMIT_EXCEEDED,
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
     description: 'The selected OCR model is currently unavailable. Please try a different model.',
     action: 'Select different model',
   },
-  INVALID_REQUEST: {
-    title: 'Invalid request',
-    description: 'Invalid request parameters. Please check your input and try again.',
-    action: 'Verify input parameters',
-  },
+  INVALID_REQUEST: SHARED_SERVICE_ERRORS.INVALID_REQUEST,
 } as const;
 
 // Utility function to format duration in seconds to MM:SS format
@@ -1229,9 +939,11 @@ export const TABS = {
   tenantManagement: "tenant-management",
   apiKeyManagement: "api-key-management",
   logs: "logs",
+  usageDashboard: "usage-dashboard",
   traces: "traces",
   alertsManagement: "alerts-management",
   piiManagement: "pii-management",
+  tierManagement: "tier-management",
   policyManagement: "policy-management",
   nmt: "nmt",
   asr: "asr",
@@ -1722,6 +1434,9 @@ export function formatServicePublishFilterLabel(filter: string): string {
   }
   return filter;
 }
+
+export { METERING } from "./meteringConstants";
+export type { MeteringHeatmapServiceKey } from "./meteringConstants";
 
 /** Password policy — keep in sync with auth-service PASSWORD_MIN/MAX_LENGTH. */
 export const PASSWORD_POLICY = {

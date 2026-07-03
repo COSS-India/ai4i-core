@@ -82,7 +82,7 @@ class PolicySyncService:
 
     # ── Redis pub/sub listener ────────────────────────────────────────────
 
-    async def start_listener(self, redis_client, db_factory) -> None:
+    def start_listener(self, redis_client, db_factory) -> None:
         """
         Subscribe to the Redis policy_updates channel and refresh on each message.
 

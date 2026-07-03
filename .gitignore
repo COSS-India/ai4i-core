@@ -2,6 +2,8 @@
 .env
 .env.local
 *.env.bak
+# Local developer secrets sourced by scripts/dev/up (NEVER commit; example is dev.secrets.example)
+dev.secrets
 env-local-setup/
 .env.development.local
 .env.test.local
@@ -22,6 +24,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!scripts/dev/lib
 parts/
 sdist/
 var/
@@ -56,6 +59,10 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Dev runner PID files (scripts/dev/* writes .run/<service>.pid)
+.run/
+*.pid
 
 # Database
 *.db
@@ -133,12 +140,10 @@ docs/alerts-api-reference.md
 *.pem
 *.key
 
-# Skills (internal review checklists)
-skills/
-
 # LLMs
 .cursor/
 .claude/
+CLAUDE.md
 
 # Editor / IDE
 .vscode/
@@ -149,3 +154,10 @@ skills/
 # Local design / mock artifacts — not for the repo
 services/inference-service/DESIGN_audio_llm_endpoints.md
 services/inference-service/postman_mock_upstream.json
+
+# Third-party skills staging (the ones we use live in ~/.claude/skills)
+skills/
+
+# Architecture docs (local ADRs, designs, diagrams), not committed
+arch-docs/
+rough

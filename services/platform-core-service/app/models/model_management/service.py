@@ -14,16 +14,18 @@ services are excluded from active queries and do not permit state transitions.
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
     ForeignKeyConstraint,
     Index,
+    Numeric,
     String,
     Text,
-    UniqueConstraint, Numeric,
+    UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -63,9 +65,11 @@ class Service(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
-    cost_per_unit = Column(Numeric(10, 4), nullable=True)
     billing_unit_type = Column(String(32), nullable=True)
-    tier = Column(String(20), nullable=True)
+    cost_per_unit = Column(Numeric(15, 8), nullable=True)
+    unit_size = Column(BigInteger, nullable=True)
+    unit_rate = Column(Numeric(15, 8), nullable=True)
+    tier_ids = Column(ARRAY(String), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

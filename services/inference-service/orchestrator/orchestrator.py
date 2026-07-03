@@ -155,16 +155,26 @@ class Orchestrator:
                     f"No serviceId in payload, SMR resolved to: {serviceId}"
                 )
 
+            attrs["service_id"] = serviceId
             self.logger.debug(f"Resolving service: {serviceId}")
             try:
                 service_info = await self.inference_server_resolver.resolve_service(serviceId)
             except Exception as e:
+                # No str(e) AND no exc_info=True — both leak the URL.
+                # str(e) of httpx-class errors embeds the request URL;
+                # exc_info=True bakes the full traceback (including the
+                # chained exception's __str__) into the formatted log
+                # record, which ships to OpenSearch via fluent-bit and
+                # surfaces in the Logs Dashboard.
+                # The `from e` chain still preserves the exception for
+                # ad-hoc server-side inspection (debug session, post-mortem
+                # via container shell) without writing it to stdout.
                 self.logger.error(
-                    f"Failed to resolve service '{serviceId}': {type(e).__name__}: {e}",
-                    exc_info=True,
+                    "Failed to resolve service '%s': %s",
+                    serviceId, type(e).__name__,
                 )
                 raise RuntimeError(
-                    f"Orchestrator: Failed to resolve service '{serviceId}': {e}"
+                    f"Orchestrator: Failed to resolve service '{serviceId}'"
                 ) from e
 
             adapter_cfg = service_info.get("adapter_config") or {}

@@ -3,7 +3,7 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -11,7 +11,12 @@ from pydantic import EmailStr
 
 from app.core.config import settings
 from app.core.responses import success_response
-from app.dependencies.auth import get_current_user, get_current_user_id
+from app.utils.masking import mask_email
+from app.dependencies.auth import (
+    get_current_user,
+    get_current_user_id,
+    get_optional_current_user,
+)
 from app.dependencies.services import get_auth_service
 from app.models.user import User
 from app.schemas.auth import (
@@ -62,7 +67,7 @@ async def register(
     )
     return success_response(data={
         "user_id": str(user.id),
-        "email": user.email,
+        "email": mask_email(user.email),
         "username": user.username,
         "message": (
             "Account created. Check your inbox for a verification link to "
@@ -90,9 +95,16 @@ async def resend_verification(
     svc: AuthService = Depends(get_auth_service),
 ):
     """Re-issue a verify-email link for a user who registered but hasn't
-    verified yet. Old verify tokens for this user are deactivated first."""
+    verified yet. Old verify tokens for this user are deactivated first.
+
+    Anti-enumeration: returns the same generic 200 message regardless of
+    whether the email matches a real account (consistent with
+    /auth/forgot-password and /auth/resend-setup-link).
+    """
     await svc.resend_verification(email=body.email, background_tasks=background_tasks)
-    return success_response(data={"message": "New verification link sent."})
+    return success_response(data={
+        "message": "If this email is registered, you will receive an email.",
+    })
 
 
 @router.post("/forgot-password")
@@ -227,11 +239,14 @@ async def resend_setup_link(
     body: ResendSetupLinkRequest,
     background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """Invalidate existing setup tokens and issue a new one for the given email."""
     await svc.resend_setup_link(
         email=body.email,
         background_tasks=background_tasks,
+        tenant_id=body.tenant_id,
+        caller=current_user,
     )
     return success_response(data={
         "message": "New setup link issued.",

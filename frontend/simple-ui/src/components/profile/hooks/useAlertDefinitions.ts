@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useToast } from "@chakra-ui/react";
+import { showToast } from "../../../utils/toast";
 import alertingService from "../../../services/alertingService";
 import type {
   AlertDefinition,
@@ -52,12 +52,12 @@ function normalizeServiceForUi(raw: string): string {
 
   const allowedSet = new Set(TARGET_SERVICES.map((s) => s.value));
   const bare = v0.replace(/-service$/, "").replace(/_service$/, "");
-  const hyphen = bare.replace(/_+/g, "-");
+  const hyphen = bare.replaceAll(/_+/g, "-");
 
   if (allowedSet.has(hyphen)) return hyphen;
   if (allowedSet.has(bare)) return bare;
 
-  const canonical = bare.replace(/-/g, "_");
+  const canonical = bare.replaceAll(/-/g, "_");
   if (INFERENCE_TASK_TO_UI_VALUE[canonical]) {
     return INFERENCE_TASK_TO_UI_VALUE[canonical];
   }
@@ -80,7 +80,7 @@ function normalizeServiceForApi(raw: string): string {
     return UI_VALUE_TO_INFERENCE_TASK[bare];
   }
 
-  const canonical = bare.replace(/-/g, "_");
+  const canonical = bare.replaceAll(/-/g, "_");
   if (Object.values(UI_VALUE_TO_INFERENCE_TASK).includes(canonical)) {
     return canonical;
   }
@@ -119,8 +119,6 @@ function resolveUpdateField<T>(
 }
 
 export function useAlertDefinitions() {
-  const toast = useToast();
-
   const [definitions, setDefinitions] = useState<AlertDefinition[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -167,20 +165,17 @@ export function useAlertDefinitions() {
       const data = await alertingService.listDefinitions();
       setDefinitions(data);
     } catch (error) {
-      toast({
-        title: "Error",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error
             ? error.message
             : "Failed to load alert definitions",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   // ---- Create ----
   const openCreate = () => {
@@ -239,12 +234,9 @@ export function useAlertDefinitions() {
     const errors = validateCreateForm(createForm);
     if (Object.keys(errors).length > 0) {
       setCreateErrors(errors);
-      toast({
-        title: "Validation Error",
-        description: "Please fix the required fields below.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please fix the required fields below.",
       });
       return;
     }
@@ -291,22 +283,14 @@ export function useAlertDefinitions() {
         annotations: createForm.annotations?.length ? createForm.annotations : undefined,
       };
       await alertingService.createDefinition(payload);
-      toast({
-        title: "Alert Definition Created",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Alert Definition Created" });
       closeCreate();
       await fetchDefinitions();
     } catch (error) {
-      toast({
-        title: "Create Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to create definition",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsCreating(false);
@@ -447,12 +431,9 @@ export function useAlertDefinitions() {
     const errors = validateUpdateForm(updateForm, updateItem, effectiveUiServices);
     if (Object.keys(errors).length > 0) {
       setUpdateErrors(errors);
-      toast({
-        title: "Validation Error",
-        description: "Please fix the required fields below.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please fix the required fields below.",
       });
       return;
     }
@@ -498,22 +479,14 @@ export function useAlertDefinitions() {
       if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
 
       await alertingService.updateDefinition(updateItem.id, payload);
-      toast({
-        title: "Alert Definition Updated",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Alert Definition Updated" });
       closeUpdate();
       await fetchDefinitions();
     } catch (error) {
-      toast({
-        title: "Update Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to update definition",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsUpdating(false);
@@ -534,22 +507,14 @@ export function useAlertDefinitions() {
     setIsDeleting(true);
     try {
       await alertingService.deleteDefinition(deleteItem.id);
-      toast({
-        title: "Alert Definition Deleted",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "success", message: "Alert Definition Deleted" });
       closeDelete();
       await fetchDefinitions();
     } catch (error) {
-      toast({
-        title: "Delete Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to delete definition",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setIsDeleting(false);
@@ -561,21 +526,16 @@ export function useAlertDefinitions() {
     setTogglingId(item.id);
     try {
       await alertingService.toggleDefinitionEnabled(item.id, !item.enabled);
-      toast({
-        title: item.enabled ? "Alert Disabled" : "Alert Enabled",
-        status: "success",
-        duration: 2000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: item.enabled ? "Alert Disabled" : "Alert Enabled",
       });
       await fetchDefinitions();
     } catch (error) {
-      toast({
-        title: "Toggle Failed",
-        description:
+      showToast({
+        type: "error",
+        message:
           error instanceof Error ? error.message : "Failed to toggle alert",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
       });
     } finally {
       setTogglingId(null);

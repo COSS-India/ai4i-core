@@ -9,7 +9,7 @@ business-logic services.
 import importlib
 from typing import Optional
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
@@ -17,6 +17,7 @@ import redis.asyncio as aioredis
 from app.core.config import settings
 from app.core.database import get_auth_db_optional, get_db
 from app.core.redis import get_redis
+from app.utils.prometheus_client import PrometheusClient
 from app.repositories.alert_management.alert_definition_repository import (
     AlertDefinitionRepository,
 )
@@ -50,12 +51,34 @@ SyncService = _alert_pkg.SyncService
 _sync_service_singleton = SyncService()
 
 
+def get_prometheus_client(request: Request) -> PrometheusClient:
+    """Return a configured PrometheusClient backed by the shared connection pool."""
+    if not settings.prometheus_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Prometheus is not configured (PROMETHEUS_URL is unset).",
+        )
+    return PrometheusClient(
+        settings.prometheus_url,
+        request.app.state.http_client,
+        timeout=settings.prometheus_timeout,
+    )
+
+
+def get_metering_service(
+    client: PrometheusClient = Depends(get_prometheus_client),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
+) -> "MeteringService":
+    from app.services.metering_service import MeteringService
+    return MeteringService(client, auth_db)
+
+
 def get_sync_service() -> "SyncService":
     """Return the process-wide SyncService singleton."""
     return _sync_service_singleton
 
 
-async def get_cache_service(
+def get_cache_service(
     redis_client: aioredis.Redis = Depends(get_redis),
 ) -> CacheService:
     return CacheService(
@@ -65,7 +88,7 @@ async def get_cache_service(
     )
 
 
-async def get_model_service(
+def get_model_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> ModelService:
@@ -76,7 +99,7 @@ async def get_model_service(
     )
 
 
-async def get_service_service(
+def get_service_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> ServiceService:
@@ -90,13 +113,13 @@ async def get_service_service(
 # ── Alert-management service factories ──
 
 
-async def get_definition_service(
+def get_definition_service(
     db: AsyncSession = Depends(get_db),
 ) -> "AlertDefinitionService":
     return AlertDefinitionService(repo=AlertDefinitionRepository(db))
 
 
-async def get_receiver_service(
+def get_receiver_service(
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ) -> "NotificationReceiverService":
@@ -107,13 +130,13 @@ async def get_receiver_service(
     )
 
 
-async def get_routing_rule_service(
+def get_routing_rule_service(
     db: AsyncSession = Depends(get_db),
 ) -> "RoutingRuleService":
     return RoutingRuleService(repo=RoutingRuleRepository(db))
 
 
-async def get_history_service(
+def get_history_service(
     db: AsyncSession = Depends(get_db),
 ) -> "AlertHistoryService":
     return AlertHistoryService(repo=AlertHistoryRepository(db))

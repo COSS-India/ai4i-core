@@ -24,8 +24,8 @@ import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
-import { PASSWORD_POLICY } from '../../config/constants';
+import { showToast } from '../../utils/toast';
+import { PASSWORD_POLICY, COMMON_ERRORS, UI_ERROR_MESSAGES } from '../../config/constants';
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
 import authService from '../../services/authService';
 
@@ -43,7 +43,6 @@ interface RegisterFormProps {
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess, isActive = true }) => {
   const { register, isLoading, error, clearError } = useAuth();
-  const toast = useToastWithDeduplication();
   const [formData, setFormData] = useState<RegisterRequest>({
     full_name: '',
     email: '',
@@ -187,13 +186,10 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       setShowConfirmPassword(false);
 
       // Show success toast — user must verify email before sign-in works.
-      toast({
-        title: "Check your email",
-        description:
+      showToast({
+        type: "success",
+        message:
           "We sent a verification link to your inbox. Click the link to activate your account, then sign in.",
-        status: "success",
-        duration: 8000,
-        isClosable: true,
       });
 
       // After successful registration, switch to login page
@@ -208,7 +204,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       console.error('Registration failed:', error);
 
       // Extract error message from response
-      let errorMessage = 'Registration failed. Please try again.';
+      let errorMessage: string = UI_ERROR_MESSAGES.REGISTRATION_FAILED;
       let errorTitle = 'Registration Error';
 
       if (error instanceof ApiValidationError) {
@@ -258,10 +254,10 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
           errorMessage = errorMessage || 'Please check that all fields are filled correctly.';
         } else if (status === 500) {
           errorTitle = 'Server Error';
-          errorMessage = 'An internal server error occurred. Please try again later.';
+          errorMessage = COMMON_ERRORS.INTERNAL_SERVER_ERROR.description;
         } else if (status === 503) {
           errorTitle = 'Service Unavailable';
-          errorMessage = 'The registration service is temporarily unavailable. Please try again later.';
+          errorMessage = COMMON_ERRORS.SERVICE_MAINTENANCE.description;
         }
       } else if (error?.message) {
         // Handle Error objects
@@ -285,13 +281,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       }
 
       // Show error toast
-      toast({
-        title: errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 7000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: errorMessage });
     }
   };
 

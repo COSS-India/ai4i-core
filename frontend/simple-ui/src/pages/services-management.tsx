@@ -6,11 +6,16 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   FormControl,
   FormLabel,
   Heading,
   IconButton,
   Input,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
   Select,
   Badge,
   Text,
@@ -28,11 +33,17 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { ViewIcon, DeleteIcon } from "@chakra-ui/icons";
+import { ViewIcon, DeleteIcon, ChevronDownIcon } from "@chakra-ui/icons";
 import { FaUpload, FaDownload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
@@ -44,12 +55,14 @@ import {
   Service,
 } from "../services/servicesManagementService";
 import { getAllModels, getModelById } from "../services/modelManagementService";
+import { fetchTiers } from "../services/tierManagementService";
+import type { Tier } from "../types/tierManagement";
 import type { ModelDetails } from "../types/platform";
 import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showError } from "../utils/errorHandler";
+import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
@@ -58,7 +71,8 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
-import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel } from "../config/constants";
+import { formatModelTaskTypeLabel } from "../config/constants";
+import { useInferenceTypes } from "../hooks/useInferenceTypes";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -73,49 +87,80 @@ const ServicesManagementPage: React.FC = () => {
     serviceDescription: "",
     publishedOn: Math.floor(Date.now() / 1000),
     modelId: "",
-    modelName: "", // Store selected model name for display
+    modelName: "",
     endpoint: "",
     task_type: "",
     modelSubmissionDate: "",
     modelVersion: "1.0",
+    tiers: [],
   });
+  const [pricePerUnit, setPricePerUnit] = useState<string>("");
+  const [unitSize, setUnitSize] = useState<string>("");
+  const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
+  const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
   const [updateFormData, setUpdateFormData] = useState<Partial<Service>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
-  const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(null);
-  const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
-  const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
+  const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(
+    null,
+  );
+  const [publishingServiceUuid, setPublishingServiceUuid] = useState<
+    string | null
+  >(null);
+  const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<
+    string | null
+  >(null);
   const [activeTab, setActiveTab] = useState(0);
   const [registryEpoch, setRegistryEpoch] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const { taskTypeNames } = useInferenceTypes();
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
-  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
-  const [confirmPublishService, setConfirmPublishService] = useState<Service | null>(null);
-  const [confirmUnpublishService, setConfirmUnpublishService] = useState<Service | null>(null);
+  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
+    "asc",
+  );
+  const [confirmPublishService, setConfirmPublishService] =
+    useState<Service | null>(null);
+  const [confirmUnpublishService, setConfirmUnpublishService] =
+    useState<Service | null>(null);
   /** When viewing a service, true if its model is deprecated (fetched by modelId); null until we know */
-  const [selectedServiceModelDeprecated, setSelectedServiceModelDeprecated] = useState<boolean | null>(null);
-  const { isOpen: isPublishConfirmOpen, onOpen: onPublishConfirmOpen, onClose: onPublishConfirmClose } = useDisclosure();
-  const { isOpen: isUnpublishConfirmOpen, onOpen: onUnpublishConfirmOpen, onClose: onUnpublishConfirmClose } = useDisclosure();
+  const [selectedServiceModelDeprecated, setSelectedServiceModelDeprecated] =
+    useState<boolean | null>(null);
+  const {
+    isOpen: isPublishConfirmOpen,
+    onOpen: onPublishConfirmOpen,
+    onClose: onPublishConfirmClose,
+  } = useDisclosure();
+  const {
+    isOpen: isUnpublishConfirmOpen,
+    onOpen: onUnpublishConfirmOpen,
+    onClose: onUnpublishConfirmClose,
+  } = useDisclosure();
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
   const cancelUnpublishRef = useRef<HTMLButtonElement>(null);
-  const toast = useToastWithDeduplication();
   const { user } = useAuth();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
-  const isServiceModelDeprecated = (service: Service | null | undefined): boolean => {
+  const isServiceModelDeprecated = (
+    service: Service | null | undefined,
+  ): boolean => {
     if (!service) return false;
     const modelVersionStatus =
       (service.model as any)?.versionStatus ??
       (service.model as any)?.version_status ??
       (service as any).versionStatus ??
       (service as any).version_status;
-    return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
+    return (
+      typeof modelVersionStatus === "string" &&
+      modelVersionStatus.toLowerCase() === "deprecated"
+    );
   };
 
-  const formatModelSubmissionDate = (value?: string | number | null): string => {
+  const formatModelSubmissionDate = (
+    value?: string | number | null,
+  ): string => {
     if (value == null || value === "") return "";
 
     let timestampMs: number;
@@ -140,13 +185,17 @@ const ServicesManagementPage: React.FC = () => {
       : services;
     if (sortBy === "time") return filtered;
     return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, {
+        sensitivity: "base",
+      });
+      if (nameCmp !== 0)
+        return nameSortDirection === "asc" ? nameCmp : -nameCmp;
       return 0;
     });
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
-  const hasActiveFilters = filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+  const hasActiveFilters =
+    filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
@@ -164,28 +213,28 @@ const ServicesManagementPage: React.FC = () => {
 
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
-    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
-      toast({
-        title: "Access Denied",
-        description: "You do not have access to Services Management.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+    if (user?.roles?.includes("GUEST") || user?.roles?.includes("USER")) {
+      showToast({
+        type: "error",
+        message: "You do not have access to Services Management.",
       });
-      router.push('/');
+      router.push("/");
     }
-  }, [user, router, toast]);
+  }, [user, router]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
-  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelDetails | null>(null);
+  const [preselectedModelFromQuery, setPreselectedModelFromQuery] =
+    useState<ModelDetails | null>(null);
 
   // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
   const fetchServices = useCallback(async () => {
     setIsLoading(true);
     try {
       const isPublishedFilter =
-        filterStatus === "published" ? true :
-        filterStatus === "unpublished" ? false :
-        undefined;
+        filterStatus === "published"
+          ? true
+          : filterStatus === "unpublished"
+            ? false
+            : undefined;
 
       const result = await fetchAllServicesMatchingFilters({
         taskType: filterTaskType || undefined,
@@ -194,21 +243,16 @@ const ServicesManagementPage: React.FC = () => {
       setServices(result.items);
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
       setServices([]);
     } finally {
       setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus, toast]);
+  }, [filterTaskType, filterStatus]);
 
-  useEffect(() => { fetchServices(); }, [fetchServices]);
+  useEffect(() => {
+    fetchServices();
+  }, [fetchServices]);
 
   // Fetch models on component mount (for dropdown)
   useEffect(() => {
@@ -218,7 +262,9 @@ const ServicesManagementPage: React.FC = () => {
         const fetchedModels = await getAllModels();
         // Filter to only show ACTIVE models
         const activeModels = fetchedModels.filter(
-          (model) => model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
+          (model) =>
+            model.versionStatus?.toLowerCase() === "active" ||
+            !model.versionStatus,
         );
         setModels(activeModels);
       } catch (error: any) {
@@ -233,6 +279,13 @@ const ServicesManagementPage: React.FC = () => {
     fetchModels();
   }, []);
 
+  // Fetch tiers for the Create Service form dropdown
+  useEffect(() => {
+    fetchTiers()
+      .then((res) => setAvailableTiers(res.data))
+      .catch(() => {});
+  }, []);
+
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
     const t = router.query.tab;
@@ -242,7 +295,11 @@ const ServicesManagementPage: React.FC = () => {
         const q = { ...router.query } as Record<string, string>;
         delete q.tab;
         delete q.modelId;
-        router.replace({ pathname: "/services-management", query: q }, undefined, { shallow: true });
+        router.replace(
+          { pathname: "/services-management", query: q },
+          undefined,
+          { shallow: true },
+        );
       }
       return;
     }
@@ -264,7 +321,7 @@ const ServicesManagementPage: React.FC = () => {
       }
 
       const inActiveList = models.some(
-        (m) => (m.modelId || m.model_id) === modelId
+        (m) => (m.modelId || m.model_id) === modelId,
       );
       if (inActiveList && formData.modelId !== modelId) {
         handleModelNameChange(modelId);
@@ -277,7 +334,7 @@ const ServicesManagementPage: React.FC = () => {
         router.replace(
           { pathname: "/services-management", query: nextQuery },
           undefined,
-          { shallow: true }
+          { shallow: true },
         );
         return;
       }
@@ -286,7 +343,8 @@ const ServicesManagementPage: React.FC = () => {
       if (!inActiveList) {
         try {
           const modelDetails = await getModelById(modelId);
-          const isDeprecated = modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+          const isDeprecated =
+            modelDetails?.versionStatus?.toLowerCase() === "deprecated";
           if (modelDetails && !isDeprecated) {
             setPreselectedModelFromQuery(modelDetails);
             if (formData.modelId !== modelId) {
@@ -304,7 +362,7 @@ const ServicesManagementPage: React.FC = () => {
         router.replace(
           { pathname: "/services-management", query: nextQuery },
           undefined,
-          { shallow: true }
+          { shallow: true },
         );
       }
     };
@@ -326,7 +384,8 @@ const ServicesManagementPage: React.FC = () => {
     !models.some(
       (m) =>
         (m.modelId || m.model_id) ===
-        (preselectedModelFromQuery.modelId || preselectedModelFromQuery.model_id)
+        (preselectedModelFromQuery.modelId ||
+          preselectedModelFromQuery.model_id),
     )
       ? [preselectedModelFromQuery, ...models]
       : models;
@@ -361,14 +420,42 @@ const ServicesManagementPage: React.FC = () => {
     }
   };
 
-  const handleInputChange = (
-    field: keyof Service,
-    value: string
-  ) => {
+  const UNIT_TYPE_BY_TASK: Record<string, string> = {
+    asr: "Audio minutes",
+    tts: "Characters",
+    nmt: "Characters",
+    llm: "Tokens",
+    transliteration: "Characters",
+    ocr: "Pages",
+    ner: "Characters",
+    "language-detection": "Characters",
+    "speaker-diarization": "Audio minutes",
+    "audio-lang-detection": "Audio minutes",
+    "language-diarization": "Audio minutes",
+  };
+
+  const handleInputChange = (field: keyof Service, value: string) => {
     setFormData((prev) => ({
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handleTaskTypeChange = (taskType: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      task_type: taskType,
+      modelId: "",
+      modelName: "",
+      modelSubmissionDate: "",
+      modelVersion: "",
+    }));
+  };
+
+  const toggleTier = (tier: string) => {
+    setSelectedTiers((prev) =>
+      prev.includes(tier) ? prev.filter((t) => t !== tier) : [...prev, tier],
+    );
   };
 
   // Handle model name selection and derive model metadata
@@ -380,47 +467,47 @@ const ServicesManagementPage: React.FC = () => {
         setIsLoadingModels(true);
         const modelDetails = await getModelById(modelId);
 
-        // Extract task_type from model
-        const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
-
         // Extract model version (required field after migration)
-        const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
+        const modelVersion =
+          modelDetails?.version || modelDetails?.modelVersion || "1.0";
 
         // Extract model submission date (if API returns it)
         const modelSubmissionDate = formatModelSubmissionDate(
-          modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? ""
+          modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? "",
         );
 
         // Get model name for display
-        const modelName = modelDetails?.name || modelDetails?.modelId || modelDetails?.model_id || "";
+        const modelName =
+          modelDetails?.name ||
+          modelDetails?.modelId ||
+          modelDetails?.model_id ||
+          "";
 
         setFormData((prev) => ({
           ...prev,
           modelId: modelId,
           modelName: modelName,
-          task_type: taskType,
           modelSubmissionDate: modelSubmissionDate,
           modelVersion: modelVersion,
         }));
       } catch (error: any) {
         console.error("Failed to fetch model details:", error);
-        toast({
-          title: "Failed to Load Model",
-          description: error instanceof Error ? error.message : "Failed to fetch model details",
-          status: "warning",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "warning",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch model details",
         });
       } finally {
         setIsLoadingModels(false);
       }
     } else {
-      // Clear fields if no model selected
+      // Clear model fields if no model selected (keep task_type)
       setFormData((prev) => ({
         ...prev,
         modelId: "",
         modelName: "",
-        task_type: "",
         modelSubmissionDate: "",
         modelVersion: "",
       }));
@@ -438,19 +525,25 @@ const ServicesManagementPage: React.FC = () => {
     try {
       // Auto-generate serviceId from name and timestamp
       const timestamp = Date.now();
-      const serviceId = `${formData.name?.toLowerCase().replace(/\s+/g, '-') || 'service'}-${timestamp}`;
+      const serviceId = `${formData.name?.toLowerCase().replaceAll(/\s+/g, "-") || "service"}-${timestamp}`;
 
       // Prepare service data with auto-generated serviceId.
       // Do not send modelSubmissionDate because backend owns this field.
       const serviceFormData: Partial<Service> = { ...formData };
       delete serviceFormData.modelSubmissionDate;
+      const tierIds = selectedTiers; // selectedTiers stores tier IDs directly
+
       const serviceData: Partial<Service> = {
         ...serviceFormData,
         serviceId: serviceId,
         publishedOn: Math.floor(Date.now() / 1000),
-        hardwareDescription: 'Default hardware', // Default value since field is removed
-        api_key: '', // Default empty since field is removed
-        status: 'active', // Default status
+        hardwareDescription: "Default hardware",
+        api_key: "",
+        status: "active",
+        billingUnitType: "INR",
+        costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
+        unitSize: unitSize ? Number(unitSize) : undefined,
+        tierIds,
       };
 
       const createdService = await createService(serviceData);
@@ -463,17 +556,22 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["nerServices"] });
       queryClient.invalidateQueries({ queryKey: ["llm-services"] });
       queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+      queryClient.invalidateQueries({
+        queryKey: ["speaker-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-detection-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["audioLanguageDetectionServices"],
+      });
 
-      toast({
-        title: "Service created",
-        description: "Service has been created successfully.",
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Service has been created successfully.",
       });
 
       // Reset form
@@ -487,7 +585,11 @@ const ServicesManagementPage: React.FC = () => {
         task_type: "",
         modelSubmissionDate: "",
         modelVersion: "1.0",
+        tiers: [],
       });
+      setPricePerUnit("");
+      setUnitSize("");
+      setSelectedTiers([]);
       setPreselectedModelFromQuery(null);
 
       await fetchServices();
@@ -496,24 +598,36 @@ const ServicesManagementPage: React.FC = () => {
       // Switch to list tab
       setActiveTab(0);
     } catch (error: any) {
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const unitType =
+    UNIT_TYPE_BY_TASK[formData.task_type?.toLowerCase() || ""] || "";
+
+  const filteredModelsForDropdown = formData.task_type
+    ? modelsForDropdown.filter((model) => {
+        const modelTaskType =
+          model?.task?.type ||
+          (model as any).task_type ||
+          (model as any).taskType ||
+          "";
+        return (
+          modelTaskType.toLowerCase() === formData.task_type?.toLowerCase()
+        );
+      })
+    : modelsForDropdown;
+
   const canCreateService =
     !!formData.name?.trim() &&
     !!formData.serviceDescription?.trim() &&
     !!formData.modelId?.trim() &&
-    !!formData.endpoint?.trim();
+    !!formData.endpoint?.trim() &&
+    !!formData.task_type?.trim() &&
+    !!pricePerUnit.trim() &&
+    selectedTiers.length > 0;
 
   const isCreateFormModelSelected = !!formData.modelId?.trim();
 
@@ -527,7 +641,14 @@ const ServicesManagementPage: React.FC = () => {
       setUpdateFormData(service);
       setIsViewingService(true);
       setActiveTab(viewTabIndex);
-      router.replace({ pathname: "/services-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
+      router.replace(
+        {
+          pathname: "/services-management",
+          query: { ...router.query, tab: "2" },
+        },
+        undefined,
+        { shallow: true },
+      );
       // Fetch model to know if deprecated (detail API may not include model.versionStatus)
       const modelId = service.modelId || service.model_id;
       if (modelId) {
@@ -545,15 +666,11 @@ const ServicesManagementPage: React.FC = () => {
         setSelectedServiceModelDeprecated(false);
       }
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch service details";
+      showError(error);
     }
   };
 
@@ -564,12 +681,9 @@ const ServicesManagementPage: React.FC = () => {
     if (!checkSessionExpiry()) return;
 
     if (!selectedService?.serviceId) {
-      toast({
-        title: "Update Failed",
-        description: "Service ID is required for update",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required for update",
       });
       return;
     }
@@ -590,17 +704,22 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["nerServices"] });
       queryClient.invalidateQueries({ queryKey: ["llm-services"] });
       queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+      queryClient.invalidateQueries({
+        queryKey: ["speaker-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-detection-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["audioLanguageDetectionServices"],
+      });
 
-      toast({
-        title: "Service Updated",
-        description: "Service has been updated successfully",
-        status: "success",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: "Service has been updated successfully",
       });
 
       setSelectedService(updatedService);
@@ -609,15 +728,9 @@ const ServicesManagementPage: React.FC = () => {
       // Refresh services list
       await fetchServices();
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to update service";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update service";
+      showError(error);
     } finally {
       setIsUpdating(false);
     }
@@ -650,13 +763,10 @@ const ServicesManagementPage: React.FC = () => {
           typeof modelDetails.versionStatus === "string" &&
           modelDetails.versionStatus.toLowerCase() === "deprecated";
         if (isDeprecated) {
-          toast({
-            title: "Publish blocked",
-            description:
+          showToast({
+            type: "error",
+            message:
               "This service cannot be published because its associated model version is deprecated. Please restore the model to ACTIVE before publishing the service.",
-            status: "error",
-            duration: 6000,
-            isClosable: true,
           });
           return;
         }
@@ -665,16 +775,16 @@ const ServicesManagementPage: React.FC = () => {
       // If model lookup fails, fall through and let backend validation (if any) handle it
       // Do not block publish solely due to a transient read error.
       // eslint-disable-next-line no-console
-      console.warn("Failed to verify model status before publishing service:", e);
+      console.warn(
+        "Failed to verify model status before publishing service:",
+        e,
+      );
     }
 
     if (!service.serviceId) {
-      toast({
-        title: "Publish Failed",
-        description: "Service ID is required",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required",
       });
       return;
     }
@@ -688,12 +798,9 @@ const ServicesManagementPage: React.FC = () => {
         isPublished: true,
       });
 
-      toast({
-        title: "Service published",
-        description: `${service.name || service.serviceId} has been published successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${service.name || service.serviceId} has been published successfully.`,
       });
 
       // Invalidate all service-related queries to refresh service lists across all pages
@@ -704,10 +811,18 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["nerServices"] });
       queryClient.invalidateQueries({ queryKey: ["llm-services"] });
       queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+      queryClient.invalidateQueries({
+        queryKey: ["speaker-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-detection-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["audioLanguageDetectionServices"],
+      });
 
       // Refresh services list
       await fetchServices();
@@ -717,15 +832,9 @@ const ServicesManagementPage: React.FC = () => {
         setSelectedService(updatedService);
       }
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to publish service";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to publish service";
+      showError(error);
     } finally {
       setPublishingServiceUuid(null);
     }
@@ -733,12 +842,9 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleUnpublishService = async (service: Service) => {
     if (!service.serviceId) {
-      toast({
-        title: "Unpublish Failed",
-        description: "Service ID is required",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required",
       });
       return;
     }
@@ -752,12 +858,9 @@ const ServicesManagementPage: React.FC = () => {
         isPublished: false,
       });
 
-      toast({
-        title: "Service unpublished",
-        description: `${service.name || service.serviceId} has been unpublished successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${service.name || service.serviceId} has been unpublished successfully.`,
       });
 
       // Invalidate all service-related queries to refresh service lists across all pages
@@ -768,10 +871,18 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["nerServices"] });
       queryClient.invalidateQueries({ queryKey: ["llm-services"] });
       queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+      queryClient.invalidateQueries({
+        queryKey: ["speaker-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-detection-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["audioLanguageDetectionServices"],
+      });
 
       // Refresh services list
       await fetchServices();
@@ -781,15 +892,9 @@ const ServicesManagementPage: React.FC = () => {
         setSelectedService(updatedService);
       }
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to unpublish service";
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to unpublish service";
+      showError(error);
     } finally {
       setUnpublishingServiceUuid(null);
     }
@@ -803,12 +908,9 @@ const ServicesManagementPage: React.FC = () => {
   const handleDeleteConfirm = async () => {
     if (!checkSessionExpiry()) return;
     if (!serviceToDelete?.serviceId) {
-      toast({
-        title: "Delete Failed",
-        description: "Service ID is required for deletion",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: "Service ID is required for deletion",
       });
       onClose();
       return;
@@ -816,12 +918,9 @@ const ServicesManagementPage: React.FC = () => {
     setDeletingServiceUuid(serviceToDelete.serviceId);
     try {
       await deleteService(serviceToDelete.serviceId);
-      toast({
-        title: "Service deleted",
-        description: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
-        status: "success",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "success",
+        message: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
       });
       queryClient.invalidateQueries({ queryKey: ["asr-services"] });
       queryClient.invalidateQueries({ queryKey: ["tts-services"] });
@@ -830,10 +929,18 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["nerServices"] });
       queryClient.invalidateQueries({ queryKey: ["llm-services"] });
       queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
-      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
-      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
-      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+      queryClient.invalidateQueries({
+        queryKey: ["speaker-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-detection-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["language-diarization-services"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["audioLanguageDetectionServices"],
+      });
       await fetchServices();
       if (selectedService?.serviceId === serviceToDelete.serviceId) {
         setIsViewingService(false);
@@ -842,14 +949,7 @@ const ServicesManagementPage: React.FC = () => {
         setActiveTab(0);
       }
     } catch (error: any) {
-      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMsg,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+      showError(error);
     } finally {
       setDeletingServiceUuid(null);
       setServiceToDelete(null);
@@ -888,15 +988,49 @@ const ServicesManagementPage: React.FC = () => {
         cell: (service) => (
           <Badge
             colorScheme={getTaskColor(
-              service.model?.task?.type || service.task?.type || service.task_type
+              service.model?.task?.type ||
+                service.task?.type ||
+                service.task_type,
             )}
             fontSize="sm"
             p={1}
           >
-            {(service.model?.task?.type || service.task?.type || service.task_type)?.toUpperCase() ||
-              "N/A"}
+            {(
+              service.model?.task?.type ||
+              service.task?.type ||
+              service.task_type
+            )?.toUpperCase() || "N/A"}
           </Badge>
         ),
+      },
+      {
+        id: "tiers",
+        header: "Tiers",
+        cell: (service) => {
+          const names = service.tierNames;
+          if (!names || names.length === 0) {
+            return (
+              <Text fontSize="sm" color="gray.400">
+                —
+              </Text>
+            );
+          }
+          return (
+            <HStack spacing={1} flexWrap="wrap">
+              {names.map((name) => (
+                <Badge
+                  key={name}
+                  colorScheme="gray"
+                  fontSize="xs"
+                  px={2}
+                  py={0.5}
+                >
+                  {name}
+                </Badge>
+              ))}
+            </HStack>
+          );
+        },
       },
       {
         id: "status",
@@ -916,7 +1050,9 @@ const ServicesManagementPage: React.FC = () => {
         header: "Created At",
         cell: (service) => (
           <Text fontSize="sm" color="gray.600">
-            {service.createdAt ? new Date(service.createdAt).toLocaleDateString() : "N/A"}
+            {service.createdAt
+              ? new Date(service.createdAt).toLocaleDateString()
+              : "N/A"}
           </Text>
         ),
       },
@@ -935,7 +1071,9 @@ const ServicesManagementPage: React.FC = () => {
                 colorScheme="blue"
                 _hover={{ bg: "blue.50" }}
                 onClick={() =>
-                  handleViewService(service.serviceId || service.service_id || "")
+                  handleViewService(
+                    service.serviceId || service.service_id || "",
+                  )
                 }
               />
             </Tooltip>
@@ -955,7 +1093,8 @@ const ServicesManagementPage: React.FC = () => {
                     }}
                     isLoading={unpublishingServiceUuid === service.serviceId}
                     isDisabled={
-                      unpublishingServiceUuid !== null || publishingServiceUuid !== null
+                      unpublishingServiceUuid !== null ||
+                      publishingServiceUuid !== null
                     }
                   />
                 </Tooltip>
@@ -1054,7 +1193,11 @@ const ServicesManagementPage: React.FC = () => {
                   const q = { ...router.query } as Record<string, string>;
                   if (index === 0) delete q.tab;
                   else q.tab = String(index);
-                  router.replace({ pathname: "/services-management", query: q }, undefined, { shallow: true });
+                  router.replace(
+                    { pathname: "/services-management", query: q },
+                    undefined,
+                    { shallow: true },
+                  );
                 }}
               >
                 <TabList>
@@ -1070,9 +1213,19 @@ const ServicesManagementPage: React.FC = () => {
                 <TabPanels>
                   {/* Service Registry Tab */}
                   <TabPanel px={0} pt={6}>
-                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                    <Card
+                      bg={cardBg}
+                      borderColor={cardBorder}
+                      borderWidth="1px"
+                      boxShadow="none"
+                    >
                       <CardHeader>
-                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+                        <Heading
+                          size="md"
+                          color="gray.700"
+                          userSelect="none"
+                          cursor="default"
+                        >
                           Service Registry
                         </Heading>
                       </CardHeader>
@@ -1085,7 +1238,9 @@ const ServicesManagementPage: React.FC = () => {
                             service.serviceId || service.service_id || ""
                           }
                           onRowClick={(service) =>
-                            handleViewService(service.serviceId || service.service_id || "")
+                            handleViewService(
+                              service.serviceId || service.service_id || "",
+                            )
                           }
                           paginate="client"
                           pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
@@ -1098,32 +1253,44 @@ const ServicesManagementPage: React.FC = () => {
                           onClearFilters={clearAllFilters}
                           filters={
                             <VStack align="stretch" spacing={3} w="full">
-                              <HStack flexWrap="wrap" spacing={3} align="flex-end">
+                              <HStack
+                                flexWrap="wrap"
+                                spacing={3}
+                                align="flex-end"
+                              >
                                 <TableSearchField
                                   label="Search"
                                   value={searchQuery}
                                   onChange={setSearchQuery}
                                   placeholder="Search by service name..."
-                                  formControlProps={{ w: { base: "full", md: "280px" } }}
+                                  formControlProps={{
+                                    w: { base: "full", md: "280px" },
+                                  }}
                                 />
                                 <TableSelectField
                                   label="Status"
                                   value={filterStatus}
                                   onChange={setFilterStatus}
-                                  formControlProps={{ w: { base: "full", sm: "140px" } }}
+                                  formControlProps={{
+                                    w: { base: "full", sm: "140px" },
+                                  }}
                                 >
                                   <option value="">All</option>
                                   <option value="published">Published</option>
-                                  <option value="unpublished">Unpublished</option>
+                                  <option value="unpublished">
+                                    Unpublished
+                                  </option>
                                 </TableSelectField>
                                 <TableSelectField
                                   label="Model Task Type"
                                   value={filterTaskType}
                                   onChange={setFilterTaskType}
-                                  formControlProps={{ w: { base: "full", sm: "160px" } }}
+                                  formControlProps={{
+                                    w: { base: "full", sm: "160px" },
+                                  }}
                                 >
                                   <option value="">All</option>
-                                  {MODEL_TASK_TYPE_LIST.map((t) => (
+                                  {taskTypeNames?.map((t) => (
                                     <option key={t} value={t}>
                                       {formatModelTaskTypeLabel(t)}
                                     </option>
@@ -1156,7 +1323,9 @@ const ServicesManagementPage: React.FC = () => {
                                       _hover={{ opacity: 0.8 }}
                                     >
                                       Status:{" "}
-                                      {filterStatus === "published" ? "Published" : "Unpublished"}{" "}
+                                      {filterStatus === "published"
+                                        ? "Published"
+                                        : "Unpublished"}{" "}
                                       ×
                                     </Badge>
                                   )}
@@ -1170,7 +1339,9 @@ const ServicesManagementPage: React.FC = () => {
                                       onClick={() => setFilterTaskType("")}
                                       _hover={{ opacity: 0.8 }}
                                     >
-                                      Model Task Type: {formatModelTaskTypeLabel(filterTaskType)} ×
+                                      Model Task Type:{" "}
+                                      {formatModelTaskTypeLabel(filterTaskType)}{" "}
+                                      ×
                                     </Badge>
                                   )}
                                 </HStack>
@@ -1184,161 +1355,347 @@ const ServicesManagementPage: React.FC = () => {
 
                   {/* Create Service Tab */}
                   {!isRegistryReadOnly && (
-                  <TabPanel px={0} pt={6}>
-                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-                      <CardHeader>
-                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                          Create New Service
-                        </Heading>
-                      </CardHeader>
-                      <CardBody>
-                        <form onSubmit={handleSubmit}>
-                          <VStack spacing={6} align="stretch">
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">
-                                Service Name{" "}
-                              </FormLabel>
-                              <Input
-                                value={formData.name || ""}
-                                onChange={(e) => handleInputChange("name", e.target.value)}
-                                placeholder="Enter service name e.g. asr-conformer-gpu"
-                                bg="white"
-                              />
-                              <Text fontSize="xs" color="gray.500" mt={1}>
-                                Enter service name e.g. asr-conformer-gpu. Service ID will be auto-generated based on this.
-                              </Text>
-                            </FormControl>
-
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">
-                                Service Description{" "}
-                              </FormLabel>
-                              <Textarea
-                                value={formData.serviceDescription || ""}
-                                onChange={(e) => handleInputChange("serviceDescription", e.target.value)}
-                                placeholder="Provide a brief description of what this service does"
-                                bg="white"
-                                rows={4}
-                              />
-                            </FormControl>
-
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">
-                                Endpoint{" "}
-                              </FormLabel>
-                              <Input
-                                value={formData.endpoint || ""}
-                                onChange={(e) => handleInputChange("endpoint", e.target.value)}
-                                placeholder="Enter endpoint URL, e.g. http://localhost:8088"
-                                bg="white"
-                              />
-                              <Text fontSize="xs" color="gray.500" mt={1}>
-                                Enter the full HTTP endpoint where this service is hosted.
-                              </Text>
-                            </FormControl>
-
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">
-                                Model Name{" "}
-                              </FormLabel>
-                              <Select
-                                value={formData.modelId || ""}
-                                onChange={(e) => handleModelNameChange(e.target.value)}
-                                placeholder={isLoadingModels ? "Loading models..." : "Select the model to be associated with this service"}
-                                bg="white"
-                                isDisabled={isLoadingModels}
-                              >
-                                {modelsForDropdown.map((model) => (
-                                  <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
-                                    {model.name || model.modelId || model.model_id}
-                                  </option>
-                                ))}
-                              </Select>
-                              <Text fontSize="xs" color="gray.500" mt={1}>
-                                Select the model to be associated with this service.
-                              </Text>
-                            </FormControl>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                    <TabPanel px={0} pt={6}>
+                      <Card
+                        bg={cardBg}
+                        borderColor={cardBorder}
+                        borderWidth="1px"
+                        boxShadow="none"
+                      >
+                        <CardHeader>
+                          <Heading
+                            size="md"
+                            color="gray.700"
+                            userSelect="none"
+                            cursor="default"
+                          >
+                            Create New Service
+                          </Heading>
+                        </CardHeader>
+                        <CardBody>
+                          <form onSubmit={handleSubmit}>
+                            <VStack spacing={6} align="stretch">
+                              {/* Service Name */}
                               <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Model ID</FormLabel>
+                                <FormLabel fontWeight="semibold">
+                                  Service Name
+                                </FormLabel>
                                 <Input
-                                  value={formData.modelId || ""}
-                                  bg={isCreateFormModelSelected ? "gray.50" : "white"}
-                                  isReadOnly
-                                  placeholder="Select a model above"
+                                  value={formData.name || ""}
+                                  onChange={(e) =>
+                                    handleInputChange("name", e.target.value)
+                                  }
+                                  placeholder="Enter service name e.g. asr-conformer-gpu"
+                                  bg="white"
+                                />
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  Enter service name e.g. asr-conformer-gpu.
+                                  Service ID will be auto-generated based on
+                                  this.
+                                </Text>
+                              </FormControl>
+
+                              {/* Service Description */}
+                              <FormControl isRequired>
+                                <FormLabel fontWeight="semibold">
+                                  Service Description
+                                </FormLabel>
+                                <Textarea
+                                  value={formData.serviceDescription || ""}
+                                  onChange={(e) =>
+                                    handleInputChange(
+                                      "serviceDescription",
+                                      e.target.value,
+                                    )
+                                  }
+                                  placeholder="Provide a brief description of what this service does"
+                                  bg="white"
+                                  rows={4}
                                 />
                               </FormControl>
 
+                              {/* Endpoint */}
                               <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Model Task Type</FormLabel>
+                                <FormLabel fontWeight="semibold">
+                                  Endpoint
+                                </FormLabel>
                                 <Input
-                                  value={formData.task_type || ""}
-                                  placeholder="Select a model above"
-                                  bg={isCreateFormModelSelected ? "gray.50" : "white"}
-                                  isReadOnly
+                                  value={formData.endpoint || ""}
+                                  onChange={(e) =>
+                                    handleInputChange(
+                                      "endpoint",
+                                      e.target.value,
+                                    )
+                                  }
+                                  placeholder="Enter endpoint URL, e.g. http://localhost:8088"
+                                  bg="white"
                                 />
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  Enter the full HTTP endpoint where this
+                                  service is hosted.
+                                </Text>
                               </FormControl>
-                            </SimpleGrid>
 
-                            <FormControl>
-                              <FormLabel fontWeight="semibold">
-                                Model Submission Date{" "}
-                              </FormLabel>
-                              <Input
-                                type="date"
-                                value={(formData.modelSubmissionDate as string) || ""}
-                                placeholder="Select a model above"
-                                bg={isCreateFormModelSelected ? "gray.50" : "white"}
-                                isReadOnly
-                              />
-                            </FormControl>
+                              {/* Model Task Type | Model Name */}
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
+                                <FormControl isRequired>
+                                  <FormLabel fontWeight="semibold">
+                                    Model Task Type
+                                  </FormLabel>
+                                  <Select
+                                    value={formData.task_type || ""}
+                                    onChange={(e) =>
+                                      handleTaskTypeChange(e.target.value)
+                                    }
+                                    placeholder="Select a task type"
+                                    bg="white"
+                                  >
+                                    {taskTypeNames?.map((t) => (
+                                      <option key={t} value={t}>
+                                        {formatModelTaskTypeLabel(t)}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                </FormControl>
 
-                            <HStack justify="flex-end" spacing={4} pt={4}>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                  setFormData({
-                                    name: "",
-                                    serviceDescription: "",
-                                    publishedOn: Math.floor(Date.now() / 1000),
-                                    modelId: "",
-                                    modelName: "",
-                                    endpoint: "",
-                                    task_type: "",
-                                    modelSubmissionDate: "",
-                                    modelVersion: "1.0",
-                                  });
-                                  setPreselectedModelFromQuery(null);
-                                }}
+                                <FormControl isRequired>
+                                  <FormLabel fontWeight="semibold">
+                                    Model Name
+                                  </FormLabel>
+                                  <Select
+                                    value={formData.modelId || ""}
+                                    onChange={(e) =>
+                                      handleModelNameChange(e.target.value)
+                                    }
+                                    placeholder={
+                                      isLoadingModels
+                                        ? "Loading models..."
+                                        : !formData.task_type
+                                          ? "Select a task type first"
+                                          : "Select a model"
+                                    }
+                                    bg="white"
+                                    isDisabled={
+                                      isLoadingModels || !formData.task_type
+                                    }
+                                  >
+                                    {filteredModelsForDropdown.map((model) => (
+                                      <option
+                                        key={model.modelId || model.model_id}
+                                        value={model.modelId || model.model_id}
+                                      >
+                                        {model.name ||
+                                          model.modelId ||
+                                          model.model_id}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              </SimpleGrid>
+
+                              {/* Unit type | Price per Unit | Currency | Tier */}
+                              <SimpleGrid
+                                columns={{ base: 2, md: 4 }}
+                                spacing={4}
                               >
-                                Reset
-                              </Button>
-                              <Button
-                                type="submit"
-                                colorScheme="blue"
-                                isLoading={isSubmitting}
-                                loadingText="Creating..."
-                                isDisabled={!canCreateService || isSubmitting}
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">
+                                    Unit type
+                                  </FormLabel>
+                                  <Input
+                                    value={unitType}
+                                    isReadOnly
+                                    bg="gray.50"
+                                    placeholder="—"
+                                  />
+                                </FormControl>
+
+                                <FormControl isRequired>
+                                  <FormLabel fontWeight="semibold">
+                                    Price per Unit
+                                  </FormLabel>
+                                  <Input
+                                    value={pricePerUnit}
+                                    onChange={(e) =>
+                                      setPricePerUnit(e.target.value)
+                                    }
+                                    placeholder="e.g. 600"
+                                    type="number"
+                                    min={0}
+                                    bg="white"
+                                  />
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">
+                                    Currency
+                                  </FormLabel>
+                                  <Input value="INR" isReadOnly bg="gray.50" />
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">
+                                    Tier{" "}
+                                    <Box as="span" color="red.500">
+                                      *
+                                    </Box>
+                                  </FormLabel>
+                                  <Menu closeOnSelect={false}>
+                                    <MenuButton
+                                      as={Button}
+                                      type="button"
+                                      rightIcon={<ChevronDownIcon />}
+                                      w="full"
+                                      textAlign="left"
+                                      fontWeight="normal"
+                                      variant="outline"
+                                      bg="white"
+                                      borderColor="inherit"
+                                      _hover={{ borderColor: "gray.300" }}
+                                      fontSize="sm"
+                                      justifyContent="space-between"
+                                    >
+                                      {selectedTiers.length > 0
+                                        ? selectedTiers
+                                            .map(
+                                              (id) =>
+                                                availableTiers.find(
+                                                  (t) => t.id === id,
+                                                )?.name ?? id,
+                                            )
+                                            .join(", ")
+                                        : "Select Tiers"}
+                                    </MenuButton>
+                                    <MenuList>
+                                      {availableTiers.map((tier) => (
+                                        <MenuItem
+                                          key={tier.id}
+                                          onClick={() => toggleTier(tier.id)}
+                                          closeOnSelect={false}
+                                        >
+                                          <Checkbox
+                                            isChecked={selectedTiers.includes(
+                                              tier.id,
+                                            )}
+                                            onChange={() => toggleTier(tier.id)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            mr={2}
+                                          />
+                                          {tier.name}
+                                        </MenuItem>
+                                      ))}
+                                    </MenuList>
+                                  </Menu>
+                                </FormControl>
+                              </SimpleGrid>
+
+                              {/* Model ID | Model Submission Date */}
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
                               >
-                                Create Service
-                              </Button>
-                            </HStack>
-                          </VStack>
-                        </form>
-                      </CardBody>
-                    </Card>
-                  </TabPanel>
+                                <FormControl isRequired>
+                                  <FormLabel fontWeight="semibold">
+                                    Model ID
+                                  </FormLabel>
+                                  <Input
+                                    value={formData.modelId || ""}
+                                    bg={
+                                      isCreateFormModelSelected
+                                        ? "gray.50"
+                                        : "white"
+                                    }
+                                    isReadOnly
+                                    placeholder="Select a model above"
+                                  />
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">
+                                    Model Submission Date
+                                  </FormLabel>
+                                  <Input
+                                    type="date"
+                                    value={
+                                      (formData.modelSubmissionDate as string) ||
+                                      ""
+                                    }
+                                    bg={
+                                      isCreateFormModelSelected
+                                        ? "gray.50"
+                                        : "white"
+                                    }
+                                    isReadOnly
+                                  />
+                                </FormControl>
+                              </SimpleGrid>
+
+                              <HStack justify="flex-end" spacing={4} pt={4}>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setFormData({
+                                      name: "",
+                                      serviceDescription: "",
+                                      publishedOn: Math.floor(
+                                        Date.now() / 1000,
+                                      ),
+                                      modelId: "",
+                                      modelName: "",
+                                      endpoint: "",
+                                      task_type: "",
+                                      modelSubmissionDate: "",
+                                      modelVersion: "1.0",
+                                      tiers: [],
+                                    });
+                                    setPricePerUnit("");
+                                    setUnitSize("");
+                                    setSelectedTiers([]);
+                                    setPreselectedModelFromQuery(null);
+                                  }}
+                                >
+                                  Reset
+                                </Button>
+                                <Button
+                                  type="submit"
+                                  colorScheme="blue"
+                                  isLoading={isSubmitting}
+                                  loadingText="Creating..."
+                                  isDisabled={!canCreateService || isSubmitting}
+                                >
+                                  Create Service
+                                </Button>
+                              </HStack>
+                            </VStack>
+                          </form>
+                        </CardBody>
+                      </Card>
+                    </TabPanel>
                   )}
 
                   {/* View Service Tab */}
                   {isViewingService && selectedService ? (
                     <TabPanel px={0} pt={6}>
-                      <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                      <Card
+                        bg={cardBg}
+                        borderColor={cardBorder}
+                        borderWidth="1px"
+                        boxShadow="none"
+                      >
                         <CardHeader>
-                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                            {selectedService.name || selectedService.serviceId || selectedService.service_id}
+                          <Heading
+                            size="md"
+                            color="gray.700"
+                            userSelect="none"
+                            cursor="default"
+                          >
+                            {selectedService.name ||
+                              selectedService.serviceId ||
+                              selectedService.service_id}
                           </Heading>
                         </CardHeader>
                         <CardBody>
@@ -1346,74 +1703,163 @@ const ServicesManagementPage: React.FC = () => {
                             // View Mode - Display service details
                             <VStack spacing={6} align="stretch">
                               {isRegistryReadOnly && (
-                                <Badge colorScheme="gray" alignSelf="flex-start" fontSize="sm" px={2} py={1}>
+                                <Badge
+                                  colorScheme="gray"
+                                  alignSelf="flex-start"
+                                  fontSize="sm"
+                                  px={2}
+                                  py={1}
+                                >
                                   Read-only
                                 </Badge>
                               )}
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Service ID
                                   </Text>
-                                  <Text fontSize="md">{selectedService.serviceId || selectedService.service_id || "N/A"}</Text>
+                                  <Text fontSize="md">
+                                    {selectedService.serviceId ||
+                                      selectedService.service_id ||
+                                      "N/A"}
+                                  </Text>
                                 </Box>
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Name
                                   </Text>
-                                  <Text fontSize="md">{selectedService.name || "N/A"}</Text>
+                                  <Text fontSize="md">
+                                    {selectedService.name || "N/A"}
+                                  </Text>
                                 </Box>
                               </SimpleGrid>
 
                               <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                <Text
+                                  fontWeight="bold"
+                                  color="gray.600"
+                                  fontSize="sm"
+                                  mb={1}
+                                >
                                   Description
                                 </Text>
-                                <Text fontSize="md">{selectedService.serviceDescription || selectedService.description || "N/A"}</Text>
+                                <Text fontSize="md">
+                                  {selectedService.serviceDescription ||
+                                    selectedService.description ||
+                                    "N/A"}
+                                </Text>
                               </Box>
 
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Model Task Type
                                   </Text>
                                   <Badge
-                                    colorScheme={getTaskColor(selectedService?.model?.task?.type || selectedService?.task?.type || selectedService.task_type)}
+                                    colorScheme={getTaskColor(
+                                      selectedService?.model?.task?.type ||
+                                        selectedService?.task?.type ||
+                                        selectedService.task_type,
+                                    )}
                                     fontSize="sm"
                                     p={2}
                                   >
-                                    {(selectedService?.model?.task?.type || selectedService?.task?.type || selectedService.task_type)?.toUpperCase() || "N/A"}
+                                    {(
+                                      selectedService?.model?.task?.type ||
+                                      selectedService?.task?.type ||
+                                      selectedService.task_type
+                                    )?.toUpperCase() || "N/A"}
                                   </Badge>
                                 </Box>
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Status (Publish/Unpublish)
                                   </Text>
-                                  <HStack spacing={2} align="center" flexWrap="wrap">
+                                  <HStack
+                                    spacing={2}
+                                    align="center"
+                                    flexWrap="wrap"
+                                  >
                                     <Badge
-                                      colorScheme={selectedService.isPublished === true ? "green" : "gray"}
+                                      colorScheme={
+                                        selectedService.isPublished === true
+                                          ? "green"
+                                          : "gray"
+                                      }
                                       fontSize="sm"
                                       p={2}
                                     >
-                                      {selectedService.isPublished === true ? "Published" : "Unpublished"}
+                                      {selectedService.isPublished === true
+                                        ? "Published"
+                                        : "Unpublished"}
                                     </Badge>
                                     {!isRegistryReadOnly &&
                                       (selectedService.isPublished === true ? (
-                                        <Tooltip label="Unpublish" placement="top" hasArrow>
+                                        <Tooltip
+                                          label="Unpublish"
+                                          placement="top"
+                                          hasArrow
+                                        >
                                           <IconButton
                                             aria-label="Unpublish"
                                             icon={<FaDownload />}
                                             size="sm"
                                             colorScheme="red"
                                             variant="outline"
-                                            onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
-                                            isLoading={unpublishingServiceUuid === selectedService.serviceId}
-                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                            onClick={() => {
+                                              setConfirmUnpublishService(
+                                                selectedService,
+                                              );
+                                              onUnpublishConfirmOpen();
+                                            }}
+                                            isLoading={
+                                              unpublishingServiceUuid ===
+                                              selectedService.serviceId
+                                            }
+                                            isDisabled={
+                                              unpublishingServiceUuid !==
+                                                null ||
+                                              publishingServiceUuid !== null
+                                            }
                                           />
                                         </Tooltip>
                                       ) : (
                                         <Tooltip
-                                          label={isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing." : "Publish"}
+                                          label={
+                                            isServiceModelDeprecated(
+                                              selectedService,
+                                            ) ||
+                                            selectedServiceModelDeprecated ===
+                                              true
+                                              ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                                              : "Publish"
+                                          }
                                           hasArrow
                                           placement="top"
                                         >
@@ -1424,13 +1870,26 @@ const ServicesManagementPage: React.FC = () => {
                                               size="sm"
                                               colorScheme="green"
                                               variant="outline"
-                                              onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
-                                              isLoading={publishingServiceUuid === selectedService.serviceId}
+                                              onClick={() => {
+                                                setConfirmPublishService(
+                                                  selectedService,
+                                                );
+                                                onPublishConfirmOpen();
+                                              }}
+                                              isLoading={
+                                                publishingServiceUuid ===
+                                                selectedService.serviceId
+                                              }
                                               isDisabled={
-                                                unpublishingServiceUuid !== null ||
-                                                publishingServiceUuid !== null ||
-                                                isServiceModelDeprecated(selectedService) ||
-                                                selectedServiceModelDeprecated === true
+                                                unpublishingServiceUuid !==
+                                                  null ||
+                                                publishingServiceUuid !==
+                                                  null ||
+                                                isServiceModelDeprecated(
+                                                  selectedService,
+                                                ) ||
+                                                selectedServiceModelDeprecated ===
+                                                  true
                                               }
                                             />
                                           </Box>
@@ -1440,37 +1899,74 @@ const ServicesManagementPage: React.FC = () => {
                                 </Box>
                               </SimpleGrid>
 
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Model ID
                                   </Text>
-                                  <Text fontSize="md">{selectedService.modelId || selectedService.model_id || "N/A"}</Text>
+                                  <Text fontSize="md">
+                                    {selectedService.modelId ||
+                                      selectedService.model_id ||
+                                      "N/A"}
+                                  </Text>
                                 </Box>
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Endpoint
                                   </Text>
                                   <Text fontSize="md" wordBreak="break-all">
-                                    {selectedService.endpoint || selectedService.endpoint_url || "N/A"}
+                                    {selectedService.endpoint ||
+                                      selectedService.endpoint_url ||
+                                      "N/A"}
                                   </Text>
                                 </Box>
                               </SimpleGrid>
 
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Hardware Description
                                   </Text>
-                                  <Text fontSize="md">{selectedService.hardwareDescription || "N/A"}</Text>
+                                  <Text fontSize="md">
+                                    {selectedService.hardwareDescription ||
+                                      "N/A"}
+                                  </Text>
                                 </Box>
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Published On
                                   </Text>
                                   <Text fontSize="md">
                                     {selectedService.publishedOn
-                                      ? new Date(selectedService.publishedOn * 1000).toLocaleString()
+                                      ? new Date(
+                                          selectedService.publishedOn * 1000,
+                                        ).toLocaleString()
                                       : "N/A"}
                                   </Text>
                                 </Box>
@@ -1478,22 +1974,36 @@ const ServicesManagementPage: React.FC = () => {
 
                               {selectedService.created_at && (
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Created At
                                   </Text>
                                   <Text fontSize="md">
-                                    {new Date(selectedService.created_at).toLocaleString()}
+                                    {new Date(
+                                      selectedService.created_at,
+                                    ).toLocaleString()}
                                   </Text>
                                 </Box>
                               )}
 
                               {selectedService.updated_at && (
                                 <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
                                     Updated At
                                   </Text>
                                   <Text fontSize="md">
-                                    {new Date(selectedService.updated_at).toLocaleString()}
+                                    {new Date(
+                                      selectedService.updated_at,
+                                    ).toLocaleString()}
                                   </Text>
                                 </Box>
                               )}
@@ -1519,8 +2029,10 @@ const ServicesManagementPage: React.FC = () => {
         body={
           <>
             Are you sure you want to delete the service{" "}
-            <strong>{serviceToDelete?.name || serviceToDelete?.service_id}</strong>?
-            This action cannot be undone.
+            <strong>
+              {serviceToDelete?.name || serviceToDelete?.service_id}
+            </strong>
+            ? This action cannot be undone.
           </>
         }
         confirmLabel="Confirm"
@@ -1542,14 +2054,18 @@ const ServicesManagementPage: React.FC = () => {
         body={
           <>
             Are you sure you want to publish{" "}
-            <strong>{confirmPublishService?.name || confirmPublishService?.serviceId}</strong>?
-            The service will be available for use.
+            <strong>
+              {confirmPublishService?.name || confirmPublishService?.serviceId}
+            </strong>
+            ? The service will be available for use.
           </>
         }
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="green"
-        isConfirmLoading={publishingServiceUuid === confirmPublishService?.serviceId}
+        isConfirmLoading={
+          publishingServiceUuid === confirmPublishService?.serviceId
+        }
         confirmLoadingText="Publishing..."
         leastDestructiveRef={cancelPublishRef}
       />
@@ -1565,14 +2081,19 @@ const ServicesManagementPage: React.FC = () => {
         body={
           <>
             Are you sure you want to unpublish{" "}
-            <strong>{confirmUnpublishService?.name || confirmUnpublishService?.serviceId}</strong>?
-            The service will no longer be available for use.
+            <strong>
+              {confirmUnpublishService?.name ||
+                confirmUnpublishService?.serviceId}
+            </strong>
+            ? The service will no longer be available for use.
           </>
         }
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.serviceId}
+        isConfirmLoading={
+          unpublishingServiceUuid === confirmUnpublishService?.serviceId
+        }
         confirmLoadingText="Unpublishing..."
         leastDestructiveRef={cancelUnpublishRef}
       />

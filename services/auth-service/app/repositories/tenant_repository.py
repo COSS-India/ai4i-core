@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Tenant, TenantStatus
@@ -25,8 +25,20 @@ class TenantRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     async def get_by_email(self, email: str) -> Optional[Tenant]:
+        # Match either storage form so the seeded/legacy plaintext default
+        # tenant email keeps working alongside encrypted rows:
+        #   * ``Tenant.email == email`` encrypts the parameter via the column's
+        #     bind processor, matching deterministic-ciphertext rows.
+        #   * ``cast(Tenant.email, Text) == <normalised>`` compares the raw
+        #     stored value as plain text (bypassing the encrypting bind
+        #     processor), matching un-encrypted rows.
         result = await self._db.execute(
-            select(Tenant).where(func.lower(Tenant.email) == email.lower().strip())
+            select(Tenant).where(
+                or_(
+                    Tenant.email == email,
+                    cast(Tenant.email, Text) == email.strip().lower(),
+                )
+            )
         )
         return result.scalar_one_or_none()
 

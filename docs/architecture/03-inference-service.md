@@ -162,8 +162,23 @@ field on `GenericInferenceRequest`. `GenericInferenceResponse` is the response m
 | LLM proxy | `LLM_DEFAULT_ENDPOINT`, `LLM_MODEL_ENDPOINTS` (JSON map), `LLM_INFERENCE_TIMEOUT` |
 | Backend | `DEFAULT_TRITON_TIMEOUT` |
 | Cache / DB | `REDIS_URL`, `REDIS_PASSWORD`, `CACHE_TTL_SECONDS`; `DATABASE_URL`, `POSTGRES_*` (optional) |
-| Telemetry | `ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Telemetry | `ENABLE_TELEMETRY`, `KAFKA_ENABLED`, `KAFKA_SERVER`, `KAFKA_TOPIC_OTEL_TRACE` |
 | Kafka (trace export) | `KAFKA_TOPIC_OTEL_TRACE`, `KAFKA_SERVER` — read directly in `trace/setup.py`, not in `config.py` |
 
 > Config source of truth: `services/inference-service/config.py` (except the Kafka trace
 > vars, which `trace/setup.py` reads via `os.getenv`).
+
+## Content Types Handled
+
+The inference-service processes three primary content modalities, routed by `task_type` in the unified `/inference` request envelope:
+
+| Modality | Task types | Input field | Format |
+|----------|-----------|-------------|--------|
+| **Text** | `NMT`, `NER`, `TRANSLITERATION`, `LANGUAGE_DETECTION`, `PII` | `input[].source` | Plain text string; multi-item arrays supported |
+| **Audio** | `ASR`, `TTS`, `AUDIO_LANGUAGE_DETECTION`, `SPEAKER_DIARIZATION`, `LANGUAGE_DIARIZATION` | `audio[].audioContent` | Base64-encoded; `audioFormat` (wav, mp3, …) declared per item |
+| **Image / Document** | `OCR` | `image[].imageContent` | Base64-encoded; `imageFormat` (png, jpg, …) declared per item |
+| **LLM chat** | — | OpenAI-compatible message array | JSON via `/chat/completions` endpoint |
+
+Content is **not persisted** by the inference-service — payloads are forwarded to the backend (Triton or LLM proxy) and the response is returned immediately to the caller. The only data written is **OpenTelemetry spans** (tenant ID + task type, no payload content) exported to the Kafka trace topic (`kafka-topic-otel-trace`).
+
+Language coverage spans Indic and international scripts. NMT, ASR, TTS, transliteration, and NER back-ends serve multiple Indic scripts (Devanagari, Tamil, Telugu, and others); exact language pairs depend on the models registered in platform-core.

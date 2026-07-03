@@ -35,6 +35,7 @@ import {
   IoNotificationsOutline,
   IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
+  IoStatsChartOutline,
 } from "react-icons/io5";
 import { TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
@@ -42,7 +43,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { canAccessServicesManagement } from "../../utils/rbac";
+import { canAccessServicesManagement, canAccessUsageDashboard } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -142,6 +143,12 @@ const safeColorMap = {
     400: "#66BB6A",
     600: "#43A047",
   },
+  [TABS.usageDashboard]: {
+    50:  "#FFF7ED",
+    300: "#FDBA74",
+    400: "#FB923C",
+    600: "#EA580C",
+  },
   [TABS.traces]: { // Purple → Pastel Purple
     50:  "#F3E5F5",
     300: "#BA68C8",
@@ -159,6 +166,12 @@ const safeColorMap = {
     300: "#9FA8DA",
     400: "#7986CB",
     600: "#5C6BC0",
+  },
+  [TABS.tierManagement]: {
+    50:  "#E3F2FD",
+    300: "#90CAF9",
+    400: "#42A5F5",
+    600: "#1565C0",
   },
   [TABS.policyManagement]: {
     50:  "#E3F2FD",
@@ -242,6 +255,15 @@ const topNavItems: NavItem[] = [
     requiresAuth: true,
   },
   {
+    id: TABS.usageDashboard,
+    label: "Usage Dashboard",
+    path: `/${TABS.usageDashboard}`,
+    icon: IoStatsChartOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
     id: TABS.traces,
     label: "Traces Dashboard",
     path: `/${TABS.traces}`,
@@ -264,6 +286,15 @@ const topNavItems: NavItem[] = [
     label: "PII Guardrail",
     path: `/${TABS.piiManagement}`,
     icon: IoShieldCheckmarkOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
+    id: TABS.tierManagement,
+    label: "Tier Management",
+    path: `/${TABS.tierManagement}`,
+    icon: IoPricetagOutline,
     iconSize: 10,
     iconColor: "",
     requiresAuth: true,
@@ -391,6 +422,46 @@ const baseNavItems: NavItem[] = [
   },
 ];
 
+interface TopNavFilterContext {
+  isGuest: boolean;
+  isUser: boolean;
+  isAdmin: boolean;
+  isTenantAdmin: boolean;
+  showTenantManagement: boolean;
+  tenantId: string | null;
+  userRoles?: string[];
+}
+
+function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
+  switch (itemId) {
+    case TABS.home:
+      return true;
+    case TABS.traces:
+    case TABS.policyManagement:
+      return false;
+    case TABS.modelManagement:
+      return !ctx.isGuest && !ctx.isUser;
+    case TABS.servicesManagement:
+      return !ctx.isGuest && !ctx.isUser && canAccessServicesManagement(ctx.userRoles);
+    case TABS.tenantManagement:
+      return ctx.showTenantManagement;
+    case TABS.apiKeyManagement:
+      return ctx.isAdmin || ctx.isTenantAdmin;
+    case TABS.logs:
+      return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
+    case TABS.usageDashboard:
+      return canAccessUsageDashboard(ctx.userRoles);
+    case TABS.alertsManagement:
+      return ctx.isAdmin;
+    case TABS.piiManagement:
+      return ctx.isAdmin || ctx.isTenantAdmin;
+    case TABS.tierManagement:
+      return ctx.isAdmin;
+    default:
+      return true;
+  }
+}
+
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isLoading, user } = useAuth();
@@ -415,38 +486,22 @@ const Sidebar: React.FC = () => {
   // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();
 
-  const topItems = useMemo(
-    () =>
-      topNavItems.filter((item) => {
-        if (item.id === TABS.home) return true;
-        if (item.id === TABS.traces) return false;
-        if (
-          (isGuest || isUser) &&
-          (item.id === TABS.modelManagement || item.id === TABS.servicesManagement)
-        ) {
-          return false;
-        }
-        if (item.id === TABS.servicesManagement && !canAccessServicesManagement(user?.roles)) {
-          return false;
-        }
-        if (item.id === TABS.tenantManagement && !showTenantManagement) return false;
-        if (item.id === TABS.alertsManagement && !isAdmin) return false;
-        if (item.id === TABS.piiManagement && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === TABS.policyManagement) return false;
-        if (item.id === TABS.apiKeyManagement && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === TABS.logs && (isUser || isGuest)) return false;
-        if (item.id === TABS.logs && !tenantId && !isAdmin) return false;
-        return true;
-      }),
-    [
-      isAdmin,
+  const topNavFilterContext = useMemo<TopNavFilterContext>(
+    () => ({
       isGuest,
       isUser,
+      isAdmin,
       isTenantAdmin,
       showTenantManagement,
       tenantId,
-      user?.roles,
-    ],
+      userRoles: user?.roles,
+    }),
+    [isGuest, isUser, isAdmin, isTenantAdmin, showTenantManagement, tenantId, user?.roles],
+  );
+
+  const topItems = useMemo(
+    () => topNavItems.filter((item) => isTopNavItemVisible(item.id, topNavFilterContext)),
+    [topNavFilterContext],
   );
 
   const serviceItems = useMemo(

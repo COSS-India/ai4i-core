@@ -6,16 +6,16 @@ then shape the ORM result through a Pydantic schema. All scope enforcement,
 repository access and provisioning lives in this file.
 """
 
+
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
 
 import httpx
 
-from ai4icore_core.email import EmailClient, EmailMessage
+from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings
@@ -25,7 +25,7 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role_name import RoleName, role_name_to_str
@@ -34,6 +34,7 @@ from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
+from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
@@ -50,7 +51,7 @@ from app.schemas.tenant import (
 )
 from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
-from app.services.auth_email_templates import render_setup_link, render_verify_email
+from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
@@ -64,6 +65,7 @@ from app.services.email_helpers import (
 )
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
+from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
@@ -110,11 +112,6 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
 _TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
 
 
-def _payload_touches_user_access(payload: dict) -> bool:
-    """True when the caller explicitly sent ``is_active`` and/or ``is_tenant_active``."""
-    return "is_active" in payload or "is_tenant_active" in payload
-
-
 def _assert_tenant_active_for_user_deactivation(
     tenant: Tenant, payload: dict
 ) -> None:
@@ -141,6 +138,7 @@ class TenantService:
         token_service: TokenService,
         email_client: EmailClient,
         api_key_service: Optional[APIKeyService] = None,
+        refresh_token_repo: Optional[RefreshTokenRepository] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -150,6 +148,7 @@ class TenantService:
         self._tokens = token_service
         self._email = email_client
         self._api_keys = api_key_service
+        self._refresh_tokens = refresh_token_repo
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -196,17 +195,29 @@ class TenantService:
                 },
             )
 
-    async def _deny_tenant_admin_tenant_flag(self, user: User, body: TenantUserStatusUpdate) -> None:
-        """Raise 403 if a Tenant Admin tries to set is_tenant_active. Only Admin may suspend tenant access."""
-        if "is_tenant_active" not in body.model_fields_set:
+    async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
+        """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
+
+        Prevents a tenant from becoming unmanageable by blocking deletion of
+        the last admin. The check is on the target (not the caller) so it covers
+        both self-deletion and an admin deleting another tenant admin.
+        """
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value not in roles:
             return
-        roles = await self._roles.get_user_roles(user.id)
-        if RoleName.TENANT_ADMIN.value in roles:
+        # Serialize concurrent last-admin checks within the same tenant.
+        await self._tenants._db.execute(
+            text("SELECT pg_advisory_xact_lock(:tid)"), {"tid": tenant.id}
+        )
+        count = await self._roles.count_tenant_admins_in_tenant(tenant.id)
+        if count <= 1:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
-                    "code": "INSUFFICIENT_PERMISSIONS",
-                    "message": "Tenant Admins cannot modify the is_tenant_active flag.",
+                    "code": "LAST_TENANT_ADMIN",
+                    "message": (
+                        f"Cannot delete user: {tenant.name} must retain at least one active Tenant Admin."
+                    ),
                 },
             )
 
@@ -238,7 +249,9 @@ class TenantService:
         roles = await self._roles.get_user_roles(user.id)
         role = self.resolve_tenant_user_role(roles)
         base = to_response(user, UserListResponse)
-        return TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+        return mask_pii_in_dict(
+            TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+        )
 
     async def build_tenant_user_responses(self, users: list[User]) -> list[dict]:
         """Build list responses with a single batched role lookup."""
@@ -250,7 +263,9 @@ class TenantService:
             role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
             base = to_response(user, UserListResponse)
             responses.append(
-                TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+                mask_pii_in_dict(
+                    TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+                )
             )
         return responses
 
@@ -498,6 +513,10 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         data = body.model_dump(exclude_unset=True)
+        # Responses return masked PII; drop a masked email/phone a client echoed
+        # back unchanged so it can't overwrite the stored plaintext. Scoped to
+        # PII keys so other fields containing ``*`` are not silently dropped.
+        data = drop_masked_pii(data)
         # Status changes go through PATCH /status to keep authorization split clean.
         data.pop("status", None)
         # Schema uses `contact_name` (frontend-aligned); model column is `name`.
@@ -734,6 +753,9 @@ class TenantService:
         await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
+        # Drop masked email/phone a client echoed back unchanged (responses are
+        # masked); scoped to PII keys so other ``*``-bearing fields survive.
+        payload = drop_masked_pii(payload)
         role_update = payload.pop("role", None)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
@@ -752,35 +774,57 @@ class TenantService:
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
-        await self._deny_tenant_admin_tenant_flag(current_user, body)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
-        payload = body.model_dump(exclude_unset=True)
-        payload["updated_by"] = current_user.id
+        payload = {"is_active": body.is_active, "updated_by": current_user.id}
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
-        if self._api_keys is not None and _payload_touches_user_access(payload):
+        if self._api_keys is not None:
             await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target
 
     async def delete_tenant_user(
-        self, current_user: User, tenant_id: int, user_id: UUID
+        self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
-        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        # MODERATORs may delete USER-role accounts but not higher-privileged roles.
+        target_roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value in target_roles:
+            await self._deny_moderator(current_user)
+        await self._assert_not_last_tenant_admin(target, tenant)
+
+        # Capture PII before anonymisation — enqueue_email is called after commit
+        # so a failed update/commit cannot leak a deletion email.
+        deleted_email = target.email
+        deleted_full_name = target.full_name
+
         await self._users.update(
             target,
             {
                 "is_delete": True,
                 "is_active": False,
-                "is_tenant_active": False,
+                "full_name": f"del_{target.id}",
+                "username": f"del_{target.id}",
+                "prev_email": target.email,
+                "email": f"del_{target.id}",
+                "prev_phone_number": target.phone_number,
+                "phone_number": None,
                 "updated_by": current_user.id,
             },
         )
+        if self._refresh_tokens is not None:
+            await self._refresh_tokens.delete_by_user_id(target.id)
         await self._users.commit()
+
+        enqueue_email(
+            background_tasks,
+            self._email,
+            lambda: render_account_deleted(deleted_email, deleted_full_name),
+        )
+
         if self._api_keys is not None:
             await self._api_keys.evict_keys_for_user(target.id)

@@ -32,6 +32,20 @@ read_env_var() {
     echo "${value:-}"
 }
 
+# Generate a 64-byte AES-256-SIV key (base64-encoded), matching auth-service docs.
+gen_pii_encryption_key() {
+    if command -v python3.11 >/dev/null 2>&1; then
+        python3.11 -c 'import base64, os; print(base64.b64encode(os.urandom(64)).decode())'
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import base64, os; print(base64.b64encode(os.urandom(64)).decode())'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 64 | tr -d '\n'
+    else
+        echo "ERROR: need python3 or openssl to generate PII_ENCRYPTION_KEY" >&2
+        exit 1
+    fi
+}
+
 POSTGRES_USER="$(read_env_var POSTGRES_USER)"
 POSTGRES_PASSWORD="$(read_env_var POSTGRES_PASSWORD)"
 POSTGRES_HOST="$(read_env_var POSTGRES_HOST)"
@@ -40,15 +54,13 @@ POSTGRES_DB="$(read_env_var POSTGRES_DB)"
 
 AUTH_DB_NAME="$(read_env_var AUTH_DB_NAME)"
 MODEL_MANAGEMENT_DB_NAME="$(read_env_var MODEL_MANAGEMENT_DB_NAME)"
-DASHBOARD_DB_NAME="$(read_env_var DASHBOARD_DB_NAME)"
-METRICS_DB_NAME="$(read_env_var METRICS_DB_NAME)"
-ALERTING_DB_NAME="$(read_env_var ALERTING_DB_NAME)"
-POLICY_DB_NAME="$(read_env_var POLICY_DB_NAME)"
 
 REDIS_PASSWORD="$(read_env_var REDIS_PASSWORD)"
 
 ALEMBIC_DB_HOST="$(read_env_var ALEMBIC_DB_HOST)"
 ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
+
+LLM_UPSTREAM_BASE_URL="$(read_env_var LLM_UPSTREAM_BASE_URL)"
 
 # ── 3. Build sed replacement expressions ─────────────────────────────────────
 SED_ARGS=()
@@ -72,13 +84,30 @@ add_sed_replacement "POSTGRES_PORT" "${POSTGRES_PORT}"
 add_sed_replacement "POSTGRES_DB" "${POSTGRES_DB}"
 add_sed_replacement "AUTH_DB_NAME" "${AUTH_DB_NAME}"
 add_sed_replacement "MODEL_MANAGEMENT_DB_NAME" "${MODEL_MANAGEMENT_DB_NAME}"
-add_sed_replacement "DASHBOARD_DB_NAME" "${DASHBOARD_DB_NAME}"
-add_sed_replacement "METRICS_DB_NAME" "${METRICS_DB_NAME}"
-add_sed_replacement "ALERTING_DB_NAME" "${ALERTING_DB_NAME}"
-add_sed_replacement "POLICY_DB_NAME" "${POLICY_DB_NAME}"
 add_sed_replacement "YOUR_REDIS_PASSWORD" "${REDIS_PASSWORD}"
 add_sed_replacement "ALEMBIC_DB_HOST" "${ALEMBIC_DB_HOST}"
 add_sed_replacement "ALEMBIC_DB_PORT" "${ALEMBIC_DB_PORT}"
+add_sed_replacement "YOUR_LLM_UPSTREAM_BASE_URL" "${LLM_UPSTREAM_BASE_URL}"
+
+# ── 3b. PII encryption key (auth-service) ────────────────────────────────────
+# Resolve in order: root .env override → existing auth-service/.env → generate.
+# Re-running setup-env.sh must not rotate an already-generated key (encrypted
+# rows would become unreadable).
+AUTH_ENV="$ROOT_DIR/services/auth-service/.env"
+PII_ENCRYPTION_KEY="$(read_env_var PII_ENCRYPTION_KEY)"
+
+if [ -z "${PII_ENCRYPTION_KEY}" ] || [ "${PII_ENCRYPTION_KEY}" = "<PII_ENCRYPTION_KEY>" ]; then
+    if [ -f "$AUTH_ENV" ]; then
+        PII_ENCRYPTION_KEY="$(grep -m1 '^PII_ENCRYPTION_KEY=' "$AUTH_ENV" 2>/dev/null | cut -d'=' -f2- || true)"
+    fi
+fi
+
+if [ -z "${PII_ENCRYPTION_KEY}" ] || [ "${PII_ENCRYPTION_KEY}" = "<PII_ENCRYPTION_KEY>" ]; then
+    PII_ENCRYPTION_KEY="$(gen_pii_encryption_key)"
+    echo "  GEN   PII_ENCRYPTION_KEY (new random key for auth-service)"
+fi
+
+add_sed_replacement "PII_ENCRYPTION_KEY" "${PII_ENCRYPTION_KEY}"
 
 # ── 4. Process every env.template ────────────────────────────────────────────
 generated=0

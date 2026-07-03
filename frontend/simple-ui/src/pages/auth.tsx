@@ -20,6 +20,7 @@ import React, { useEffect, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import LoginForm from "../components/auth/LoginForm";
 import RegisterForm from "../components/auth/RegisterForm";
+import { ACCOUNT_DELETED_LOGIN_MESSAGE } from "../components/profile/hooks/useDeleteAccount";
 
 const AuthPage: React.FC = () => {
   const router = useRouter();
@@ -59,6 +60,27 @@ const AuthPage: React.FC = () => {
       setMode("login");
     }
   }, [router.query]);
+
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  useEffect(() => {
+    if (router.isReady && router.query.message === "account-deleted") {
+      setBannerDismissed(false);
+    }
+  }, [router.isReady, router.query.message]);
+
+  const loginBannerMessage =
+    !bannerDismissed && router.isReady && router.query.message === "account-deleted"
+      ? ACCOUNT_DELETED_LOGIN_MESSAGE
+      : null;
+
+  const dismissLoginBanner = async () => {
+    setBannerDismissed(true);
+    if (!router.isReady || router.query.message !== "account-deleted") return;
+
+    const { message: _message, ...rest } = router.query;
+    await router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true });
+  };
 
   // Handle successful login - redirect to home or intended destination from query
   const handleLoginSuccess = () => {
@@ -134,6 +156,8 @@ const AuthPage: React.FC = () => {
                       <LoginForm
                         onSuccess={handleLoginSuccess}
                         onSwitchToRegister={switchToRegister}
+                        bannerMessage={loginBannerMessage}
+                        onDismissBanner={dismissLoginBanner}
                       />
                     </TabPanel>
 
@@ -157,4 +181,3 @@ const AuthPage: React.FC = () => {
 };
 
 export default AuthPage;
-

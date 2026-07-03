@@ -8,6 +8,7 @@ from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
+from app.utils.masking import drop_masked_pii, mask_email, mask_phone
 
 
 class UserService:
@@ -19,7 +20,8 @@ class UserService:
         roles = await self._roles.get_user_roles(user.id)
         return {
             "user_id": str(user.id),
-            "email": user.email,
+            # PII masked for the response; never expose the decrypted value.
+            "email": mask_email(user.email),
             "username": user.username,
             "full_name": user.full_name,
             "is_active": user.is_active,
@@ -31,7 +33,7 @@ class UserService:
             "tenant_id": str(user.tenant_id) if user.tenant_id is not None else None,
             "last_login": user.last_login,
             "avatar_url": user.avatar_url,
-            "phone_number": user.phone_number,
+            "phone_number": mask_phone(user.phone_number),
             "timezone": user.timezone,
             "roles": roles,
             "created_at": user.created_at,
@@ -40,7 +42,14 @@ class UserService:
 
     async def update_profile(self, user: User, data: dict) -> User:
         """Apply a partial update. Callers must validate `data` keys at the route layer
-        (route Pydantic schema); the repo silently drops unknown keys."""
+        (route Pydantic schema); the repo silently drops unknown keys.
+
+        Responses return masked PII, so a client may echo a masked value back
+        on save. Drop only masked email/phone fields to avoid overwriting the
+        stored plaintext, while leaving other fields (which may legitimately
+        contain ``*``) untouched.
+        """
+        data = drop_masked_pii(data)
         await self._users.update(user, data)
         await self._users.commit()
         return user

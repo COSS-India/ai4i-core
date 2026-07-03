@@ -1,0 +1,1 @@
+from . import handler  # noqa: F401 — side-effect import: registers @kafka_listener handlers

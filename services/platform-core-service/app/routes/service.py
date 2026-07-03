@@ -54,7 +54,7 @@ async def list_try_it_services(
     items, total = await svc.list_services(
         task_type=TaskTypeEnum.nmt.value, is_published=True
     )
-    return success_response(data=items, meta={"total": total})
+    return success_response(data={"services": items}, meta={"total": total})
 
 
 @router.get("")
@@ -93,7 +93,7 @@ async def list_services(
     )
     response.headers["X-Total-Count"] = str(total)
     return success_response(
-        data=items,
+        data={"services": items},
         meta={"total": total, "offset": offset, "limit": limit},
     )
 

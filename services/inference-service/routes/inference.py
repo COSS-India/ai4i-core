@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
-
+from trace.request_span import traced_span, get_context_attributes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -34,7 +34,7 @@ _CHAT_EXAMPLE = {
 _orchestrator = Orchestrator()
 
 
-async def get_orchestrator() -> Orchestrator:
+def get_orchestrator() -> Orchestrator:
     """
     Dependency for Orchestrator instance.
     Can be overridden in tests.
@@ -107,7 +107,24 @@ async def _run_inference(
     try:
         result = await orchestrator.route_inference(payload=payload, request=request)
     except Exception as exc:
-        logger.error(f"Inference failed: task_type={task_type}", exc_info=True)
+        # No exc_info=True — the formatted traceback embeds chained
+        # exception messages, which (for httpx-class errors below the
+        # orchestrator) contain the resolved Triton URL. That traceback
+        # then ships to OpenSearch via fluent-bit and ends up in the
+        # Logs Dashboard. The `from exc` on the raise below preserves
+        # the full chain for in-process / debug-shell inspection.
+        # Log the chain's TYPE names so a developer triaging a 502 can
+        # see "RuntimeError → ConnectionError → OSError" without exposing
+        # any underlying str(e) (which is the URL-leak vector).
+        chain_types: list[str] = []
+        c: Optional[BaseException] = exc
+        while c is not None and len(chain_types) < 16:
+            chain_types.append(type(c).__name__)
+            c = c.__cause__
+        logger.error(
+            "Inference failed: task_type=%s exc_chain=%s",
+            task_type, "→".join(chain_types),
+        )
         raise _http_error_for(exc, task_type) from exc
 
     for key in strip:
@@ -373,6 +390,24 @@ async def run_ocr_inference(
     """Dedicated endpoint for OCR inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="OCR")
 
+async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
+    """
+    Shared handler for LLM chat routes. Owns only the request span — model and
+    ai_inference spans are managed inside OpenAIProxyService.proxy_traced(),
+    mirroring the Orchestrator + BaseTaskService pattern for Triton services.
+    """
+    with traced_span("request", root=True, classify_status=True) as req_attrs:
+        req_attrs["url"] = request.url.path
+        req_attrs["method"] = request.method
+        req_attrs.update(get_context_attributes())
+ 
+        status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
+ 
+        if status_code >= 400:
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = status_code
+ 
+    return JSONResponse(status_code=status_code, content=body)
 
 @router.post(
     "/chat/completions",
@@ -380,10 +415,10 @@ async def run_ocr_inference(
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
 )
 async def chat_completions(
+    request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> JSONResponse:
-    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat/completions", payload=payload)
-    return JSONResponse(status_code=status_code, content=body)
+    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
 @router.post(
@@ -392,11 +427,10 @@ async def chat_completions(
     description="Forwards the request to the upstream LLM at /v1/chat",
 )
 async def chat(
+    request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> JSONResponse:
-    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
-    return JSONResponse(status_code=status_code, content=body)
-
+    return await _run_llm_chat(request, payload, path="/v1/chat")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OpenAI-compatible audio endpoints — pure multipart passthrough.

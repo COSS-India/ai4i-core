@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 import httpx
 
 from config import settings
+from trace.request_span import traced_span, traced_inference, get_context_attributes
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,48 @@ class OpenAIProxyService:
             body = {"raw": response.text}
 
         return response.status_code, body
+
+    async def proxy_traced(self, path: str, payload: Any) -> Tuple[int, Any]:
+        """
+        proxy() wrapped with model + ai_inference spans, mirroring the
+        Orchestrator + BaseTaskService pattern used by Triton-backed services.
+        The caller (route) owns the outer request span.
+        """
+        # Extract before forwarding — upstream LLM API doesn't accept this field.
+        # Mirror orchestrator: check config block first, then top-level.
+        if isinstance(payload, dict):
+            config_block = payload.get("config") or {}
+            service_id = (
+                config_block.get("serviceId") if isinstance(config_block, dict) else None
+            ) or payload.get("serviceId", "") or ""
+            payload.pop("serviceId", None)
+        else:
+            service_id = ""
+
+        with traced_span("model") as model_attrs:
+            model_attrs["task_type"] = "LLM"
+            model_attrs["model_name"] = payload.get("model", "unknown") if isinstance(payload, dict) else "unknown"
+            model_attrs["model_version"] = "unknown"
+            model_attrs.update(get_context_attributes())
+            model_attrs["service_id"] = service_id
+
+            async with traced_inference(payload, "LLM", logger) as infer_attrs:
+                # service_id is not in context vars — must be copied explicitly.
+                # tenantId is also set explicitly: the PPU Kafka consumer reads only
+                # the ai-inference span for billing, so it must always be present
+                # even if the contextvar is None (get_context_attributes skips None).
+                infer_attrs["service_id"] = service_id
+                infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+
+                status_code, body = await self.proxy(path=path, payload=payload)
+
+                if isinstance(body, dict):
+                    usage = body.get("usage") or {}
+                    infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
+                    infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
+                    infer_attrs["output_type"] = "text"
+
+        return status_code, body
 
     async def proxy(self, path: str, payload: Any) -> Tuple[int, Any]:
         """
@@ -104,31 +147,41 @@ class OpenAIProxyService:
         Any 4xx/5xx the upstream itself returns is passed through; we trust
         upstream to be OpenAI-spec conformant for these audio routes.
         """
-        model = (data or {}).get("model")
-        try:
-            url = self.resolve_upstream_url(model=model, path=path)
-        except ValueError as exc:
-            logger.error("LLM proxy misconfiguration: %s", exc)
-            return 503, {
-                "error": {"message": str(exc), "type": "api_error"}
-            }
+        data = dict(data or {})
+        service_id = data.pop("serviceId", "") or ""
+        model = data.get("model")
 
-        logger.info("LLM proxy (multipart) -> %s (model=%s)", url, model)
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, files=files, data=data or {})
-        except httpx.RequestError as exc:
-            logger.warning(
-                "LLM upstream request failed (path=%s): %s", path, exc
-            )
-            return 502, {
-                "error": {"message": str(exc), "type": "upstream_error"}
-            }
+        with traced_span("model") as model_attrs:
+            model_attrs["task_type"] = "LLM"
+            model_attrs["model_name"] = model or "unknown"
+            model_attrs["model_version"] = "unknown"
+            model_attrs.update(get_context_attributes())
+            model_attrs["service_id"] = service_id
 
-        try:
-            return response.status_code, response.json()
-        except Exception:
-            # Non-JSON 200 (response_format=text) or non-JSON error body
-            # — return the raw text so the route layer can decide how to
-            # surface it (text/plain vs JSON-wrapped).
-            return response.status_code, response.text
+            try:
+                url = self.resolve_upstream_url(model=model, path=path)
+            except ValueError as exc:
+                logger.error("LLM proxy misconfiguration: %s", exc)
+                return 503, {
+                    "error": {"message": str(exc), "type": "api_error"}
+                }
+
+            logger.info("LLM proxy (multipart) -> %s (model=%s)", url, model)
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(url, files=files, data=data)
+            except httpx.RequestError as exc:
+                logger.warning(
+                    "LLM upstream request failed (path=%s): %s", path, exc
+                )
+                return 502, {
+                    "error": {"message": str(exc), "type": "upstream_error"}
+                }
+
+            try:
+                return response.status_code, response.json()
+            except Exception:
+                # Non-JSON 200 (response_format=text) or non-JSON error body
+                # — return the raw text so the route layer can decide how to
+                # surface it (text/plain vs JSON-wrapped).
+                return response.status_code, response.text

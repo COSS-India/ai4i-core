@@ -79,6 +79,13 @@ class AuthSettings(BaseSettings):
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
 
+    # ── PII field encryption (email / phone at rest) ──
+    # Base64- or hex-encoded AES-SIV key (decodes to 32, 48, or 64 bytes; use
+    # 64 for AES-256-SIV). Deterministic so encrypted email can be compared
+    # directly for duplicate detection. Generate with:
+    #   python -c "import base64,os;print(base64.b64encode(os.urandom(64)).decode())"
+    pii_encryption_key: Optional[SecretStr] = None
+
     # ── Password hashing (argon2id) ──
     argon2_time_cost: int = 3
     argon2_memory_cost: int = 65536
@@ -134,6 +141,23 @@ class AuthSettings(BaseSettings):
 
     # ── External services ──
     platform_core_url: Optional[str] = None
+    platform_core_db_name: Optional[str] = None
+    # Dedicated credentials for the platform-core Postgres instance.
+    # Falls back to the shared POSTGRES_* vars when unset (single-instance deployments).
+    platform_core_db_user: Optional[str] = None
+    platform_core_db_password: Optional[SecretStr] = None
+    platform_core_db_host: Optional[str] = None
+    platform_core_db_port: Optional[int] = None
+
+    def get_platform_core_db_url(self) -> Optional[str]:
+        if not self.platform_core_db_name:
+            return None
+        user = self.platform_core_db_user or self.postgres_user or "postgres"
+        raw_pw = self.platform_core_db_password or self.postgres_password
+        password = raw_pw.get_secret_value() if raw_pw else ""
+        host = self.platform_core_db_host or self.postgres_host
+        port = self.platform_core_db_port if self.platform_core_db_port is not None else self.postgres_port
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{self.platform_core_db_name}"
 
     # ── Derived helpers ──
 
@@ -182,6 +206,16 @@ class AuthSettings(BaseSettings):
 
 
 settings = AuthSettings()
+
+
+# Hand the PII encryption key to the crypto module so the SQLAlchemy encrypted
+# column types can source it from settings (pydantic loads .env into settings,
+# not os.environ).
+from app.core import pii_crypto  # noqa: E402
+
+pii_crypto.configure_key(
+    settings.pii_encryption_key.get_secret_value() if settings.pii_encryption_key else None
+)
 
 
 # ── Role IDs (must match the seeded values in roles table) ───────────

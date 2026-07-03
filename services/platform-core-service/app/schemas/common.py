@@ -3,12 +3,19 @@ Shared building-block schemas used by both Model and Service domains.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.enums.model_management import LicenseEnum, TaskTypeEnum
+
+_T = TypeVar("_T")
+
+
+class SuccessResponse(BaseModel, Generic[_T]):
+    success: bool
+    data: _T
 
 
 # ── Shared regex for entity name format: alphanumeric, hyphen, slash ──
@@ -97,7 +104,7 @@ class InferenceEndPoint(BaseModel):
 
     endpoint_schema: Optional[InferenceSchemaSpec] = Field(None, alias="schema")
     call_back_url: Optional[str] = None
-    adapter_config: Optional[Dict[str, Any]] = None
+    adapter_config: Optional[Dict[str, Any]] = Field(None, alias="adapterConfig")
 
 
 # ── Submitter / team ──

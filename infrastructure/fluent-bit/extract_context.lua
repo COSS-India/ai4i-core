@@ -51,13 +51,6 @@ function extract_context_fields(tag, timestamp, record)
         if context["correlation_id"] ~= nil then
             record["correlationId"] = context["correlation_id"]
         end
-        -- Extract jaeger_trace_url from context if it exists
-        -- This ensures it's available at top level for OpenSearch Dashboards
-        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
-            record["jaeger_trace_url"] = context["jaeger_trace_url"]
-            -- Also ensure it's in context.jaeger_trace_url for nested access
-            record["context"]["jaeger_trace_url"] = context["jaeger_trace_url"]
-        end
     end
     
     -- Flatten nested req.* fields if they exist
@@ -158,10 +151,7 @@ end
 
 -- Function to add Jaeger trace URL to logs
 function add_jaeger_url(tag, timestamp, record)
-    -- First, check if jaeger_trace_url already exists at top level (from nest filter or extract_context_fields)
-    -- If it exists and is not empty, preserve it and return
     if record["jaeger_trace_url"] ~= nil and record["jaeger_trace_url"] ~= "" then
-        -- Ensure it's also in context for consistency
         if record["context"] == nil then
             record["context"] = {}
         end
@@ -170,8 +160,7 @@ function add_jaeger_url(tag, timestamp, record)
         end
         return 1, timestamp, record
     end
-    
-    -- If not at top level, check if it exists in context
+
     if record["context"] ~= nil and type(record["context"]) == "table" then
         local context = record["context"]
         if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
@@ -179,25 +168,47 @@ function add_jaeger_url(tag, timestamp, record)
             return 1, timestamp, record
         end
     end
-    
-    -- Only add jaeger_trace_url if it doesn't already exist (fallback: construct from trace_id)
-    if record["jaeger_trace_url"] == nil or record["jaeger_trace_url"] == "" then
-        -- Check if trace_id exists
-        if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
-            local trace_id = record["trace_id"]
-            -- Store only the trace_id in jaeger_trace_url field
-            -- OpenSearch Dashboards will use URL template to construct: http://localhost:16686/trace/{trace_id}
-            -- This ensures the URL is treated as external absolute URL, not relative path
-            record["jaeger_trace_url"] = trace_id
-        end
+
+    if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
+        record["jaeger_trace_url"] = record["trace_id"]
     end
-    
+
     return 1, timestamp, record
 end
 
+-- Drop plain-text uvicorn lines; keep JSON logs that have a service field.
+function keep_structured_log(tag, timestamp, record)
+    local service = record["service"]
+    if service == nil or service == "" then
+        return -1, timestamp, record
+    end
+    return 1, timestamp, record
+end
+
+-- Services whose structured logs are fully ingested (all loggers, not just HTTP middleware).
+local FULL_INGEST_SERVICES = {
+    ["auth-service"] = true,
+    ["ai4x-inference"] = true,
+    ["inference-service"] = true,
+    ["pipeline-service"] = true,
+}
+
+local function is_full_ingest_service(service)
+    if service == nil or type(service) ~= "string" or service == "" then
+        return false
+    end
+    return FULL_INGEST_SERVICES[service:lower()] == true
+end
+
 -- Function to filter logs based on service and endpoint whitelist
--- Only logs matching BOTH service AND endpoint are kept
+-- Only logs matching BOTH service AND endpoint are kept (except FULL_INGEST_SERVICES)
 function filter_dashboard_logs(tag, timestamp, record)
+    -- Local dev: ingest all structured JSON logs from native host services.
+    local filter_enabled = os.getenv("DASHBOARD_LOG_FILTER_ENABLED") or "true"
+    if filter_enabled:lower():match("^%s*(false|0|no|off)%s*$") then
+        return 1, timestamp, record
+    end
+
     -- ALWAYS filter out [TENANT_DEBUG] logs - these are debug logs from ObservabilityMiddleware
     -- We only want RequestLoggingMiddleware logs (one per API call)
     local message = record["message"] or ""
@@ -273,9 +284,59 @@ function filter_dashboard_logs(tag, timestamp, record)
             end
         end
     end
+
+    -- Ingest all structured logs from core app services (middleware + business loggers).
+    if is_full_ingest_service(record["service"]) then
+        return 1, timestamp, record
+    end
     
+    -- Shared inference endpoints (consolidated inference-service logs as ai4x-inference)
+    local inference_endpoints = {
+        "/asr/inference",
+        "/api/v1/asr/inference",
+        "/audio-lang-detection/inference",
+        "/api/v1/audio-lang-detection/inference",
+        "/language-detection/inference",
+        "/api/v1/language-detection/inference",
+        "/language-diarization/inference",
+        "/api/v1/language-diarization/inference",
+        "/llm/inference",
+        "/api/v1/llm/inference",
+        "/ner/inference",
+        "/api/v1/ner/inference",
+        "/nmt/inference",
+        "/api/v1/nmt/inference",
+        "/ocr/inference",
+        "/api/v1/ocr/inference",
+        "/pipeline/inference",
+        "/api/v1/pipeline/inference",
+        "/speaker-diarization/inference",
+        "/api/v1/speaker-diarization/inference",
+        "/transliteration/inference",
+        "/api/v1/transliteration/inference",
+        "/tts/inference",
+        "/api/v1/tts/inference",
+    }
+
+    -- Platform-core API endpoints (model/service management, telemetry, metering, etc.)
+    local platform_core_endpoints = {
+        "/api/v1/services",
+        "/api/v1/models",
+        "/api/v1/pay-per-use",
+        "/api/v1/inference-types",
+        "/api/v1/telemetry",
+        "/api/v1/metering",
+        "/api/v1/alerts",
+        "/api/v1/pii",
+        "/api/v1/platform-core",
+    }
+
     -- Define whitelist of allowed service + endpoint combinations
     local allowed_combinations = {
+        -- Consolidated inference service (native dev + platform telemetry)
+        ["ai4x-inference"] = inference_endpoints,
+        ["inference-service"] = inference_endpoints,
+        ["platform-core-service"] = platform_core_endpoints,
         ["asr-service"] = {
             "/asr/inference",
             "/api/v1/asr/inference"

@@ -9,6 +9,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+from app.models.types import EncryptedEmail, EncryptedPhone
 
 
 class TenantStatus(str, enum.Enum):
@@ -24,8 +25,8 @@ class Tenant(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     name = Column(String(255), nullable=False)
     organisation = Column(String(255), nullable=False)
-    email = Column(String(255), nullable=False)
-    phone_number = Column(String(20), nullable=True)
+    email = Column(EncryptedEmail(), nullable=False)
+    phone_number = Column(EncryptedPhone(), nullable=True)
     status = Column(
         Enum(
             TenantStatus,
@@ -40,13 +41,15 @@ class Tenant(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     updated_by = Column(UUID(as_uuid=True), nullable=True)
 
-    # Case-insensitive uniqueness on organisation and email, declared so
-    # alembic autogenerate treats these indexes as the model's source of truth
-    # (created by migrations d4e5f6a7b8c9 and e5f6a7b8c9d0). Without these the
-    # drift check would generate a migration to drop them.
+    # Case-insensitive uniqueness on organisation (created by migration
+    # d4e5f6a7b8c9). Email is now stored as deterministic, lower-normalised
+    # ciphertext, so uniqueness is enforced by a plain unique index on the
+    # encrypted value (the expression index uq_tenants_email_lower was replaced
+    # by uq_tenants_email — see the encrypt-pii migration). Both are declared
+    # here so alembic autogenerate treats them as the source of truth.
     __table_args__ = (
         Index("uq_tenants_organisation_lower", func.lower(organisation), unique=True),
-        Index("uq_tenants_email_lower", func.lower(email), unique=True),
+        Index("uq_tenants_email", email, unique=True),
     )
 
     # Relationships

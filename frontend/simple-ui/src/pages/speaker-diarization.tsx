@@ -15,14 +15,13 @@ import SpeakerDiarizationResult, {
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
-import { extractErrorInfo } from "../utils/errorHandler";
+import { parseError } from "../utils/errorHandler";
 import { SPEAKER_DIARIZATION_ERRORS } from "../config/constants";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("speaker-diarization");
 
 const SpeakerDiarizationPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
   const [audioClearToken, setAudioClearToken] = useState(0);
@@ -46,11 +45,11 @@ const SpeakerDiarizationPage: React.FC = () => {
   const handleSubmit = async () => {
     if (!audioData) {
       const err = SPEAKER_DIARIZATION_ERRORS.FILE_REQUIRED;
-      toast({ title: err.title, description: err.description, status: "error", duration: 3000, isClosable: true });
+      showToast({ type: "error", message: err.description });
       return;
     }
     if (!serviceId) {
-      toast({ title: "Service Required", description: "Please select a service.", status: "warning", duration: 3000, isClosable: true });
+      showToast({ type: "warning", message: "Please select a service." });
       return;
     }
 
@@ -64,15 +63,8 @@ const SpeakerDiarizationPage: React.FC = () => {
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, "speaker-diarization");
+      const { message: errorMessage } = parseError(err, { service: "speaker-diarization" });
       setError(errorMessage);
-      toast({
-        title: showOnlyMessage ? undefined : errorTitle,
-        description: errorMessage,
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
     } finally {
       setFetching(false);
     }

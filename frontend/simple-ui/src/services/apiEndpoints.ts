@@ -3,7 +3,7 @@
  * Use with axios baseURL or prefix fetch URLs with API_BASE_URL.
  */
 
-export const API_V1 = '/api/v1' as const;
+export const API_V1 = "/api/v1" as const;
 
 export const apiEndpoints = {
   auth: {
@@ -13,72 +13,73 @@ export const apiEndpoints = {
     user: (userId: string) => `${API_V1}/auth/users/${userId}`,
     /** Relative to `base` (prefix: `${API_BASE_URL}${auth.base}`). */
     paths: {
-      checkEmail: '/check-email',
-      register: '/register',
-      login: '/login',
-      guestLogin: '/guest/login',
-      rolesListGuestServices: '/roles/list/guest/services',
-      refresh: '/refresh',
-      validate: '/validate',
-      me: '/me',
-      logout: '/logout',
-      changePassword: '/change-password',
-      forgotPassword: '/forgot-password',
-      resetPassword: '/reset-password',
-      setPassword: '/set-password',
+      checkEmail: "/check-email",
+      register: "/register",
+      login: "/login",
+      guestLogin: "/guest/login",
+      rolesListGuestServices: "/roles/list/guest/services",
+      refresh: "/refresh",
+      validate: "/validate",
+      me: "/me",
+      logout: "/logout",
+      changePassword: "/change-password",
+      forgotPassword: "/forgot-password",
+      resetPassword: "/reset-password",
+      setPassword: "/set-password",
       setPasswordStatus: (token: string) =>
         `/set-password/status?token=${encodeURIComponent(token)}`,
-      verifyEmail: '/verify-email',
-      resendVerification: '/resend-verification',
-      resendSetupLink: '/resend-setup-link',
-      apiKeys: '/api-keys',
-      apiKeysAll: '/api-keys/all',
+      verifyEmail: "/verify-email",
+      resendVerification: "/resend-verification",
+      resendSetupLink: "/resend-setup-link",
+      apiKeys: "/api-keys",
+      apiKeysAll: "/api-keys/all",
       apiKeyById: (keyId: number) => `/api-keys/${keyId}`,
-      oauth2Providers: '/oauth2/providers',
-      oauth2Exchange: '/oauth2/exchange',
-      usersInitial: '/users?limit=500&offset=0',
+      oauth2Providers: "/oauth2/providers",
+      oauth2Exchange: "/oauth2/exchange",
+      usersInitial: "/users?limit=500&offset=0",
       usersPage: (offset: number, limit: number) =>
         `/users?limit=${limit}&offset=${offset}`,
       userById: (userId: string) => `/users/${userId}`,
-      inferencePermissions: '/inference/permissions',
-      permissions: '/permissions/',
+      inferencePermissions: "/inference/permissions",
+      permissions: "/permissions/",
     },
     /** Relative to `rolesBase`. */
     rolePaths: {
-      list: '/list',
+      list: "/list",
       user: (userId: string) => `/user/${userId}`,
-      assign: '/assign',
-      remove: '/remove',
+      assign: "/assign",
+      remove: "/remove",
     },
   },
 
   tenants: {
-    base: `${API_V1}/tenants`,
+    base: `${API_V1}/auth/tenants`,
     /** POST — re-send onboarding verification to tenant contact (pending backend). */
     resendVerification: (tenantId: string) =>
-      `${API_V1}/tenants/${tenantId}/resend-verification`,
+      `${API_V1}/auth/tenants/${tenantId}/resend-verification`,
   },
 
   alerts: {
     base: `${API_V1}/alerts`,
     /** Relative to `alerts.base`. */
     paths: {
-      definitions: '/definitions',
+      definitions: "/definitions",
       definition: (id: number) => `/definitions/${id}`,
       definitionEnabled: (id: number) => `/definitions/${id}/enabled`,
-      receivers: '/receivers',
+      receivers: "/receivers",
       receiver: (id: number) => `/receivers/${id}`,
-      routingRules: '/routing-rules',
+      routingRules: "/routing-rules",
       routingRule: (id: number) => `/routing-rules/${id}`,
-      routingRulesTiming: '/routing-rules/timing',
-      history: '/history',
+      routingRulesTiming: "/routing-rules/timing",
+      history: "/history",
     },
   },
 
   platform: {
     models: {
       base: `${API_V1}/models`,
-      byId: (modelId: string) => `${API_V1}/models/${encodeURIComponent(modelId)}`,
+      byId: (modelId: string) =>
+        `${API_V1}/models/${encodeURIComponent(modelId)}`,
     },
     services: {
       base: `${API_V1}/services`,
@@ -89,6 +90,7 @@ export const apiEndpoints = {
     tryIt: {
       execute: `${API_V1}/nmt/try-it`,
     },
+    inferenceTypes: `${API_V1}/inference-types`,
   },
 
   telemetry: {
@@ -125,7 +127,7 @@ export const apiEndpoints = {
     streamingInfo: `${API_V1}/asr/streaming/info`,
     config: `${API_V1}/asr/config`,
     streaming:
-      process.env.NEXT_PUBLIC_ASR_STREAM_URL || 'ws://localhost:8087/socket.io',
+      process.env.NEXT_PUBLIC_ASR_STREAM_URL || "ws://localhost:8087/socket.io",
   },
   tts: {
     inference: `${API_V1}/tts/inference`,
@@ -142,7 +144,7 @@ export const apiEndpoints = {
     config: `${API_V1}/nmt/config`,
   },
   llm: {
-    chat: `${API_V1}/chat`,
+    chat: `${API_V1}/chat/completions`,
     inference: `${API_V1}/llm/inference`,
     models: `${API_V1}/llm/models`,
     health: `${API_V1}/llm/health`,
@@ -155,19 +157,19 @@ export const apiEndpoints = {
     inference: `${API_V1}/transliteration/inference`,
     health: `${API_V1}/transliteration/health`,
   },
-  'language-detection': {
+  "language-detection": {
     inference: `${API_V1}/language-detection/inference`,
     health: `${API_V1}/language-detection/health`,
   },
-  'speaker-diarization': {
+  "speaker-diarization": {
     inference: `${API_V1}/speaker-diarization/inference`,
     health: `${API_V1}/speaker-diarization/health`,
   },
-  'language-diarization': {
+  "language-diarization": {
     inference: `${API_V1}/language-diarization/inference`,
     health: `${API_V1}/language-diarization/health`,
   },
-  'audio-language-detection': {
+  "audio-language-detection": {
     inference: `${API_V1}/audio-lang-detection/inference`,
     health: `${API_V1}/audio-lang-detection/health`,
   },
@@ -201,19 +203,41 @@ export const apiEndpoints = {
     piiTypeById: (id: string) => `${API_V1}/policy-service/pii-types/${id}`,
     policies: `${API_V1}/policy-service/policies`,
     policyById: (id: string) => `${API_V1}/policy-service/policies/${id}`,
-    policyStatus: (id: string) => `${API_V1}/policy-service/policies/${id}/status`,
+    policyStatus: (id: string) =>
+      `${API_V1}/policy-service/policies/${id}/status`,
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
+  },
+  metering: {
+    base: `${API_V1}/metering`,
+    overview: `${API_V1}/metering/overview`,
+    tenantConsumption: `${API_V1}/metering/tenant-consumption`,
+    serviceConsumption: `${API_V1}/metering/service-consumption`,
+  },
+
+  tiers: {
+    base: `${API_V1}/pay-per-use`,
+    list: `${API_V1}/pay-per-use/tiers`,
+    create: `${API_V1}/pay-per-use/tier`,
+    update: `${API_V1}/pay-per-use/tier`,
+    assignTenant: `${API_V1}/pay-per-use/tenant/tier`,
+  },
+
+  usage: {
+    base: `${API_V1}/pay-per-use`,
+    summary: `${API_V1}/pay-per-use/usage-summary`,
+    tenants: `${API_V1}/pay-per-use/usage-tenants`,
+    tenant: `${API_V1}/pay-per-use/usage-tenant`,
   },
 } as const;
 
 /** `/api/v1/{service}` prefix derived from inference routes (substring checks in interceptors). */
 const inferenceServicePrefix = (inferencePath: string) =>
-  inferencePath.replace(/\/inference$/, '');
+  inferencePath.replace(/\/inference$/, "");
 
 /** Substrings matched against lowercase request URLs in axios interceptors */
 export const API_URL_PATH_MARKERS = {
-  modelManagement: '/model-management',
+  modelManagement: "/model-management",
   asr: inferenceServicePrefix(apiEndpoints.asr.inference),
   nmt: inferenceServicePrefix(apiEndpoints.nmt.inference),
   tts: inferenceServicePrefix(apiEndpoints.tts.inference),
@@ -221,12 +245,20 @@ export const API_URL_PATH_MARKERS = {
   pipeline: inferenceServicePrefix(apiEndpoints.pipeline.inference),
   ner: inferenceServicePrefix(apiEndpoints.ner.inference),
   ocr: inferenceServicePrefix(apiEndpoints.ocr.inference),
-  transliteration: inferenceServicePrefix(apiEndpoints.transliteration.inference),
-  languageDetection: inferenceServicePrefix(apiEndpoints['language-detection'].inference),
-  speakerDiarization: inferenceServicePrefix(apiEndpoints['speaker-diarization'].inference),
-  languageDiarization: inferenceServicePrefix(apiEndpoints['language-diarization'].inference),
+  transliteration: inferenceServicePrefix(
+    apiEndpoints.transliteration.inference,
+  ),
+  languageDetection: inferenceServicePrefix(
+    apiEndpoints["language-detection"].inference,
+  ),
+  speakerDiarization: inferenceServicePrefix(
+    apiEndpoints["speaker-diarization"].inference,
+  ),
+  languageDiarization: inferenceServicePrefix(
+    apiEndpoints["language-diarization"].inference,
+  ),
   audioLangDetection: inferenceServicePrefix(
-    apiEndpoints['audio-language-detection'].inference
+    apiEndpoints["audio-language-detection"].inference,
   ),
 } as const;
 

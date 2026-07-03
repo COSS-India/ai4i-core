@@ -8,10 +8,10 @@ import logging
 from contextlib import asynccontextmanager
 import time
 
+import httpx
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from prometheus_client import make_asgi_app
 from starlette.requests import Request
 from app.core.config import settings
 from app.core.database import (
@@ -24,16 +24,14 @@ from app.core.exceptions import register_exception_handlers
 from app.core.database import get_primary_session_factory as _get_pii_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
-from app.services.pay_per_use.pay_per_use_service import warm_pricing_cache
-
 # services/model-management/ is hyphenated; importlib is the only way to pull symbols out.
 import importlib as _importlib
 EndpointValidationFailedError = _importlib.import_module(
     "app.services.model-management.service_service"
 ).EndpointValidationFailedError
 
-from ai4icore_core.logging import configure_logging, RequestMiddleware
-from ai4icore_core.exceptions import ErrorDetail
+from ai4i_core.logging import configure_logging, RequestMiddleware
+from ai4i_core.exceptions import ErrorDetail
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +39,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
+
+    # Shared HTTP client — connection pool reused across all Prometheus queries.
+    app.state.http_client = httpx.AsyncClient()
 
     # ── Core DB & Redis ───────────────────────────────────────────────────
     await init_database(
@@ -50,13 +51,11 @@ async def lifespan(app: FastAPI):
         echo=settings.debug,
     )
     # Secondary auth_db engine — no-op if AUTH_DB_NAME is not configured.
-    await init_auth_database()
+    init_auth_database()
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
-    await warm_pricing_cache()
-
     # ── Telemetry / OpenSearch ────────────────────────────────────────────
     if settings.opensearch_url and settings.opensearch_username and settings.opensearch_password:
         from app.utils.opensearch_client import OpenSearchTraceClient
@@ -119,7 +118,7 @@ async def lifespan(app: FastAPI):
         async with _get_pii_session_factory()() as session:
             yield session
 
-    await policy_sync.start_listener(
+    policy_sync.start_listener(
         redis_client=app.state.redis_client,
         db_factory=_pii_db_factory,
     )
@@ -134,6 +133,7 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(sync_task, return_exceptions=True)
 
     # ── Shutdown ──────────────────────────────────────────────────────────
+    await app.state.http_client.aclose()
     await policy_sync.stop_listener()
     await close_redis()
     await close_auth_database()
@@ -171,7 +171,6 @@ def create_app() -> FastAPI:
 
     versioning.register(app)
     app.include_router(api_router)
-    app.mount("/metrics", make_asgi_app())
 
     # OpenAPI security: Bearer JWT lock on all endpoints except health/root.
     _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json"}

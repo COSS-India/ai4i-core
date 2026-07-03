@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
         None, description="OpenTelemetry OTLP exporter endpoint"
     )
+    # Off by default — only the logging/streaming compose profiles bring Kafka
+    # up. When false, the trace exporter ships spans to stdout only and never
+    # imports kafka-python, avoiding the bootstrap retry storm on services
+    # without a broker. Flip to true in services/inference-service/.env when
+    # running `--profile logging` or `--profile streaming`.
+    KAFKA_ENABLED: bool = Field(False, description="Ship OTel trace spans to Kafka")
     KAFKA_SERVER: str = Field(
         "localhost:9092", description="Kafka bootstrap servers for trace export"
     )
@@ -88,7 +94,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
-        # Allow other libs (e.g. ai4icore_core.observability with OBSERVE_UTIL_*)
+        # Allow other libs (e.g. ai4i_core.observability with OBSERVE_UTIL_*)
         # to read their own vars from the same .env without tripping validation.
         extra = "ignore"
 

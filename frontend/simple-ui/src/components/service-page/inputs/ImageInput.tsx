@@ -17,7 +17,7 @@ import { AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload } from "react-icons/fa";
 import { MAX_IMAGE_FILE_SIZE } from "../../../config/constants";
 import type { ServiceImageInputProps } from "../../../types/servicePage";
-import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
+import { showToast } from "../../../utils/toast";
 
 const ImageInput: React.FC<ServiceImageInputProps> = ({
   file,
@@ -32,7 +32,6 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const toast = useToastWithDeduplication();
 
   const validateAndSet = useCallback(
     (next: File | null) => {
@@ -41,28 +40,19 @@ const ImageInput: React.FC<ServiceImageInputProps> = ({
         return;
       }
       if (!next.type.startsWith("image/")) {
-        toast({
-          title: "Invalid file",
-          description: "Please select an image file.",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
-        });
+        showToast({ type: "error", message: "Please select an image file." });
         return;
       }
       if (next.size > maxSizeBytes) {
-        toast({
-          title: "File too large",
-          description: `Maximum size is ${(maxSizeBytes / 1024 / 1024).toFixed(0)}MB.`,
-          status: "error",
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: `Maximum size is ${(maxSizeBytes / 1024 / 1024).toFixed(0)}MB.`,
         });
         return;
       }
       onFileChange(next);
     },
-    [maxSizeBytes, onFileChange, toast]
+    [maxSizeBytes, onFileChange]
   );
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

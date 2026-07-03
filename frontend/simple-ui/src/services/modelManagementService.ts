@@ -47,7 +47,7 @@ export const unpublishModel = async (
     const response = await apiService.patch(
       apiEndpoints.platform.models.base,
       { modelId, versionStatus: MODEL_VERSION.STATUS.DEPRECATED },
-      { responseSchema: withPlatformEnvelope(unpublishModelResponseSchema) }
+      { suppressErrorAlert: true, responseSchema: withPlatformEnvelope(unpublishModelResponseSchema) }
     );
     return response.data;
   } catch (error: unknown) {
@@ -64,6 +64,7 @@ export const unpublishModel = async (
 export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
     const response = await apiService.get(apiEndpoints.platform.models.base, {
+      suppressErrorAlert: true,
       responseSchema: modelsListSchema,
     });
     return response.data || [];
@@ -117,10 +118,11 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
 
     const response = await apiService.get(apiEndpoints.platform.models.base, {
       params: queryParams,
+      suppressErrorAlert: true,
       responseSchema: modelsListSchema,
     });
 
-    const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const total = Number.parseInt(response.headers['x-total-count'] ?? '0', 10);
     const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
 
@@ -144,6 +146,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
 export const createModel = async (modelData: ModelCreateRequest): Promise<ModelResponse> => {
   try {
     const response = await apiService.post(apiEndpoints.platform.models.base, modelData, {
+      suppressErrorAlert: true,
       responseSchema: unknownPlatformPayloadSchema,
     });
     return response.data as ModelResponse;
@@ -162,6 +165,7 @@ export const createModel = async (modelData: ModelCreateRequest): Promise<ModelR
 export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
     const response = await apiService.get(apiEndpoints.platform.models.byId(modelId), {
+      suppressErrorAlert: true,
       responseSchema: modelSingleSchema,
     });
     return response.data;
@@ -180,6 +184,7 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
 export const updateModel = async (modelData: ModelUpdateRequest): Promise<ModelStatusUpdateResponse> => {
   try {
     const response = await apiService.patch(apiEndpoints.platform.models.base, modelData, {
+      suppressErrorAlert: true,
       responseSchema: unknownPlatformPayloadSchema,
     });
     return response.data as ModelStatusUpdateResponse;
@@ -201,7 +206,7 @@ export const publishModel = async (modelId: string): Promise<ModelStatusUpdateRe
     const response = await apiService.patch(
       apiEndpoints.platform.models.base,
       { modelId, versionStatus: MODEL_VERSION.STATUS.ACTIVE },
-      { responseSchema: unknownPlatformPayloadSchema }
+      { suppressErrorAlert: true, responseSchema: unknownPlatformPayloadSchema }
     );
     return response.data as ModelStatusUpdateResponse;
   } catch (error: unknown) {
@@ -228,6 +233,7 @@ export const listServices = async (
     if (publishedOnly === true) params.is_published = 'true';
     const response = await apiService.get(url, {
       params,
+      suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
     return response.data || [];

@@ -1,6 +1,6 @@
 {
   "name": "simple-ui",
-  "version": "1.0.0",
+  "version": "2.2.0",
   "private": true,
   "description": "Simple UI for testing ASR, TTS, and NMT microservices",
   "scripts": {
@@ -17,23 +17,32 @@
     "@emotion/styled": "^11.10.5",
     "@tanstack/react-query": "^5.0.0",
     "@tanstack/react-query-devtools": "^5.0.0",
-    "axios": "^1.2.2",
+    "axios": "1.16.0",
     "crypto-js": "^4.2.0",
     "framer-motion": "^8.1.4",
-    "next": "14.2.32",
+    "next": "15.5.19",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-icons": "^4.7.1",
-    "socket.io-client": "^4.5.4",
+    "recharts": "^2.15.0",
+    "socket.io-client": "4.8.3",
     "zod": "^3.23.8"
+  },
+  "overrides": {
+    "postcss": "8.5.10",
+    "socket.io-parser": "4.2.6",
+    "ws": "8.20.1"
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
+    "@types/http-proxy": "^1.17.15",
+    "@types/jest": "^29.5.14",
     "@types/node": "18.11.18",
     "@types/react": "18.0.27",
     "@types/react-dom": "18.0.10",
-    "eslint": "8.32.0",
-    "eslint-config-next": "13.1.1",
+    "eslint": "9.39.4",
+    "eslint-config-next": "15.5.19",
+    "http-proxy": "^1.18.1",
     "typescript": "4.9.4"
   }
 }

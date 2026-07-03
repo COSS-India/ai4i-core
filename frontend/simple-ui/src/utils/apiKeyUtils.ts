@@ -1,8 +1,6 @@
 import type { APIKeyResponse } from "../types/auth";
 import { INFERENCE_PERMISSION_LABEL_BY_ID } from "../config/constants";
-
-/** sessionStorage cache: keys created in this browser session (hex shown once at create). */
-export const API_KEY_HEX_CACHE_KEY = "ai4i_api_key_hex_cache";
+import { SESSION_STORAGE_KEYS } from "../config/sessionStorageKeys";
 
 type ApiKeyLike = {
   api_key?: string | null;
@@ -31,29 +29,16 @@ export function resolveApiKeyHex(key: ApiKeyLike): string | null {
   return /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
 }
 
-/** Path tokens to try for revoke/update (hex first, then numeric id for older gateways). */
-export function buildApiKeyRevokePathTokens(key: ApiKeyLike): string[] {
-  const tokens: string[] = [];
-  const hex = resolveApiKeyHex(key);
-  if (hex) tokens.push(hex);
-  const id = key.id ?? key.key_id ?? key.keyId;
-  if (id != null && Number.isFinite(Number(id))) tokens.push(String(id));
-  return Array.from(new Set(tokens));
-}
-
 export function formatApiKeyDisplayId(key: ApiKeyLike): string {
   const id = key.id ?? key.key_id ?? key.keyId;
   if (id != null && Number.isFinite(Number(id))) return String(id);
-  const hex = resolveApiKeyHex(key);
-  if (hex) return hex;
-  const raw = (key.api_key ?? key.apiKey)?.trim();
-  return raw || "—";
+  return "—";
 }
 
 export function readApiKeyHexCache(): Record<string, string> {
   if (typeof window === "undefined") return {};
   try {
-    const raw = sessionStorage.getItem(API_KEY_HEX_CACHE_KEY);
+    const raw = sessionStorage.getItem(SESSION_STORAGE_KEYS.inferenceKeyHexDisplayCache);
     return raw ? (JSON.parse(raw) as Record<string, string>) : {};
   } catch {
     return {};
@@ -69,7 +54,10 @@ export function cacheCreatedApiKeyHex(
   const map = readApiKeyHexCache();
   map[keyName] = hex.toLowerCase();
   if (id != null) map[`id:${id}`] = hex.toLowerCase();
-  sessionStorage.setItem(API_KEY_HEX_CACHE_KEY, JSON.stringify(map));
+  sessionStorage.setItem(
+    SESSION_STORAGE_KEYS.inferenceKeyHexDisplayCache,
+    JSON.stringify(map),
+  );
 }
 
 export function mergeApiKeyHexFromCache<T extends APIKeyResponse>(keys: T[]): T[] {
@@ -93,7 +81,7 @@ export function permissionLabelWithFallback(
     typeof raw === "number" && Number.isInteger(raw)
       ? raw
       : /^\d+$/.test(String(raw))
-        ? parseInt(String(raw), 10)
+        ? Number.parseInt(String(raw), 10)
         : null;
   if (id != null) {
     const fromCatalog = catalog.find((p) => p.id === id);

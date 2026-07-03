@@ -16,10 +16,11 @@ from typing import Any, Optional
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
-from jose import jwt, JWTError, ExpiredSignatureError
+import jwt
+from jwt.exceptions import PyJWTError, ExpiredSignatureError
 import httpx
 
-from ai4icore_core.exceptions import (
+from ai4i_core.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
 )
@@ -179,7 +180,7 @@ class JWTVerifier:
         # JWKS kid-selection pattern that python:S5659 itself recommends.
         try:
             header = jwt.get_unverified_header(token)  # NOSONAR
-        except JWTError as exc:
+        except PyJWTError as exc:
             raise JWTVerificationError(TOKEN_HEADER_INVALID) from exc
 
         kid = header.get("kid")
@@ -218,7 +219,7 @@ class JWTVerifier:
             payload = jwt.decode(token, pem, **decode_kwargs)
         except ExpiredSignatureError as exc:
             raise JWTExpiredError() from exc
-        except JWTError as exc:
+        except PyJWTError as exc:
             logger.debug(LOG_DEBUG_RS256_VERIFICATION_FAILED, exc)
             raise JWTVerificationError(TOKEN_INVALID) from exc
 

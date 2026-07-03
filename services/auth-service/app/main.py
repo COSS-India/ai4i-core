@@ -17,9 +17,10 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from app.core.permission_checker import PermissionChecker, set_global_endpoint_permission_map
+from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
-from app.core.database import close_database, init_database
+from app.core.database import close_database, close_platform_core_database, init_database, init_platform_core_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
 from app.core.security import key_manager
@@ -27,7 +28,7 @@ from app.dependencies.auth import init_jwt_verifier
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 
-from ai4icore_core.logging import configure_logging, RequestMiddleware
+from ai4i_core.logging import configure_logging, RequestMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,10 @@ async def lifespan(app: FastAPI):
     if settings.environment != ENV_DEVELOPMENT and settings.debug:
         raise RuntimeError(f"FATAL: DEBUG=true is not allowed in {settings.environment}.")
 
+    # Fail fast on a missing/malformed PII encryption key: every email/phone
+    # bind needs it, so a bad config must crash at boot, not on the first login.
+    pii_crypto.validate_key()
+
     await init_database(
         db_url=settings.get_database_url(),
         pool_size=settings.db_pool_size,
@@ -52,8 +57,9 @@ async def lifespan(app: FastAPI):
         socket_timeout=settings.redis_timeout,
         redis_db=settings.redis_db,
     )
-    await key_manager.initialize()
-    await init_jwt_verifier()
+    init_platform_core_database()
+    key_manager.initialize()
+    init_jwt_verifier()
     await _load_api_permissions_with_retry(app)
     await role_permission_cache.start()
 
@@ -62,10 +68,11 @@ async def lifespan(app: FastAPI):
     await role_permission_cache.stop()
     await close_redis()
     await close_database()
+    await close_platform_core_database()
     logger.info("Shutdown complete.")
 
 
-async def load_api_permissions(app: FastAPI) -> None:
+def load_api_permissions(app: FastAPI) -> None:
     json_path = pathlib.Path(__file__).parent.parent / "api_permissions.json"
     if not json_path.exists():
         logger.info("No api_permissions.json found, skipping.")
@@ -104,7 +111,7 @@ async def _load_api_permissions_with_retry(
     last_exc: OSError | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            await load_api_permissions(app)
+            load_api_permissions(app)
             return
         except OSError as exc:
             last_exc = exc

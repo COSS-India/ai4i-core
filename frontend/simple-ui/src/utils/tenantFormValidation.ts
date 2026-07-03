@@ -27,14 +27,16 @@ export const NAME_NO_LETTER_MSG = "Must contain at least one letter.";
 
 export const PHONE_E164_MSG =
   "Phone number must be in E.164 format (e.g. +919876543210).";
+export const PHONE_MAX_LENGTH_MSG =
+  "Maximum 15 digits allowed in E.164 format.";
 
 export function cleanText(value: string): string {
-  return (value ?? "").replace(INVISIBLE_CHARS, "").trim();
+  return (value ?? "").replaceAll(INVISIBLE_CHARS, "").trim();
 }
 
 // ES5-safe character checks (tsconfig target is es5; avoid \p{…} /u regex).
 const LETTER_OR_MARK_RE =
-  /[A-Za-z\u00C0-\u024F\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0300-\u036F]/;
+  /[A-Za-z\u00C0-\u024F]|[\u0300-\u036F]|[\u0900-\u097F]|[\u0980-\u09FF]|[\u0A00-\u0A7F]/;
 
 function isLetterOrMark(char: string): boolean {
   return LETTER_OR_MARK_RE.test(char);
@@ -111,13 +113,23 @@ export function validateOptionalPersonName(value: string): string | undefined {
 }
 
 export function normalizePhoneInput(value: string): string {
-  return cleanText(value).replace(PHONE_FORMAT_CHARS, "");
+  return cleanText(value).replaceAll(PHONE_FORMAT_CHARS, "");
 }
 
 export function validateE164Phone(value: string): string | undefined {
   const trimmed = cleanText(value);
   if (!trimmed) return undefined;
+  // API returns masked phone; skip format checks when echoed back unchanged.
+  if (trimmed.includes("*")) return undefined;
   const normalized = normalizePhoneInput(trimmed);
+
+  if (normalized.startsWith("+")) {
+    const digits = normalized.slice(1);
+    if (/^\d+$/.test(digits) && digits.length > 15) {
+      return PHONE_MAX_LENGTH_MSG;
+    }
+  }
+
   if (!E164_RE.test(normalized)) return PHONE_E164_MSG;
   return undefined;
 }

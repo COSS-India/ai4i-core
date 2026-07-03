@@ -14,8 +14,9 @@ import {
   Text,
 } from '@chakra-ui/react';
 import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
+import AccessibleAudio from '../common/AccessibleAudio';
 import { TTSResultsProps } from '../../types/tts';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { showToast } from '../../utils/toast';
 
 const TTSResults: React.FC<TTSResultsProps> = ({
   audioSrc,
@@ -23,11 +24,12 @@ const TTSResults: React.FC<TTSResultsProps> = ({
   wordCount,
   responseTime,
   audioDuration,
+  captionText,
+  captionLang,
   onPlay,
   onPause,
   onDownload,
 }) => {
-  const toast = useToastWithDeduplication();
   const downloadExt = audioFormat?.toLowerCase() === "mp3" ? "mp3" : "wav";
 
   const handleDownload = () => {
@@ -40,24 +42,15 @@ const TTSResults: React.FC<TTSResultsProps> = ({
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      toast({
-        title: 'Download Started',
-        description: 'Audio file downloaded successfully.',
-        status: 'success',
-        duration: 2000,
-        isClosable: true,
+
+      showToast({
+        type: "success",
+        message: "Audio file downloaded successfully.",
       });
       onDownload?.();
     } catch (error) {
       console.error('Download error:', error);
-      toast({
-        title: 'Download Failed',
-        description: 'Failed to download audio file.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "error", message: "Failed to download audio file." });
     }
   };
 
@@ -124,14 +117,17 @@ const TTSResults: React.FC<TTSResultsProps> = ({
 
         {/* HTML5 Audio Player */}
         <Box w="full" maxW="600px">
-          <audio
+          <AccessibleAudio
             controls
             style={{ width: '100%' }}
             src={audioSrc}
             preload="metadata"
+            captionText={captionText}
+            captionDurationSeconds={audioDuration}
+            captionLang={captionLang}
           >
             Your browser does not support the audio element.
-          </audio>
+          </AccessibleAudio>
         </Box>
       </VStack>
     </VStack>

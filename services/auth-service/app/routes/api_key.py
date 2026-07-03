@@ -5,9 +5,13 @@ Route definitions only — no business logic, no DB/Redis calls.
 All operations are delegated to APIKeyService.
 """
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_platform_core_db
 
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_user, get_current_user_id, get_user_context
@@ -22,13 +26,14 @@ from app.schemas.api_key import (
 )
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
+from app.utils.masking import mask_email
 
 router = APIRouter(prefix="/auth", tags=["API Keys"])
 
 
 def _key_dict(k) -> dict:
     return {
-        "api_key": k.api_key,
+        "id": k.id,
         "key_name": k.key_name,
         "user_id": str(k.user_id),
         "permissions": k.permissions or [],
@@ -44,6 +49,7 @@ async def create_api_key(
     body: CreateAPIKeyRequest,
     ctx = Depends(get_user_context),
     svc: APIKeyService = Depends(get_api_key_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     raw_key, api_key = await svc.create_api_key(
         user_id=ctx.user_id,
@@ -51,8 +57,10 @@ async def create_api_key(
         permissions=body.permissions,
         expires_days=body.expires_days,
         tenant_id=ctx.tenant_id,
+        platform_core_db=platform_core_db,
     )
     return success_response(data=CreateAPIKeyResponse(
+        id=api_key.id,
         api_key=raw_key,
         key_name=api_key.key_name,
         permissions=api_key.permissions or [],
@@ -70,50 +78,55 @@ async def list_api_keys(
     return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
 
 
-@router.patch("/api-keys/{api_key}")
+@router.patch("/api-keys/{key_id}")
 async def update_api_key(
-    api_key: str,
+    key_id: int,
     body: UpdateAPIKeyRequest,
     user_id: UUID = Depends(get_current_user_id),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    # Only allow updating if at least one field is provided
+    from app.core.exceptions import EntityNotFoundError, ValidationError
+
     update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
     if not update_data:
-        from app.core.exceptions import ValidationError
         raise ValidationError(
             message="No fields to update. Provide at least one of: key_name, permissions, expires_days.",
             code="NOTHING_TO_UPDATE",
         )
 
-    updated_key = await svc.update_key(
-        api_key_value=api_key,
-        data=update_data,
-        user_id=user_id,
-    )
-    return success_response(data={
-        "api_key": updated_key.api_key,
-        "key_name": updated_key.key_name,
-        "user_id": str(updated_key.user_id),
-        "permissions": updated_key.permissions or [],
-        "expires_at": updated_key.expires_at.isoformat() if updated_key.expires_at else None,
-        "is_active": updated_key.is_active,
-    })
+    # Ownership-scoped: returns None whether the key doesn't exist or belongs to
+    # another user, so the caller cannot enumerate valid key IDs.
+    db_key = await svc.get_by_id_for_owner(key_id, user_id)
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
+    updated_key = await svc.update_key_by_obj(db_key, update_data, user_id)
+    return success_response(data=_key_dict(updated_key))
 
 
-@router.delete("/api-keys/{api_key}")
+@router.delete("/api-keys/{key_id}")
 async def revoke_api_key(
-    api_key: str,
+    key_id: int,
     user_id: UUID = Depends(get_current_user_id),
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
 ):
-    owner_scoped_user_id = user_id
-    roles = await role_svc.get_user_roles(user_id)
-    if RoleName.ADMIN.value in roles:
-        owner_scoped_user_id = None
+    from app.core.exceptions import EntityNotFoundError
 
-    await svc.revoke_api_key(api_key, user_id=owner_scoped_user_id)
+    roles = await role_svc.get_user_roles(user_id)
+    is_admin = RoleName.ADMIN.value in roles
+
+    # Admins can revoke any key (unscoped); regular users get a uniform 404
+    # whether the key doesn't exist or belongs to someone else.
+    db_key = (
+        await svc.get_by_id(key_id)
+        if is_admin
+        else await svc.get_by_id_for_owner(key_id, user_id)
+    )
+    if not db_key:
+        raise EntityNotFoundError("API key")
+
+    await svc.revoke_by_obj(db_key)
     return success_response(data={"message": "API key revoked."})
 
 
@@ -128,7 +141,9 @@ async def list_all_api_keys(
     items = [
         {
             **_key_dict(api_key),
-            "user_email": user.email,
+            # Email is decrypted transparently by the column type; mask it so this
+            # admin/moderator endpoint never returns plaintext PII.
+            "user_email": mask_email(user.email),
             "username": user.username,
         }
         for api_key, user in results

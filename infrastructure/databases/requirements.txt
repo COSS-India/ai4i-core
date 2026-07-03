@@ -9,9 +9,6 @@ psycopg2-binary>=2.9.0
 # Redis
 redis>=5.0.0
 
-# InfluxDB
-influxdb-client>=1.38.0
-
 # Elasticsearch
 elasticsearch>=8.10.0
 
@@ -32,3 +29,12 @@ alembic>=1.12.0
 bcrypt>=4.0.0
 passlib[argon2]>=1.7.4
 argon2-cffi>=25.1.0
+
+# PII field encryption (AES-SIV) — used by the auth-service models loaded during
+# migrations and by the encrypt-PII data migration to encrypt existing rows.
+cryptography>=41.0.0
+
+# Security: pin transitive dependencies to patched versions
+mako>=1.3.12
+idna>=3.15
+starlette>=1.0.1

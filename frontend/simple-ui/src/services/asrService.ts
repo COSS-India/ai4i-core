@@ -50,6 +50,7 @@ export const performASRInference = async (
 
     const response = await apiService.post(apiEndpoints.asr.inference, payload, {
       responseSchema: asrInferenceResponseSchema,
+      errorService: 'asr',
     });
 
     return response.data;
@@ -95,6 +96,7 @@ export const transcribeAudio = async (
 
     const response = await apiService.post(apiEndpoints.asr.inference, payload, {
       responseSchema: asrInferenceResponseSchema,
+      errorService: 'asr',
     });
 
     console.log('=== ASR API Response ===');
@@ -103,7 +105,7 @@ export const transcribeAudio = async (
     console.log('Response output:', response.data.output);
 
     // Extract response time from headers
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
 
     return {
       data: response.data,

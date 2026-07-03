@@ -1,3 +1,5 @@
+const path = require('path');
+
 /** @type {import('next').NextConfig} */
 
 /**
@@ -8,9 +10,7 @@ function getAllowedConnectOrigins() {
   const origins = new Set(["'self'"]);
   const urls = [
     process.env.NEXT_PUBLIC_API_URL,
-    process.env.LOCAL_API_GATEWAY_ORIGIN,
     process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL,
-    process.env.NEXT_PUBLIC_JAEGER_URL,
     process.env.NEXT_PUBLIC_ASR_STREAM_URL,
     process.env.NEXT_PUBLIC_TTS_STREAM_URL,
   ];
@@ -27,10 +27,9 @@ function getAllowedConnectOrigins() {
   if (origins.size <= 1) {
     [
       "http://localhost:9000",
-      "http://localhost:8080",
+      "http://localhost:3000",
       "http://localhost:8084",
       "http://localhost:8107",
-      "http://localhost:16686",
       "ws://localhost:8087",
       "ws://localhost:8088",
     ].forEach((o) => origins.add(o));
@@ -81,45 +80,26 @@ function getSecurityHeaders() {
 
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
   transpilePackages: ['crypto-js'],
   images: {
-    domains: ['localhost', 'api-gateway-service'],
+    remotePatterns: [
+      { protocol: 'http', hostname: 'localhost' },
+      { protocol: 'https', hostname: 'localhost' },
+      { protocol: 'http', hostname: 'api-gateway-service' },
+      { protocol: 'https', hostname: 'api-gateway-service' },
+    ],
   },
   // Note: NEXT_PUBLIC_* variables from .env files are automatically exposed by Next.js
   // No need to manually set them in the env object - that can cause conflicts
   // If NEXT_PUBLIC_API_URL is not set in .env, the code will use the fallback in api.ts
   output: 'standalone',
+  // Monorepo: pin tracing root to this app (avoids parent lockfile workspace inference).
+  outputFileTracingRoot: path.join(__dirname),
   compress: true,
 
   // --- Security ---
   // Do not expose X-Powered-By: Next.js to reduce fingerprinting
   poweredByHeader: false,
-
-  /**
-   * Dev-only: browser calls `/api/v1/...` on the Next origin (no NEXT_PUBLIC_API_URL) would
-   * 404. Proxy to the local gateway so policy-service and other APIs resolve.
-   * Production / `next start`: set NEXT_PUBLIC_API_URL or rely on api.ts client fallback.
-   */
-  async rewrites() {
-    if (process.env.NODE_ENV !== 'development') {
-      return [];
-    }
-    const gateway =
-      process.env.LOCAL_API_GATEWAY_ORIGIN || 'http://127.0.0.1:8080';
-    let origin;
-    try {
-      origin = new URL(gateway).origin;
-    } catch {
-      origin = 'http://127.0.0.1:8080';
-    }
-    return [
-      {
-        source: '/api/v1/:path*',
-        destination: `${origin}/api/v1/:path*`,
-      },
-    ];
-  },
 
   async headers() {
     const headers = [...getSecurityHeaders()];

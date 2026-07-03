@@ -18,7 +18,7 @@ import {
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React from "react";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showToast } from "../utils/toast";
 import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitMergeOutline,
@@ -148,7 +148,6 @@ const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 40
 
 const HomePage: React.FC = () => {
   const router = useRouter();
-  const toast = useToastWithDeduplication();
   const { isAuthenticated, isLoading } = useAuth();
   const { isGuest, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const cardBg = useColorModeValue("white", "gray.800");
@@ -156,7 +155,7 @@ const HomePage: React.FC = () => {
 
   const handleServiceClick = async (path: string, serviceName: string) => {
     if (isLoading) return;
-    
+
     // Navigate to the service (no auth check needed here, handled by button logic)
     router.push(path);
   };
@@ -222,7 +221,7 @@ const HomePage: React.FC = () => {
               <AlertIcon />
               <AlertDescription fontSize="sm">
                 Try <strong>Neural Machine Translation</strong> without signing in! Please login to access other services{" "}
-                
+
               </AlertDescription>
             </Alert>
           )}
@@ -239,7 +238,7 @@ const HomePage: React.FC = () => {
             {services.map((service) => {
               // Check if service is disabled for anonymous users
               const isDisabledForAnonymous = !isAuthenticated && service.id !== "nmt" && !isLoading;
-              
+
               return (
               <Card
                 key={service.id}
@@ -360,13 +359,9 @@ const HomePage: React.FC = () => {
                       e.preventDefault();
                       if (isDisabledForAnonymous) {
                         // Show toast and redirect to signup
-                        toast({
-                          title: "Sign In Required",
-                          description: "Please login to access other services.",
-                          status: "warning",
-                          duration: 4000,
-                          isClosable: true,
-                          position: "top",
+                        showToast({
+                          type: "warning",
+                          message: "Please login to access other services.",
                         });
                         setTimeout(() => {
                           router.push(

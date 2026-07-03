@@ -62,7 +62,6 @@ import {
   clearTokenStorage,
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
-import { buildApiKeyRevokePathTokens } from '../utils/apiKeyUtils';
 
 const authPath = apiEndpoints.auth.paths;
 
@@ -77,7 +76,7 @@ class AuthService {
     endpoint: string,
     schema: S,
     options: RequestInit = {},
-    requestOpts: { withAuth?: boolean; timeoutMs?: number } = {}
+    requestOpts: { withAuth?: boolean; timeoutMs?: number; suppressErrorAlert?: boolean } = {}
   ): Promise<z.infer<S>> {
     const url = `${this.baseUrl}${endpoint}`;
     const withAuth = requestOpts.withAuth !== false;
@@ -111,6 +110,7 @@ class AuthService {
           headers: config.headers as Record<string, string>,
           timeout: timeoutMs,
           responseSchema: schema,
+          suppressErrorAlert: requestOpts.suppressErrorAlert,
         }
       );
       return response.data as z.infer<S>;
@@ -370,12 +370,12 @@ class AuthService {
     });
   }
 
-  async getCurrentUser(): Promise<User> {
+  async getCurrentUser(options?: { suppressErrorAlert?: boolean }): Promise<User> {
     return this.validatedRequest(
       authPath.me,
       authUnwrappedSchema(userSchema),
       { method: 'GET' },
-      { timeoutMs: 20000 }
+      { timeoutMs: 20000, suppressErrorAlert: options?.suppressErrorAlert }
     );
   }
 
@@ -534,64 +534,26 @@ class AuthService {
     );
   }
 
-  /** Revoke by path token (32-char hex `api_key`, or numeric id on older gateways). */
-  async revokeApiKey(apiKeyToken: string): Promise<{ message: string }> {
-    const encoded = encodeURIComponent(apiKeyToken);
+  /** DELETE `/api-keys/{keyId}` — integer PK in the path. */
+  async revokeApiKey(keyId: number): Promise<{ message: string }> {
     return this.validatedRequest(
-      `${authPath.apiKeys}/${encoded}`,
+      `${authPath.apiKeys}/${keyId}`,
       authUnwrappedSchema(messageResponseSchema),
       { method: 'DELETE' }
     );
   }
 
-  /**
-   * Revoke using every identifier available on the row (hex, then numeric id).
-   * Falls back to PATCH `is_active: false` when DELETE returns 404.
-   */
-  async revokeApiKeyRecord(key: APIKeyResponse): Promise<{ message: string }> {
-    const tokens = buildApiKeyRevokePathTokens(key);
-    if (!tokens.length) {
-      throw new Error(
-        'This API key cannot be revoked from the UI. Refresh the list or recreate the key.',
-      );
-    }
-
-    let lastError: unknown;
-    for (const token of tokens) {
-      try {
-        return await this.revokeApiKey(token);
-      } catch (error: unknown) {
-        lastError = error;
-        const status = (error as { status?: number })?.status;
-        if (status === 404) {
-          try {
-            await this.updateApiKey(token, { is_active: false });
-            return { message: 'API key revoked.' };
-          } catch (patchError) {
-            lastError = patchError;
-          }
-        }
-        if (status === 400 || status === 404) continue;
-        throw error;
-      }
-    }
-
-    const message =
-      lastError instanceof Error ? lastError.message : 'Failed to revoke API key';
-    throw new Error(message);
-  }
 
   /**
-   * PATCH `/api-keys/{api_key}` — hex key in the path (auth-service contract since May 2026).
+   * PATCH `/api-keys/{keyId}` — integer PK in the path.
    * `permissions` must be permission IDs (numbers), not display names.
    */
   async updateApiKey(
-    apiKeyHex: string,
+    keyId: number,
     updateData: { key_name?: string; permissions?: number[]; expires_days?: number; is_active?: boolean },
   ): Promise<APIKeyResponse> {
-    const encoded = encodeURIComponent(apiKeyHex);
     return this.validatedRequest(
-      `${authPath.apiKeys}/${encoded}`,
+      `${authPath.apiKeys}/${keyId}`,
       authUnwrappedSchema(apiKeyResponseSchema),
       {
         method: 'PATCH',
@@ -831,7 +793,6 @@ class AuthService {
         await this.refreshToken();
         return true;
       } catch (refreshError) {
-        // Refresh failed, clear tokens
         this.clearTokens();
         this.clearStoredUser();
         return false;
@@ -857,7 +818,7 @@ class AuthService {
   public getLoginTimestamp(): number | null {
     if (typeof window === 'undefined') return null;
     const timestampStr = sessionStorage.getItem('login_timestamp');
-    return timestampStr ? parseInt(timestampStr, 10) : null;
+    return timestampStr ? Number.parseInt(timestampStr, 10) : null;
   }
 
   /**

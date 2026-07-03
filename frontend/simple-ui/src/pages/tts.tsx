@@ -139,6 +139,8 @@ const TTSPage: React.FC = () => {
                 wordCount={requestWordCount}
                 responseTime={Number(requestTime)}
                 audioDuration={audioDuration}
+                captionText={inputText}
+                captionLang={language}
               />
             ) : undefined
           }

@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai4i-core"
+version = "1.0.5"
+description = "AI4I Core - consolidated utility libraries (exceptions, logging, telemetry, observability, bootstrap, email) for AI4I microservices"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "AI4Inclusion", email = "support@ai4inclusion.org"},
+]
+keywords = [
+    "ai4i",
+    "fastapi",
+    "logging",
+    "telemetry",
+    "observability",
+    "bootstrap",
+    "email",
+    "exceptions"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Logging",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    # Web framework
+    "fastapi>=0.104.0",
+    "starlette>=0.27.0",
+    # Config / models
+    "pyyaml>=6.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    # HTTP
+    "httpx>=0.25.0",
+    # Data stores
+    "redis>=5.0.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    # Rate limiting
+    "slowapi>=0.1.9",
+    # Email
+    "aiosmtplib>=3.0.0,<4.0.0",
+    "jinja2>=3.1.0,<4.0.0",
+    # Logging
+    "python-json-logger>=2.0.7",
+    "kafka-python>=2.0.2",
+    "aiokafka>=0.8.0",
+    # Observability
+    "prometheus-client>=0.19.0",
+    "psutil>=5.9.0",
+    "PyJWT>=2.8.0",
+    # Model management / inference
+    "tritonclient[http]>=2.40.0",
+    "numpy>=1.24.0",
+    # Telemetry
+    "packaging>=21.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.41b0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/COSS-India/ai4i-core"
+Repository = "https://github.com/COSS-India/ai4i-core"
+Issues = "https://github.com/COSS-India/ai4i-core/issues"
+Source = "https://github.com/COSS-India/ai4i-core/tree/master/libs/ai4i_core"
+
+[tool.setuptools.packages.find]
+include = ["ai4i_core*"]
+
+[tool.setuptools.package-data]
+ai4i_core = ["telemetry/util/**/*.json", "ppu/*.yaml"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']

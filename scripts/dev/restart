@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/profiles.sh"
+source "$SCRIPT_DIR/lib/pids.sh"
+source "$SCRIPT_DIR/lib/env-bootstrap.sh"
+source "$SCRIPT_DIR/lib/services.sh"
+source "$SCRIPT_DIR/lib/frontend.sh"
+source "$SCRIPT_DIR/lib/health.sh"
+
+print_usage() {
+    cat <<'EOF'
+Usage: ./scripts/dev/restart [profile|service] [--no-env]
+
+Restarts the NATIVE services (uvicorn / simple-ui) WITHOUT touching Docker infra
+or re-running migrations. By default it re-applies the environment first
+(sources dev.secrets, regenerates the service .env files, re-injects SMTP/LLM and
+alert-config paths), so config edits take effect on the restarted process.
+
+  profile   core (default) | frontend | observability | logging | all
+            Pass the same profile you started with so KAFKA_ENABLED stays correct.
+  service   auth | platform | inference | ui    (restart just one)
+  --no-env  skip env regeneration (preserve the current .env files as-is)
+
+Examples:
+  ./scripts/dev/restart                 # re-apply env, restart all core services
+  ./scripts/dev/restart inference       # just the inference service
+  ./scripts/dev/restart --no-env        # bounce services, keep current .env
+EOF
+}
+
+PROFILE="${AI4I_PROFILE:-core}"
+ONLY=""
+SKIP_ENV=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --no-env)                                   SKIP_ENV=1 ;;
+        -h|--help)                                  print_usage; exit 0 ;;
+        core|frontend|observability|logging|all)    PROFILE="$arg" ;;
+        auth|platform|inference|ui)                 ONLY="$arg" ;;
+        --*)                                        die "Unknown flag: $arg (see --help)" ;;
+        *)                                          die "Unknown argument: $arg (see --help)" ;;
+    esac
+done
+
+resolve_profile "$PROFILE"
+[[ -n "${AI4I_SKIP_FRONTEND:-}" ]] && START_FRONTEND="false"
+
+# Re-apply the environment so dev.secrets / template changes take effect. This
+# regenerates the service .env files (same as `up` does) — so hand-edits to a
+# service .env are NOT durable; put values in dev.secrets instead. Use --no-env
+# to preserve the current .env files.
+if [[ -z "$SKIP_ENV" ]]; then
+    log "Re-applying environment (dev.secrets + service .env files)"
+    load_dev_secrets
+    generate_service_envs
+    fill_smtp
+    fill_inference_llm
+    toggle_kafka "$ENABLE_KAFKA"
+fi
+
+if [[ -n "$ONLY" ]]; then
+
+    log "Restarting $ONLY"
+
+    case "$ONLY" in
+        ui)
+            kill_service simple-ui
+            START_FRONTEND="true"
+            start_frontend
+            wait_for_frontend
+            ;;
+        auth)
+            kill_service auth-service
+            start_one_service auth
+            wait_for_auth_service
+            ;;
+        platform)
+            kill_service platform-core-service
+            start_one_service platform
+            wait_for_platform_service
+            ;;
+        inference)
+            kill_service inference-service
+            start_one_service inference
+            wait_for_inference_service
+            ;;
+    esac
+
+else
+
+    log "Restarting all native services ($PROFILE profile)"
+
+    stop_all_services
+    stop_frontend
+
+    start_all_services
+    start_frontend
+
+    wait_for_all_services
+    if [[ "$START_FRONTEND" == "true" ]]; then
+        wait_for_frontend
+    fi
+fi
+
+ok "Restart complete"

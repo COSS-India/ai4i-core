@@ -5,12 +5,13 @@ Role, Permission, UserRole, RolePermission queries.
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select , func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Permission, Role, RolePermission, UserRole
 from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.base import BaseRepository
+from app.models.user import User
 
 
 class RoleRepository(BaseRepository):
@@ -53,6 +54,22 @@ class RoleRepository(BaseRepository):
         for user_id, role_name in result.all():
             roles_by_user[user_id].append(role_name_to_str(role_name))
         return roles_by_user
+
+    async def count_tenant_admins_in_tenant(self, tenant_id: int) -> int:
+        """Count active, non-deleted TENANT ADMIN users in a given tenant."""
+        result = await self._db.execute(
+            select(sa_func.count())
+            .select_from(UserRole)
+            .join(Role, Role.id == UserRole.role_id)
+            .join(User, User.id == UserRole.user_id)
+            .where(
+                Role.name == RoleName.TENANT_ADMIN.value,
+                User.tenant_id == tenant_id,
+                User.is_delete.isnot(True),
+                User.is_active.is_(True),
+            )
+        )
+        return result.scalar_one()
 
     async def get_user_role_records(self, user_id: UUID) -> list[UserRole]:
         result = await self._db.execute(

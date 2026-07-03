@@ -13,14 +13,19 @@ import {
   SliderThumb,
 } from '@chakra-ui/react';
 import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
+import AccessibleAudio from '../common/AccessibleAudio';
 import { AudioPlayerProps } from '../../types/asr';
 import { formatDuration } from '../../utils/helpers';
-import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import { showToast } from '../../utils/toast';
+import { UI_ERROR_MESSAGES } from '../../config/constants';
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioSrc,
   downloadExtension,
   showVisualization = true,
+  captionText,
+  captionDurationSeconds,
+  captionLang,
   onPlay,
   onPause,
   onEnded,
@@ -31,7 +36,6 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
-  const toast = useToastWithDeduplication();
 
   // Audio event handlers
   useEffect(() => {
@@ -100,38 +104,38 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const analyser = audioContext.createAnalyser();
     const source = audioContext.createMediaElementSource(audio);
-    
+
     source.connect(analyser);
     analyser.connect(audioContext.destination);
-    
+
     analyser.fftSize = 256;
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
 
     const draw = () => {
       if (!isPlaying) return;
-      
+
       requestAnimationFrame(draw);
-      
+
       analyser.getByteFrequencyData(dataArray);
-      
+
       ctx.fillStyle = '#f7fafc';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
+
       const barWidth = (canvas.width / bufferLength) * 2.5;
       let barHeight;
       let x = 0;
-      
+
       for (let i = 0; i < bufferLength; i++) {
         barHeight = (dataArray[i] / 255) * canvas.height;
-        
+
         const gradient = ctx.createLinearGradient(0, canvas.height - barHeight, 0, canvas.height);
         gradient.addColorStop(0, '#ff8c00');
         gradient.addColorStop(1, '#ff6b00');
-        
+
         ctx.fillStyle = gradient;
         ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-        
+
         x += barWidth + 1;
       }
     };
@@ -154,12 +158,9 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
     } else {
       audio.play().catch((error) => {
         console.error('Error playing audio:', error);
-        toast({
-          title: 'Playback Error',
-          description: 'Failed to play audio. Please try again.',
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: UI_ERROR_MESSAGES.AUDIO_PLAYBACK_FAILED,
         });
       });
     }
@@ -211,12 +212,9 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
       document.body.removeChild(link);
     } catch (error) {
       console.error('Error downloading audio:', error);
-      toast({
-        title: 'Download Error',
-        description: 'Failed to download audio. Please try again.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: UI_ERROR_MESSAGES.AUDIO_DOWNLOAD_FAILED,
       });
     }
   };
@@ -241,12 +239,16 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </Box>
       )}
 
-      {/* Audio Element */}
-      <audio
+      {/* Audio Element (hidden; custom controls drive playback) */}
+      <AccessibleAudio
         ref={audioRef}
         src={audioSrc}
         preload="metadata"
         style={{ display: 'none' }}
+        captionText={captionText}
+        captionDurationSeconds={captionDurationSeconds ?? duration}
+        captionLang={captionLang}
+        noCaptionsFallback="Audio playback without a synchronized transcript."
       />
 
       {/* Playback Controls */}
