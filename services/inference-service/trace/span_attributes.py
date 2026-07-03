@@ -76,6 +76,38 @@ def ensure_payload_analyzed(payload: Dict[str, Any]) -> Dict[str, Any]:
     return analysis
 
 
+def _build_observability_metrics(
+    analysis: Dict[str, Any],
+    span_attrs: Dict[str, Any],
+    service_type: str,
+) -> Dict[str, Any]:
+    return {
+        "service_type": service_type,
+        "service_id": span_attrs.get("service_id") or analysis.get("service_id") or "",
+        "source_lang": analysis.get("source_lang") or "",
+        "target_lang": analysis.get("target_lang") or "",
+        "characters": analysis.get("characters") or 0,
+        "ner_tokens": analysis.get("ner_tokens") or 0,
+        "audio_seconds": analysis.get("audio_seconds") or 0.0,
+        "ocr_characters": analysis.get("ocr_characters") or 0,
+        "ocr_image_kb": analysis.get("ocr_image_kb") or 0.0,
+    }
+
+
+def _llm_observability_fields(payload: Dict[str, Any], span_attrs: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = int(span_attrs.get("input_tokens") or 0)
+    completion = int(span_attrs.get("output_tokens") or 0)
+    if not (prompt or completion):
+        return {}
+    model = payload.get("model", "") if isinstance(payload, dict) else ""
+    return {
+        "llm_prompt_tokens": prompt,
+        "llm_completion_tokens": completion,
+        "llm_total_tokens": prompt + completion,
+        "llm_model": model,
+    }
+
+
 def publish_observability_metrics(
     payload: Dict[str, Any], span_attrs: Dict[str, Any], task_name: str
 ) -> None:
@@ -85,35 +117,9 @@ def publish_observability_metrics(
 
         analysis = ensure_payload_analyzed(payload) if isinstance(payload, dict) else {}
         service_type = analysis.get("service_type") or _service_type_from_task_name(task_name)
-        metrics = {
-            "service_type": service_type,
-            "service_id": span_attrs.get("service_id") or analysis.get("service_id") or "",
-            "source_lang": analysis.get("source_lang") or "",
-            "target_lang": analysis.get("target_lang") or "",
-            "characters": analysis.get("characters") or 0,
-            "ner_tokens": analysis.get("ner_tokens") or 0,
-            "audio_seconds": analysis.get("audio_seconds") or 0.0,
-            "ocr_characters": analysis.get("ocr_characters") or 0,
-            "ocr_image_kb": analysis.get("ocr_image_kb") or 0.0,
-        }
-
+        metrics = _build_observability_metrics(analysis, span_attrs, service_type)
         if service_type == "llm":
-            prompt = int(span_attrs.get("input_tokens") or 0)
-            completion = int(span_attrs.get("output_tokens") or 0)
-            if prompt or completion:
-                metrics.update(
-                    {
-                        "llm_prompt_tokens": prompt,
-                        "llm_completion_tokens": completion,
-                        "llm_total_tokens": prompt + completion,
-                        "llm_model": (
-                            payload.get("model", "")
-                            if isinstance(payload, dict)
-                            else ""
-                        ),
-                    }
-                )
-
+            metrics.update(_llm_observability_fields(payload, span_attrs))
         set_inference_payload_metrics(metrics)
     except Exception as exc:
         logger.debug("Could not publish observability payload metrics: %s", exc)
@@ -356,25 +362,26 @@ def _count_output_image_tokens(response_data: List[Dict[str, Any]]) -> int:
     return total
 
 
+def _nested_payload_list(payload: Dict[str, Any], key: str, input_data_key: Optional[str] = None) -> List[Any]:
+    items = payload.get(key)
+    if items is None and input_data_key:
+        inp = payload.get("inputData")
+        if isinstance(inp, dict):
+            items = inp.get(input_data_key)
+    return items if isinstance(items, list) else []
+
+
 def _input_items(payload: Dict[str, Any], input_type: str) -> List[Any]:
-    if input_type == "text":
-        items = payload.get("input")
-        if items is None:
-            inp = payload.get("inputData")
-            if isinstance(inp, dict):
-                items = inp.get("input")
-        return items if isinstance(items, list) else []
-    if input_type == "audio":
-        items = payload.get("audio")
-        if items is None:
-            inp = payload.get("inputData")
-            if isinstance(inp, dict):
-                items = inp.get("audio")
-        return items if isinstance(items, list) else []
-    if input_type == "image":
-        items = payload.get("image")
-        return items if isinstance(items, list) else []
-    return []
+    key_map = {
+        "text": ("input", "input"),
+        "audio": ("audio", "audio"),
+        "image": ("image", None),
+    }
+    keys = key_map.get(input_type)
+    if keys is None:
+        return []
+    top_key, nested_key = keys
+    return _nested_payload_list(payload, top_key, nested_key)
 
 
 def _service_type_from_payload(payload: Dict[str, Any]) -> str:

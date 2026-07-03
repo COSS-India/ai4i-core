@@ -67,6 +67,133 @@ def _has_llm_metrics(trace_metrics: Optional[Dict[str, Any]]) -> bool:
     )
 
 
+def _track_characters(
+    trace_metrics: Dict[str, Any],
+    track_fn,
+    **extra_labels,
+) -> None:
+    chars = int(trace_metrics.get("characters") or 0)
+    if chars > 0:
+        track_fn(characters=chars, **extra_labels)
+
+
+def _track_audio_seconds(
+    trace_metrics: Dict[str, Any],
+    track_fn,
+    **extra_labels,
+) -> None:
+    seconds = float(trace_metrics.get("audio_seconds") or 0.0)
+    if seconds > 0:
+        track_fn(audio_seconds=seconds, **extra_labels)
+
+
+def _emit_tts_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_characters(
+        trace_metrics,
+        collector.track_tts_characters,
+        language=source_lang,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_translation_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_characters(
+        trace_metrics,
+        collector.track_nmt_characters,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_asr_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_audio_seconds(
+        trace_metrics,
+        collector.track_asr_audio_length,
+        language=source_lang,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_ocr_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    chars = int(trace_metrics.get("ocr_characters") or 0)
+    if chars > 0:
+        collector.track_ocr_characters(characters=chars, tenant=tenant, service_id=service_id)
+    kb = float(trace_metrics.get("ocr_image_kb") or 0.0)
+    if kb > 0:
+        collector.track_ocr_image_size(image_size_kb=kb, tenant=tenant, service_id=service_id)
+
+
+def _emit_transliteration_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_characters(
+        trace_metrics,
+        collector.track_transliteration_characters,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_language_detection_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_characters(
+        trace_metrics,
+        collector.track_language_detection_characters,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_audio_lang_detection_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_audio_seconds(
+        trace_metrics,
+        collector.track_audio_lang_detection_length,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_speaker_diarization_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_audio_seconds(
+        trace_metrics,
+        collector.track_speaker_diarization_length,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_language_diarization_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    _track_audio_seconds(
+        trace_metrics,
+        collector.track_language_diarization_length,
+        tenant=tenant,
+        service_id=service_id,
+    )
+
+
+def _emit_ner_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
+    tokens = int(trace_metrics.get("ner_tokens") or 0)
+    if tokens > 0:
+        collector.track_ner_tokens(tokens=tokens, tenant=tenant, service_id=service_id)
+
+
+_TRACE_PAYLOAD_EMITTERS = {
+    "tts": _emit_tts_metrics,
+    "translation": _emit_translation_metrics,
+    "asr": _emit_asr_metrics,
+    "ocr": _emit_ocr_metrics,
+    "transliteration": _emit_transliteration_metrics,
+    "language_detection": _emit_language_detection_metrics,
+    "audio_lang_detection": _emit_audio_lang_detection_metrics,
+    "speaker_diarization": _emit_speaker_diarization_metrics,
+    "language_diarization": _emit_language_diarization_metrics,
+    "ner": _emit_ner_metrics,
+}
+
+
 class ObservabilityMiddleware(BaseHTTPMiddleware):
     """Middleware for tracking requests and collecting metrics."""
 
@@ -271,102 +398,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_id: str,
     ) -> None:
         """Emit Prometheus payload metrics from a trace-computed snapshot."""
+        emitter = _TRACE_PAYLOAD_EMITTERS.get(service_type)
+        if emitter is None:
+            return
         source_lang = str(trace_metrics.get("source_lang") or "")
         target_lang = str(trace_metrics.get("target_lang") or "")
         try:
-            if service_type == "tts":
-                chars = int(trace_metrics.get("characters") or 0)
-                if chars > 0:
-                    self.metrics_collector.track_tts_characters(
-                        language=source_lang,
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "translation":
-                chars = int(trace_metrics.get("characters") or 0)
-                if chars > 0:
-                    self.metrics_collector.track_nmt_characters(
-                        source_lang=source_lang,
-                        target_lang=target_lang,
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "asr":
-                seconds = float(trace_metrics.get("audio_seconds") or 0.0)
-                if seconds > 0:
-                    self.metrics_collector.track_asr_audio_length(
-                        language=source_lang,
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "ocr":
-                chars = int(trace_metrics.get("ocr_characters") or 0)
-                if chars > 0:
-                    self.metrics_collector.track_ocr_characters(
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-                kb = float(trace_metrics.get("ocr_image_kb") or 0.0)
-                if kb > 0:
-                    self.metrics_collector.track_ocr_image_size(
-                        image_size_kb=kb,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "transliteration":
-                chars = int(trace_metrics.get("characters") or 0)
-                if chars > 0:
-                    self.metrics_collector.track_transliteration_characters(
-                        source_lang=source_lang,
-                        target_lang=target_lang,
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "language_detection":
-                chars = int(trace_metrics.get("characters") or 0)
-                if chars > 0:
-                    self.metrics_collector.track_language_detection_characters(
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "audio_lang_detection":
-                seconds = float(trace_metrics.get("audio_seconds") or 0.0)
-                if seconds > 0:
-                    self.metrics_collector.track_audio_lang_detection_length(
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "speaker_diarization":
-                seconds = float(trace_metrics.get("audio_seconds") or 0.0)
-                if seconds > 0:
-                    self.metrics_collector.track_speaker_diarization_length(
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "language_diarization":
-                seconds = float(trace_metrics.get("audio_seconds") or 0.0)
-                if seconds > 0:
-                    self.metrics_collector.track_language_diarization_length(
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-            elif service_type == "ner":
-                tokens = int(trace_metrics.get("ner_tokens") or 0)
-                if tokens > 0:
-                    self.metrics_collector.track_ner_tokens(
-                        tokens=tokens,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+            emitter(
+                self.metrics_collector,
+                trace_metrics,
+                source_lang,
+                target_lang,
+                tenant,
+                service_id,
+            )
         except Exception:
             if self.config.debug:
                 logger.debug("Trace payload metric emission failed", exc_info=True)
