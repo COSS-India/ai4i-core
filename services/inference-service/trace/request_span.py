@@ -172,13 +172,15 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
     Single definition shared by the base run_inference and TTS's override —
     keep span attribute changes here only.
     """
-    from trace.span_attributes import get_input_type
+    from trace.span_attributes import ensure_payload_analyzed, get_input_type, publish_observability_metrics
 
     def _zero_tokens(attrs, exc):
         logger_.error(f"{task_name}: inference failed: {exc}", exc_info=True)
         attrs["input_tokens"] = 0
         attrs["output_tokens"] = 0
         return attrs
+
+    ensure_payload_analyzed(payload)
 
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
@@ -194,4 +196,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
             "input_tokens": 0,
             "output_tokens": 0,
         })
-        yield attrs
+        try:
+            yield attrs
+        finally:
+            publish_observability_metrics(payload, attrs, task_name)
