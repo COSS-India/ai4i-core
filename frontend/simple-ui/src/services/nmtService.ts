@@ -151,6 +151,7 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
       for (const s of raw) {
         const normalized = normalizeServiceToNMTDetails(s);
         if (!normalized.service_id || seen.has(normalized.service_id)) continue;
+        if (normalized.name !== 'indictrans-gpu-t4') continue;
         seen.add(normalized.service_id);
         out.push(normalized);
       }
