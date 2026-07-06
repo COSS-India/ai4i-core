@@ -31,17 +31,31 @@ from app.utils.masking import mask_email
 router = APIRouter(prefix="/auth", tags=["API Keys"])
 
 
-def _key_dict(k) -> dict:
+def _key_dict(k, *, permission_names: list[str]) -> dict:
     return {
         "id": k.id,
         "key_name": k.key_name,
         "user_id": str(k.user_id),
-        "permissions": k.permissions or [],
+        "permissions": permission_names,
         "expires_at": k.expires_at.isoformat() if k.expires_at else None,
         "is_active": k.is_active,
         "created_at": k.created_at.isoformat() if k.created_at else None,
         "updated_at": k.updated_at.isoformat() if k.updated_at else None,
     }
+
+
+async def _key_dicts_for_response(svc: APIKeyService, keys) -> list[dict]:
+    """Batch-resolve stored permission IDs to names for list responses."""
+    id_to_name = await svc.permission_name_map_for_keys(keys)
+
+    def names_for(key) -> list[str]:
+        return [
+            id_to_name[pid]
+            for pid in (key.permissions or [])
+            if pid in id_to_name
+        ]
+
+    return [_key_dict(k, permission_names=names_for(k)) for k in keys]
 
 
 @router.post("/api-keys", status_code=status.HTTP_201_CREATED)
@@ -59,11 +73,12 @@ async def create_api_key(
         tenant_id=ctx.tenant_id,
         platform_core_db=platform_core_db,
     )
+    permission_names = await svc.permission_ids_to_names(api_key.permissions or [])
     return success_response(data=CreateAPIKeyResponse(
         id=api_key.id,
         api_key=raw_key,
         key_name=api_key.key_name,
-        permissions=api_key.permissions or [],
+        permissions=permission_names,
         expires_at=api_key.expires_at,
     ).model_dump())
 
@@ -75,7 +90,8 @@ async def list_api_keys(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     keys = await svc.list_by_user(user_id)
-    return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
+    key_dicts = await _key_dicts_for_response(svc, keys)
+    return success_response(data={"api_keys": key_dicts})
 
 
 @router.patch("/api-keys/{key_id}")
@@ -101,7 +117,8 @@ async def update_api_key(
         raise EntityNotFoundError("API key")
 
     updated_key = await svc.update_key_by_obj(db_key, update_data, user_id)
-    return success_response(data=_key_dict(updated_key))
+    permission_names = await svc.permission_ids_to_names(updated_key.permissions or [])
+    return success_response(data=_key_dict(updated_key, permission_names=permission_names))
 
 
 @router.delete("/api-keys/{key_id}")
@@ -138,14 +155,16 @@ async def list_all_api_keys(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     results = await svc.list_all_with_users(offset, limit)
+    keys = [api_key for api_key, _user in results]
+    key_dicts = await _key_dicts_for_response(svc, keys)
     items = [
         {
-            **_key_dict(api_key),
+            **key_dict,
             # Email is decrypted transparently by the column type; mask it so this
             # admin/moderator endpoint never returns plaintext PII.
             "user_email": mask_email(user.email),
             "username": user.username,
         }
-        for api_key, user in results
+        for key_dict, (_api_key, user) in zip(key_dicts, results)
     ]
     return success_response(data=items)

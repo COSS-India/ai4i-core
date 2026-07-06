@@ -33,6 +33,17 @@ class PermissionResponse(BaseSchema):
     updated_by: Optional[UUID] = None
 
 
+def permission_display_label(name: str) -> str:
+    """Human-readable label for a stable permission name (e.g. nmt.inference → NMT.INFERENCE)."""
+    return name.upper()
+
+
+class InferencePermissionResponse(BaseSchema):
+    """Slim catalog entry for API-key create UI — no internal DB fields."""
+    name: str
+    label: str
+
+
 class RoleAssignRequest(BaseSchema):
     user_id: UUID
     role_name: RoleName

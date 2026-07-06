@@ -142,6 +142,16 @@ class RoleRepository(BaseRepository):
         )
         return {pid: name for pid, name in result.all()}
 
+    async def get_permission_ids_by_names(self, permission_names: list[str]) -> dict[str, int]:
+        if not permission_names:
+            return {}
+        result = await self._db.execute(
+            select(Permission.name, Permission.id).where(
+                Permission.name.in_(permission_names)
+            )
+        )
+        return {name: pid for name, pid in result.all()}
+
     async def delete_role_permissions_for_permission_ids(
         self, role_id: int, permission_ids: list[int]
     ) -> None:
