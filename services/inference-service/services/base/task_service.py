@@ -243,6 +243,7 @@ class BaseTaskService:
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
+        service_id = serviceInfo.get('serviceId', '')
         self._adapter_config = serviceInfo.get('adapter_config')
         if not model_name or not triton_endpoint:
             raise RuntimeError(
@@ -270,6 +271,10 @@ class BaseTaskService:
             )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
             async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
+                # service_id is not in context vars — must be copied explicitly.
+                # The PPU Kafka consumer reads only the ai-inference span for
+                # billing, so it must always be present there (mirrors llm_service.py).
+                span_ctx["service_id"] = service_id
                 span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
