@@ -49,6 +49,12 @@ const INFERENCE_TASKS = new Set([
 const PUBLIC_AUTH_PATH =
   /^\/api\/v1\/auth\/(login|register|refresh|guest|verify-email|resend-verification|forgot-password|reset-password|set-password|resend-setup-link|validate|oauth)(\/|$|\?)/;
 
+// Anonymous try-it paths: no JWT, no forward-auth.
+// Covers the inference call (/nmt/try-it) and the public service-list endpoint
+// served by platform-core under either the direct or model-management prefix.
+const TRY_IT_PUBLIC_PATH =
+  /^\/api\/v1\/(nmt\/try-it|(?:model-management\/)?services\/try-it-service-list)(\/|$|\?)/;
+
 // Identity headers the gateway/forward-auth owns. We strip any inbound copies
 // (so a client cannot spoof them) and re-inject the validated values.
 const IDENTITY_HEADERS = [
@@ -70,11 +76,12 @@ function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
     // "Public platform-core health route" block (no auth_request).
     return { target: PLATFORM_CORE_SERVICE, requiresAuth: false };
   }
+  const isTryItPublic = TRY_IT_PUBLIC_PATH.test(path);
   const segment = path.split("/")[3]; // /api/v1/{segment}/...
   if (segment && INFERENCE_TASKS.has(segment)) {
-    return { target: INFERENCE_SERVICE, requiresAuth: true };
+    return { target: INFERENCE_SERVICE, requiresAuth: !isTryItPublic };
   }
-  return { target: PLATFORM_CORE_SERVICE, requiresAuth: true };
+  return { target: PLATFORM_CORE_SERVICE, requiresAuth: !isTryItPublic };
 }
 
 interface UserHeaders {
