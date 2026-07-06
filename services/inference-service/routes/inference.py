@@ -186,6 +186,33 @@ async def run_nmt_inference(
 
 
 @router.post(
+    "/nmt/try-it",
+    response_model=GenericInferenceResponse,
+    response_model_exclude={"config"},
+    summary="NMT Try-It Endpoint (anonymous)",
+    description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
+                "({ service_name, serviceId?, payload: NMTPayload }) or a plain NMT "
+                "payload directly (for when APISIX has already unwrapped the envelope).",
+)
+async def run_nmt_try_it(
+    request: Request,
+    body: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    # Unwrap TryItRequest envelope if present; fall back to body as-is when
+    # APISIX has already extracted the inner payload before forwarding here.
+    inner: Dict[str, Any] = body.get("payload") or body
+    # Hoist top-level serviceId into config so the orchestrator finds it
+    # regardless of which level the client placed it.
+    top_service_id = body.get("serviceId")
+    if top_service_id and not (inner.get("config") or {}).get("serviceId"):
+        inner = {**inner, "config": {**(inner.get("config") or {}), "serviceId": top_service_id}}
+    return await _run_inference(request, inner, orchestrator, default_task_type="NMT")
+
+
+
+
+@router.post(
     "/ner/inference",
     response_model=None,
     summary="NER Inference Endpoint",
@@ -400,13 +427,13 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         req_attrs["url"] = request.url.path
         req_attrs["method"] = request.method
         req_attrs.update(get_context_attributes())
- 
+
         status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
- 
+
         if status_code >= 400:
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
- 
+
     return JSONResponse(status_code=status_code, content=body)
 
 @router.post(

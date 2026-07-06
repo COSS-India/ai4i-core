@@ -16,11 +16,9 @@ const getTryItHeaders = () => ({
   'X-Try-It': 'true',
 });
 
-/**
- * Try-It request payload structure
- */
 export interface TryItRequest {
   service_name: 'nmt';
+  serviceId?: string;
   payload: NMTInferenceRequest;
 }
 
@@ -73,6 +71,7 @@ export const performTryItNMTInference = async (
 
     const tryItPayload: TryItRequest = {
       service_name: 'nmt',
+      serviceId: tryItConfig.serviceId,
       payload: nmtPayload,
     };
 
