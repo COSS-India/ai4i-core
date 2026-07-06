@@ -1,6 +1,7 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
+import math
 from typing import Optional
 
 from sqlalchemy import text
@@ -64,8 +65,8 @@ class MeteringService:
         def _float(r, default: float = 0.0) -> float:
             return float(r) if not isinstance(r, Exception) else default
 
-        total_v = round(_float(raw[0]))
-        success_v = round(_float(raw[1]))
+        total_v = math.ceil(_float(raw[0]))
+        success_v = math.ceil(_float(raw[1]))
         avg_rps_v = round(_float(raw[2]), 2)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
         raw_failed = total_v - success_v
@@ -90,8 +91,8 @@ class MeteringService:
         prev_avg_rps_v: Optional[float] = None
 
         if window:
-            prev_total = max(0, round(_float(raw[3])))
-            prev_success = max(0, round(_float(raw[4])))
+            prev_total = max(0, math.ceil(_float(raw[3])))
+            prev_success = max(0, math.ceil(_float(raw[4])))
             prev_avg_rps = _float(raw[5])
             prev_failed = max(0, prev_total - prev_success)
             prev_total_v = prev_total
@@ -256,7 +257,7 @@ class MeteringService:
             [
                 {
                     "tenant": r["metric"].get("tenant", "unknown"),
-                    "requests": max(1, round(float(r["value"][1]))),
+                    "requests": max(1, math.ceil(float(r["value"][1]))),
                 }
                 for r in results
                 if float(r["value"][1]) > 0
@@ -415,7 +416,7 @@ class MeteringService:
             [
                 {
                     "tenant": r["metric"].get("tenant", "unknown"),
-                    "requests": max(1, round(float(r["value"][1]))),
+                    "requests": max(1, math.ceil(float(r["value"][1]))),
                 }
                 for r in results
                 if float(r["value"][1]) > 0
@@ -495,7 +496,7 @@ class MeteringService:
                 task = raw.replace("-", "_") if raw else None
             if task not in active_services:
                 continue
-            v = max(0, round(float(r["value"][1])))
+            v = max(0, math.ceil(float(r["value"][1])))
             if v <= 0:
                 continue
             bucket = tenant_task.setdefault(tenant_label, {})
@@ -568,7 +569,7 @@ class MeteringService:
                 # Normalise hyphens to underscores so speaker-diarization → speaker_diarization
                 raw = parts[2] if len(parts) >= 4 else ep
                 task = raw.replace("-", "_")
-            out[task] = out.get(task, 0) + round(float(r["value"][1]))
+            out[task] = out.get(task, 0) + math.ceil(float(r["value"][1]))
         return out
 
     @staticmethod
