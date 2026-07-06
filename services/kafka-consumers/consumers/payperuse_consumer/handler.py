@@ -6,10 +6,7 @@ from confluent_kafka.cimpl import Message
 
 from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
-from config import settings
-from consumers.registry import kafka_listener
-from db_registry import db_registry
-
+from config import settings, Constants
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
@@ -17,11 +14,10 @@ from consumers.payperuse_consumer._billing import (
     get_service_pricing,
     update_quota_usage,
 )
+from consumers.registry import kafka_listener
+from db_registry import db_registry
 
 logger = get_logger(__name__)
-
-_BILLED_KEY_PREFIX = "ppu:billed:"
-_BILLED_KEY_TTL = 86400  # 24 hours — longer than any realistic Kafka redelivery window
 
 
 @kafka_listener(settings.topics.TOPIC_PAY_PER_USE)
@@ -61,7 +57,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     # the same Redis key — poisoning the dedup set after the first hit.
     attrs = data.get("attributes") or {}
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
-    billed_key: str = f"{_BILLED_KEY_PREFIX}{correlation_id}" if correlation_id else ""
+    billed_key: str = f"{Constants.PPU_BILLED_KEY_PREFIX}{correlation_id}" if correlation_id else ""
 
     if billed_key:
         try:
@@ -192,7 +188,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     if billed_key:
         try:
             redis = get_redis_client()
-            await redis.set(billed_key, "1", ex=_BILLED_KEY_TTL)
+            await redis.set(billed_key, "1", ex=Constants.PPU_BILLED_KEY_TTL)
         except Exception as exc:
             logger.warning(
                 "Failed to set Redis dedup key for correlation_id=%s: %s",

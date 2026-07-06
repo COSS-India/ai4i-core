@@ -3,24 +3,22 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
+from ai4i_core.bootstrap import get_redis_client
+from ai4i_core.logging import get_logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.bootstrap import get_redis_client
-from ai4i_core.logging import get_logger
+from config import Constants
 
 logger = get_logger(__name__)
-
-_PRICING_CACHE_PREFIX = "ppu:svc:"
-_PRICING_CACHE_TTL = 3600  # 1 hour
 
 
 @dataclass
 class ServicePricing:
-    billing_unit_type: str   # "llm", "asr", "nmt" — maps to inference_name
-    unit_rate: Optional[Decimal]       # ₹ per single raw unit (preferred)
-    cost_per_unit: Optional[Decimal]   # ₹ per unit_size units (fallback)
-    unit_size: Optional[int]           # scaling divisor
+    billing_unit_type: str  # "llm", "asr", "nmt" — maps to inference_name
+    unit_rate: Optional[Decimal]  # ₹ per single raw unit (preferred)
+    cost_per_unit: Optional[Decimal]  # ₹ per unit_size units (fallback)
+    unit_size: Optional[int]  # scaling divisor
 
 
 @dataclass
@@ -39,15 +37,15 @@ async def get_service_pricing(
         redis = get_redis_client()
     except RuntimeError:
         redis = None
-    cache_key = f"{_PRICING_CACHE_PREFIX}{service_id}"
+    cache_key = f"{Constants.PPU_PRICING_CACHE_PREFIX}{service_id}"
 
     if redis is not None:
         cached = await redis.hgetall(cache_key)
         if cached:
             return ServicePricing(
-                billing_unit_type=cached.get("billing_unit_type", ""),
-                unit_rate=Decimal(cached["unit_rate"]) if cached.get("unit_rate") else None,
-                cost_per_unit=Decimal(cached["cost_per_unit"]) if cached.get("cost_per_unit") else None,
+                billing_unit_type=str(cached.get("billing_unit_type", "")),
+                unit_rate=Decimal(str(cached["unit_rate"])) if cached.get("unit_rate") else None,
+                cost_per_unit=Decimal(str(cached["cost_per_unit"])) if cached.get("cost_per_unit") else None,
                 unit_size=int(cached["unit_size"]) if cached.get("unit_size") else None,
             )
 
@@ -76,13 +74,13 @@ async def get_service_pricing(
     # a stale empty entry would block billing for 1 hour after admin adds pricing.
     if redis is not None and pricing.billing_unit_type:
         pipe = redis.pipeline()
-        pipe.hset(cache_key, mapping={
+        await pipe.hset(cache_key, mapping={
             "billing_unit_type": pricing.billing_unit_type,
             "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
         })
-        pipe.expire(cache_key, _PRICING_CACHE_TTL)
+        await pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
         await pipe.execute()
 
     return pricing
