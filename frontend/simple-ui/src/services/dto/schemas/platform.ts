@@ -41,9 +41,13 @@ export const servicesListSchema = z.preprocess((raw: unknown) => {
 export const serviceSingleSchema = withPlatformEnvelope(serviceRecordSchema);
 
 /** Try-it and other callers expect a plain service array. */
-export const tryItServiceListSchema = z.preprocess(
-  unwrapPlatformListPayload,
-  z.array(platformRecordSchema)
-);
+export const tryItServiceListSchema = z.preprocess((raw: unknown) => {
+  let data = unwrapPlatformListPayload(raw);
+  // Response nests services under { services: [...] } — extract to array
+  if (data && typeof data === 'object' && !Array.isArray(data) && 'services' in data) {
+    data = (data as Record<string, unknown>).services;
+  }
+  return data;
+}, z.array(platformRecordSchema));
 
 export const unknownPlatformPayloadSchema = withPlatformEnvelope(z.unknown());
