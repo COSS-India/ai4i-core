@@ -97,6 +97,18 @@ async def _run_inference(
     the endpoint contract excludes, and map failures to client-safe HTTP
     errors (full details logged server-side only).
     """
+    # Unwrap TryItRequest envelope ({ service_name, serviceId?, payload: <inner> })
+    # when present. Normal inference payloads carry input/audio/image at the top
+    # level and never have a nested 'payload' wrapper, so this detection is safe.
+    # Handles the case where APISIX rewrites /nmt/try-it → /nmt/inference while
+    # passing the original client body through unchanged.
+    inner = payload.get("payload")
+    if isinstance(inner, dict) and "service_name" in payload:
+        top_service_id = payload.get("serviceId")
+        payload = inner
+        if top_service_id and not (payload.get("config") or {}).get("serviceId"):
+            payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": top_service_id}}
+
     # No manual timing here: the logging middleware records duration_ms for
     # every request, and the request span carries total_time_ms.
     if default_task_type and not payload.get("task_type"):
