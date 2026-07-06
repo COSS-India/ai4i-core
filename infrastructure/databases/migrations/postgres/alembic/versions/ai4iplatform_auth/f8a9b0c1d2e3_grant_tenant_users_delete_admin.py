@@ -10,7 +10,7 @@ This migration restores the explicit DB grant so ADMIN permission sets stay
 consistent with tenant-management operations. Idempotent via NOT EXISTS.
 
 Revision ID: f8a9b0c1d2e3
-Revises: 74d5ab55e71e
+Revises: e5f6a7b8c9d1
 Create Date: 2026-07-06 00:00:00.000000
 
 """
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 
 
 revision: str = "f8a9b0c1d2e3"
-down_revision: Union[str, None] = "74d5ab55e71e"
+down_revision: Union[str, None] = "e5f6a7b8c9d1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
