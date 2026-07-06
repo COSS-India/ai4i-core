@@ -6,6 +6,18 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+class Constants:
+    """
+    Constants That will be used as class variables.
+    All
+    """
+    # PPU Settings constants
+    PPU_PRICING_CACHE_PREFIX = "ppu:svc:"
+    PPU_PRICING_CACHE_TTL = 3600
+    PPU_BILLED_KEY_PREFIX = "ppu:billed:"
+    PPU_BILLED_KEY_TTL = 86400
+
+
 class Topics(BaseSettings):
     TOPIC_PAY_PER_USE: str = Field(
         description="Kafka topic for pay-per-use usage events",
