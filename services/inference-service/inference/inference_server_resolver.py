@@ -148,6 +148,7 @@ class InferenceServerResolver:
                 "api_key": data.get("apiKey") or data.get("api_key"),
                 "adapter_config": adapter_config,
                 "class_instance": class_instance,
+                "is_published": bool(data.get("isPublished", False)),
             }
 
         # Flat shape (legacy/fallback): pass through as-is

@@ -177,6 +177,11 @@ class Orchestrator:
                     f"Orchestrator: Failed to resolve service '{serviceId}'"
                 ) from e
 
+            if not service_info.get("is_published", True):
+                raise ValueError(
+                    f"Service '{serviceId}' is not published and cannot be used for inference"
+                )
+
             adapter_cfg = service_info.get("adapter_config") or {}
             attrs["model_name"] = service_info.get("name", "")
             attrs["model_version"] = (
