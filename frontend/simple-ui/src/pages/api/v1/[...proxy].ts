@@ -92,10 +92,18 @@ type AuthResult =
 
 async function callAuthValidate(
   authHeader: string | undefined,
-  originalUri: string
+  originalUri: string,
+  originalMethod: string
 ): Promise<AuthResult> {
   const validateUrl = `${AUTH_SERVICE}/api/v1/auth/validate`;
-  const reqHeaders: Record<string, string> = { "X-Original-URI": originalUri };
+  const reqHeaders: Record<string, string> = {
+    "X-Original-URI": originalUri,
+    // APISIX sets both X-Original-URI and X-Original-Method on every forward-auth
+    // call. The auth service's _validate_anonymous() requires both to be present
+    // before it can confirm an endpoint is public — without X-Original-Method it
+    // returns (looked_up=False) and raises 401 even for genuinely public routes.
+    "X-Original-Method": originalMethod,
+  };
   if (authHeader) {
     reqHeaders["Authorization"] = authHeader;
   }
@@ -206,7 +214,8 @@ export default async function handler(
   if (requiresAuth) {
     const authResult = await callAuthValidate(
       req.headers["authorization"] as string | undefined,
-      originalUri
+      originalUri,
+      req.method ?? "GET"
     );
     if (!authResult.ok) {
       res.setHeader("Content-Type", "application/json");
