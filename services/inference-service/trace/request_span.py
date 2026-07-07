@@ -193,9 +193,9 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
             "output_type": "unknown",
             "input_tokens": 0,
             "output_tokens": 0,
-            # Travels with the span to Kafka so the PPU consumer can tell LLM
-            # apart from every other service without depending on mm_services'
-            # billing_unit_type being configured correctly.
+            # For trace/observability only — the PPU consumer's LLM/non-LLM
+            # billing decision reads mm_services.task_type instead (via
+            # get_service_pricing), not this span attribute.
             "task_type": task_name.lower(),
         })
         yield attrs
