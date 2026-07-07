@@ -95,6 +95,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
+    task_type: str = str(attrs.get("task_type") or "").strip().lower()
     input_tokens: int = int(attrs.get("input_tokens") or 0)
     output_tokens: int = int(attrs.get("output_tokens") or 0)
     total_tokens: int = input_tokens + output_tokens
@@ -137,7 +138,15 @@ async def handle_ppu_usage(msg: Message) -> None:
             pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
         )
 
-        cost = calculate_cost(total_tokens, pricing)
+        # Only llm bills on input+output (real prompt/completion tokens from the
+        # model's own API response). Every other inference type is input-only —
+        # output_tokens is still recorded on the span for trace/observability
+        # purposes, but must not count toward cost or quota here. task_type is
+        # stamped directly on the span at emission time (request_span.py), so
+        # this doesn't depend on mm_services.billing_unit_type being correct.
+        billed_units = total_tokens if task_type == "llm" else input_tokens
+
+        cost = calculate_cost(billed_units, pricing)
         if cost == 0:
             logger.warning(
                 "Zero cost for service_id=%s — skipping billing for tenant=%s"
@@ -147,7 +156,7 @@ async def handle_ppu_usage(msg: Message) -> None:
             )
             return
 
-        logger.info("Cost calculated | tenant=%s cost=%s tokens=%d", tenant_id, cost, total_tokens)
+        logger.info("Cost calculated | tenant=%s cost=%s billed_units=%d", tenant_id, cost, billed_units)
 
         wallet = await deduct_balance(db, tenant_id, cost)
 
@@ -169,12 +178,12 @@ async def handle_ppu_usage(msg: Message) -> None:
                 inference_name=pricing.billing_unit_type,
                 billing_month=billing_month,
                 tier_id=wallet.tier_id,
-                units=total_tokens,
+                units=billed_units,
             )
             logger.info(
                 "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
                 " units=%d quota_exhausted=%s",
-                tenant_id, pricing.billing_unit_type, billing_month, total_tokens, quota_exhausted,
+                tenant_id, pricing.billing_unit_type, billing_month, billed_units, quota_exhausted,
             )
         else:
             logger.info(
@@ -200,8 +209,8 @@ async def handle_ppu_usage(msg: Message) -> None:
             )
 
     logger.info(
-        "Billing applied | tenant=%s service=%s tokens=%d cost=%s exhausted=%s",
-        tenant_id, service_id, total_tokens, cost, wallet.exhausted,
+        "Billing applied | tenant=%s service=%s billed_units=%d cost=%s exhausted=%s",
+        tenant_id, service_id, billed_units, cost, wallet.exhausted,
     )
 
     if wallet.exhausted:
