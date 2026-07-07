@@ -177,8 +177,8 @@ class Orchestrator:
                     f"Orchestrator: Failed to resolve service '{serviceId}'"
                 ) from e
 
-            if not service_info.get("is_published", True):
-                raise ValueError(
+            if not service_info.get("is_published", False):
+                raise LookupError(
                     f"Service '{serviceId}' is not published and cannot be used for inference"
                 )
 

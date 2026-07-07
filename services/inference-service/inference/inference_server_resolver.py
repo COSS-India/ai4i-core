@@ -151,5 +151,7 @@ class InferenceServerResolver:
                 "is_published": bool(data.get("isPublished", False)),
             }
 
-        # Flat shape (legacy/fallback): pass through as-is
-        return raw
+        # Flat shape (legacy/fallback): pass through as-is, but ensure
+        # is_published is always present so the orchestrator gate is never
+        # skipped by a missing key.
+        return {**raw, "is_published": bool(raw.get("is_published", False))}
