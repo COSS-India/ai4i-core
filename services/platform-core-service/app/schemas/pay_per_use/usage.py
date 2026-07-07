@@ -25,8 +25,8 @@ class TenantUsageBreakdown(BaseModel):
     unit: str
     spend: float
     percentage: float
-    quotaLimit: Optional[float]
-    remainingQuota: Optional[float]
+    quotaLimit: Optional[float] = None
+    remainingQuota: Optional[float] = None
 
 
 class TenantUsageItem(BaseModel):
@@ -36,10 +36,10 @@ class TenantUsageItem(BaseModel):
     budgetLimit: float
     spendToDate: float
     remainingBudget: float
-    quotaLimit: Optional[float]
+    quotaLimit: Optional[float] = None
     quotaUnit: str
-    consumptionToDate: Optional[float]
-    remainingQuota: Optional[float]
+    consumptionToDate: Optional[float] = None
+    remainingQuota: Optional[float] = None
     currency: str
 
 
