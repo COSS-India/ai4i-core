@@ -95,7 +95,6 @@ async def handle_ppu_usage(msg: Message) -> None:
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
-    task_type: str = str(attrs.get("task_type") or "").strip().lower()
     input_tokens: int = int(attrs.get("input_tokens") or 0)
     output_tokens: int = int(attrs.get("output_tokens") or 0)
     total_tokens: int = input_tokens + output_tokens
@@ -132,9 +131,9 @@ async def handle_ppu_usage(msg: Message) -> None:
             return
 
         logger.info(
-            "Pricing resolved | service_id=%s billing_unit_type=%r"
+            "Pricing resolved | service_id=%s task_type=%r"
             " unit_rate=%s cost_per_unit=%s unit_size=%s",
-            service_id, pricing.billing_unit_type,
+            service_id, pricing.task_type,
             pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
         )
 
@@ -142,9 +141,9 @@ async def handle_ppu_usage(msg: Message) -> None:
         # model's own API response). Every other inference type is input-only —
         # output_tokens is still recorded on the span for trace/observability
         # purposes, but must not count toward cost or quota here. task_type is
-        # stamped directly on the span at emission time (request_span.py), so
-        # this doesn't depend on mm_services.billing_unit_type being correct.
-        billed_units = total_tokens if task_type == "llm" else input_tokens
+        # sourced from mm_services (via get_service_pricing), so it must be
+        # configured correctly on the service for billing to be accurate.
+        billed_units = total_tokens if pricing.task_type.lower() == "llm" else input_tokens
 
         cost = calculate_cost(billed_units, pricing)
         if cost == 0:
@@ -171,11 +170,11 @@ async def handle_ppu_usage(msg: Message) -> None:
         )
 
         quota_exhausted = False
-        if wallet.tier_id and pricing.billing_unit_type:
+        if wallet.tier_id and pricing.task_type:
             quota_exhausted = await update_quota_usage(
                 db,
                 tenant_id=tenant_id,
-                inference_name=pricing.billing_unit_type,
+                inference_name=pricing.task_type,
                 billing_month=billing_month,
                 tier_id=wallet.tier_id,
                 units=billed_units,
@@ -183,12 +182,12 @@ async def handle_ppu_usage(msg: Message) -> None:
             logger.info(
                 "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
                 " units=%d quota_exhausted=%s",
-                tenant_id, pricing.billing_unit_type, billing_month, billed_units, quota_exhausted,
+                tenant_id, pricing.task_type, billing_month, billed_units, quota_exhausted,
             )
         else:
             logger.info(
-                "Quota update skipped | tenant=%s tier_id=%s billing_unit_type=%r",
-                tenant_id, wallet.tier_id, pricing.billing_unit_type,
+                "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
+                tenant_id, wallet.tier_id, pricing.task_type,
             )
 
         # Commit DB changes before any HTTP calls to avoid holding row locks
@@ -222,7 +221,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     if quota_exhausted:
         await _notify_auth(
             f"/internal/ppu/tenant/{tenant_id}/quota-exhausted",
-            {"inference_name": pricing.billing_unit_type},
+            {"inference_name": pricing.task_type},
         )
 
 

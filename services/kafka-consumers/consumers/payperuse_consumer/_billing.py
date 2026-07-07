@@ -17,7 +17,7 @@ _PRICING_CACHE_TTL = 3600  # 1 hour
 
 @dataclass
 class ServicePricing:
-    billing_unit_type: str   # "llm", "asr", "nmt" — maps to inference_name
+    task_type: str   # "llm", "asr", "nmt" — maps to inference_name
     unit_rate: Optional[Decimal]       # ₹ per single raw unit (preferred)
     cost_per_unit: Optional[Decimal]   # ₹ per unit_size units (fallback)
     unit_size: Optional[int]           # scaling divisor
@@ -45,7 +45,7 @@ async def get_service_pricing(
         cached = await redis.hgetall(cache_key)
         if cached:
             return ServicePricing(
-                billing_unit_type=cached.get("billing_unit_type", ""),
+                task_type=cached.get("task_type", ""),
                 unit_rate=Decimal(cached["unit_rate"]) if cached.get("unit_rate") else None,
                 cost_per_unit=Decimal(cached["cost_per_unit"]) if cached.get("cost_per_unit") else None,
                 unit_size=int(cached["unit_size"]) if cached.get("unit_size") else None,
@@ -53,7 +53,7 @@ async def get_service_pricing(
 
     result = await db.execute(
         text(
-            "SELECT billing_unit_type, unit_rate, cost_per_unit, unit_size"
+            "SELECT task_type, unit_rate, cost_per_unit, unit_size"
             " FROM mm_services"
             " WHERE service_id = :service_id AND deleted_at IS NULL"
             " ORDER BY created_at DESC"
@@ -66,18 +66,18 @@ async def get_service_pricing(
         return None
 
     pricing = ServicePricing(
-        billing_unit_type=row.billing_unit_type or "",
+        task_type=row.task_type or "",
         unit_rate=Decimal(str(row.unit_rate)) if row.unit_rate is not None else None,
         cost_per_unit=Decimal(str(row.cost_per_unit)) if row.cost_per_unit is not None else None,
         unit_size=int(row.unit_size) if row.unit_size else None,
     )
 
-    # Only cache when the service has a billing_unit_type configured; otherwise
+    # Only cache when the service has a task_type configured; otherwise
     # a stale empty entry would block billing for 1 hour after admin adds pricing.
-    if redis is not None and pricing.billing_unit_type:
+    if redis is not None and pricing.task_type:
         pipe = redis.pipeline()
         pipe.hset(cache_key, mapping={
-            "billing_unit_type": pricing.billing_unit_type,
+            "task_type": pricing.task_type,
             "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
