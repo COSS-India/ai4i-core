@@ -11,4 +11,4 @@ Subpackages:
     telemetry          — OpenTelemetry tracing, OpenSearch query clients
 """
 
-__version__ = "1.0.2"
+__version__ = "1.0.6"
