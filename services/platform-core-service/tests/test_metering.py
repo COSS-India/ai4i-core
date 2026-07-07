@@ -361,6 +361,42 @@ class TestActiveTenantsExcludesUnknown:
         call_args = svc._client.query.call_args[0][0]
         assert 'tenant!="unknown"' in call_args
 
+    async def test_filters_deleted_tenants_when_db_available(self):
+        """Tenants present in Prometheus but absent from the DB are excluded.
+
+        This covers the post-DB-flush scenario where stale Prometheus series
+        for deleted tenants would otherwise inflate 7d/30d active-tenant counts.
+        """
+        prom_rows = [
+            {"metric": {"tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant": "2"}, "value": [0, "3"]},  # deleted tenant
+            {"metric": {"tenant": "3"}, "value": [0, "8"]},
+        ]
+        # DB has only tenants 1 and 3; tenant 2 was deleted
+        auth_db = AsyncMock()
+        db_result = MagicMock()
+        db_result.all.return_value = [(1,), (3,)]
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("7d")
+
+        assert result["count"] == 2
+        returned_ids = {t["tenant"] for t in result["active_tenants"]}
+        assert returned_ids == {"1", "3"}
+        assert "2" not in returned_ids
+
+    async def test_no_filter_when_db_unavailable(self):
+        """Falls back to unfiltered Prometheus results when auth DB is absent."""
+        prom_rows = [
+            {"metric": {"tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant": "99"}, "value": [0, "2"]},
+        ]
+        svc = _make_service(query_return=prom_rows)  # no auth_db
+        result = await svc.active_tenants("7d")
+
+        assert result["count"] == 2
+
 
 class TestFormatCount:
     def test_millions(self):
