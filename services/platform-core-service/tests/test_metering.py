@@ -5,7 +5,6 @@ No running services required.
 """
 from __future__ import annotations
 
-import math
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,9 +14,10 @@ import pytest
 from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
-    apply_time_range,
     build_base_selectors,
+    sum_over_prev_window,
     sum_over_window,
+    windowed_change_expr,
 )
 
 
@@ -56,11 +56,33 @@ class TestBuildBaseSelectors:
         assert sel.startswith("{") and sel.endswith("}")
 
 
+class TestWindowedChangeExpr:
+    def test_normal_delta_branch(self):
+        expr = windowed_change_expr("m", "m offset 24h")
+        assert "(m - m offset 24h) > 0" in expr
+
+    def test_counter_reset_branch(self):
+        expr = windowed_change_expr("m", "m offset 24h")
+        assert "(m < m offset 24h)" in expr
+
+    def test_new_series_branch(self):
+        expr = windowed_change_expr("m", "m offset 24h")
+        assert "(m unless m offset 24h)" in expr
+
+    def test_three_branches_joined_with_or(self):
+        expr = windowed_change_expr("m", "m offset 1h")
+        assert expr.count(" or ") == 2
+
+    def test_no_increase_function(self):
+        expr = windowed_change_expr("metric{}", "metric{} offset 7d")
+        assert "increase(" not in expr
+
+
 class TestSumOverWindow:
-    def test_with_window_uses_increase(self):
+    def test_with_window_uses_offset_diff(self):
         expr = sum_over_window("metric{}", "24h")
-        assert "increase(metric{}[24h])" in expr
-        assert "offset 24h" in expr
+        assert "(metric{} - metric{} offset 24h) > 0" in expr
+        assert "increase(" not in expr
 
     def test_no_window_plain_sum(self):
         expr = sum_over_window("metric{}", None)
@@ -72,18 +94,39 @@ class TestSumOverWindow:
 
     def test_7d_window(self):
         expr = sum_over_window("metric{}", "7d")
-        assert "[7d]" in expr
         assert "offset 7d" in expr
+        assert "increase(" not in expr
+
+    def test_wraps_windowed_change_in_sum(self):
+        expr = sum_over_window("metric{}", "1h")
+        assert expr.startswith("sum(") and expr.endswith(")")
 
 
-class TestApplyTimeRange:
-    def test_applies_increase(self):
-        expr = apply_time_range("metric{}", "1h")
-        assert expr == "increase(metric{}[1h])"
+class TestSumOverPrevWindow:
+    def test_1h_uses_1h_and_2h_offsets(self):
+        expr = sum_over_prev_window("metric{}", "1h")
+        assert "offset 1h" in expr
+        assert "offset 2h" in expr
+        assert "increase(" not in expr
 
-    def test_no_window_returns_raw(self):
-        expr = apply_time_range("metric{}", None)
-        assert expr == "metric{}"
+    def test_24h_uses_24h_and_48h_offsets(self):
+        expr = sum_over_prev_window("metric{}", "24h")
+        assert "offset 24h" in expr
+        assert "offset 48h" in expr
+
+    def test_7d_uses_7d_and_14d_offsets(self):
+        expr = sum_over_prev_window("metric{}", "7d")
+        assert "offset 7d" in expr
+        assert "offset 14d" in expr
+
+    def test_30d_uses_30d_and_60d_offsets(self):
+        expr = sum_over_prev_window("metric{}", "30d")
+        assert "offset 30d" in expr
+        assert "offset 60d" in expr
+
+    def test_wraps_in_sum(self):
+        expr = sum_over_prev_window("metric{}", "24h")
+        assert expr.startswith("sum(") and expr.endswith(")")
 
 
 class TestServiceBreakdownConfig:
