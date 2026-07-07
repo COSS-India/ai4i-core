@@ -1,21 +1,20 @@
 """
 Middleware for AI4ICore Observability Plugin.
 
-Handles request tracking, path-based service detection, and Prometheus metric
-emission. Tenant is read from the gateway-injected ``X-Tenant-Id`` header
-(set by ``auth-service /validate``) — this middleware does NOT decode JWTs and
-does NOT open OpenTelemetry spans.
+Handles request tracking, path-based service detection, payload analysis, and
+Prometheus metric emission. Tenant is read from the gateway-injected
+``X-Tenant-Id`` header (set by ``auth-service /validate``) — this middleware
+does NOT decode JWTs and does NOT open OpenTelemetry spans.
 
-When inference-service trace publishes pre-computed payload metrics (via
-``set_inference_payload_metrics``), this middleware skips re-parsing the
-request body and emits Prometheus metrics from that snapshot instead.
+For JSON inference requests, payload analysis runs **before** ``call_next``.
+Pre-computed attributes are injected as ``X-Tracing-*`` request headers for
+downstream tracing layers and stored on ``request.state`` for post-response
+Prometheus emission.
 """
 import asyncio
 import json
 import logging
-import re
 import time
-from contextvars import ContextVar
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import Request
@@ -24,29 +23,10 @@ from starlette.responses import Response
 
 from .config import PluginConfig
 from .metrics import MetricsCollector
+from .payload_analysis import analyze_payload, build_observability_metrics
+from .tracing_headers import inject_tracing_headers
 
 logger = logging.getLogger(__name__)
-
-# Populated by inference-service trace after a single payload analysis pass.
-_inference_payload_metrics: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
-    "inference_payload_metrics", default=None
-)
-
-
-def set_inference_payload_metrics(metrics: Dict[str, Any]) -> None:
-    """Store payload metrics computed during inference tracing (one pass per request)."""
-    _inference_payload_metrics.set(metrics)
-
-
-def get_inference_payload_metrics() -> Optional[Dict[str, Any]]:
-    """Peek at trace-computed payload metrics without clearing."""
-    return _inference_payload_metrics.get()
-
-
-def clear_inference_payload_metrics() -> None:
-    """Clear trace-computed metrics after the HTTP request is done with them."""
-    _inference_payload_metrics.set(None)
-
 
 # Service types whose request bodies carry payload-size metrics worth
 # extracting. Membership check is O(1). LLM is handled separately because its
@@ -56,6 +36,29 @@ _BODY_METRIC_SERVICES = frozenset({
     "language_detection", "audio_lang_detection",
     "speaker_diarization", "language_diarization", "ner",
 })
+
+_INFERENCE_JSON_PATH_HINTS = (
+    "/inference",
+    "/nmt",
+    "/asr",
+    "/tts",
+    "/ocr",
+    "/ner",
+    "/transliteration",
+    "/translate",
+    "/translation",
+    "/language-detection",
+    "/lang-detect",
+    "/audio-lang-detection",
+    "/audio-language-detection",
+    "/speaker-diarization",
+    "/language-diarization",
+    "/chat",
+    "/completion",
+    "/generate",
+    "/llm",
+)
+
 
 def _has_llm_metrics(trace_metrics: Optional[Dict[str, Any]]) -> bool:
     if not trace_metrics:
@@ -218,14 +221,26 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if self.config.debug:
             logger.debug(f"Request: {method} {path} -> service_type={service_type}")
 
-        # Run the actual handler. All observability work happens AFTER the
-        # response is in hand so we never block the user.
-        response = await call_next(request)
+        trace_metrics: Optional[Dict[str, Any]] = None
+        body_bytes: Optional[bytes] = None
+
+        if self._should_analyze_request_body(request, method, path):
+            body_bytes, trace_metrics = await self._prepare_inference_request(
+                request, service_type
+            )
+
+        if body_bytes is not None:
+            response = await self._call_next_with_body(request, body_bytes, call_next)
+        else:
+            response = await call_next(request)
+
         duration = time.time() - start_time
 
-        # LLM (chat / chat-completions): prefer usage captured during tracing;
-        # otherwise buffer the response body once to read the vLLM `usage` block.
-        trace_metrics = get_inference_payload_metrics()
+        if trace_metrics is None:
+            trace_metrics = getattr(request.state, "observability_payload_metrics", None)
+
+        # LLM (chat / chat-completions): token counts come from the upstream
+        # response `usage` block. Buffer the response body once when needed.
         llm_prompt_tokens = 0
         llm_completion_tokens = 0
         llm_total_tokens = 0
@@ -235,7 +250,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             llm_completion_tokens = int(trace_metrics.get("llm_completion_tokens") or 0)
             llm_total_tokens = int(trace_metrics.get("llm_total_tokens") or 0)
             llm_model = str(trace_metrics.get("llm_model") or "")
-        elif service_type == "llm":
+        elif service_type == "llm" or (trace_metrics or {}).get("service_type") == "llm":
             response, response_body_bytes = await self._buffer_response(response)
             (
                 llm_prompt_tokens,
@@ -244,21 +259,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 llm_model,
             ) = self._extract_llm_usage_from_body(response_body_bytes)
 
-        # tenant_id comes from the gateway-injected X-Tenant-Id header (set by
-        # auth-service /validate after verifying the bearer token; the gateway
-        # forwards it upstream). HTTP header names are case-insensitive, so
-        # this matches X-Tenant-Id / X-Tenant-ID / x-tenant-id.
-        # service_id is populated during request handling by model-management.
         tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
         service_id = getattr(request.state, "service_id", "") or ""
-        # LLM endpoints don't go through model-management; per spec the
-        # model name echoed in the response acts as the service identifier.
         if service_type == "llm" and llm_model:
             service_id = llm_model
+        elif trace_metrics and trace_metrics.get("service_id"):
+            service_id = str(trace_metrics.get("service_id") or service_id)
 
-        # Fire-and-forget: parse the body and emit metrics WITHOUT blocking
-        # the response. Holding the task in self._pending_tasks keeps it
-        # alive — asyncio.create_task only keeps a weak reference.
         task = asyncio.create_task(self._record_metrics(
             path=path,
             method=method,
@@ -275,9 +282,70 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         ))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
-        clear_inference_payload_metrics()
 
         return response
+
+    async def _prepare_inference_request(
+        self,
+        request: Request,
+        path_service_type: str,
+    ) -> Tuple[Optional[bytes], Optional[Dict[str, Any]]]:
+        """Analyze JSON body, inject tracing headers, and cache metrics on state."""
+        body_bytes: Optional[bytes] = None
+        try:
+            body_bytes = await request.body()
+            if not body_bytes:
+                return None, None
+
+            payload = json.loads(body_bytes)
+            if not isinstance(payload, dict):
+                return body_bytes, None
+
+            analysis = analyze_payload(payload)
+            if path_service_type != "unknown" and analysis.get("service_type") == "unknown":
+                analysis["service_type"] = path_service_type
+
+            inject_tracing_headers(request.scope, analysis)
+            trace_metrics = build_observability_metrics(
+                analysis,
+                path_service_type=path_service_type,
+            )
+            request.state.observability_payload_metrics = trace_metrics
+            request.state.observability_payload_analysis = analysis
+
+            if self.config.debug:
+                logger.debug(
+                    "Injected tracing headers for %s (service_type=%s)",
+                    request.url.path,
+                    analysis.get("service_type"),
+                )
+            return body_bytes, trace_metrics
+        except json.JSONDecodeError:
+            return body_bytes, None
+        except Exception:
+            if self.config.debug:
+                logger.debug("Inference payload analysis failed", exc_info=True)
+            return body_bytes, None
+
+    @staticmethod
+    async def _call_next_with_body(request: Request, body: bytes, call_next):
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        replayed = Request(request.scope, receive)
+        return await call_next(replayed)
+
+    @staticmethod
+    def _should_analyze_request_body(request: Request, method: str, path: str) -> bool:
+        if method.upper() not in {"POST", "PUT", "PATCH"}:
+            return False
+        path_lower = path.lower()
+        if not any(hint in path_lower for hint in _INFERENCE_JSON_PATH_HINTS):
+            return False
+        content_type = (request.headers.get("content-type") or "").lower()
+        if content_type and "application/json" not in content_type:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Path-based service detection.
@@ -351,8 +419,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 if payload_service_id:
                     service_id = payload_service_id
 
-            # Request count + duration fire for every request, regardless of
-            # whether we extracted a payload metric.
             self.metrics_collector.track_request(
                 method=method,
                 endpoint=path,
@@ -362,9 +428,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 service_id=service_id,
             )
 
-            # LLM: token counts come from the inference engine's response
-            # `usage` block (extracted in dispatch). Skipped for streaming
-            # responses (no usage block).
             if effective_service_type == "llm" and (
                 llm_prompt_tokens or llm_completion_tokens or llm_total_tokens
             ):
@@ -397,7 +460,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         tenant: str,
         service_id: str,
     ) -> None:
-        """Emit Prometheus payload metrics from a trace-computed snapshot."""
+        """Emit Prometheus payload metrics from a pre-computed snapshot."""
         emitter = _TRACE_PAYLOAD_EMITTERS.get(service_type)
         if emitter is None:
             return
@@ -430,7 +493,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         async for chunk in response.body_iterator:
             chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
         body = b"".join(chunks)
-        # Drop Content-Length — Response recomputes it from the buffered body.
         headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
         new_response = Response(
             content=body,

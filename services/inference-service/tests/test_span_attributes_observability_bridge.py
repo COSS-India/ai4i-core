@@ -1,4 +1,4 @@
-"""Tests for payload analysis and the optional trace → observability bridge."""
+"""Tests for payload analysis, tracing headers, and trace layer integration."""
 
 import base64
 import io
@@ -8,24 +8,18 @@ from unittest.mock import patch
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
+from starlette.requests import Request
 
-from ai4i_core.observability.middleware import (
-    clear_inference_payload_metrics,
-    get_inference_payload_metrics,
+from ai4i_core.observability.payload_analysis import analyze_payload
+from ai4i_core.observability.tracing_headers import (
+    TRACING_HEADER_PREFIX,
+    build_tracing_header_pairs,
+    inject_tracing_headers,
+    read_tracing_headers,
 )
-from trace import observability_bridge as ob
-from trace import payload_analysis as pa
 from trace import span_attributes as sa
 from trace.request_span import traced_inference
-
-
-@pytest.fixture(autouse=True)
-def _reset_context():
-    pa._payload_analysis.set(None)
-    clear_inference_payload_metrics()
-    yield
-    pa._payload_analysis.set(None)
-    clear_inference_payload_metrics()
+from trace.tracing_headers import get_tracing_attributes
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +41,21 @@ def _wav_base64(seconds: float = 1.0, rate: int = 16000) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _request_with_tracing_headers(analysis: dict) -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/inference",
+        "headers": [],
+    }
+    inject_tracing_headers(scope, analysis)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request(scope, receive)
+
+
 class TestAnalyzePayload:
     def test_nmt_payload_analysis(self):
         payload = {
@@ -57,7 +66,7 @@ class TestAnalyzePayload:
                 "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
             },
         }
-        analysis = pa.analyze_payload(payload)
+        analysis = analyze_payload(payload)
 
         assert analysis["input_type"] == "text"
         assert analysis["input_tokens"] == 2
@@ -74,112 +83,83 @@ class TestAnalyzePayload:
             "audio": [{"audioContent": _wav_base64(2.0)}],
             "config": {"language": {"sourceLanguage": "en"}},
         }
-        analysis = pa.analyze_payload(payload)
+        analysis = analyze_payload(payload)
 
         assert analysis["input_type"] == "audio"
         assert analysis["service_type"] == "asr"
         assert analysis["audio_seconds"] == pytest.approx(2.0, rel=0.01)
 
-    def test_ocr_payload_analysis(self):
-        content = "A" * 400
-        payload = {
-            "task_type": "OCR",
-            "image": [{"imageContent": content}],
-        }
-        analysis = pa.analyze_payload(payload)
-
-        assert analysis["input_type"] == "image"
-        assert analysis["ocr_characters"] == 2
-        assert analysis["ocr_image_kb"] > 0
-
-    def test_caches_second_call_for_same_payload(self):
-        payload = {"task_type": "NER", "input": [{"source": "one two three"}]}
-        first = pa.analyze_payload(payload)
-        second = pa.analyze_payload(payload)
-        assert first is second
-
     def test_non_dict_returns_empty(self):
-        assert pa.analyze_payload(None) == {}
+        assert analyze_payload(None) == {}
 
 
-class TestPublishInferencePayloadMetrics:
-    def test_publishes_nmt_snapshot_to_contextvar(self):
-        payload = {
-            "task_type": "NMT",
-            "input": [{"source": "hello"}],
-            "config": {"serviceId": "nmt-1"},
+class TestTracingHeaders:
+    def test_prefix_constant(self):
+        assert TRACING_HEADER_PREFIX == "X-Tracing-"
+
+    def test_build_and_read_round_trip(self):
+        analysis = {
+            "input_type": "text",
+            "input_tokens": 5,
+            "service_type": "translation",
+            "service_id": "nmt-1",
+            "characters": 42,
         }
-        ob.publish_inference_payload_metrics(
-            payload,
-            span_attrs={"service_id": "span-svc"},
-            task_name="NMTTaskService",
-        )
-        metrics = get_inference_payload_metrics()
-        assert metrics is not None
-        assert metrics["service_type"] == "translation"
-        assert metrics["characters"] == 5
-        assert metrics["service_id"] == "span-svc"
+        pairs = build_tracing_header_pairs(analysis)
+        headers = {name: value for name, value in pairs}
+        parsed = read_tracing_headers(headers)
+        assert parsed["input_type"] == "text"
+        assert parsed["input_tokens"] == 5
+        assert parsed["service_type"] == "translation"
+        assert parsed["service_id"] == "nmt-1"
+        assert parsed["characters"] == 42
 
-    def test_publishes_llm_token_fields(self):
-        payload = {"task_type": "LLM", "model": "gemma-test"}
-        ob.publish_inference_payload_metrics(
-            payload,
-            span_attrs={"input_tokens": 100, "output_tokens": 25},
-            task_name="LLM",
-        )
-        metrics = get_inference_payload_metrics()
-        assert metrics["service_type"] == "llm"
-        assert metrics["llm_prompt_tokens"] == 100
-        assert metrics["llm_completion_tokens"] == 25
-        assert metrics["llm_total_tokens"] == 125
-        assert metrics["llm_model"] == "gemma-test"
-
-    def test_service_type_from_task_name_suffix(self):
-        payload = {"task_type": "NMT", "input": [{"source": "x"}]}
-        ob.publish_inference_payload_metrics(payload, {}, "NMTTaskService")
-        assert get_inference_payload_metrics()["service_type"] == "translation"
-
-    def test_publish_swallows_errors(self, monkeypatch):
-        monkeypatch.setattr(
-            pa,
-            "analyze_payload",
-            lambda _payload: (_ for _ in ()).throw(RuntimeError("boom")),
-        )
-        ob.publish_inference_payload_metrics({"input": []}, {}, "NER")
+    def test_get_tracing_attributes_from_request(self):
+        analysis = {
+            "input_type": "audio",
+            "input_tokens": 10,
+            "service_type": "asr",
+            "service_id": "asr-svc",
+            "audio_seconds": 1.5,
+        }
+        request = _request_with_tracing_headers(analysis)
+        attrs = get_tracing_attributes(request)
+        assert attrs["input_type"] == "audio"
+        assert attrs["input_tokens"] == 10
+        assert attrs["service_id"] == "asr-svc"
+        assert attrs["audio_seconds"] == pytest.approx(1.5)
 
 
 class TestTracedInferenceIntegration:
     @pytest.mark.asyncio
-    async def test_traced_inference_publishes_on_success(self):
+    async def test_traced_inference_seeds_from_tracing_headers(self):
         payload = {
             "task_type": "ASR",
             "audio": [{"audioContent": _wav_base64(1.0)}],
             "config": {"serviceId": "asr-svc"},
         }
+        analysis = analyze_payload(payload)
+        request = _request_with_tracing_headers(analysis)
         logger = logging.getLogger("test.trace")
+        captured = {}
 
-        async with traced_inference(payload, "ASRTaskService", logger) as attrs:
-            attrs["input_tokens"] = 10
+        async with traced_inference(payload, "ASRTaskService", logger, request=request) as attrs:
+            captured.update(attrs)
             attrs["output_tokens"] = 5
             attrs["output_type"] = "text"
-            attrs["service_id"] = "asr-svc"
 
-        metrics = get_inference_payload_metrics()
-        assert metrics is not None
-        assert metrics["service_type"] == "asr"
-        assert metrics["service_id"] == "asr-svc"
-        assert metrics["audio_seconds"] == pytest.approx(1.0, rel=0.05)
+        assert captured["input_type"] == "audio"
+        assert captured["input_tokens"] == analysis["input_tokens"]
+        assert captured["service_id"] == "asr-svc"
 
     @pytest.mark.asyncio
-    async def test_traced_inference_does_not_publish_on_failure(self):
-        payload = {"task_type": "ASR", "audio": [{"audioContent": _wav_base64(0.5)}]}
-        logger = logging.getLogger("test.trace.failure")
+    async def test_traced_inference_falls_back_without_headers(self):
+        payload = {"input": [{"source": "hello"}]}
+        logger = logging.getLogger("test.trace.fallback")
 
-        with pytest.raises(RuntimeError, match="inference failed"):
-            async with traced_inference(payload, "ASRTaskService", logger):
-                raise RuntimeError("inference failed")
-
-        assert get_inference_payload_metrics() is None
+        async with traced_inference(payload, "NER", logger) as attrs:
+            assert attrs["input_type"] == "text"
+            assert attrs["input_tokens"] == 0
 
 
 class TestSpanAttributes:
@@ -210,13 +190,5 @@ class TestPayloadShapeVariants:
             "task_type": "NMT",
             "inputData": {"input": [{"source": "nested text"}]},
         }
-        analysis = pa.analyze_payload(payload)
+        analysis = analyze_payload(payload)
         assert analysis["characters"] == len("nested text")
-
-
-class TestObservabilityPackageExport:
-    def test_set_inference_payload_metrics_exported(self):
-        from ai4i_core.observability import set_inference_payload_metrics as exported
-
-        exported({"service_type": "ner", "ner_tokens": 1})
-        assert get_inference_payload_metrics()["ner_tokens"] == 1

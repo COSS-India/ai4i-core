@@ -1,21 +1,16 @@
-"""Single-pass inference payload analysis for observability metrics.
+"""Single-pass inference payload analysis for observability and tracing headers.
 
-Kept separate from span attribute helpers so tracing stays decoupled from
-Prometheus / observability middleware.
+Runs in ObservabilityMiddleware before handlers execute so downstream tracing
+can read pre-computed attributes from ``X-Tracing-*`` request headers.
 """
 
 import base64
 import io
 import logging
 import wave
-from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-_payload_analysis: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
-    "payload_analysis", default=None
-)
 
 _TASK_TYPE_TO_SERVICE = {
     "NMT": "translation",
@@ -33,12 +28,9 @@ _TASK_TYPE_TO_SERVICE = {
 
 
 def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Analyze the inference payload once and cache for the current request."""
+    """Analyze an inference JSON payload once."""
     if not isinstance(payload, dict):
         return {}
-    cached = _payload_analysis.get()
-    if cached is not None and cached.get("_payload_id") == id(payload):
-        return cached
 
     input_type = _detect_input_type(payload)
     input_items = _input_items(payload, input_type)
@@ -55,8 +47,7 @@ def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     source_lang, target_lang = _extract_languages(payload)
     service_id = _extract_service_id(payload)
 
-    analysis: Dict[str, Any] = {
-        "_payload_id": id(payload),
+    return {
         "input_type": input_type,
         "input_tokens": input_tokens,
         "characters": _sum_input_characters(payload),
@@ -69,21 +60,18 @@ def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "service_id": service_id,
         "service_type": _service_type_from_payload(payload),
     }
-    _payload_analysis.set(analysis)
-    return analysis
 
 
 def build_observability_metrics(
-    payload: Dict[str, Any],
-    span_attrs: Dict[str, Any],
-    task_name: str,
+    analysis: Dict[str, Any],
+    *,
+    path_service_type: str = "unknown",
 ) -> Dict[str, Any]:
-    """Build the snapshot ObservabilityMiddleware reads after a successful request."""
-    analysis = analyze_payload(payload) if isinstance(payload, dict) else {}
-    service_type = analysis.get("service_type") or _service_type_from_task_name(task_name)
-    metrics = {
+    """Build the Prometheus snapshot stored on request.state after analysis."""
+    service_type = analysis.get("service_type") or path_service_type
+    return {
         "service_type": service_type,
-        "service_id": span_attrs.get("service_id") or analysis.get("service_id") or "",
+        "service_id": analysis.get("service_id") or "",
         "source_lang": analysis.get("source_lang") or "",
         "target_lang": analysis.get("target_lang") or "",
         "characters": analysis.get("characters") or 0,
@@ -91,23 +79,6 @@ def build_observability_metrics(
         "audio_seconds": analysis.get("audio_seconds") or 0.0,
         "ocr_characters": analysis.get("ocr_characters") or 0,
         "ocr_image_kb": analysis.get("ocr_image_kb") or 0.0,
-    }
-    if service_type == "llm":
-        metrics.update(_llm_observability_fields(payload, span_attrs))
-    return metrics
-
-
-def _llm_observability_fields(payload: Dict[str, Any], span_attrs: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = int(span_attrs.get("input_tokens") or 0)
-    completion = int(span_attrs.get("output_tokens") or 0)
-    if not (prompt or completion):
-        return {}
-    model = payload.get("model", "") if isinstance(payload, dict) else ""
-    return {
-        "llm_prompt_tokens": prompt,
-        "llm_completion_tokens": completion,
-        "llm_total_tokens": prompt + completion,
-        "llm_model": model,
     }
 
 
@@ -120,6 +91,8 @@ def _detect_input_type(payload: Dict[str, Any]) -> str:
         return "audio"
     if payload.get("image"):
         return "image"
+    if payload.get("messages"):
+        return "text"
     return "unknown"
 
 
@@ -176,6 +149,8 @@ def _nested_payload_list(payload: Dict[str, Any], key: str, input_data_key: Opti
 
 
 def _input_items(payload: Dict[str, Any], input_type: str) -> List[Any]:
+    if input_type == "text" and payload.get("messages"):
+        return payload.get("messages") or []
     key_map = {
         "text": ("input", "input"),
         "audio": ("audio", "audio"),
@@ -192,16 +167,9 @@ def _service_type_from_payload(payload: Dict[str, Any]) -> str:
     task_type = str(payload.get("task_type") or "").upper()
     if task_type in _TASK_TYPE_TO_SERVICE:
         return _TASK_TYPE_TO_SERVICE[task_type]
+    if payload.get("messages") is not None:
+        return "llm"
     return "unknown"
-
-
-def _service_type_from_task_name(task_name: str) -> str:
-    normalized = (task_name or "").upper()
-    if normalized in _TASK_TYPE_TO_SERVICE:
-        return _TASK_TYPE_TO_SERVICE[normalized]
-    if normalized.endswith("TASKSERVICE"):
-        normalized = normalized.replace("TASKSERVICE", "")
-    return _TASK_TYPE_TO_SERVICE.get(normalized, "unknown")
 
 
 def _extract_languages(payload: Dict[str, Any]) -> tuple:
@@ -222,6 +190,9 @@ def _extract_service_id(payload: Dict[str, Any]) -> str:
         service_id = str(cfg.get("service_id") or cfg.get("serviceId") or "").strip()
         if service_id:
             return service_id
+    model = str(payload.get("model") or "").strip()
+    if model:
+        return model
     return str(payload.get("serviceId") or payload.get("service_id") or "").strip()
 
 

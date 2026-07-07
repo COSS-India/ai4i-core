@@ -401,7 +401,9 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         req_attrs["method"] = request.method
         req_attrs.update(get_context_attributes())
  
-        status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
+        status_code, body = await OpenAIProxyService().proxy_traced(
+            path=path, payload=payload, request=request
+        )
  
         if status_code >= 400:
             req_attrs["status"] = "failure"

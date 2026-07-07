@@ -56,7 +56,12 @@ class OpenAIProxyService:
 
         return response.status_code, body
 
-    async def proxy_traced(self, path: str, payload: Any) -> Tuple[int, Any]:
+    async def proxy_traced(
+        self,
+        path: str,
+        payload: Any,
+        request=None,
+    ) -> Tuple[int, Any]:
         """
         proxy() wrapped with model + ai_inference spans, mirroring the
         Orchestrator + BaseTaskService pattern used by Triton-backed services.
@@ -80,7 +85,7 @@ class OpenAIProxyService:
             model_attrs.update(get_context_attributes())
             model_attrs["service_id"] = service_id
 
-            async with traced_inference(payload, "LLM", logger) as infer_attrs:
+            async with traced_inference(payload, "LLM", logger, request=request) as infer_attrs:
                 # service_id is not in context vars — must be copied explicitly.
                 # tenantId is also set explicitly: the PPU Kafka consumer reads only
                 # the ai-inference span for billing, so it must always be present

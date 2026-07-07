@@ -8,9 +8,13 @@ with context attributes (userId, tenantId) from ai4i_core.context.
 import time
 import logging
 from contextlib import asynccontextmanager, contextmanager
+from typing import Optional
 
+from fastapi import Request
 from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import StatusCode
+
+from trace.tracing_headers import get_tracing_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -161,18 +165,23 @@ def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: boo
 
 
 @asynccontextmanager
-async def traced_inference(payload: dict, task_name: str, logger_: logging.Logger):
+async def traced_inference(
+    payload: dict,
+    task_name: str,
+    logger_: logging.Logger,
+    request: Optional[Request] = None,
+):
     """
     The 'ai-inference' span around an inference call, built on traced_span.
 
-    Yields a mutable attrs dict pre-seeded with input_type; the wrapped code
-    fills in input_tokens / output_tokens / output_type as they become known.
+    Yields a mutable attrs dict pre-seeded with input_type and other payload
+    attributes from ObservabilityMiddleware ``X-Tracing-*`` headers. The
+    wrapped code fills in output_tokens / output_type after inference completes.
     On failure token counts are zeroed and the error is logged with traceback.
 
     Single definition shared by the base run_inference and TTS's override —
     keep span attribute changes here only.
     """
-    from trace.observability_bridge import publish_inference_payload_metrics
     from trace.span_attributes import get_input_type
 
     def _zero_tokens(attrs, exc):
@@ -181,23 +190,21 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
         attrs["output_tokens"] = 0
         return attrs
 
+    tracing = get_tracing_attributes(request)
+
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
-        # Seed correlation_id (and tenantId/authType) so LoggerSpanExporter uses
-        # the same context.trace_id as the sibling request/model spans.  Without
-        # this the ai-inference span lands in OpenSearch under the raw OTel trace
-        # ID (0x…) rather than the correlation ID, making it invisible in the UI.
         attrs.update(get_context_attributes())
         attrs.update({
-            "input_type": get_input_type(payload),
+            "input_type": tracing.get("input_type") or get_input_type(payload),
             "output_type": "unknown",
-            "input_tokens": 0,
+            "input_tokens": tracing.get("input_tokens", 0),
             "output_tokens": 0,
         })
+        if tracing.get("service_id"):
+            attrs["service_id"] = tracing["service_id"]
         try:
             yield attrs
         except Exception:
             raise
-        else:
-            publish_inference_payload_metrics(payload, attrs, task_name)

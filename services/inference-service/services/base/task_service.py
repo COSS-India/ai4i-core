@@ -71,6 +71,7 @@ class BaseTaskService:
         self,
         payload: Dict[str, Any],
         serviceInfo: Optional[Dict[str, Any]] = None,
+        request: Optional[Any] = None,
     ) -> Any:
         """
         Execute the complete inference pipeline (Template Method).
@@ -98,7 +99,7 @@ class BaseTaskService:
 
         await self.validate_request(payload)
         preprocessed = await self.preprocess_input(payload)
-        result = await self.run_inference(preprocessed, serviceInfo)
+        result = await self.run_inference(preprocessed, serviceInfo, request=request)
         return await self.postprocess_output(result)
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
@@ -224,7 +225,7 @@ class BaseTaskService:
         mapper = GenericTritonMapper(self._adapter_config)
         return mapper.to_output_items(mapper.map_outputs(triton_output))
 
-    async def run_inference(self, payload: Dict[str, Any], serviceInfo: Dict[str, Any]) -> PostProcessFormat:
+    async def run_inference(self, payload: Dict[str, Any], serviceInfo: Dict[str, Any], request=None) -> PostProcessFormat:
         """
         Generic Triton inference — single implementation for every modality.
 
@@ -269,8 +270,9 @@ class BaseTaskService:
                 group, config_data
             )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
-            async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-                span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
+            async with traced_inference(payload, self.task_name, self.logger, request=request) as span_ctx:
+                if not span_ctx.get("input_tokens"):
+                    span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,

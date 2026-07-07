@@ -79,7 +79,7 @@ class Orchestrator:
 
             # Instantiate and run the task service with the raw payload
             task_service = self._get_task_service(service_info)
-            task_response = await task_service.process(payload, service_info)
+            task_response = await task_service.process(payload, service_info, request=request)
 
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
 
