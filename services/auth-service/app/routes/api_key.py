@@ -5,6 +5,7 @@ Route definitions only — no business logic, no DB/Redis calls.
 All operations are delegated to APIKeyService.
 """
 
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -28,6 +29,8 @@ from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
 from app.utils.masking import mask_email
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["API Keys"])
 
 
@@ -49,11 +52,16 @@ async def _key_dicts_for_response(svc: APIKeyService, keys) -> list[dict]:
     id_to_name = await svc.permission_name_map_for_keys(keys)
 
     def names_for(key) -> list[str]:
-        return [
-            id_to_name[pid]
-            for pid in (key.permissions or [])
-            if pid in id_to_name
-        ]
+        names = []
+        for pid in (key.permissions or []):
+            name = id_to_name.get(pid)
+            if name is None:
+                logger.warning(
+                    "api_key id=%s references unknown permission id=%s", key.id, pid
+                )
+                continue
+            names.append(name)
+        return names
 
     return [_key_dict(k, permission_names=names_for(k)) for k in keys]
 
@@ -73,7 +81,9 @@ async def create_api_key(
         tenant_id=ctx.tenant_id,
         platform_core_db=platform_core_db,
     )
-    permission_names = await svc.permission_ids_to_names(api_key.permissions or [])
+    permission_names = await svc.permission_ids_to_names(
+        api_key.permissions or [], api_key_id=api_key.id
+    )
     return success_response(data=CreateAPIKeyResponse(
         id=api_key.id,
         api_key=raw_key,
@@ -117,7 +127,9 @@ async def update_api_key(
         raise EntityNotFoundError("API key")
 
     updated_key = await svc.update_key_by_obj(db_key, update_data, user_id)
-    permission_names = await svc.permission_ids_to_names(updated_key.permissions or [])
+    permission_names = await svc.permission_ids_to_names(
+        updated_key.permissions or [], api_key_id=updated_key.id
+    )
     return success_response(data=_key_dict(updated_key, permission_names=permission_names))
 
 

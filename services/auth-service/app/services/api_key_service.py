@@ -98,12 +98,28 @@ class APIKeyService:
             )
         return [name_to_id[name] for name in unique_names]
 
-    async def permission_ids_to_names(self, permission_ids: list[int]) -> list[str]:
+    async def permission_ids_to_names(
+        self, permission_ids: list[int], *, api_key_id: int | None = None
+    ) -> list[str]:
         """Map stored permission IDs to stable names for client-facing responses."""
         if not permission_ids:
             return []
         id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
-        return [id_to_name[pid] for pid in permission_ids if pid in id_to_name]
+        names = []
+        for pid in permission_ids:
+            name = id_to_name.get(pid)
+            if name is None:
+                if api_key_id is not None:
+                    logger.warning(
+                        "api_key id=%s references unknown permission id=%s",
+                        api_key_id,
+                        pid,
+                    )
+                else:
+                    logger.warning("unknown permission id=%s (no name mapping)", pid)
+                continue
+            names.append(name)
+        return names
 
     async def permission_name_map_for_keys(self, keys: list[APIKey]) -> dict[int, str]:
         """Batch-fetch id→name for all permission IDs referenced by the given keys."""

@@ -84,11 +84,13 @@ class TestPermissionIdsToNames:
         assert await svc.permission_ids_to_names([]) == []
 
     @pytest.mark.asyncio
-    async def test_orphaned_id_is_omitted_from_response(self) -> None:
+    async def test_orphaned_id_is_omitted_from_response(self, caplog) -> None:
         """Deleted permissions leave stored IDs that no longer resolve — names are dropped."""
         svc = _service(id_to_name={12: "nmt.inference"})
-        names = await svc.permission_ids_to_names([12, 99])
+        with caplog.at_level("WARNING"):
+            names = await svc.permission_ids_to_names([12, 99], api_key_id=1)
         assert names == ["nmt.inference"]
+        assert "api_key id=1 references unknown permission id=99" in caplog.text
 
 
 class TestAPIKeyReadRoutes:
@@ -113,7 +115,7 @@ class TestAPIKeyReadRoutes:
         assert all(not isinstance(p, int) for p in response["data"]["api_keys"][0]["permissions"])
 
     @pytest.mark.asyncio
-    async def test_list_api_keys_omits_unresolved_permission_ids(self) -> None:
+    async def test_list_api_keys_omits_unresolved_permission_ids(self, caplog) -> None:
         from app.routes.api_key import list_api_keys
 
         key = _api_key(permissions=[12, 99])
@@ -121,9 +123,11 @@ class TestAPIKeyReadRoutes:
         mock_svc.list_by_user = AsyncMock(return_value=[key])
         mock_svc.permission_name_map_for_keys = AsyncMock(return_value={12: "nmt.inference"})
 
-        response = await list_api_keys(user_id=key.user_id, _admin=MagicMock(), svc=mock_svc)
+        with caplog.at_level("WARNING"):
+            response = await list_api_keys(user_id=key.user_id, _admin=MagicMock(), svc=mock_svc)
 
         assert response["data"]["api_keys"][0]["permissions"] == ["nmt.inference"]
+        assert "api_key id=1 references unknown permission id=99" in caplog.text
 
 
 class TestInferencePermissionCatalog:
