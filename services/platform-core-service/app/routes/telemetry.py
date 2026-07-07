@@ -1,7 +1,6 @@
 """Telemetry API endpoints for querying traces."""
 import re
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -20,6 +19,11 @@ _ROLE_TENANT_ADMIN = 5
 
 # All allowed roles for telemetry access (roles that can access telemetry endpoints)
 ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
+
+# Fixed display order for the trace-detail waterfall: every task type
+# (LLM, NMT, ASR, ...) resolves a model before calling it, so this sequence
+# is always correct regardless of task type or nesting shape.
+_SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2}
 
 
 def _check_permission_ids(request: Request, *allowed: int) -> None:
@@ -322,27 +326,13 @@ async def get_trace_by_id(
                 "timestamp": source.get("@timestamp") or source.get("timestamp"),
             })
 
-        # OpenSearch returns spans by @timestamp desc (span end time), which puts
-        # outer spans first only when they finish last (true for LLM's nested
-        # model->ai-inference, but not for NMT's flat model/ai-inference siblings,
-        # where model finishes long before ai-inference even starts). Re-sort by
-        # start time (end time minus duration) ascending so span order reflects
-        # when each span actually began, giving a consistent
-        # request -> model -> ai-inference ordering for every task type.
-        def _start_time(span: dict) -> datetime:
-            ts = span.get("timestamp")
-            duration_ms = span.get("attributes", {}).get("total_time_ms")
-            if not ts:
-                return datetime.min.replace(tzinfo=timezone.utc)
-            try:
-                end = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                return datetime.min.replace(tzinfo=timezone.utc)
-            if duration_ms is None:
-                return end
-            return end - timedelta(milliseconds=duration_ms)
-
-        spans.sort(key=_start_time)
+        # @timestamp is Fluent Bit's ingestion time, not the span's real OTel
+        # end_time (no Time_Key override in fluent-bit.conf), so all spans in a
+        # trace land within a few ms of each other regardless of actual duration
+        # -- unusable for chronological ordering, and start_time/end_time never
+        # reach this index. Every task type follows the same fixed span
+        # sequence, so rank by name instead of by (unreliable) time.
+        spans.sort(key=lambda s: _SPAN_ORDER.get(s.get("name"), len(_SPAN_ORDER)))
 
         trace_response = TraceResponse(
             trace_id=trace_id,
