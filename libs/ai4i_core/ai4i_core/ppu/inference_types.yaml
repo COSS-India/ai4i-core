@@ -35,6 +35,3 @@ inference_types:
   - name: pipeline
     endpoint_pattern: /api/v1/pipeline/inference
     unit: requests
-  - name: pii
-    endpoint_pattern: /api/v1/pii/redact
-    unit: characters
