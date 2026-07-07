@@ -5,6 +5,12 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+try:
+    import numpy as _np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -338,6 +344,13 @@ class GenericTritonMapper:
         return current
 
     def _cast_dtype(self, value: Any, dtype: str) -> Any:
+        # numpy array fast-path: batch-convert in one C-level call instead of
+        # 480k individual Python float()/int() invocations (ASR samples tensor).
+        if _HAS_NUMPY and isinstance(value, _np.ndarray):
+            if dtype.startswith("FP"):
+                return value.astype(_np.float32).tolist()
+            if dtype.startswith("INT") or dtype.startswith("UINT"):
+                return value.astype(_np.int64).tolist()
         if isinstance(value, list):
             return [self._cast_dtype(item, dtype) for item in value]
         if dtype.startswith("FP"):
@@ -364,6 +377,20 @@ class GenericTritonMapper:
             normalized = [value if isinstance(value, list) else [value] for value in rendered_values]
         inferred_shape = self._infer_shape(normalized)
         final_shape = self._apply_declared_shape(inferred_shape, list(declared_shape))
+
+        # Fast-path: batch of flat primitive lists (e.g. ASR float samples after
+        # numpy batch-conversion). Replaces recursive _flatten + element-wise
+        # _cast_dtype with a single list comprehension — ~3x fewer Python calls.
+        if (
+            normalized
+            and isinstance(normalized[0], list)
+            and normalized[0]
+            and not isinstance(normalized[0][0], list)
+            and isinstance(normalized[0][0], (int, float))
+            and (dtype.startswith("FP") or dtype.startswith("INT") or dtype.startswith("UINT"))
+        ):
+            return final_shape, [item for sublist in normalized for item in sublist]
+
         flattened = self._flatten(normalized)
         casted = [self._cast_dtype(item, dtype) for item in flattened]
         return final_shape, casted
