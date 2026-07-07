@@ -4,7 +4,7 @@
 
 This guide documents how to run **AI4I Core** and a local **NMT** model together on **Linux** — auth, inference APIs, optional web UI, and CPU-based translation via Triton. You do **not** need a GPU for the NMT path described here.
 
-It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md` (alongside `docs/SETUP_GUIDE.md`).
+It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md`.
 
 ### Two repositories
 
@@ -379,6 +379,7 @@ sed -i \
   -e 's/POSTGRES_PASSWORD=<YOUR_POSTGRES_PASSWORD>/POSTGRES_PASSWORD=postgres/' \
   -e 's/REDIS_PASSWORD=<YOUR_REDIS_PASSWORD>/REDIS_PASSWORD=changeme/' \
   .env
+echo 'TRITON_ENDPOINT_NMT=http://localhost:8000' >> .env
 grep -E '^(POSTGRES_|REDIS_|TRITON_|ALEMBIC_)' .env
 ```
 
@@ -769,10 +770,10 @@ Optional full stack (Kafka, OpenSearch, Prometheus, Grafana): **`docs/TRACING-OB
 
 ## Related documents
 
-| Document | Location |
-|----------|----------|
-| This guide | `docs/END-TO-END-SETUP-GUIDE.md` |
-| Tracing and observability (local) | `docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md` |
-| Platform setup reference | `docs/SETUP_GUIDE.md` |
-| model-hosting | https://github.com/COSS-India/model-hosting (`feat/nmt-local-setup`) |
-| ai4i-core (PyPI) | https://libraries.io/pypi/ai4i-core |
+| Document | Link |
+|----------|------|
+| This guide | [END-TO-END-SETUP-GUIDE.md](END-TO-END-SETUP-GUIDE.md) |
+| Tracing and observability (local) | [TRACING-OBSERVABILITY-LOCAL-SETUP.md](TRACING-OBSERVABILITY-LOCAL-SETUP.md) |
+| Docker Compose local reference | [DOCKER-COMPOSE-LOCAL-REFERENCE.md](DOCKER-COMPOSE-LOCAL-REFERENCE.md) |
+| model-hosting | [github.com/COSS-India/model-hosting](https://github.com/COSS-India/model-hosting) (`feat/nmt-local-setup`) |
+| ai4i-core (PyPI) | [libraries.io/pypi/ai4i-core](https://libraries.io/pypi/ai4i-core) |
