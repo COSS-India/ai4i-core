@@ -148,7 +148,10 @@ class InferenceServerResolver:
                 "api_key": data.get("apiKey") or data.get("api_key"),
                 "adapter_config": adapter_config,
                 "class_instance": class_instance,
+                "is_published": bool(data.get("isPublished", False)),
             }
 
-        # Flat shape (legacy/fallback): pass through as-is
-        return raw
+        # Flat shape (legacy/fallback): pass through as-is, but ensure
+        # is_published is always present so the orchestrator gate is never
+        # skipped by a missing key.
+        return {**raw, "is_published": bool(raw.get("is_published", False))}
