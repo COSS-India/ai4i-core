@@ -11,6 +11,13 @@ import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
 
+# Cap concurrent decode + resample work across all in-flight requests. Each job
+# holds several MB of numpy arrays; without a bound, a burst of parallel
+# requests stacks that memory at once on a pod with no memory limit. The pod is
+# also single-core, so extra threads past this only add scheduler churn.
+_PREPROCESS_MAX_CONCURRENCY = 4
+_preprocess_semaphore = asyncio.Semaphore(_PREPROCESS_MAX_CONCURRENCY)
+
 
 class ASRTaskService(AudioBase):
     """
@@ -71,7 +78,7 @@ class ASRTaskService(AudioBase):
           2. Offload CPU-bound work to thread pool per item so the event loop
              is free to serve other requests during soundfile decode + resample
         Items are returned with samples as a numpy array; the config mapper
-        converts to list once via its numpy fast-path.
+        sends it to Triton as a binary tensor (no Python float list).
         """
         input_data = payload.get(self.payload_key) or []
         if not input_data:
@@ -82,16 +89,22 @@ class ASRTaskService(AudioBase):
             *[self._get_audio_bytes(item) for item in input_data]
         )
 
-        # CPU-bound decode + resample in thread pool — concurrent across items
+        # CPU-bound decode + resample in thread pool, bounded by the semaphore
+        # so parallel requests don't stack unbounded numpy arrays in memory.
         processed = await asyncio.gather(
             *[
-                asyncio.to_thread(self._preprocess_item_sync, item, ab)
+                self._preprocess_item(item, ab)
                 for item, ab in zip(input_data, audio_bytes_list)
             ]
         )
 
         payload[self.payload_key] = list(processed)
         return payload
+
+    async def _preprocess_item(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
+        """Run one item's CPU-bound preprocessing in a bounded thread-pool slot."""
+        async with _preprocess_semaphore:
+            return await asyncio.to_thread(self._preprocess_item_sync, item, audio_bytes)
 
     def _preprocess_item_sync(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
         """Sync preprocessing pipeline — runs in a thread-pool worker.
@@ -228,10 +241,13 @@ class ASRTaskService(AudioBase):
         Normalize audio amplitude to the [-1, 1] range.
         Returns normalized float32 numpy array.
         """
+        audio = audio.astype(np.float32, copy=False)
         max_val = np.max(np.abs(audio))
         if max_val > 0:
-            audio = audio / max_val
-        return audio.astype(np.float32)
+            # In place: we own this array (fresh from resample/decode), so avoid
+            # allocating another full copy per request.
+            audio *= np.float32(1.0 / max_val)
+        return audio
 
     # postprocess_output: adapter_config-driven — the mapper decodes the
     # transcript from the Triton JSON (always a plain str; the old numpy/bytes

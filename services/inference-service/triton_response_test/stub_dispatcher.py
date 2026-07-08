@@ -138,6 +138,11 @@ def _extract_payload_string(triton_inputs):
         data = inp.get("data", [])
         if not data:
             continue
+        # Numeric arrays (e.g. audio samples) can hold hundreds of thousands
+        # of values; size off element count instead of str()-ing each one,
+        # which was an O(N) per-request cost that dwarfed the real work.
+        if isinstance(data, list) and isinstance(data[0], (int, float)):
+            return "0" * len(data)
         parts = []
         stack = list(data)
         while stack:
@@ -152,8 +157,20 @@ def _extract_payload_string(triton_inputs):
     return ""
 
 
-def _classify(payload_string):
-    length = len(payload_string)
+def _binary_payload_len(triton_inputs):
+    """Byte length of the first binary tensor ('_raw'), or None if none.
+
+    Binary tensors (ASR audio samples) carry raw bytes, not a data list, so
+    their size proxy is the byte count — no stringifying of any elements.
+    """
+    for inp in triton_inputs:
+        raw = inp.get("_raw")
+        if raw is not None:
+            return len(raw)
+    return None
+
+
+def _classify(length):
     if length < SMALL_THRESHOLD:
         return 0  # SMALL
     if length < MEDIUM_THRESHOLD:
@@ -171,9 +188,9 @@ def get_stub_response(task_name, triton_inputs):
     entry = _STUBS.get(task_name)
     if entry is None:
         return None
-    payload_str = _extract_payload_string(triton_inputs)
-    idx = _classify(payload_str)
-    return copy.deepcopy(entry[idx])
+    raw_len = _binary_payload_len(triton_inputs)
+    length = raw_len if raw_len is not None else len(_extract_payload_string(triton_inputs))
+    return copy.deepcopy(entry[_classify(length)])
 
 
 # Size-bucketed OpenAI chat-completion stubs for the LLM proxy path. Kept
@@ -202,5 +219,5 @@ def get_llm_stub_response(payload):
     LLM proxy path. Mirrors get_stub_response so the LLM path is stubbed like
     every other service during load testing.
     """
-    idx = _classify(_extract_chat_prompt(payload))
+    idx = _classify(len(_extract_chat_prompt(payload)))
     return copy.deepcopy(_LLM_STUBS[idx])
