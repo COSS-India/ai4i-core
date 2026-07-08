@@ -161,7 +161,7 @@ class GenericTritonMapper:
 
         triton_inputs: Dict[str, Any] = {}
         for tensor_cfg in self.adapter_config.inputs:
-            rendered_values: List[Any] = []
+            resolved_values: List[Any] = []
             for index, item in enumerate(input_data):
                 # Canonical context available for every tensor declaration.
                 context: Dict[str, Any] = {
@@ -174,9 +174,22 @@ class GenericTritonMapper:
                     # are merged without changing generic mapper logic.
                     context.update(context_builder(item, index, config) or {})
 
-                resolved = self._resolve_value(tensor_cfg=tensor_cfg, context=context)
-                rendered_values.append(self._cast_dtype(resolved, tensor_cfg.dtype))
+                resolved_values.append(self._resolve_value(tensor_cfg=tensor_cfg, context=context))
 
+            # Large numeric numpy tensors (e.g. ASR AUDIO_SIGNAL samples) ride
+            # the KServe binary tensor extension as raw bytes, skipping the
+            # Python float list + JSON float serialization entirely.
+            binary = self._as_binary_tensor(resolved_values, tensor_cfg.shape, tensor_cfg.dtype)
+            if binary is not None:
+                shape, raw = binary
+                triton_inputs[tensor_cfg.tensor] = {
+                    "dtype": tensor_cfg.dtype,
+                    "shape": shape,
+                    "_raw": raw,
+                }
+                continue
+
+            rendered_values = [self._cast_dtype(v, tensor_cfg.dtype) for v in resolved_values]
             # Keep Triton payload shape explicit per declaration.
             shape, data = self._materialize_tensor(rendered_values, tensor_cfg.shape, tensor_cfg.dtype)
             triton_inputs[tensor_cfg.tensor] = {
@@ -202,10 +215,16 @@ class GenericTritonMapper:
             'datatype' (KServe v2 wire field) instead of the internal 'dtype'.
         """
         triton_inputs, output_names = self.render_inputs(input_data, config, context_builder)
-        inputs_list = [
-            {"name": name, "datatype": t["dtype"], "shape": t["shape"], "data": t["data"]}
-            for name, t in triton_inputs.items()
-        ]
+        inputs_list = []
+        for name, t in triton_inputs.items():
+            entry = {"name": name, "datatype": t["dtype"], "shape": t["shape"]}
+            # Binary tensors carry raw bytes under '_raw'; the transport layer
+            # assembles them into the KServe binary body. Others keep 'data'.
+            if "_raw" in t:
+                entry["_raw"] = t["_raw"]
+            else:
+                entry["data"] = t["data"]
+            inputs_list.append(entry)
         return inputs_list, output_names
 
     def map_outputs(self, triton_output: Dict[str, Any]) -> Dict[str, Any]:
@@ -364,6 +383,46 @@ class GenericTritonMapper:
                 return value.decode("utf-8", errors="replace")
             return str(value)
         return value
+
+    # Little-endian numpy wire dtypes for the KServe binary tensor extension.
+    _BINARY_WIRE_DTYPE = {
+        "FP16": "<f2", "FP32": "<f4", "FP64": "<f8",
+        "INT8": "|i1", "INT16": "<i2", "INT32": "<i4", "INT64": "<i8",
+        "UINT8": "|u1", "UINT16": "<u2", "UINT32": "<u4", "UINT64": "<u8",
+    }
+
+    def _as_binary_tensor(
+        self,
+        values: List[Any],
+        declared_shape: Sequence[int],
+        dtype: str,
+    ) -> Optional[Tuple[List[int], bytes]]:
+        """Return (shape, raw_bytes) when this tensor is a numeric numpy array
+        to send via the binary tensor extension, else None.
+
+        Only triggers for numpy ndarray values (currently ASR float samples).
+        Every other service resolves scalars/strings/lists, so this returns
+        None for them and the JSON path is unchanged.
+        """
+        if not _HAS_NUMPY:
+            return None
+        wire = self._BINARY_WIRE_DTYPE.get(dtype)
+        if wire is None or not values:
+            return None
+        if not all(isinstance(v, _np.ndarray) for v in values):
+            return None
+
+        rows = [v.astype(wire, copy=False).ravel() for v in values]
+        if len({row.shape[0] for row in rows}) != 1:
+            # Ragged batch: fall back to JSON so shape inference stays correct.
+            return None
+        row_len = rows[0].shape[0]
+        raw = rows[0].tobytes() if len(rows) == 1 else b"".join(r.tobytes() for r in rows)
+        if len(declared_shape) >= 2:
+            shape = [len(rows), row_len]
+        else:
+            shape = [row_len] if len(rows) == 1 else [len(rows) * row_len]
+        return shape, raw
 
     def _materialize_tensor(
         self,
