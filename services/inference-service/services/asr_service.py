@@ -70,8 +70,8 @@ class ASRTaskService(AudioBase):
           1. Fetch raw audio bytes for all items (async — supports URI downloads)
           2. Offload CPU-bound work to thread pool per item so the event loop
              is free to serve other requests during soundfile decode + resample
-        Items are returned with samples as a numpy array; the config mapper
-        converts to list once via its numpy fast-path.
+        Items are returned with samples as a Python list (converted in the
+        thread) so the event loop is not blocked by .tolist() or mapper overhead.
         """
         input_data = payload.get(self.payload_key) or []
         if not input_data:
@@ -96,15 +96,16 @@ class ASRTaskService(AudioBase):
     def _preprocess_item_sync(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
         """Sync preprocessing pipeline — runs in a thread-pool worker.
 
-        Keeps the numpy array as-is; the mapper's numpy fast-path converts it to
-        a Python list in a single C-level call, avoiding 1.44M individual Python
-        float() invocations.
+        Converts samples to a Python list here (in the thread) so the event loop
+        is not blocked by the 100–200 ms .tolist() allocation and so the
+        _materialize_tensor fast-path (plain list comprehension, no per-element
+        function calls) fires correctly in the config mapper.
         """
         audio_data, sample_rate = self._decode_audio_bytes_sync(audio_bytes)
         audio_data = self._stereo_to_mono(audio_data)
         audio_data = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
         audio_data = self._equalize_amplitude(audio_data)
-        item["samples"]     = audio_data          # numpy array; mapper converts
+        item["samples"]     = audio_data.tolist()  # convert in thread, not on event loop
         item["num_samples"] = len(audio_data)
         item["sample_rate"] = self.TARGET_SAMPLE_RATE
         return item
@@ -212,15 +213,22 @@ class ASRTaskService(AudioBase):
     def _resample(self, data: Any, from_rate: int, to_rate: int) -> Any:
         """Resample a float32 numpy array from from_rate to to_rate.
 
-        Uses resample_poly (polyphase filter) instead of resample (full FFT).
-        For typical rates (44100→16000, 48000→16000) this is 3–10x faster because
-        the filter operates on a downsampled signal rather than an FFT over the
-        full array length.
+        resample_poly is faster only when the GCD-reduced ratio has a small
+        denominator (≤20 phases, e.g. 48000→16000 gives down=3).  For complex
+        ratios like 44100→16000 (down=441 after GCD) it builds an 8821-tap FIR
+        which is slower than an FFT over the same signal — so fall back to
+        scipy.signal.resample (FFT-based) in that case.
         """
         if from_rate == to_rate:
             return data
         g = gcd(int(from_rate), int(to_rate))
-        resampled = sps.resample_poly(data, to_rate // g, from_rate // g)
+        up   = to_rate  // g
+        down = from_rate // g
+        if down <= 20:
+            resampled = sps.resample_poly(data, up, down)
+        else:
+            num_samples = round(len(data) * to_rate / from_rate)
+            resampled = sps.resample(data, num_samples)
         return resampled.astype(np.float32)
 
     def _equalize_amplitude(self, audio: Any) -> Any:
