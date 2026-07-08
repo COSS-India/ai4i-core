@@ -15,9 +15,10 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     build_base_selectors,
-    windowed_change_expr,
+    apply_time_range,
     sum_over_window,
     sum_over_prev_window,
+    delta_expr,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ class MeteringService:
 
         total_v = math.ceil(_float(raw[0]))
         success_v = math.ceil(_float(raw[1]))
-        avg_rps_v = round(_float(raw[2]), 2)
+        avg_rps_v = round(_float(raw[2]), 4)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
         raw_failed = total_v - success_v
         if raw_failed < 0:
@@ -101,7 +102,7 @@ class MeteringService:
             prev_total_v = prev_total
             prev_failed_v = prev_failed
             prev_success_v = prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 2)
+            prev_avg_rps_v = round(prev_avg_rps, 4)
             # Previous success rate is undefined without prior traffic → report 0.
             prev_success_rate_v = (
                 round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
@@ -203,7 +204,7 @@ class MeteringService:
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         double_window = DOUBLE_TIME_RANGES[time_range]
-        promql = f"count(sum by(tenant)({windowed_change_expr(f'{metric} offset {window}', f'{metric} offset {double_window}')}) > 0)"
+        promql = f"count(sum by(tenant)({delta_expr(metric, window, snapshot_offset=window)}) > 0)"
         try:
             return int(round(float(await self._client.scalar(promql))))
         except Exception:
@@ -220,7 +221,7 @@ class MeteringService:
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
         double_window = DOUBLE_TIME_RANGES[time_range]
-        _prev_expr = windowed_change_expr(f"{metric} offset {window}", f"{metric} offset {double_window}")
+        _prev_expr = delta_expr(metric, window, snapshot_offset=window)
         total_q = f"sum({_prev_expr})"
         active_q = f"count(sum by(tenant)({_prev_expr}) > 0)"
         try:
@@ -326,7 +327,7 @@ class MeteringService:
             metric = f"{_METRIC}{selector}"
             if not window:
                 return f"sum by(endpoint) ({metric})"
-            return f"sum by(endpoint) ({windowed_change_expr(metric, f'{metric} offset {window}')})"
+            return f"sum by(endpoint) ({delta_expr(metric, window)})"
 
         # ── Fixed-index queries ──────────────────────────────────────────────
         fixed_queries = [
@@ -465,7 +466,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
 
         if window:
-            promql = f"sum by(tenant, endpoint) ({windowed_change_expr(metric, f'{metric} offset {window}')}) > 0"
+            promql = f"sum by(tenant, endpoint) ({delta_expr(metric, window)}) > 0"
         else:
             promql = f"sum by(tenant, endpoint) ({metric}) > 0"
 
@@ -575,13 +576,13 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return f"sum by(tenant) ({metric}) > 0"
-        return f"sum by(tenant) ({windowed_change_expr(metric, f'{metric} offset {window}')}) > 0"
+        return f"sum by(tenant) ({delta_expr(metric, window)}) > 0"
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:
         window = TIME_RANGES.get(time_range or "all")
         if window:
-            return f"sum by(tenant) ({windowed_change_expr(metric, f'{metric} offset {window}')}) > 0"
+            return f"sum by(tenant) ({delta_expr(metric, window)}) > 0"
         base = f"sum by(tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base
 

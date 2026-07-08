@@ -164,3 +164,6 @@ rough
 
 # Sonar scanner cli
 .scannerwork
+
+docs/asr_latecny_fix_plan.md
+docs/ASR_LATENCY_ANALYSIS.md

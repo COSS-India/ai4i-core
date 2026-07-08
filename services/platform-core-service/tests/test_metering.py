@@ -15,9 +15,9 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
     build_base_selectors,
+    delta_expr,
     sum_over_prev_window,
     sum_over_window,
-    windowed_change_expr,
 )
 
 
@@ -56,32 +56,38 @@ class TestBuildBaseSelectors:
         assert sel.startswith("{") and sel.endswith("}")
 
 
-class TestWindowedChangeExpr:
-    def test_normal_delta_branch(self):
-        expr = windowed_change_expr("m", "m offset 24h")
-        assert "(m - m offset 24h) > 0" in expr
+class TestDeltaExpr:
+    def test_uses_last_over_time(self):
+        expr = delta_expr("m", "24h")
+        assert "last_over_time(m[24h])" in expr
 
-    def test_counter_reset_branch(self):
-        expr = windowed_change_expr("m", "m offset 24h")
-        assert "(m < m offset 24h)" in expr
+    def test_includes_offset(self):
+        expr = delta_expr("m", "24h")
+        assert "offset 24h" in expr
 
-    def test_new_series_branch(self):
-        expr = windowed_change_expr("m", "m offset 24h")
-        assert "(m unless m offset 24h)" in expr
+    def test_uses_clamp_min(self):
+        expr = delta_expr("m", "1h")
+        assert expr.startswith("clamp_min(")
 
-    def test_three_branches_joined_with_or(self):
-        expr = windowed_change_expr("m", "m offset 1h")
-        assert expr.count(" or ") == 2
+    def test_zero_fallback_for_new_series(self):
+        expr = delta_expr("m", "7d")
+        assert "* 0" in expr
 
     def test_no_increase_function(self):
-        expr = windowed_change_expr("metric{}", "metric{} offset 7d")
+        expr = delta_expr("metric{}", "7d")
         assert "increase(" not in expr
+
+    def test_snapshot_offset_shifts_both_windows(self):
+        expr = delta_expr("metric{}", "7d", snapshot_offset="7d")
+        assert "offset 7d" in expr
+        assert "offset 14d" in expr
 
 
 class TestSumOverWindow:
-    def test_with_window_uses_offset_diff(self):
+    def test_with_window_uses_last_over_time(self):
         expr = sum_over_window("metric{}", "24h")
-        assert "(metric{} - metric{} offset 24h) > 0" in expr
+        assert "last_over_time(metric{}[24h])" in expr
+        assert "offset 24h" in expr
         assert "increase(" not in expr
 
     def test_no_window_plain_sum(self):

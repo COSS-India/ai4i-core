@@ -3,7 +3,7 @@
 Provides:
   - ``TIME_RANGES``: allowed time-window keys mapped to Prometheus duration strings.
   - ``INFERENCE_ENDPOINT_REGEX``: regex that matches all inference endpoints.
-  - ``windowed_change_expr``: exact counter diff (no increase() / no extrapolation).
+  - ``apply_time_range`` / ``sum_over_window`` / ``sum_over_prev_window``: exact last_over_time delta queries.
   - ``sum_over_window`` / ``sum_over_prev_window``: ready-made sum queries.
 """
 
@@ -69,57 +69,59 @@ WINDOW_STEP: dict = {
 }
 
 
-def windowed_change_expr(current: str, prev: str) -> str:
-    """Inner PromQL expression for exact counter change between two snapshots.
+def delta_expr(metric_expr: str, window: str, snapshot_offset: str = "") -> str:
+    """Exact counter delta between two last_over_time snapshots — no extrapolation.
 
-    Three cases handled in left-biased `or` priority order:
-    1. Normal increase  — (current - prev) > 0        exact integer delta
-    2. Counter reset    — current < prev               pod restarted; use current
-                                                       value as post-reset count
-    3. Brand-new series — current unless prev          series didn't exist at prev;
-                                                       use raw counter directly
+    current  = last_over_time(metric[window] [offset snapshot_offset])
+    prev     = last_over_time(metric[window] offset <snapshot_offset + window>)
+               OR  current * 0   when the series didn't exist that far back
+                   (new deployments, or data older than Prometheus retention)
 
-    `current` and `prev` are arbitrary instant-vector PromQL expressions
-    (e.g. metric labels, or metric with an `offset`).
+    clamp_min(..., 0) absorbs counter resets (pod restarts) so they contribute
+    their post-reset count rather than a negative delta.
+
+    snapshot_offset (optional): shift both snapshots back by this duration.
+    Leave empty for the current window; set to `window` for the previous period.
     """
-    return (
-        f"({current} - {prev}) > 0"
-        f" or ({current} < {prev})"
-        f" or ({current} unless {prev})"
-    )
+    if snapshot_offset:
+        current = f"last_over_time({metric_expr}[{window}] offset {snapshot_offset})"
+        prev    = f"last_over_time({metric_expr}[{window}] offset {DOUBLE_TIME_RANGES.get(snapshot_offset, snapshot_offset)})"
+    else:
+        current = f"last_over_time({metric_expr}[{window}])"
+        prev    = f"last_over_time({metric_expr}[{window}] offset {window})"
+    return f"clamp_min({current} - ({prev} or {current} * 0), 0)"
 
 
 def apply_time_range(metric_expr: str, time_range: str | None) -> str:
-    """Wrap metric_expr in an exact windowed-change expression.
+    """Wrap metric_expr in an exact windowed delta expression.
 
-    Returns (metric - metric offset window) three-case expression when a
-    time range is given, or the raw cumulative counter for time_range=None/'all'.
+    Returns delta_expr(metric, window) when a time range is given,
+    or the raw cumulative counter for time_range=None/'all'.
     """
     window = TIME_RANGES.get(time_range or "all")
     if window:
-        return windowed_change_expr(metric_expr, f"{metric_expr} offset {window}")
+        return delta_expr(metric_expr, window)
     return metric_expr
 
 
 def sum_over_window(metric_expr: str, time_range: str | None) -> str:
-    """Exact counter change over a rolling window — no increase() extrapolation.
+    """Total exact counter delta over a rolling window — no extrapolation.
 
     Falls back to a plain sum for time_range="all"/None (cumulative counter, no window).
     """
     window = TIME_RANGES.get(time_range or "all")
     if not window:
         return f"sum({metric_expr})"
-    return f"sum({windowed_change_expr(metric_expr, f'{metric_expr} offset {window}')})"
+    return f"sum({delta_expr(metric_expr, window)})"
 
 
 def sum_over_prev_window(metric_expr: str, time_range: str) -> str:
-    """Exact counter change over the previous period (for period-over-period comparison).
+    """Total exact counter delta over the previous period (for period-over-period comparison).
 
     For a 1h window: counts requests in [T-2h, T-1h].
     """
     window = TIME_RANGES[time_range]
-    double_window = DOUBLE_TIME_RANGES[time_range]
-    return f"sum({windowed_change_expr(f'{metric_expr} offset {window}', f'{metric_expr} offset {double_window}')})"
+    return f"sum({delta_expr(metric_expr, window, snapshot_offset=window)})"
 
 
 # Per-task display metadata for the service breakdown table.

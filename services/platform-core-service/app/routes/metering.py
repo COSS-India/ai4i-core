@@ -169,7 +169,7 @@ async def _request_volume_chart(
     """
     if window not in WINDOW_STEP:
         return None
-    from app.utils.metering_promql_builder import build_base_selectors, windowed_change_expr
+    from app.utils.metering_promql_builder import build_base_selectors, delta_expr
 
     success_sel = build_base_selectors(
         inference_only=True, tenant=tenant, extra=['status_code=~"2.."']
@@ -191,10 +191,10 @@ async def _request_volume_chart(
     n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
     start = now - n_buckets * step_secs
 
-    # `or vector(0)` fills idle buckets with 0 so the timeline is continuous —
-    # without it empty-bucket evaluation points are dropped and the chart shows gaps.
-    success_q = f"sum({windowed_change_expr(success_metric, f'{success_metric} offset {step}')}) or vector(0)"
-    failed_q  = f"sum({windowed_change_expr(failed_metric,  f'{failed_metric}  offset {step}')}) or vector(0)"
+    # delta_expr uses last_over_time so each bucket is stale-tolerant.
+    # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
+    success_q = f"sum({delta_expr(success_metric, step)}) or vector(0)"
+    failed_q  = f"sum({delta_expr(failed_metric,  step)}) or vector(0)"
 
     succ_res, fail_res = await asyncio.gather(
         svc._client.query_range(success_q, start=start, end=now, step=step),
