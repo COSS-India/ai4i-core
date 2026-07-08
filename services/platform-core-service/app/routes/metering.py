@@ -183,13 +183,15 @@ async def _request_volume_chart(
     step_secs = _step_seconds(step)
     w_secs = _WINDOW_SECONDS[window]
     now = _time.time()
-    # Align the range so the LAST bucket ends at `now`. query_range places eval
-    # points at start + i*step, so an unaligned start (e.g. a 30d window with a 7d
-    # step — 30 isn't divisible by 7) leaves the final point short of now and the
-    # most recent bucket (today's requests) is never evaluated. Snap start to a
-    # whole number of buckets ending at now.
+    # query_range is inclusive of both endpoints, so [start, now] with step s
+    # produces (n+1) bars where n = (now-start)/s. To get exactly n_buckets bars
+    # we need start = now - (n_buckets-1)*step. That also makes the bar sum equal
+    # the card total: sum of n deltas = C(now) - C(now - n_buckets*step) = same
+    # window the card query uses.
+    # Note: for 30d/7d, n_buckets=5 covers 35d (not 30d — 30 isn't divisible by 7),
+    # so a small bar/card mismatch remains for that window.
     n_buckets = max(1, -(-w_secs // step_secs)) if step_secs else 1
-    start = now - n_buckets * step_secs
+    start = now - (n_buckets - 1) * step_secs
 
     # delta_expr uses last_over_time so each bucket is stale-tolerant.
     # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
