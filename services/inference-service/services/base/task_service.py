@@ -2,6 +2,7 @@
 Base class defining the contract and shared pipeline for all inference task services.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from tarfile import HeaderError
@@ -358,14 +359,8 @@ class BaseTaskService:
             return stub
 
         from config import settings
-        import httpx
 
         try:
-            payload = {
-                "inputs": triton_inputs,
-                "outputs": [{"name": name} for name in triton_outputs],
-            }
-
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -378,12 +373,30 @@ class BaseTaskService:
             self.logger.debug("Calling Triton (model=%s)", self.service_info.get("name", ""))
 
             client = _get_triton_client()
-            response = await client.post(
-                triton_endpoint,
-                json=payload,
-                headers=headers,
-                timeout=settings.DEFAULT_TRITON_TIMEOUT,
-            )
+
+            # Inputs carrying raw bytes (e.g. ASR AUDIO_SIGNAL float samples)
+            # use the KServe binary tensor extension: raw bytes appended after
+            # a JSON header, avoiding multi-MB JSON float serialization.
+            if any("_raw" in inp for inp in triton_inputs):
+                body, binary_headers = self._build_binary_request(triton_inputs, triton_outputs)
+                headers.update(binary_headers)
+                response = await client.post(
+                    triton_endpoint,
+                    content=body,
+                    headers=headers,
+                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
+                )
+            else:
+                payload = {
+                    "inputs": triton_inputs,
+                    "outputs": [{"name": name} for name in triton_outputs],
+                }
+                response = await client.post(
+                    triton_endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
+                )
             if response.status_code == 404:
                 raise LookupError("Triton endpoint not found")
             response.raise_for_status()
@@ -405,3 +418,41 @@ class BaseTaskService:
             raise RuntimeError(
                 f"{self.task_name}: Triton inference call failed"
             ) from e
+
+    @staticmethod
+    def _build_binary_request(triton_inputs, triton_outputs):
+        """Assemble a KServe v2 binary tensor request (header + raw bytes).
+
+        Inputs carrying '_raw' bytes are declared with binary_data_size and
+        their bytes appended after the JSON header, in input order. Outputs are
+        requested as JSON (binary_data: false) so the response parses normally.
+
+        Returns (body_bytes, extra_headers).
+        """
+        header_inputs = []
+        raw_chunks = []
+        for inp in triton_inputs:
+            if "_raw" in inp:
+                raw = inp["_raw"]
+                header_inputs.append({
+                    "name": inp["name"],
+                    "datatype": inp["datatype"],
+                    "shape": inp["shape"],
+                    "parameters": {"binary_data_size": len(raw)},
+                })
+                raw_chunks.append(raw)
+            else:
+                header_inputs.append(inp)
+        header = {
+            "inputs": header_inputs,
+            "outputs": [
+                {"name": name, "parameters": {"binary_data": False}}
+                for name in triton_outputs
+            ],
+        }
+        header_bytes = json.dumps(header).encode("utf-8")
+        body = header_bytes + b"".join(raw_chunks)
+        return body, {
+            "Content-Type": "application/octet-stream",
+            "Inference-Header-Content-Length": str(len(header_bytes)),
+        }
