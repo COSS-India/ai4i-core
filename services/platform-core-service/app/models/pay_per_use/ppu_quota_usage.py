@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import BigInteger, Column, DateTime, String, UniqueConstraint
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -24,6 +24,13 @@ class PPUQuotaUsage(Base):
     billing_month = Column(String(7), nullable=False)
     monthly_quota_snap = Column(BigInteger, nullable=True)
     units_used = Column(BigInteger, nullable=False, default=0, server_default="0")
+    tier_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ppu_tiers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    cost_accum = Column(Numeric(15, 8), nullable=False, default=0, server_default="0")
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
