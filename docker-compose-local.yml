@@ -104,9 +104,17 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
+        until bash -c "echo > /dev/tcp/zookeeper/2181" 2>/dev/null; do
+          echo "Waiting for ZooKeeper at zookeeper:2181..."
+          sleep 2
+        done
         /etc/confluent/docker/run &
         KAFKA_PID=$$!
         until kafka-broker-api-versions --bootstrap-server localhost:9093 >/dev/null 2>&1; do
+          if ! kill -0 $$KAFKA_PID 2>/dev/null; then
+            echo "Kafka process died before becoming ready, exiting so the container can restart..."
+            exit 1
+          fi
           sleep 2
         done
         bash /init-kafka.sh
@@ -117,9 +125,9 @@ services:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
       interval: 10s
       timeout: 10s
-      retries: 3
-      start_period: 20s
-    restart: unless-stopped
+      retries: 5
+      start_period: 40s
+    restart: always
 
   # ── Metrics ───────────────────────────────────────────────────────────────────
 
