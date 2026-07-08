@@ -14,11 +14,11 @@ from app.schemas.base import BaseSchema
 
 class CreateAPIKeyRequest(BaseSchema):
     key_name: str = Field(..., min_length=1, max_length=100)
-    permissions: list[int] = Field(
+    permissions: list[str] = Field(
         ...,
         min_length=1,
         description=(
-            "Permission IDs from the permissions table. At least one "
+            "Stable permission names (e.g. nmt.inference). At least one "
             "permission is required — an API key with no permissions cannot "
             "authorize any request and would only be confusing to the caller."
         ),
@@ -35,12 +35,12 @@ class UpdateAPIKeyRequest(BaseSchema):
     )
 
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)
-    permissions: Optional[list[int]] = Field(
+    permissions: Optional[list[str]] = Field(
         None,
         min_length=1,
         description=(
             "Omit to leave permissions unchanged. If supplied, must contain at "
-            "least one permission ID — an explicit empty list is rejected (same "
+            "least one permission name — an explicit empty list is rejected (same "
             "as create) since a zero-permission key can't authorize anything."
         ),
     )
@@ -53,7 +53,7 @@ class CreateAPIKeyResponse(BaseSchema):
     id: int
     api_key: str = Field(..., description="32-char hex key. Store securely — shown only once.")
     key_name: str
-    permissions: list[int]
+    permissions: list[str]
     expires_at: Optional[datetime] = None
 
 
