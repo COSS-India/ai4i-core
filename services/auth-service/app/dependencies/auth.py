@@ -5,7 +5,7 @@ JWT verification logic is now local to auth-service (no longer shared library).
 """
 
 import logging
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 from uuid import UUID
 
 from cryptography.hazmat.primitives import serialization
@@ -110,11 +110,31 @@ class UserContext(NamedTuple):
     tenant_id: str | None
 
 
-async def get_user_context(request: Request) -> UserContext:
+def get_user_context(request: Request) -> UserContext:
     """Read X-User-ID + X-Tenant-ID headers only. No DB call."""
     user_id = get_current_user_id(request)
     tenant_id = request.headers.get("X-Tenant-ID")
     return UserContext(user_id=user_id, tenant_id=tenant_id)
+
+
+async def get_optional_current_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """Return the authenticated user when gateway headers are present, else None."""
+    user_id_str = request.headers.get("X-User-ID")
+    if not user_id_str:
+        return None
+    try:
+        user_id = UUID(user_id_str)
+    except (ValueError, TypeError):
+        return None
+
+    repo = UserRepository(db)
+    user = await repo.get_by_id(user_id)
+    if not user or not user.is_active:
+        return None
+    return user
 
 
 async def get_current_user(

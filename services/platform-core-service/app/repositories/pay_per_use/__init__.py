@@ -1,1 +1,1 @@
-"""Pay-per-use data access layer."""
+"""PPU repositories."""

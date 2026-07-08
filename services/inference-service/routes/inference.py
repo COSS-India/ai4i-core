@@ -73,9 +73,7 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
         # exact type: KeyError/IndexError are LookupError subclasses but are
         # programming errors, not not-found semantics — they must stay 500
         if type(e) is LookupError:
-            return HTTPException(
-                status_code=404, detail=f"{task_type}: requested service not found"
-            )
+            return HTTPException(status_code=404, detail=str(e))
     for e in chain:
         if isinstance(e, (RuntimeError, ConnectionError)):
             return HTTPException(
@@ -400,13 +398,13 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         req_attrs["url"] = request.url.path
         req_attrs["method"] = request.method
         req_attrs.update(get_context_attributes())
- 
+
         status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
- 
+
         if status_code >= 400:
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
- 
+
     return JSONResponse(status_code=status_code, content=body)
 
 @router.post(

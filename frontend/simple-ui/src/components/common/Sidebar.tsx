@@ -167,6 +167,12 @@ const safeColorMap = {
     400: "#7986CB",
     600: "#5C6BC0",
   },
+  [TABS.tierManagement]: {
+    50:  "#E3F2FD",
+    300: "#90CAF9",
+    400: "#42A5F5",
+    600: "#1565C0",
+  },
   [TABS.policyManagement]: {
     50:  "#E3F2FD",
     300: "#64B5F6",
@@ -280,6 +286,15 @@ const topNavItems: NavItem[] = [
     label: "PII Guardrail",
     path: `/${TABS.piiManagement}`,
     icon: IoShieldCheckmarkOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
+    id: TABS.tierManagement,
+    label: "Tier Management",
+    path: `/${TABS.tierManagement}`,
+    icon: IoPricetagOutline,
     iconSize: 10,
     iconColor: "",
     requiresAuth: true,
@@ -440,6 +455,8 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
       return ctx.isAdmin;
     case TABS.piiManagement:
       return ctx.isAdmin || ctx.isTenantAdmin;
+    case TABS.tierManagement:
+      return ctx.isAdmin;
     default:
       return true;
   }

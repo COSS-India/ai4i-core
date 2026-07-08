@@ -2,7 +2,7 @@
 OpenTelemetry span helpers for the inference pipeline.
 
 Provides a shared tracer instance and utilities for creating named spans
-with context attributes (userId, tenantId) from ai4icore_core.context.
+with context attributes (userId, tenantId) from ai4i_core.context.
 """
 
 import time
@@ -20,33 +20,43 @@ tracer = trace.get_tracer("inference-service")
 
 def get_context_attributes() -> dict:
     """
-    Resolve userId and tenantId for span attributes from ai4icore_core ContextVars.
+    Resolve userId, tenantId, and the request correlation ID for span attributes
+    from ai4i_core ContextVars.
 
-    RequestMiddleware (ai4icore_core.logging) populates these contextvars from
-    the gateway-injected X-Tenant-Id / X-User-ID headers before handlers run;
-    contextvars set in middleware propagate into the handler task, so they are
-    the single source of truth here — no header re-reading.
+    RequestMiddleware (ai4i_core.logging) populates these contextvars from the
+    gateway-injected headers before handlers run; contextvars propagate into the
+    handler task, so they are the single source of truth — no header re-reading.
+
+    correlation_id must be captured here (request context) and stored as a span
+    attribute so that LoggerSpanExporter can read it from the span later on the
+    background exporter thread, where get_trace_id() would return None.
 
     Returns dict with available values (skips None).
     """
     attrs = {}
     try:
-        from ai4icore_core.context import get_user_id, get_tenant_id
+        from ai4i_core.context import get_user_id, get_tenant_id, get_trace_id, get_auth_type
         user_id = get_user_id()
         tenant_id = get_tenant_id()
+        correlation_id = get_trace_id()
+        auth_type = get_auth_type()
         if user_id:
             attrs["userId"] = user_id
         if tenant_id:
             attrs["tenantId"] = tenant_id
+        if correlation_id:
+            attrs["correlation_id"] = correlation_id
+        if auth_type:
+            attrs["authType"] = auth_type
     except Exception as e:
         logger.debug(f"Could not read context attributes: {e}")
     return attrs
 
 
 def get_endpoint_path() -> str:
-    """Read endpoint_path from ai4icore_core ContextVars."""
+    """Read endpoint_path from ai4i_core ContextVars."""
     try:
-        from ai4icore_core.context import get_endpoint_path as _get_ep
+        from ai4i_core.context import get_endpoint_path as _get_ep
         return _get_ep() or ""
     except Exception:
         return ""
@@ -92,16 +102,22 @@ def format_timing_summary(attrs: dict) -> str:
 
 def log_span_attributes(span_name: str, span, attributes: dict) -> None:
     """
-    Log span attributes in OpenTelemetry standard JSON format
-    (trace_id, span_id, kind, attributes), shared by all span finalizers.
+    Log span attributes in OpenTelemetry standard JSON format.
+
+    Uses the request correlation_id (seeded by RequestMiddleware from
+    X-Correlation-ID) as context.trace_id so OpenSearch queries from
+    platform-core correlate correctly. The OTel SDK trace ID is preserved
+    as context.otel_trace_id for cross-service OTel joins.
     """
     import json
     try:
         span_context = span.get_span_context()
+        correlation_id = attributes.get("correlation_id")
         otel_format = {
             "name": span_name,
             "context": {
-                "trace_id": f"0x{span_context.trace_id:032x}",
+                "trace_id": correlation_id or f"0x{span_context.trace_id:032x}",
+                "otel_trace_id": f"0x{span_context.trace_id:032x}",
                 "span_id": f"0x{span_context.span_id:016x}",
                 "trace_state": str(span_context.trace_state or "")
             },
@@ -232,6 +248,11 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
+        # Seed correlation_id (and tenantId/authType) so LoggerSpanExporter uses
+        # the same context.trace_id as the sibling request/model spans.  Without
+        # this the ai-inference span lands in OpenSearch under the raw OTel trace
+        # ID (0x…) rather than the correlation ID, making it invisible in the UI.
+        attrs.update(get_context_attributes())
         attrs.update({
             "input_type": get_input_type(payload),
             "output_type": "unknown",

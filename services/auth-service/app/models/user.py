@@ -11,6 +11,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+from app.models.types import EncryptedEmail, EncryptedPhone
 
 
 class CreationType(str, enum.Enum):
@@ -25,7 +26,9 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), unique=True, index=True, nullable=False)
+    # Stored encrypted (deterministic) so the unique index doubles as a
+    # case-insensitive duplicate-email guard on the ciphertext.
+    email = Column(EncryptedEmail(), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=False, nullable=False, server_default="false")
@@ -37,9 +40,11 @@ class User(Base):
     )
     last_login = Column(DateTime(timezone=True), nullable=True)
     avatar_url = Column(String(500), nullable=True)
-    phone_number = Column(String(20), nullable=True)
+    phone_number = Column(EncryptedPhone(), nullable=True)
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
+    prev_email = Column(EncryptedEmail(), nullable=True)
+    prev_phone_number = Column(EncryptedPhone(), nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
     creation_type = Column(
         Enum(

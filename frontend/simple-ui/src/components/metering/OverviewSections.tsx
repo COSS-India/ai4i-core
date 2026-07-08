@@ -16,7 +16,15 @@ interface OverviewKpiCardsProps {
   data: OverviewResponse;
 }
 
-/** Top-row summary KPI cards (Total requests, Success rate, Avg RPS, Avg per tenant). */
+// Value colour per KPI: successful = green, failed = red, others neutral.
+const KPI_VALUE_COLORS: Record<string, string> = {
+  total_requests: "gray.800",
+  successful: "green.500",
+  failed: "red.500",
+  avg_rps: "gray.800",
+};
+
+/** Top-row summary KPI cards (Total, Successful, Failed, Avg RPS). */
 export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({ data }) => (
   <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
     {data.kpis.map((kpi) => (
@@ -25,7 +33,9 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({ data }) => (
         label={kpi.label}
         value={formatMeteringKpiValue(kpi.key, kpi.value)}
         pctChange={kpi.pct_change}
-        helper={METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS]}
+        valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
+        invertTrend={kpi.key === "failed"}
+        helper={kpi.helper ?? METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS]}
       />
     ))}
   </SimpleGrid>
@@ -148,7 +158,7 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
               }
               pctChange={activeCell?.pct_change}
               helper={card.helper}
-              accent="teal"
+              valueColor="gray.800"
             />
           );
         })}

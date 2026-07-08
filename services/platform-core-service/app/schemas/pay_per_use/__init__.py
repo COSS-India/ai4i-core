@@ -1,1 +1,1 @@
-"""Pay-per-use Pydantic schemas."""
+"""PPU response schemas."""

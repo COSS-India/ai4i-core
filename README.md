@@ -37,17 +37,19 @@ lane** (dotted) so they never touch the business-data path.
 - ✅ **Source code** for all backend services and the frontend
 - ✅ **Docker Compose** (`docker-compose-local.yml`) for local infrastructure
 - ✅ **Alembic migrations** for the PostgreSQL schemas
-- ✅ **Shared Python library** (`libs/ai4icore_core`): logging + request middleware,
+- ✅ **Shared Python library** (`libs/ai4i_core`): logging + request middleware,
   observability (OpenTelemetry + Prometheus ASGI), bootstrap (API versioning, async DB),
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
 > **Note on gateways:** the production infrastructure uses
-> **APISIX** (external to this repo). The **local development setup**
-> defined by `docker-compose-local.yml` uses an **nginx** stand-in
-> (`nginx-gateway`, image `nginx:alpine`, config at
-> `infrastructure/nginx/nginx.conf`) so the same forward-auth contract can
-> be exercised without standing up APISIX. See
+> **APISIX** (external to this repo) for path routing and forward-auth.
+> In the **local development setup** defined by `docker-compose-local.yml`
+> there is no gateway container — the Simple UI's Next.js dev server proxies
+> every `/api/v1/*` request through a catch-all API route
+> (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) that performs the same
+> path routing and forward-auth (calling auth-service `/api/v1/auth/validate`)
+> and forwards to the backend services directly. See
 > [`docs/SETUP_GUIDE.md`](./docs/SETUP_GUIDE.md) for local-setup specifics.
 
 ## 🎯 Core Services
@@ -116,7 +118,7 @@ PII inference requests fail loudly instead of falling through.
 - **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
 ### Gateway & Infrastructure
-- **APISIX** — API gateway in production / staging / dev (forward-auth via `/auth/validate`; external to this repo). For local development, `docker-compose-local.yml` provides an **nginx** stand-in (`nginx-gateway`, config at `infrastructure/nginx/nginx.conf`).
+- **APISIX** — API gateway in production / staging / dev (forward-auth via `/auth/validate`; external to this repo). For local development there is no gateway container — the Simple UI's Next.js dev server proxies `/api/v1/*` through `frontend/simple-ui/src/pages/api/v1/[...proxy].ts`, which handles path routing and forward-auth.
 - **Docker Compose** — local infrastructure (`docker-compose-local.yml`)
 - **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
 - **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting
@@ -197,7 +199,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for full contribution guidelines.
 
 ## 🚀 Releases
 
-New versions are published as a PyPI package (`ai4icore-core`). Release notes are on the
+New versions are published as a PyPI package (`ai4i-core`). Release notes are on the
 [GitHub Releases](https://github.com/COSS-India/ai4i-core/releases) page.
 
 - **[RELEASE.md](./RELEASE.md)** — branching model, versioning scheme, and step-by-step
@@ -208,7 +210,7 @@ New versions are published as a PyPI package (`ai4icore-core`). Release notes ar
 
 - **Metrics** — services expose Prometheus metrics (scraped by **Prometheus**,
   visualized in **Grafana**, alerted via **Alertmanager**).
-- **Logs** — structured JSON logs (`ai4icore_core.logging`) shipped by **Fluent Bit** to
+- **Logs** — structured JSON logs (`ai4i_core.logging`) shipped by **Fluent Bit** to
   **OpenSearch**.
 - **Traces** — only **inference-service** emits OpenTelemetry spans; they flow
   **Kafka (`kafka-topic-otel-trace`) → Fluent Bit → OpenSearch `traces-*`**, queried via

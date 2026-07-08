@@ -124,7 +124,7 @@ Only **inference-service** wires up OpenTelemetry tracing and the Kafka span exp
 platform-core-service are explicitly **logging-only** — see the module docstrings in
 `services/auth-service/app/main.py` and `services/platform-core-service/app/main.py`
 ("No tracing or observability — logging only"). All three still emit structured logs
-(via `ai4icore_core.logging`) that Fluent Bit ships to OpenSearch. Only
+(via `ai4i_core.logging`) that Fluent Bit ships to OpenSearch. Only
 **inference-service** exposes a Prometheus scrape endpoint (`/enterprise/metrics`);
 platform-core and auth-service do not.
 
@@ -140,7 +140,7 @@ All infrastructure and runtime dependencies are open source. No proprietary depe
 
 | Dependency | Package / Image | License |
 |---|---|---|
-| **Triton Inference Server client** | `tritonclient[http]>=2.40.0` (`libs/ai4icore_core/pyproject.toml`) | BSD-3-Clause |
+| **Triton Inference Server client** | `tritonclient[http]>=2.40.0` (`libs/ai4i_core/pyproject.toml`) | BSD-3-Clause |
 | **Ollama** | HTTP backend only — no pip package; called via REST | MIT |
 | **PostgreSQL** | `postgres:15-alpine` + `asyncpg`, `psycopg2-binary` | PostgreSQL License (OSI-approved) |
 | **Redis** | `redis:7-alpine` + `redis>=5.0.0` | BSD-3-Clause |

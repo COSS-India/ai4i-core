@@ -33,8 +33,7 @@ docker compose -f docker-compose-local.yml up -d \
   zookeeper kafka \
   opensearch opensearch-init \
   prometheus alertmanager grafana node-exporter \
-  fluent-bit opensearch-dashboards \
-  nginx-gateway
+  fluent-bit opensearch-dashboards
 ```
 
 Wait until core services are healthy:
@@ -45,8 +44,6 @@ docker compose -f docker-compose-local.yml ps
 
 `postgres`, `redis`, and (if started) `kafka` / `opensearch` should be **healthy** before relying on tracing.
 
-> This matches **Option B** in [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md#option-b-full-observability-stack-recommended).
-
 ---
 
 ## Typical local URLs
@@ -55,8 +52,8 @@ docker compose -f docker-compose-local.yml ps
 |----------|----------------|
 | Grafana | http://localhost:3001 |
 | Prometheus | http://localhost:9090 |
-| OpenSearch Dashboards | http://localhost:5601 |
-| Alertmanager | http://localhost:9093 |
+| OpenSearch Dashboards | http://localhost:5602 |
+| Alertmanager | http://localhost:9095 |
 
 Credentials and overrides are in `docker-compose-local.yml` and root `.env` (`GRAFANA_*`, etc.).
 
@@ -75,7 +72,6 @@ Without Kafka, `inference-service` logs `KafkaConnectionError` and falls back â€
 To view traces from Simple UI, set in `frontend/simple-ui/.env` (from `setup-env.sh`):
 
 - `NEXT_PUBLIC_TELEMETRY_SERVICE_URL`
-- `NEXT_PUBLIC_JAEGER_URL` (if your deployment exposes Jaeger; local stack may use OpenSearch Dashboards instead)
 
 See `frontend/simple-ui/env.template` for defaults.
 
@@ -83,9 +79,9 @@ See `frontend/simple-ui/env.template` for defaults.
 
 ## Related documents
 
-| Document | Location |
-|----------|----------|
-| End-to-end NMT setup (minimal infra) | `docs/END-TO-END-SETUP-GUIDE.md` |
-| Full platform setup reference | `docs/SETUP_GUIDE.md` |
-| Architecture overview | `docs/architecture/00-overview.md` |
-| Inference telemetry path | `docs/architecture/03-inference-service.md` |
+| Document | Link |
+|----------|------|
+| End-to-end NMT setup (minimal infra) | [END-TO-END-SETUP-GUIDE.md](END-TO-END-SETUP-GUIDE.md) |
+| Docker Compose local reference | [DOCKER-COMPOSE-LOCAL-REFERENCE.md](DOCKER-COMPOSE-LOCAL-REFERENCE.md) |
+| Architecture overview | [architecture/00-overview.md](architecture/00-overview.md) |
+| Inference telemetry path | [architecture/03-inference-service.md](architecture/03-inference-service.md) |

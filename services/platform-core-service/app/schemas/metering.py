@@ -13,6 +13,7 @@ class Cell(BaseModel):
     value: Any
     previous: Optional[Any] = None
     pct_change: Optional[float] = None
+    helper: Optional[str] = None       # optional dynamic sub-text (e.g. "97.40% success rate")
 
 
 class GraphPoint(BaseModel):
@@ -40,15 +41,11 @@ class Scope(BaseModel):
 
 class ServiceRow(BaseModel):
     service: str
-    metering_unit: str
     requests: int
-    percentage: float = 0.0             # share of total requests (Service Consumption donut)
     native_units: Optional[float] = None
     native_unit_suffix: str
     success_pct: float
     failure_rate_pct: float = 0.0       # 100 - success_pct
-    failed: int
-    vs_prev_period_pct: Optional[float] = None
 
 
 class TenantRow(BaseModel):
@@ -85,6 +82,7 @@ class ServiceEntry(BaseModel):
     display_name: str
     requests: int
     formatted_requests: str
+    percentage: float = 0.0       # this service's share of the tenant's total (row %)
 
 
 class TenantServiceRow(BaseModel):
@@ -93,24 +91,7 @@ class TenantServiceRow(BaseModel):
     services: dict[str, ServiceEntry]
     total: int
     formatted_total: str
-
-
-class ThroughputData(BaseModel):
-    avg_rps: float
-    peak_rps: Optional[float] = None
-    peak_at: Optional[str] = None
-
-
-class RequestHealth(BaseModel):
-    """Total / successful / failed request counts + rates (Request Volume & Health card)."""
-    total: int
-    successful: int
-    failed: int
-    total_formatted: str
-    successful_formatted: str
-    failed_formatted: str
-    success_rate_pct: float
-    failure_rate_pct: float
+    percentage: float = 0.0       # this tenant's share of all tenants' total (grand %)
 
 
 class MostUsedService(BaseModel):
@@ -125,7 +106,6 @@ class HighestFailureService(BaseModel):
 
 class ServiceSummary(BaseModel):
     """Service Consumption KPI cards (computed over services with traffic)."""
-    active_services: int = 0
     most_used: Optional[MostUsedService] = None
     highest_failure_rate: Optional[HighestFailureService] = None
 
@@ -135,40 +115,25 @@ class ServiceSummary(BaseModel):
 class OverviewResponse(BaseModel):
     scope: Scope
     kpis: list[Cell]
-    active_tenants: list[Cell]
     platform_adoption: Optional[PlatformAdoption] = None
     usage_concentration: Optional[UsageConcentration] = None
-    request_health: Optional[RequestHealth] = None
     request_volume: Optional[Graph] = None
-    throughput: ThroughputData
     degraded: bool = False
     generated_at: str
-    refresh_interval_seconds: int = 60
-    data_state: str = "ok"
-    is_stale: bool = False
 
 
 class TenantConsumptionResponse(BaseModel):
     scope: Scope
+    avg_requests_per_tenant: Optional[Cell] = None   # KPI card shown above the ranking
     tenant_ranking: list[TenantRow]
     usage_by_service: list[TenantServiceRow]
-    throughput: Optional[ThroughputData] = None      # Throughput & Load: avg/peak RPS
-    request_volume: Optional[Graph] = None           # Throughput & Load: RPS over time
     degraded: bool = False
     generated_at: str
-    refresh_interval_seconds: int = 60
-    data_state: str = "ok"
-    is_stale: bool = False
 
 
 class ServiceConsumptionResponse(BaseModel):
     scope: Scope
     summary: Optional[ServiceSummary] = None
     service_breakdown: list[ServiceRow]
-    throughput: ThroughputData
-    request_volume: Optional[Graph] = None
     degraded: bool = False
     generated_at: str
-    refresh_interval_seconds: int = 60
-    data_state: str = "ok"
-    is_stale: bool = False

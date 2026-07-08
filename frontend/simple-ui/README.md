@@ -56,8 +56,9 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 
 4. **Update environment variables**
    ```bash
-   # .env
-   NEXT_PUBLIC_API_URL=http://localhost:8080
+   # .env — browser calls the same-origin Next.js dev server, which proxies
+   # /api/v1/* to the backend services (src/pages/api/v1/[...proxy].ts).
+   NEXT_PUBLIC_API_URL=http://localhost:3000
    ```
 
 ## Development

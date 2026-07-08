@@ -14,6 +14,7 @@ import binascii
 import json
 import logging
 
+from ai4i_core.ppu import get_inference_types
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -30,6 +31,15 @@ from app.services.cache_service import CacheService
 
 USER_PLAN_JWT: str = "P1"
 USER_PLAN_APIKEY: str = "P2"
+
+def _resolve_service(uri: str) -> dict | None:
+    """Map X-Original-URI to its inference type entry from the bundled YAML."""
+    path = uri.split("?", 1)[0]
+    for entry in get_inference_types():
+        if path.startswith(entry["endpoint_pattern"]):
+            return entry
+    return None
+
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
 
@@ -48,7 +58,7 @@ def is_jwt_strict(token: str) -> bool:
         return False
 
 
-async def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
+def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
     """Look up the permission required for X-Original-Method:X-Original-URI.
 
     Returns:
@@ -73,7 +83,7 @@ async def _check_endpoint_permission(request: Request, permission_ids: list[int]
     Allow when: gateway didn't signal an endpoint (direct call), OR the
     endpoint is public, OR the caller holds the required permission.
     """
-    looked_up, required = await _required_endpoint_permission(request)
+    looked_up, required = _required_endpoint_permission(request)
     if not looked_up:
         return True
     return required is None or required in permission_ids
@@ -92,7 +102,7 @@ def _extract_token(request: Request) -> str:
 
 async def _validate_anonymous(request: Request) -> Response:
     """No token: allow only when X-Original-* point at a public endpoint."""
-    looked_up, required = await _required_endpoint_permission(request)
+    looked_up, required = _required_endpoint_permission(request)
     if looked_up and required is None:
         resp = JSONResponse(
             content=TokenValidationResponse(valid=True).model_dump(),
@@ -126,6 +136,23 @@ async def _validate_api_key(
     if user_id:
         response.headers["X-User-ID"] = str(user_id)
     response.headers["X-User-Plan"] = USER_PLAN_APIKEY
+    response.headers["X-Tier-ID"] = result.get("tier_id") or ""
+
+    response.headers["X-Budget-Exhausted"] = "true" if result.get("budget-exhausted") == "1" else "false"
+
+    service = _resolve_service(request.headers.get("X-Original-URI", ""))
+    if service and service["unit"] == "requests":
+        response.headers["X-Quota-Exhausted"] = "false"
+        exhausted_services = sorted(
+            k[len("quota-"):]
+            for k, v in result.items()
+            if k.startswith("quota-") and v == "1"
+        )
+        if exhausted_services:
+            response.headers["X-Quota-Exhausted-Services"] = json.dumps(exhausted_services)
+    elif service:
+        response.headers["X-Quota-Exhausted"] = "true" if result.get(f"quota-{service['name']}") == "1" else "false"
+
     response.headers["X-Auth-Type"] = "api_key"
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
     if tenant_id:
@@ -158,6 +185,7 @@ async def _validate_jwt(
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
     response.headers["X-User-Plan"] = USER_PLAN_JWT
+    response.headers["X-Tier-ID"] = ""
     response.headers["X-Auth-Type"] = claims.token_type
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in claims.permission_ids) + "]"
     if claims.tenant_id:

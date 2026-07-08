@@ -3,7 +3,8 @@
 Provides:
   - ``TIME_RANGES``: allowed time-window keys mapped to Prometheus duration strings.
   - ``INFERENCE_ENDPOINT_REGEX``: regex that matches all inference endpoints.
-  - ``apply_time_range``: wraps a metric expression in ``increase(...[window])``.
+  - ``windowed_change_expr``: exact counter diff (no increase() / no extrapolation).
+  - ``sum_over_window`` / ``sum_over_prev_window``: ready-made sum queries.
 """
 
 from __future__ import annotations
@@ -53,49 +54,72 @@ ENDPOINT_TO_TASK: dict = {
     "/api/v1/chat/completions": "llm",
 }
 
-# Resolution step for range queries (charts, peak RPS). Target ~300 points per window.
+# Bucket size for the Request Volume range chart — chosen so each window renders a
+# small, readable set of aggregated bars rather than hundreds of fine-grained points:
+#   1h  → 10m buckets (~6 bars, time labels)
+#   24h → 4h  buckets (~6 bars, time labels)
+#   7d  → 1d  buckets (7 bars, daily date labels)
+#   30d → 7d  buckets (date+time labels)
+# The frontend label format keys off this step (see formatMeteringTimestamp).
 WINDOW_STEP: dict = {
-    "1h":  "30s",
-    "24h": "5m",
-    "7d":  "1h",
-    "30d": "6h",
+    "1h":  "10m",
+    "24h": "4h",
+    "7d":  "1d",
+    "30d": "7d",
 }
 
 
-def apply_time_range(metric_expr: str, time_range: str | None) -> str:
-    """Wrap metric_expr in increase(...[window]) when a time range is given.
+def windowed_change_expr(current: str, prev: str) -> str:
+    """Inner PromQL expression for exact counter change between two snapshots.
 
-    increase() returns how much the counter grew over the window.
-    When time_range is None or 'all', returns the raw cumulative counter.
+    Three cases handled in left-biased `or` priority order:
+    1. Normal increase  — (current - prev) > 0        exact integer delta
+    2. Counter reset    — current < prev               pod restarted; use current
+                                                       value as post-reset count
+    3. Brand-new series — current unless prev          series didn't exist at prev;
+                                                       use raw counter directly
+
+    `current` and `prev` are arbitrary instant-vector PromQL expressions
+    (e.g. metric labels, or metric with an `offset`).
+    """
+    return (
+        f"({current} - {prev}) > 0"
+        f" or ({current} < {prev})"
+        f" or ({current} unless {prev})"
+    )
+
+
+def apply_time_range(metric_expr: str, time_range: str | None) -> str:
+    """Wrap metric_expr in an exact windowed-change expression.
+
+    Returns (metric - metric offset window) three-case expression when a
+    time range is given, or the raw cumulative counter for time_range=None/'all'.
     """
     window = TIME_RANGES.get(time_range or "all")
     if window:
-        return f"increase({metric_expr}[{window}])"
+        return windowed_change_expr(metric_expr, f"{metric_expr} offset {window}")
     return metric_expr
 
 
 def sum_over_window(metric_expr: str, time_range: str | None) -> str:
-    """Build a PromQL sum that captures every request, including very recent ones.
+    """Exact counter change over a rolling window — no increase() extrapolation.
 
-    Two-part approach so no data is lost:
-    1. increase() >= 0  — established series (2+ scrape points); handles counter
-       resets across service restarts automatically.
-    2. metric unless metric offset window — raw counter for brand-new series that
-       have only 1 scrape point (increase() returns NaN for them). The `unless`
-       guard ensures only truly new series (didn't exist at window-start) use the
-       raw counter, preventing old series from inflating the total with their
-       all-time value.
-    Falls back to a plain sum for time_range="all"/None.
+    Falls back to a plain sum for time_range="all"/None (cumulative counter, no window).
     """
     window = TIME_RANGES.get(time_range or "all")
     if not window:
         return f"sum({metric_expr})"
-    return (
-        f"sum("
-        f"(increase({metric_expr}[{window}]) > 0)"
-        f" or ({metric_expr} unless {metric_expr} offset {window})"
-        f")"
-    )
+    return f"sum({windowed_change_expr(metric_expr, f'{metric_expr} offset {window}')})"
+
+
+def sum_over_prev_window(metric_expr: str, time_range: str) -> str:
+    """Exact counter change over the previous period (for period-over-period comparison).
+
+    For a 1h window: counts requests in [T-2h, T-1h].
+    """
+    window = TIME_RANGES[time_range]
+    double_window = DOUBLE_TIME_RANGES[time_range]
+    return f"sum({windowed_change_expr(f'{metric_expr} offset {window}', f'{metric_expr} offset {double_window}')})"
 
 
 # Per-task display metadata for the service breakdown table.

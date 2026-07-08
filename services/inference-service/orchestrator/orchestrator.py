@@ -160,6 +160,7 @@ class Orchestrator:
                     f"No serviceId in payload, SMR resolved to: {serviceId}"
                 )
 
+            attrs["service_id"] = serviceId
             self.logger.debug(f"Resolving service: {serviceId}")
             try:
                 service_info = await self.inference_server_resolver.resolve_service(serviceId)
@@ -180,6 +181,11 @@ class Orchestrator:
                 raise RuntimeError(
                     f"Orchestrator: Failed to resolve service '{serviceId}'"
                 ) from e
+
+            if not service_info.get("is_published", False):
+                raise LookupError(
+                    f"Service '{serviceId}' is not published and cannot be used for inference"
+                )
 
             adapter_cfg = service_info.get("adapter_config") or {}
             attrs["model_name"] = service_info.get("name", "")

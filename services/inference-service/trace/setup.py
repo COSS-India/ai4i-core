@@ -16,6 +16,7 @@ class LoggerSpanExporter(SpanExporter):
     """
 
     KAFKA_TOPIC = settings.KAFKA_TOPIC_OTEL_TRACE
+    _NULL_TRACE_ID = "0x" + "0" * 32
 
     def __init__(self):
         self._producer = None
@@ -53,10 +54,34 @@ class LoggerSpanExporter(SpanExporter):
                 parent_span_id = (
                     f"0x{span.parent.span_id:016x}" if span.parent else None
                 )
+                # correlation_id was stored as a span attribute by get_context_attributes()
+                # while still in request context. Reading it here (background thread,
+                # request context gone) is the only safe path — get_trace_id() returns None.
+                span_attrs = dict(span.attributes) if span.attributes else {}
+                correlation_id = span_attrs.get("correlation_id")
+                otel_trace_id = f"0x{span_context.trace_id:032x}"
+
+                # Only export spans that carry a correlation_id — the
+                # application-level request identifier written by RequestMiddleware.
+                # Spans without one (ASGI background tasks, lifespan hooks) have
+                # no meaningful trace context and must not reach OpenSearch.
+                # Falling back to the raw OTel trace ID would index them under a
+                # key that no query matches, polluting the traces-* index.
+                if not correlation_id:
+                    continue
+
+                # Drop spans where the OTel SDK failed to assign a real span_id
+                # (span_id=0 means NonRecordingSpan / un-initialised tracer).
+                # Such spans share a single span_id value, which would poison
+                # the PPU consumer's Redis dedup set on the first hit.
+                if span_context.span_id == 0:
+                    continue
+
                 span_data = {
                     "name": span.name,
                     "context": {
-                        "trace_id": f"0x{span_context.trace_id:032x}",
+                        "trace_id": correlation_id,
+                        "otel_trace_id": otel_trace_id,
                         "span_id": f"0x{span_context.span_id:016x}",
                         "parent_span_id": parent_span_id,
                         "trace_state": str(span_context.trace_state or ""),
@@ -64,11 +89,12 @@ class LoggerSpanExporter(SpanExporter):
                     "kind": str(span.kind),
                     "start_time": span.start_time,
                     "end_time": span.end_time,
-                    "attributes": dict(span.attributes) if span.attributes else {},
+                    "attributes": span_attrs,
                     "status": {
                         "status_code": str(span.status.status_code),
                         "description": span.status.description,
                     },
+                    "service_name": settings.SERVICE_NAME,
                 }
 
                 # Log to Python logger
@@ -194,7 +220,6 @@ class FilteringSpanExporter(SpanExporter):
     ]
 
     def __init__(self, base_exporter: SpanExporter, service_name: str = None):
-        """Initialize the filtering exporter with a base exporter."""
         self.base_exporter = base_exporter
         self.service_name = service_name
         # Always include send/receive spans for inference service

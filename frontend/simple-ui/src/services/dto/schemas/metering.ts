@@ -8,6 +8,7 @@ export const meteringCellSchema = z.object({
   value: z.union([z.string(), z.number(), z.null()]),
   previous: z.union([z.string(), z.number(), z.null()]).optional(),
   pct_change: z.number().nullable().optional(),
+  helper: z.string().nullable().optional(),
 });
 
 export const meteringGraphPointSchema = z.object({
@@ -22,7 +23,6 @@ export const meteringGraphSeriesSchema = z.object({
 });
 
 export const meteringGraphSchema = z.object({
-  step: z.string(),
   series: z.array(meteringGraphSeriesSchema),
 });
 
@@ -79,6 +79,16 @@ export const throughputDataSchema = z.object({
   peak_at: z.string().nullable().optional(),
 });
 
+const meteringDataStateSchema = z.enum(["ok", "error", "empty", "no_history"]);
+
+const meteringResponseMetaSchema = {
+  degraded: z.boolean().optional(),
+  generated_at: z.string(),
+  refresh_interval_seconds: z.number().optional(),
+  data_state: meteringDataStateSchema.optional(),
+  is_stale: z.boolean().optional(),
+};
+
 export const overviewResponseSchema = z.object({
   scope: meteringScopeSchema,
   kpis: z.array(meteringCellSchema),
@@ -87,15 +97,15 @@ export const overviewResponseSchema = z.object({
   usage_concentration: usageConcentrationSchema.nullable().optional(),
   request_health: requestHealthSchema.nullable().optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
-  throughput: throughputDataSchema,
-  degraded: z.boolean().optional(),
-  generated_at: z.string(),
+  throughput: throughputDataSchema.optional(),
+  ...meteringResponseMetaSchema,
 });
 
 export const serviceEntrySchema = z.object({
   display_name: z.string(),
   requests: z.number(),
   formatted_requests: z.string(),
+  percentage: z.number().optional().default(0),
 });
 
 export const tenantServiceRowSchema = z.object({
@@ -105,40 +115,47 @@ export const tenantServiceRowSchema = z.object({
   services: z.record(z.string(), serviceEntrySchema),
   total: z.number(),
   formatted_total: z.string(),
+  percentage: z.number().optional().default(0),
 });
 
 export const tenantConsumptionResponseSchema = z.object({
   scope: meteringScopeSchema,
+  avg_requests_per_tenant: meteringCellSchema.nullable().optional(),
   tenant_ranking: z.array(tenantRowSchema),
   usage_by_service: z.array(tenantServiceRowSchema),
   throughput: throughputDataSchema.optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
-  degraded: z.boolean().optional(),
-  generated_at: z.string(),
+  ...meteringResponseMetaSchema,
 });
 
 export const serviceConsumptionSummarySchema = z.object({
-  active_services: z.number(),
-  most_used: z.object({
-    service: z.string(),
-    requests: z.number(),
-  }),
-  highest_failure_rate: z.object({
-    service: z.string(),
-    failure_rate_pct: z.number(),
-  }),
+  active_services: z.number().optional(),
+  most_used: z
+    .object({
+      service: z.string(),
+      requests: z.number(),
+    })
+    .nullable()
+    .optional(),
+  highest_failure_rate: z
+    .object({
+      service: z.string(),
+      failure_rate_pct: z.number(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const serviceRowSchema = z.object({
   service: z.string(),
-  metering_unit: z.string(),
+  metering_unit: z.string().optional(),
   requests: z.number(),
   percentage: z.number().optional(),
   native_units: z.number().nullable().optional(),
   native_unit_suffix: z.string(),
   success_pct: z.number(),
   failure_rate_pct: z.number().optional(),
-  failed: z.number(),
+  failed: z.number().optional(),
   vs_prev_period_pct: z.number().nullable().optional(),
 });
 
@@ -146,8 +163,7 @@ export const serviceConsumptionResponseSchema = z.object({
   scope: meteringScopeSchema,
   summary: serviceConsumptionSummarySchema.nullable().optional(),
   service_breakdown: z.array(serviceRowSchema),
-  throughput: throughputDataSchema,
+  throughput: throughputDataSchema.optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
-  degraded: z.boolean().optional(),
-  generated_at: z.string(),
+  ...meteringResponseMetaSchema,
 });

@@ -1,213 +1,105 @@
-from typing import List
-from uuid import UUID
+"""Tier Management and Tenant Assignment endpoints for Pay-Per-Use."""
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
-from app.core.redis import get_redis_client
-from app.schemas.pay_per_use.pay_per_use import (
-    CheckRequest,
-    CheckResponse,
-    RecordRequest,
-    RecordResponse,
-    TopUpRequest,
-)
-from app.schemas.pay_per_use.billing import (
-    PlanCreateRequest,
-    PlanOut,
-    PlanServiceOut,
-    PlanUpdateRequest,
-    QuotaConfigCreate,
-    QuotaConfigOut,
-    QuotaConfigUpdate,
-    RateLimitConfigCreate,
-    RateLimitConfigOut,
-    RateLimitConfigUpdate,
-)
-from app.services.pay_per_use import pay_per_use_service as ppu_svc
-from app.services.pay_per_use import billing_policies_service as billing_svc
-from app.services.pay_per_use import quota_config_service as quota_svc
-from app.services.pay_per_use import rate_limit_service as rate_svc
-
-router = APIRouter(prefix="/pay-per-use", tags=["Pay Per Use"])
-billing_router = APIRouter(prefix="/billing", tags=["Billing"])
-
-@router.post("/check", response_model=CheckResponse)
-async def check_usage(body: CheckRequest, session: AsyncSession = Depends(get_db)):
-    rds = get_redis_client()
-    return await ppu_svc.check_usage(body, session, rds)
+from app.core.database import get_auth_db, get_db
+from app.schemas.common import SuccessResponse
+from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse, TopUpRequest, TopUpResponse
+from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
+from app.services.pay_per_use import tenant_assignment_service, tier_service
+from ai4i_core.exceptions.responses import success_response
 
 
-@router.post("/record", response_model=RecordResponse)
-async def record_usage(body: RecordRequest, session: AsyncSession = Depends(get_db)):
-    rds = get_redis_client()
-    return await ppu_svc.record_usage(body, session, rds)
+router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
 
 
-@router.get("/usage/tenant/{tenant_id}")
-async def usage_tenant(
-    tenant_id: str,
-    response: Response,
+@router.get("/tiers")
+async def list_tiers(
+    modelTaskType: Optional[str] = Query(
+        None,
+        description="Filter by model task type: LLM, NMT, ASR, TTS, OCR, Pipeline, Transliteration, NER, Text LD, Speaker Diarization, Audio LD",
+    ),
     session: AsyncSession = Depends(get_db),
 ):
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
-    response.headers["Pragma"] = "no-cache"
-    rds = get_redis_client()
-    return await ppu_svc.get_tenant_usage(tenant_id, session, rds)
+    return await tier_service.list_tiers(session, model_task_type=modelTaskType)
 
 
-@router.get("/usage/tenant/{tenant_id}/api-keys")
-async def usage_tenant_api_keys(tenant_id: str, session: AsyncSession = Depends(get_db)):
-    return await ppu_svc.get_tenant_api_key_usage(tenant_id, session)
+@router.get("/tier", response_model=TierOut)
+async def get_tier(
+    tier_id: str = Query(...),
+    session: AsyncSession = Depends(get_db),
+):
+    return await tier_service.get_tier_by_id(tier_id, session)
 
 
-@router.get("/usage/adopter")
-async def usage_adopter(session: AsyncSession = Depends(get_db)):
-    rds = get_redis_client()
-    return await ppu_svc.get_adopter_usage(session, rds)
+@router.post("/tier", response_model=TierOut, status_code=status.HTTP_201_CREATED)
+async def create_tier(
+    request: Request,
+    body: TierCreate,
+    session: AsyncSession = Depends(get_db),
+):
+    created_by = request.headers.get("X-User-Id")
+    return await tier_service.create_tier(body, session, created_by=created_by)
 
 
-@router.get("/wallet/{tenant_id}")
-async def get_wallet(tenant_id: str, session: AsyncSession = Depends(get_db)):
-    rds = get_redis_client()
-    return await ppu_svc.get_wallet(tenant_id, session, rds)
+@router.patch("/tier", response_model=TierOut)
+async def update_tier(
+    request: Request,
+    body: TierUpdate,
+    session: AsyncSession = Depends(get_db),
+):
+    updated_by = request.headers.get("X-User-Id")
+    return await tier_service.update_tier(body, session, updated_by=updated_by)
 
 
-@router.post("/wallet/{tenant_id}/topup")
-async def topup_wallet(
-    tenant_id: str,
+@router.delete("/tier", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tier(
+    tier_id: str = Query(...),
+    session: AsyncSession = Depends(get_db),
+):
+    await tier_service.delete_tier(tier_id, session)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/tenant/tier", response_model=SuccessResponse[List[TierAssignResponse]])
+async def list_tenant_tiers(
+    tier_id: Optional[str] = Query(None, description="Filter by tier UUID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all active PPU tenant-tier assignments, optionally filtered by tier_id."""
+    data = await tenant_assignment_service.list_tenant_tiers(db, tier_id=tier_id)
+    return success_response(data=data)
+
+
+@router.post("/tenant/top-up", response_model=TopUpResponse)
+async def top_up_tenant_budget(
+    request: Request,
     body: TopUpRequest,
-    session: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    return await ppu_svc.topup_wallet(tenant_id, body, session)
+    """Add budget to a tenant's active tier assignment and reset the budget-exhausted flag."""
+    from app.core.config import settings
+    return await tenant_assignment_service.top_up_budget(
+        body,
+        db,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )
 
 
-@router.get("/quota/{tenant_id}/status")
-async def quota_status(tenant_id: str):
-    rds = get_redis_client()
-    return await ppu_svc.get_quota_status(tenant_id, rds)
-
-
-@router.post("/quota/{tenant_id}/reset")
-async def quota_reset(tenant_id: str):
-    rds = get_redis_client()
-    return await ppu_svc.reset_quota(tenant_id, rds)
-
-
-
-# ── Billing Policies ──────────────────────────────────────────────────────────
-
-@billing_router.get("/policies/{plan_id}/services", response_model=List[PlanServiceOut])
-async def list_plan_services(plan_id: UUID, session: AsyncSession = Depends(get_db)):
-    return await billing_svc.list_plan_services(plan_id, session)
-
-
-@billing_router.post("/policies", response_model=PlanOut, status_code=status.HTTP_201_CREATED)
-async def create_policy(body: PlanCreateRequest, session: AsyncSession = Depends(get_db)):
-    return await billing_svc.create_policy(body, session)
-
-
-@billing_router.get("/policies", response_model=List[PlanOut])
-async def list_policies(session: AsyncSession = Depends(get_db)):
-    return await billing_svc.list_policies(session)
-
-
-@billing_router.get("/policies/tier/{tier}", response_model=PlanOut)
-async def get_policy_by_tier(tier: str, session: AsyncSession = Depends(get_db)):
-    return await billing_svc.get_policy_by_tier(tier, session)
-
-
-@billing_router.get("/policies/{plan_id}", response_model=PlanOut)
-async def get_policy(plan_id: UUID, session: AsyncSession = Depends(get_db)):
-    return await billing_svc.get_policy_by_id(plan_id, session)
-
-
-@billing_router.get("/policies/tenant/{tenant_id}")
-async def get_policy_for_tenant(tenant_id: str):
-    return await billing_svc.get_policy_for_tenant(tenant_id)
-
-
-@billing_router.put("/policies/{plan_id}", response_model=PlanOut)
-async def update_policy(
-    plan_id: UUID, body: PlanUpdateRequest, session: AsyncSession = Depends(get_db)
+@router.post("/tenant/tier", response_model=TierAssignResponse)
+async def assign_tenant_tier(
+    request: Request,
+    body: TierAssignRequest,
+    db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ):
-    return await billing_svc.update_policy(plan_id, body, session)
+    """Assign a PPU tier to a tenant.
 
-
-@billing_router.delete("/policies/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_policy(plan_id: UUID, session: AsyncSession = Depends(get_db)):
-    await billing_svc.delete_policy(plan_id, session)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ── Billing - Quota Config ────────────────────────────────────────────────────
-
-@billing_router.post("/quota-configs", response_model=QuotaConfigOut, status_code=status.HTTP_201_CREATED)
-async def create_quota_config(body: QuotaConfigCreate, session: AsyncSession = Depends(get_db)):
-    return await quota_svc.create_quota_config(body, session)
-
-
-@billing_router.get("/quota-configs", response_model=List[QuotaConfigOut])
-async def list_quota_configs(session: AsyncSession = Depends(get_db)):
-    return await quota_svc.list_quota_configs(session)
-
-
-@billing_router.get("/quota-configs/name/{name:path}", response_model=QuotaConfigOut)
-async def get_quota_config_by_name(name: str, session: AsyncSession = Depends(get_db)):
-    return await quota_svc.get_quota_config_by_name(name, session)
-
-
-@billing_router.get("/quota-configs/{config_id}", response_model=QuotaConfigOut)
-async def get_quota_config(config_id: UUID, session: AsyncSession = Depends(get_db)):
-    return await quota_svc.get_quota_config_by_id(config_id, session)
-
-
-@billing_router.put("/quota-configs/{config_id}", response_model=QuotaConfigOut)
-async def update_quota_config(
-    config_id: UUID, body: QuotaConfigUpdate, session: AsyncSession = Depends(get_db)
-):
-    return await quota_svc.update_quota_config(config_id, body, session)
-
-
-@billing_router.delete("/quota-configs/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_quota_config(config_id: UUID, session: AsyncSession = Depends(get_db)):
-    await quota_svc.delete_quota_config(config_id, session)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ── Billing - Rate Limit Config ───────────────────────────────────────────────
-
-@billing_router.post("/rate-limit-configs", response_model=RateLimitConfigOut, status_code=status.HTTP_201_CREATED)
-async def create_rate_limit_config(body: RateLimitConfigCreate, session: AsyncSession = Depends(get_db)):
-    return await rate_svc.create_rate_limit_config(body, session)
-
-
-@billing_router.get("/rate-limit-configs", response_model=List[RateLimitConfigOut])
-async def list_rate_limit_configs(session: AsyncSession = Depends(get_db)):
-    return await rate_svc.list_rate_limit_configs(session)
-
-
-@billing_router.get("/rate-limit-configs/name/{name:path}", response_model=RateLimitConfigOut)
-async def get_rate_limit_config_by_name(name: str, session: AsyncSession = Depends(get_db)):
-    return await rate_svc.get_rate_limit_config_by_name(name, session)
-
-
-@billing_router.get("/rate-limit-configs/{config_id}", response_model=RateLimitConfigOut)
-async def get_rate_limit_config(config_id: UUID, session: AsyncSession = Depends(get_db)):
-    return await rate_svc.get_rate_limit_config_by_id(config_id, session)
-
-
-@billing_router.put("/rate-limit-configs/{config_id}", response_model=RateLimitConfigOut)
-async def update_rate_limit_config(
-    config_id: UUID, body: RateLimitConfigUpdate, session: AsyncSession = Depends(get_db)
-):
-    return await rate_svc.update_rate_limit_config(config_id, body, session)
-
-
-@billing_router.delete("/rate-limit-configs/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_rate_limit_config(config_id: UUID, session: AsyncSession = Depends(get_db)):
-    await rate_svc.delete_rate_limit_config(config_id, session)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
+    Validates that the tenant exists and is ACTIVE in the auth DB.
+    Returns 409 if the tenant already has an active tier assignment.
+    """
+    user_id = request.headers.get("X-User-Id")
+    return await tenant_assignment_service.assign_tier(body, db, auth_db, user_id)

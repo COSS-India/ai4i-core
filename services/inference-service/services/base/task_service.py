@@ -7,6 +7,29 @@ from dataclasses import dataclass, field
 from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
 
+# ── Persistent Triton HTTP client (Fix 5) ────────────────────────────────────
+# One shared httpx.AsyncClient reuses TCP connections across Triton calls instead
+# of opening and closing a new connection on every request.
+_TRITON_CLIENT: Optional[Any] = None  # httpx.AsyncClient, imported lazily
+
+
+def _get_triton_client() -> Any:
+    global _TRITON_CLIENT
+    if _TRITON_CLIENT is None:
+        import httpx
+        _TRITON_CLIENT = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _TRITON_CLIENT
+
+
+async def close_triton_client() -> None:
+    """Close the shared Triton client; called from the app lifespan on shutdown."""
+    global _TRITON_CLIENT
+    if _TRITON_CLIENT is not None:
+        await _TRITON_CLIENT.aclose()
+        _TRITON_CLIENT = None
+
 
 @dataclass
 class PostProcessFormat:
@@ -249,7 +272,7 @@ class BaseTaskService:
         from trace.phase_timer import timed_phase
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
 
-        
+
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
@@ -300,7 +323,6 @@ class BaseTaskService:
                 with timed_phase("output_tokens_ms"):
                     span_ctx["output_type"] = get_output_type(response_data)
                     span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
-    
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
@@ -336,7 +358,7 @@ class BaseTaskService:
             return stub
 
         from config import settings
-        from utils.http_client import HTTPServiceClient
+        import httpx
 
         try:
             payload = {
@@ -354,9 +376,18 @@ class BaseTaskService:
             # span carries the model_name attribute when correlation is
             # needed server-side.
             self.logger.debug("Calling Triton (model=%s)", self.service_info.get("name", ""))
-            return await HTTPServiceClient(
-                timeout=settings.DEFAULT_TRITON_TIMEOUT
-            ).post_json(triton_endpoint, payload, headers)
+
+            client = _get_triton_client()
+            response = await client.post(
+                triton_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=settings.DEFAULT_TRITON_TIMEOUT,
+            )
+            if response.status_code == 404:
+                raise LookupError("Triton endpoint not found")
+            response.raise_for_status()
+            return response.json()
 
         except Exception as e:
             # Log only the exception TYPE — httpx/urllib3 error reprs embed

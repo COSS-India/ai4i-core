@@ -23,7 +23,7 @@ import logging
 from typing import Any, Optional
 
 import httpx
-from ai4icore_core.email import EmailClient
+from ai4i_core.email import EmailClient
 from fastapi import BackgroundTasks
 
 from app.core.config import settings

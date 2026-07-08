@@ -100,6 +100,7 @@ export const setPasswordStatusResponseSchema = z.object({
 /** POST /api-keys — raw key shown once; no list metadata. */
 export const createApiKeyResponseSchema = z
   .object({
+    id: z.coerce.number(),
     api_key: z.string(),
     key_name: z.string(),
     permissions: z.array(z.coerce.number()),
@@ -113,7 +114,7 @@ export const createApiKeyResponseSchema = z
 
 const apiKeyResponseRawSchema = z
   .object({
-    id: z.coerce.number().optional(),
+    id: z.coerce.number(),
     key_id: z.coerce.number().optional(),
     key_name: z.string(),
     api_key: z.string().optional(),
@@ -133,7 +134,7 @@ function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchem
   const isActive = d.is_active ?? true;
   return {
     ...d,
-    ...(d.id != null || d.key_id != null ? { id: (d.id ?? d.key_id) as number } : {}),
+    id: d.id,
     is_active: isActive,
     is_revoked: d.is_revoked ?? !isActive,
     created_at: d.created_at ?? undefined,

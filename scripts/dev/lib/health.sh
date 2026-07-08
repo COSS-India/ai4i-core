@@ -24,16 +24,6 @@ wait_for_redis() {
     ok "Redis healthy"
 }
 
-wait_for_nginx() {
-
-    log "Waiting for nginx gateway..."
-
-    wait_for_port localhost 8080 180 \
-        || die "Nginx failed to become healthy"
-
-    ok "Nginx healthy"
-}
-
 wait_for_kafka() {
 
     log "Waiting for kafka..."
@@ -60,7 +50,6 @@ wait_for_infra() {
     wait_for_postgres
     wait_for_redis
 
-    [[ "${WAIT_NGINX:-false}" == "true" ]]      && wait_for_nginx
     [[ "${WAIT_KAFKA:-false}" == "true" ]]      && wait_for_kafka
     [[ "${WAIT_OPENSEARCH:-false}" == "true" ]] && wait_for_opensearch
 

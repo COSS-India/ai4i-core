@@ -3,9 +3,9 @@
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import { pipelineInferenceResponseSchema, pipelineInfoOrHealthSchema } from './dto/schemas/pipeline';
-import { 
-  PipelineInferenceRequest, 
-  PipelineInferenceResponse 
+import {
+  PipelineInferenceRequest,
+  PipelineInferenceResponse
 } from '../types/pipeline';
 
 const PIPELINE_ENDPOINTS = apiEndpoints.pipeline;
@@ -20,7 +20,7 @@ export const runPipelineInference = async (
     const response = await apiService.post(
       PIPELINE_ENDPOINTS.inference,
       request,
-      { responseSchema: pipelineInferenceResponseSchema }
+      { responseSchema: pipelineInferenceResponseSchema, errorService: 'pipeline' }
     );
     return response.data;
   } catch (error) {

@@ -21,7 +21,7 @@ Usage: ./scripts/dev/up [profile] [--pull]
 
 Profiles (each builds on core):
   core           postgres + redis + auth/platform/inference (default; no UI)
-  frontend       core + nginx-gateway + simple-ui  (UI for the inference services)
+  frontend       core + simple-ui  (UI for the inference services)
   observability  core + prometheus/alertmanager/grafana/node-exporter
   logging        core + kafka/zookeeper/opensearch/fluent-bit (KAFKA_ENABLED=true)
   all            everything above
@@ -112,11 +112,6 @@ print_banner() {
 
     if [[ "$START_FRONTEND" == "true" ]]; then
         echo "Simple UI:               http://localhost:3000"
-        echo "Gateway:                 http://localhost:8080"
-    fi
-
-    if [[ "$WAIT_NGINX" == "true" && "$START_FRONTEND" != "true" ]]; then
-        echo "Gateway:                 http://localhost:8080"
     fi
 
     case "$PROFILE" in

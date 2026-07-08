@@ -4,15 +4,15 @@ import { METERING } from "../../config/meteringConstants";
 
 interface MeteringAlertsProps {
   errorMessage?: string | null;
-  isDegraded?: boolean;
+  dataStateBanner?: { status: "error" | "info"; message: string } | null;
 }
 
-/** Dashboard-level error and degraded-data banners. */
+/** Dashboard-level HTTP errors and API `data_state` banners. */
 export const MeteringAlerts: React.FC<MeteringAlertsProps> = ({
   errorMessage,
-  isDegraded = false,
+  dataStateBanner,
 }) => {
-  if (!errorMessage && !isDegraded) return null;
+  if (!errorMessage && !dataStateBanner) return null;
 
   return (
     <VStack align="stretch" spacing={2}>
@@ -22,10 +22,10 @@ export const MeteringAlerts: React.FC<MeteringAlertsProps> = ({
           <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       ) : null}
-      {isDegraded ? (
-        <Alert status="warning" borderRadius="md" fontSize="sm">
+      {dataStateBanner ? (
+        <Alert status={dataStateBanner.status} borderRadius="md" fontSize="sm">
           <AlertIcon />
-          <AlertDescription>{METERING.BANNERS.DEGRADED}</AlertDescription>
+          <AlertDescription>{dataStateBanner.message}</AlertDescription>
         </Alert>
       ) : null}
     </VStack>

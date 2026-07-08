@@ -201,7 +201,7 @@ Per `docs/architecture/00-overview.md`, GDPR/DPDPA data-subject rights are expli
 | PII redaction audit | `services/platform-core-service/app/models/pii_management/audit_log.py` |
 | Usage/billing | `services/platform-core-service/app/models/pay_per_use/` |
 | Model submitter names | `services/platform-core-service/app/models/model_management/model.py` |
-| Access log middleware (client IP) | `libs/ai4icore_core/ai4icore_core/logging/middleware.py` |
+| Access log middleware (client IP) | `libs/ai4i_core/ai4i_core/logging/middleware.py` |
 | Trace user/tenant attributes | `services/inference-service/trace/request_span.py` |
 | Frontend token/profile storage | `frontend/simple-ui/src/utils/tokenStorage.ts`, `src/services/authService.ts` |
 | Kafka retention | `infrastructure/kafka/init-kafka.sh` |

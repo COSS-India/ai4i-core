@@ -49,7 +49,7 @@ class HTTPServiceClient:
 
                 if response.status_code == 404:
                     logger.warning(f"Service endpoint not found: {url}")
-                    raise LookupError(f"Endpoint not found: {url}")
+                    raise LookupError("Endpoint not found")
 
                 response.raise_for_status()
                 return response.json()
@@ -93,7 +93,7 @@ class HTTPServiceClient:
 
                 if response.status_code == 404:
                     logger.warning(f"Service endpoint not found: {url}")
-                    raise LookupError(f"Endpoint not found: {url}")
+                    raise LookupError("Endpoint not found")
 
                 response.raise_for_status()
                 return response.json()

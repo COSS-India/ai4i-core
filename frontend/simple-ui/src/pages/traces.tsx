@@ -38,7 +38,7 @@ import {
   Trace,
   Span,
 } from "../services/observabilityService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { showToast } from "../utils/toast";
 import { API_V1, INFERENCE_TRACE_PATHS } from "../services/apiEndpoints";
 
 // Utility functions to extract and categorize spans
@@ -1144,7 +1144,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   // durations add up correctly to the total trace duration.
   //
   // Algorithm: build a "displayed tree" where the parent of each displayed
-  // span is its nearest displayed ancestor (walking up the Jaeger parent chain).
+  // span is its nearest displayed ancestor (walking up the parent span chain).
   // Then: effectiveDuration = span.duration − Σ(displayed direct children durations)
   const computeEffectiveDurations = (spanList: ProcessedSpan[]): void => {
     const displayedIds = new Set(spanList.map(p => p.span.spanID));
@@ -1152,7 +1152,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       spanList.map(p => [p.span.spanID, p])
     );
 
-    // For each displayed span, walk up the Jaeger parent chain to find the
+    // For each displayed span, walk up the parent span chain to find the
     // nearest displayed ancestor (which may be a grandparent if the direct
     // parent is not in the displayed list).
     const displayedParentOf = new Map<string, string>(); // childId → parentId
@@ -1848,7 +1848,6 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
 };
 
 const TracesPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const [traceIdSearch, setTraceIdSearch] = useState<string>("");
@@ -1862,16 +1861,13 @@ const TracesPage: React.FC = () => {
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view traces.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please log in to view traces.",
       });
       router.push("/auth");
     }
-  }, [isAuthenticated, authLoading, router, toast]);
+  }, [isAuthenticated, authLoading, router]);
 
   // Handle traceId from query parameter (e.g., from logs page)
   useEffect(() => {
@@ -1894,12 +1890,9 @@ const TracesPage: React.FC = () => {
 
   const handleSearchByTraceId = async () => {
     if (!traceIdSearch.trim()) {
-      toast({
-        title: "Trace ID Required",
-        description: "Please enter a trace ID to search.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
+      showToast({
+        type: "warning",
+        message: "Please enter a trace ID to search.",
       });
       return;
     }
@@ -1907,12 +1900,9 @@ const TracesPage: React.FC = () => {
     try {
       setSelectedTraceId(traceIdSearch.trim());
     } catch (error: any) {
-      toast({
-        title: "Trace Not Found",
-        description: error?.message || "Could not find trace with the provided ID.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
+      showToast({
+        type: "error",
+        message: error?.message || "Could not find trace with the provided ID.",
       });
     }
   };

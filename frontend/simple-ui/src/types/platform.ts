@@ -249,6 +249,20 @@ export interface ServiceLegacyFields {
   modelName?: string;
   /** UI-only: derived from model submittedOn (not sent to API). */
   modelSubmissionDate?: string;
+  /** Pay-per-use tier names assigned to this service. */
+  tiers?: string[];
+  /** Legacy single-tier field from mm_services.tier column. */
+  tier?: string | null;
+  /** Billing unit type (task type used for billing, e.g. "LLM", "ASR"). */
+  billingUnitType?: string;
+  /** Cost charged per billing unit. */
+  costPerUnit?: number;
+  /** Size of one billing unit. */
+  unitSize?: number;
+  /** IDs of tiers this service is available under. */
+  tierIds?: string[] | null;
+  /** Display names of tiers this service is available under (returned by list API). */
+  tierNames?: string[] | null;
 }
 
 /** Service row as consumed by registry UI and inference adapters. */

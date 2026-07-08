@@ -51,11 +51,22 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
+    billingUnitType: Optional[str] = None
+    costPerUnit: Optional[float] = None
+    unitSize: Optional[int] = None
+    tierIds: Optional[List[str]] = None
 
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str) -> str:
         return validate_entity_name(v, field="Service name")
+
+    @field_validator("unitSize")
+    @classmethod
+    def _validate_unit_size(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("unitSize must be greater than 0")
+        return v
 
     @field_validator("inferenceServerType", mode="before")
     @classmethod
@@ -87,6 +98,17 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
+    billingUnitType: Optional[str] = None
+    costPerUnit: Optional[float] = None
+    unitSize: Optional[int] = None
+    tierIds: Optional[List[str]] = None
+
+    @field_validator("unitSize")
+    @classmethod
+    def _validate_unit_size(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("unitSize must be greater than 0")
+        return v
 
     @field_validator("inferenceServerType", mode="before")
     @classmethod
@@ -122,6 +144,12 @@ class ServiceResponse(BaseSchema):
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
+    billingUnitType: Optional[str] = None
+    costPerUnit: Optional[float] = None
+    unitSize: Optional[int] = None
+    unitRate: Optional[float] = None
+    tierIds: Optional[List[str]] = None
+    tierNames: Optional[List[str]] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 

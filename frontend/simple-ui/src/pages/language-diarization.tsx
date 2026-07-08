@@ -14,12 +14,12 @@ import LanguageDiarizationResult, {
 } from "../components/service-page/results/LanguageDiarizationResult";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { parseError } from "../utils/errorHandler";
+import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("language-diarization");
 
 const LanguageDiarizationPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
   const [audioClearToken, setAudioClearToken] = useState(0);
@@ -42,23 +42,11 @@ const LanguageDiarizationPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!audioData) {
-      toast({
-        title: "No Audio",
-        description: "Please record or upload audio first.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please record or upload audio first." });
       return;
     }
     if (!serviceId) {
-      toast({
-        title: "Service Required",
-        description: "Please select a Language Diarization service.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
+      showToast({ type: "warning", message: "Please select a Language Diarization service." });
       return;
     }
 
@@ -72,19 +60,8 @@ const LanguageDiarizationPage: React.FC = () => {
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
-      let errorMessage = "Failed to perform language diarization";
-      const e = err as { response?: { data?: { detail?: { message?: string }; message?: string } }; message?: string };
-      if (e?.response?.data?.detail && typeof e.response.data.detail === "object" && "message" in e.response.data.detail) {
-        errorMessage = (e.response.data.detail as { message: string }).message;
-      } else if (e?.response?.data?.message) {
-        errorMessage = e.response.data.message;
-      } else if (typeof e?.response?.data?.detail === "string") {
-        errorMessage = e.response.data.detail;
-      } else if (e?.message) {
-        errorMessage = e.message;
-      }
+      const { message: errorMessage } = parseError(err);
       setError(errorMessage);
-      toast({ title: "Error", description: errorMessage, status: "error", duration: 5000, isClosable: true });
     } finally {
       setFetching(false);
     }

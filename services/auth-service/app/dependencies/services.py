@@ -7,9 +7,9 @@ This is the ONLY place where repositories are imported and wired into services.
 
 from functools import lru_cache
 
-from ai4icore_core.email import EmailClient
-from ai4icore_core.email.providers.factory import build_provider
-from ai4icore_core.email.settings import EmailSettings
+from ai4i_core.email import EmailClient
+from ai4i_core.email.providers.factory import build_provider
+from ai4i_core.email.settings import EmailSettings
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,6 +119,7 @@ def get_tenant_service(
         token_service=token_service,
         email_client=email_client,
         api_key_service=api_key_service,
+        refresh_token_repo=RefreshTokenRepository(db),
     )
 
 

@@ -26,7 +26,7 @@ export const asrInferenceResponseSchema = inferenceOutputResponseSchema;
 export const nmtInferenceResponseSchema = inferenceOutputResponseSchema;
 export const llmInferenceResponseSchema = inferenceOutputResponseSchema;
 
-/** OpenAI-style chat completion from POST /api/v1/chat */
+/** OpenAI-style chat completion from POST /api/v1/chat/completions */
 export const chatCompletionResponseSchema = z
   .object({
     choices: z.array(

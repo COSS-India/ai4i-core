@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useToast } from "@chakra-ui/react";
+import { showToast } from "../../../utils/toast";
 import alertingService from "../../../services/alertingService";
 import type { AlertHistoryItem } from "../../../types/alerting";
 
 const DEFAULT_PAGE_SIZE = 25;
 
 export function useAlertHistory(enabled: boolean) {
-  const toast = useToast();
   const [items, setItems] = useState<AlertHistoryItem[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -49,18 +48,15 @@ export function useAlertHistory(enabled: boolean) {
         setTotal(res.total);
         setOffset(nextOffset);
       } catch (error) {
-        toast({
-          title: "Error",
-          description: error instanceof Error ? error.message : "Failed to load alert history",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
+        showToast({
+          type: "error",
+          message: error instanceof Error ? error.message : "Failed to load alert history",
         });
       } finally {
         setIsLoading(false);
       }
     },
-    [toast, filterCategory, filterSeverity, dateFrom, dateTo, searchQuery, pageSize]
+    [filterCategory, filterSeverity, dateFrom, dateTo, searchQuery, pageSize]
   );
 
   const clearFilters = useCallback(() => {

@@ -153,11 +153,13 @@ async def search_traces_opensearch(
         # Total count is the number of matching traces (not spans)
         total = ids_response.get("aggregations", {}).get("trace_count", {}).get("value", 0)
 
+        _NULL_TRACE_ID = "0x" + "0" * 32
+
         # Preserve the newest-first order from the collapse result
         paginated_trace_ids = []
         for hit in ids_response.get("hits", {}).get("hits", []):
             trace_id = hit.get("_source", {}).get("context", {}).get("trace_id")
-            if trace_id and trace_id not in paginated_trace_ids:
+            if trace_id and trace_id != _NULL_TRACE_ID and trace_id not in paginated_trace_ids:
                 paginated_trace_ids.append(trace_id)
 
         # Step 3: fetch ALL spans for the paged traces. Filters target single span
@@ -169,7 +171,7 @@ async def search_traces_opensearch(
             spans_response = opensearch_client.search_traces(
                 query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
                 size=len(paginated_trace_ids) * 50,  # generous per-trace span ceiling
-                source_fields=["@timestamp", "name", "context.trace_id", "attributes"],
+                source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
             )
 
             for hit in spans_response.get("hits", {}).get("hits", []):
@@ -184,14 +186,17 @@ async def search_traces_opensearch(
                 if trace_id not in traces_map:
                     traces_map[trace_id] = {
                         "trace_id": trace_id,
-                        "service": "ai4x-inference",
+                        "service": source.get("service_name") or "ai4x-inference",
                         "task_type": None,
                         "status": "unknown",
                         "url": None,
-                        "tenant_id": tenant_filter or "system",
+                        "tenant_id": tenant_filter or attrs.get("tenantId") or "system",
                         "timestamp": source.get("@timestamp") or source.get("timestamp"),
                     }
-
+                elif not traces_map[trace_id]["service"] or traces_map[trace_id]["service"] == "ai4x-inference":
+                    # Upgrade the service name from a later span if a real name is present
+                    if source.get("service_name"):
+                        traces_map[trace_id]["service"] = source.get("service_name")
 
                 # Extract task_type from model span
                 if span_name == "model" and not traces_map[trace_id]["task_type"]:
@@ -212,14 +217,15 @@ async def search_traces_opensearch(
         by_level = {}
         by_task = {}
         for trace in data:
-            trace_status = trace.get("status", "unknown")
-            task_type = trace.get("task_type", "unknown")
+            # .get(..., "unknown") does not help when the value is explicitly None
+            trace_status = trace.get("status") or "unknown"
+            task_type_key = trace.get("task_type") or "unknown"
 
             by_level[trace_status] = by_level.get(trace_status, 0) + 1
-            by_task[task_type] = by_task.get(task_type, 0) + 1
+            by_task[task_type_key] = by_task.get(task_type_key, 0) + 1
 
         return SearchTracesResponse(
-            
+
             data=data,
             total=total,
             page=page,

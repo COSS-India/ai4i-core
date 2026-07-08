@@ -17,6 +17,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+
+from ai4i_core.ppu import get_inference_types
+
 from app.core.config import settings
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
@@ -99,6 +104,12 @@ class APIKeyService:
             ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
         if ttl <= 0:
             return
+        existing = await self._cache.get_api_key_cache(db_key.api_key)
+        preserved = {
+            k: v
+            for k, v in (existing or {}).items()
+            if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
+        }
         await self._cache.set_api_key_cache(
             db_key.api_key,
             ttl,
@@ -107,6 +118,7 @@ class APIKeyService:
                 "permissions": db_key.permissions or [],
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
+                **preserved,
             },
         )
 
@@ -180,6 +192,63 @@ class APIKeyService:
                 break
             offset += _USERS_PAGE_SIZE
 
+    async def _patch_all_tenant_key_caches(
+        self, tenant_id: int, field: str, value: str
+    ) -> None:
+        """Patch a single Redis hash field on every cached API key for the tenant."""
+        if self._repo is None or self._users is None:
+            return
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await self._cache.patch_api_key_cache_field(key.api_key, field, value)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
+    async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
+        """Flip budget-exhausted on all cached API key hashes for the tenant."""
+        await self._patch_all_tenant_key_caches(
+            tenant_id, "budget-exhausted", "1" if exhausted else "0"
+        )
+
+    async def reset_all_quota_fields(self) -> None:
+        """HDEL every quota-* field from all active API key hashes across all tenants.
+        Called by the monthly cron on the 1st of each month.
+        """
+        if self._repo is None or self._users is None or self._tenants is None:
+            logger.warning("reset_all_quota_fields skipped: missing repositories")
+            return
+        inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
+        offset = 0
+        while True:
+            # list_by_tenant with tenant_id=None isn't available; iterate all users via repo
+            users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await self._cache.delete_api_key_cache_fields(key.api_key, inference_fields)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
+    async def set_quota_exhausted_for_tenant(
+        self, tenant_id: int, inference_name: str
+    ) -> None:
+        """Mark quota-{inference_name} exhausted on all cached API key hashes for the tenant."""
+        await self._patch_all_tenant_key_caches(
+            tenant_id, f"quota-{inference_name}", "1"
+        )
+
     async def create_api_key(
         self,
         user_id: UUID,
@@ -187,6 +256,7 @@ class APIKeyService:
         permissions: list[int],
         expires_days: Optional[int] = None,
         tenant_id: Optional[str] = None,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
@@ -231,6 +301,45 @@ class APIKeyService:
             tenant = await self._tenants.get_by_id(owner.tenant_id)
         owner_active = self.user_may_use_api_keys(owner, tenant)
 
+        if not tenant_id:
+            raise ValidationError(
+                message="A tenant ID is required to create an API key.",
+                code="TENANT_ID_REQUIRED",
+            )
+
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier assignment cannot be verified: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+
+        tier_id = ""
+        try:
+            row = (await platform_core_db.execute(
+                text(
+                    "SELECT tier_id FROM ppu_tenant_tier_assignments"
+                    " WHERE tenant_id = :tenant_id"
+                    "   AND effective_from <= now()"
+                    "   AND effective_to   >  now()"
+                    " LIMIT 1"
+                ),
+                {"tenant_id": tenant_id},
+            )).first()
+            if row:
+                tier_id = str(row.tier_id)
+        except Exception as exc:
+            logger.warning("Failed to fetch tier_id for tenant %s: %s", tenant_id, exc)
+            raise ValidationError(
+                message="Failed to verify tier assignment for the tenant.",
+                code="TIER_LOOKUP_FAILED",
+            ) from exc
+
+        if not tier_id:
+            raise ValidationError(
+                message="API key cannot be created: tenant has no active tier assignment.",
+                code="NO_ACTIVE_TIER",
+            )
+
         api_key = APIKey(
             api_key=raw_key,
             user_id=user_id,
@@ -253,6 +362,7 @@ class APIKeyService:
                     "permissions": permission_ids,
                     "user_id": str(user_id),
                     "tenant_id": tenant_id,
+                    "tier_id": tier_id,
                 },
             )
 
@@ -272,10 +382,9 @@ class APIKeyService:
             raise InvalidAPIKeyError()
 
         return {
+            **cached,
             "valid": True,
-            "user_id": cached.get("user_id"),
             "permission_ids": cached.get("permissions", []),
-            "tenant_id": cached.get("tenant_id"),
         }
 
     async def revoke_api_key(
@@ -283,31 +392,20 @@ class APIKeyService:
         api_key_value: str,
         user_id: Optional[UUID] = None,
     ) -> None:
-        # Validate API key format
         if not self._is_api_key(api_key_value):
             raise ValidationError(
                 message="Invalid API key format. Must be a 32-character hex string.",
                 code="INVALID_API_KEY_FORMAT",
             )
-
-        # Check if API key exists
         db_key = await self._repo.get_by_api_key(api_key_value)
         if not db_key:
             raise EntityNotFoundError("API key")
-
-        # Check authorization (owner can only revoke own keys unless admin)
         if user_id is not None and db_key.user_id != user_id:
             raise AuthorizationError(
                 message="You do not have permission to revoke this API key. API keys can only be revoked by their owner.",
                 code="UNAUTHORIZED_API_KEY_REVOCATION",
             )
-
-        await self._repo.revoke(db_key)
-        await self._repo.commit()
-
-        # Evict from Redis AFTER DB commit to ensure atomicity
-        await self._cache.delete_api_key_cache(api_key_value)
-        logger.info("API key revoked: api_key=%s user=%s", api_key_value, db_key.user_id)
+        await self.revoke_by_obj(db_key)
 
     async def update_key(
         self,
@@ -315,31 +413,43 @@ class APIKeyService:
         data: dict,
         user_id: Optional[UUID] = None,
     ) -> APIKey:
-        # Validate API key format
         if not self._is_api_key(api_key_value):
             raise ValidationError(
                 message="Invalid API key format. Must be a 32-character hex string.",
                 code="INVALID_API_KEY_FORMAT",
             )
-
-        # Check if API key exists
         db_key = await self._repo.get_by_api_key(api_key_value)
         if not db_key:
             raise EntityNotFoundError("API key")
-
-        # Check authorization (owner can only update own keys)
         if user_id is not None and db_key.user_id != user_id:
             raise AuthorizationError(
                 message="You do not have permission to update this API key. API keys can only be updated by their owner.",
                 code="UNAUTHORIZED_API_KEY_UPDATE",
             )
+        return await self.update_key_by_obj(db_key, data, user_id)
 
-        # Validate permissions if provided
+    async def revoke_by_obj(self, db_key: APIKey) -> None:
+        """Revoke a key that has already been fetched and ownership-verified by the caller.
+        Skips the second get_by_api_key lookup that revoke_api_key() would otherwise perform."""
+        await self._repo.revoke(db_key)
+        await self._repo.commit()
+        await self._cache.delete_api_key_cache(db_key.api_key)
+        logger.info("API key revoked: api_key=%s user=%s", db_key.api_key, db_key.user_id)
+
+    async def update_key_by_obj(
+        self,
+        db_key: APIKey,
+        data: dict,
+        user_id: Optional[UUID] = None,
+    ) -> APIKey:
+        """Update a key that has already been fetched and ownership-verified by the caller.
+        Skips the second get_by_api_key lookup that update_key() would otherwise perform."""
+        data = dict(data)  # avoid mutating the caller's dict
+
         permissions = data.get("permissions")
         if permissions is not None:
             await self._validate_permission_ids(permissions)
 
-        # Validate expires_days if provided
         expires_days = data.pop("expires_days", None)
         if expires_days is not None:
             if not isinstance(expires_days, int) or expires_days < 1:
@@ -349,14 +459,11 @@ class APIKeyService:
                 )
             data["expires_at"] = datetime.now(timezone.utc) + timedelta(days=expires_days)
 
-        # Set updated_by
         if user_id is not None:
             data["updated_by"] = str(user_id)
 
-        # Update in database
         await self._repo.update(db_key, data)
         await self._repo.refresh(db_key)
-
         await self._repo.commit()
 
         tenant_id_str: Optional[str] = None
@@ -367,16 +474,16 @@ class APIKeyService:
                 tenant = await self._tenants.get_by_id(owner.tenant_id)
                 tenant_id_str = str(owner.tenant_id)
             if owner:
-                should_cache = self.effective_is_active(db_key, owner, tenant)
-                if should_cache:
+                if self.effective_is_active(db_key, owner, tenant):
                     await self._refresh_redis_cache(db_key, tenant_id_str)
                 else:
-                    await self._cache.delete_api_key_cache(api_key_value)
+                    await self._cache.delete_api_key_cache(db_key.api_key)
             else:
-                await self._cache.delete_api_key_cache(api_key_value)
+                await self._cache.delete_api_key_cache(db_key.api_key)
         elif data.get("is_active") is False:
-            await self._cache.delete_api_key_cache(api_key_value)
-        logger.info("API key updated: api_key=%s user=%s", api_key_value, db_key.user_id)
+            await self._cache.delete_api_key_cache(db_key.api_key)
+
+        logger.info("API key updated: api_key=%s user=%s", db_key.api_key, db_key.user_id)
         return db_key
 
     async def list_by_user(self, user_id: UUID) -> list[APIKey]:
@@ -387,3 +494,9 @@ class APIKeyService:
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         return await self._repo.get_by_api_key(api_key_value)
+
+    async def get_by_id(self, key_id: int) -> Optional[APIKey]:
+        return await self._repo.get_by_id(key_id)
+
+    async def get_by_id_for_owner(self, key_id: int, user_id: UUID) -> Optional[APIKey]:
+        return await self._repo.get_by_id_for_owner(key_id, user_id)

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
 
-from ai4icore_core.email import EmailMessage, TemplateRenderer
+from ai4i_core.email import EmailMessage, TemplateRenderer
 
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
@@ -137,5 +137,22 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
         ctx={
             "display_name": _display_name(user),
             "when": when.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+    )
+
+
+def render_account_deleted(email: str, full_name: Optional[str] = None) -> EmailMessage:
+    """Deletion confirmation sent to the user's original address.
+
+    ``email`` and ``full_name`` must be captured before the account is
+    anonymised and passed explicitly so this function is safe to call after
+    the DB commit that overwrites those fields.
+    """
+    return _render(
+        "account_deleted",
+        to=email,
+        subject="Your AI4I Platform account has been deleted",
+        ctx={
+            "display_name": full_name or "there",
         },
     )

@@ -92,7 +92,7 @@ export const performAudioLanguageDetectionInference = async (
     const response = await apiService.post(
       apiEndpoints['audio-language-detection'].inference,
       payload,
-      { responseSchema: audioLanguageDetectionInferenceResponseSchema }
+      { responseSchema: audioLanguageDetectionInferenceResponseSchema, errorService: 'audio-language-detection' }
     );
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);

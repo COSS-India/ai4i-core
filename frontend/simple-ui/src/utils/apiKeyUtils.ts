@@ -29,23 +29,10 @@ export function resolveApiKeyHex(key: ApiKeyLike): string | null {
   return /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
 }
 
-/** Path tokens to try for revoke/update (hex first, then numeric id for older gateways). */
-export function buildApiKeyRevokePathTokens(key: ApiKeyLike): string[] {
-  const tokens: string[] = [];
-  const hex = resolveApiKeyHex(key);
-  if (hex) tokens.push(hex);
-  const id = key.id ?? key.key_id ?? key.keyId;
-  if (id != null && Number.isFinite(Number(id))) tokens.push(String(id));
-  return Array.from(new Set(tokens));
-}
-
 export function formatApiKeyDisplayId(key: ApiKeyLike): string {
   const id = key.id ?? key.key_id ?? key.keyId;
   if (id != null && Number.isFinite(Number(id))) return String(id);
-  const hex = resolveApiKeyHex(key);
-  if (hex) return hex;
-  const raw = (key.api_key ?? key.apiKey)?.trim();
-  return raw || "—";
+  return "—";
 }
 
 export function readApiKeyHexCache(): Record<string, string> {
