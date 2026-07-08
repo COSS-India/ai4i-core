@@ -33,7 +33,7 @@ class AuthSettings(BaseSettings):
     # ── Server ──
     host: str = "0.0.0.0"
     port: int = 8081
-    workers: int = 2
+    workers: int = 1
     log_level: str = "INFO"
 
     # ── Database ──
