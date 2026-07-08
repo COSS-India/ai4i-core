@@ -29,6 +29,8 @@ async def _lifespan(app: FastAPI):
     provider = trace.get_tracer_provider()
     if hasattr(provider, "shutdown"):
         provider.shutdown()  # flushes the Kafka span exporter
+    from services.base.task_service import close_triton_client
+    await close_triton_client()
     logger.info("✓ Inference service shutting down")
 
 
