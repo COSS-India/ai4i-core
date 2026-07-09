@@ -185,6 +185,7 @@ async def handle_ppu_usage(msg: Message) -> None:
                 billing_month=billing_month,
                 tier_id=wallet.tier_id,
                 units=billed_units,
+                cost=cost,
             )
             logger.info(
                 "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
