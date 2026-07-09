@@ -25,6 +25,11 @@ class PPUNotificationService:
         background_tasks: BackgroundTasks,
     ) -> None:
         for tenant_id in tenant_ids:
+            if not tenant_id.isdigit():
+                logger.error(
+                    "quota-limit-updated: skipping tenant %r — non-numeric id", tenant_id
+                )
+                continue
             try:
                 admins = await self._role_repo.get_tenant_admins(int(tenant_id))
                 for admin in admins:
