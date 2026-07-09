@@ -3,6 +3,7 @@ export interface TierQuota {
   unit?: string;
   limit: number;
   rateLimit?: number;
+  pendingLimit?: number | null;
 }
 
 export interface Tier {
@@ -29,6 +30,8 @@ export interface UpdateTierPayload {
   name: string;
   description?: string;
   quotas?: { modelTaskType: string; limit: number }[];
+  cancel_pending_quota?: string[];
+  remove_quota?: string[];
 }
 
 export type TierFormQuota = {
@@ -36,6 +39,7 @@ export type TierFormQuota = {
   modelTaskType: string;
   unit: string;
   limit: string;
+  isExisting?: boolean;
 };
 
 export type TierFormData = {

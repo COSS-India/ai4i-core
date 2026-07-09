@@ -53,7 +53,7 @@ class PPUUsageService:
 
         items: list[dict] = []
         for row in rows:
-            units = int(row.total_units or 0)
+            units = float(row.total_units or 0)
             spend = round(float(row.total_cost or 0), 2)
 
             items.append({
@@ -94,9 +94,9 @@ class PPUUsageService:
         for row in rows:
             budget_limit = float(row.budget_limit)
             remaining_budget = float(row.available_balance)
-            total_units = int(row.total_units or 0)
+            total_units = float(row.total_units or 0)
             raw_quota = row.total_quota  # None means unlimited (no quota rows for this tier)
-            quota_display = int(raw_quota) if raw_quota is not None else None
+            quota_display = float(raw_quota) if raw_quota is not None else None
 
             items.append(TenantUsageItem(
                 tenantId=row.tenant_id,
@@ -128,12 +128,13 @@ class PPUUsageService:
         org_map = await _resolve_tenant_names([tenant_id], auth_db)
 
         breakdown: list[TenantUsageBreakdown] = []
-        total_consumption = 0
+        total_consumption = 0.0
         inference_types: set[str] = set()
 
         raw: list[dict] = []
         for row in breakdown_rows:
             units = int(row.total_units or 0)
+            unit_size = int(row.unit_size) if row.unit_size else 1
             total_consumption += units
             inference_types.add(row.inference_name)
 
@@ -141,7 +142,7 @@ class PPUUsageService:
 
             snap = row.monthly_quota_snap
             if snap is not None:
-                row_quota_limit = int(snap)
+                row_quota_limit = float(snap)
                 row_remaining = max(0, row_quota_limit - units)
             else:
                 row_quota_limit = None
