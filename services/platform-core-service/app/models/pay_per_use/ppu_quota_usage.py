@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, Numeric, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -23,8 +23,8 @@ class PPUQuotaUsage(Base):
     tenant_id = Column(String(255), nullable=False, index=True)
     inference_name = Column(String(64), nullable=False, index=True)
     billing_month = Column(String(7), nullable=False)
-    monthly_quota_snap = Column(Numeric(15, 2), nullable=True)
-    units_used = Column(Numeric(15, 2), nullable=False, default=0, server_default="0")
+    monthly_quota_snap = Column(Numeric(15, 4), nullable=True)
+    units_used = Column(Numeric(15, 4), nullable=False, default=0, server_default="0")
     tier_id = Column(
         UUID(as_uuid=True),
         ForeignKey("ppu_tiers.id", ondelete="SET NULL"),

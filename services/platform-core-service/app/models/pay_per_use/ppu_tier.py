@@ -50,8 +50,8 @@ class PPUTierQuota(Base):
         index=True,
     )
     inference_name = Column(String(64), nullable=False)
-    monthly_quota = Column(Numeric(15, 2), nullable=False)
-    pending_monthly_quota = Column(Numeric(15, 2), nullable=True)
+    monthly_quota = Column(Numeric(15, 4), nullable=False)
+    pending_monthly_quota = Column(Numeric(15, 4), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
