@@ -116,12 +116,14 @@ async def reassign_tenant_tier(
     request: Request,
     body: TierReassignRequest,
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ):
     """Reassign a tenant's active PPU tier to a different tier, effective immediately.
 
+    Validates that the tenant exists and is ACTIVE in the auth DB.
     Budget/available balance carry over unchanged from the previous assignment.
     Quota and cost tracking start fresh under the new tier for the remainder
     of the current assignment period.
     """
     user_id = request.headers.get("X-User-Id")
-    return await tenant_assignment_service.reassign_tier(body, db, user_id)
+    return await tenant_assignment_service.reassign_tier(body, db, auth_db, user_id)

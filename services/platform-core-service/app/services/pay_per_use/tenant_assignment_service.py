@@ -149,6 +149,7 @@ async def assign_tier(
 async def reassign_tier(
     body: TierReassignRequest,
     db: AsyncSession,
+    auth_db: AsyncSession,
     user_id: Optional[str] = None,
 ) -> TierAssignResponse:
     """Move a tenant to a different tier, effective immediately.
@@ -159,6 +160,9 @@ async def reassign_tier(
     tier, running through the same original effective_to. Usage/cost tracking
     (ppu_quota_usage) keys on tier_id, so it starts fresh under the new tier.
     """
+    # 1. Confirm tenant exists and is ACTIVE via auth DB.
+    await require_active_tenant(body.tenant_id, auth_db)
+
     try:
         new_tier_uuid = UUID(body.tier_id)
     except ValueError:
@@ -204,6 +208,23 @@ async def reassign_tier(
         )
 
     original_effective_to = current.effective_to
+
+    # Reject if the replacement window overlaps a future-dated assignment
+    # (the current row being closed is excluded since it's being replaced).
+    overlapping = await db.execute(
+        select(PPUTenantTierAssignment).where(
+            PPUTenantTierAssignment.tenant_id == body.tenant_id,
+            PPUTenantTierAssignment.id != current.id,
+            PPUTenantTierAssignment.effective_from < original_effective_to,
+            PPUTenantTierAssignment.effective_to > now,
+        )
+    )
+    if overlapping.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Tenant '{body.tenant_id}' has a future tier assignment overlapping the reassignment period",
+        )
+
     current.effective_to = now
     current.updated_by = user_id
 

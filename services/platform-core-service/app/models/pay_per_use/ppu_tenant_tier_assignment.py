@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -10,9 +10,15 @@ from app.models import Base
 
 class PPUTenantTierAssignment(Base):
     __tablename__ = "ppu_tenant_tier_assignments"
+    __table_args__ = (
+        Index(
+            "ix_ppu_tenant_tier_assignments_tenant_effective",
+            "tenant_id", "effective_from", "effective_to",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(255), nullable=False)
     tier_id = Column(
         UUID(as_uuid=True),
         ForeignKey("ppu_tiers.id"),
