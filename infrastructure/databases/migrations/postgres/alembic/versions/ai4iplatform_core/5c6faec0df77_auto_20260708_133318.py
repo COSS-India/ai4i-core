@@ -1,7 +1,7 @@
 """auto_20260708_133318
 
 Revision ID: 5c6faec0df77
-Revises: b3c4d5e6f7a8
+Revises: d4e6f8a1b3c5
 Create Date: 2026-07-08 13:33:18.770866
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '5c6faec0df77'
-down_revision: Union[str, None] = 'b3c4d5e6f7a8'
+down_revision: Union[str, None] = 'd4e6f8a1b3c5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
