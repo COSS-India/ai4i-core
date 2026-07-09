@@ -5,7 +5,7 @@ consumer now sources the LLM/non-LLM billing decision from this column
 (via mm_services) instead of the span attribute stamped at request time.
 
 Revision ID: d4e6f8a1b3c5
-Revises: b3c4d5e6f7a8
+Revises: 5c6faec0df77
 Create Date: 2026-07-07 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = 'd4e6f8a1b3c5'
-down_revision: Union[str, Sequence[str], None] = 'b3c4d5e6f7a8'
+down_revision: Union[str, Sequence[str], None] = '5c6faec0df77'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
