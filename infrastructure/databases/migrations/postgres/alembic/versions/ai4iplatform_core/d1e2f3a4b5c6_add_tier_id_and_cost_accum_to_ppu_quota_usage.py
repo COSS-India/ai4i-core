@@ -5,7 +5,7 @@ and cost_accum (cumulative ₹ spend for that tenant/inference/billing_month) to
 ppu_quota_usage.
 
 Revision ID: d1e2f3a4b5c6
-Revises: d4e6f8a1b3c5
+Revises: 5c6faec0df77
 Create Date: 2026-07-08 00:00:00.000000
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'd1e2f3a4b5c6'
-down_revision: Union[str, Sequence[str], None] = 'd4e6f8a1b3c5'
+down_revision: Union[str, Sequence[str], None] = '5c6faec0df77'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
