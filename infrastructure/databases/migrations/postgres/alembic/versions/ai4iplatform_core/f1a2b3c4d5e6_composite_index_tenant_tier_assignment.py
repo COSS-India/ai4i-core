@@ -11,7 +11,7 @@ the heap. Replacing it with a composite index on
 satisfied from the index directly, which matters once a tenant accumulates
 many historical rows from repeated reassignments.
 
-Revision ID: a4b6c8d0e2f4
+Revision ID: f1a2b3c4d5e6
 Revises: e5f6a7b8c9d0
 Create Date: 2026-07-09 00:00:00.000000
 
@@ -20,7 +20,7 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = 'a4b6c8d0e2f4'
+revision: str = 'f1a2b3c4d5e6'
 down_revision: Union[str, Sequence[str], None] = 'e5f6a7b8c9d0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
