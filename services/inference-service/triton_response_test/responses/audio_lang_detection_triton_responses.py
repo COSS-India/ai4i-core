@@ -14,8 +14,8 @@ Three sizes:
 import json
 from typing import Any
 
-_LANG_TA = _LANG_TA
-_LANG_HI = _LANG_HI
+_LANG_TA = "ta: Tamil"
+_LANG_HI = "hi: Hindi"
 
 SMALL_ALD_TRITON_RESPONSE: dict[str, Any] = {
     "model_name": "ald",
