@@ -5,6 +5,7 @@ Functions to detect input/output types, count tokens, and calculate payload size
 All functions return safe defaults on error to prevent trace enrichment from breaking inference.
 """
 
+import base64
 import logging
 from typing import Any, Dict, List
 
@@ -68,15 +69,15 @@ def get_output_type(response_data: List[Dict[str, Any]]) -> str:
         return "unknown"
 
 
-def count_input_tokens(input_items: List[Any], input_type: str) -> int:
+def count_input_tokens(input_items: List[Any], input_type: str) -> float:
     """
-    Estimate token count for input based on modality.
+    Billed input units, computed per modality (see inference_types.yaml).
 
     Text: character count (len(text)) — matches the "characters" billing unit
-    Audio: estimate from sample count (samples / 16000 * 100)
+    Audio: real duration in minutes, fractional (see _count_audio_tokens)
     Image: heuristic from file size or resolution
 
-    Returns: estimated token count, or 0 on error
+    Returns: billed unit count, or 0 on error
     """
     try:
         if not input_items:
@@ -147,32 +148,61 @@ def _count_text_tokens(input_items: List[Any]) -> int:
     return total
 
 
-def _count_audio_tokens(input_items: List[Any]) -> int:
+def _count_audio_tokens(input_items: List[Any]) -> float:
     """
-    Estimate tokens from audio input items.
+    Billed units for audio input items — real minutes of audio, fractional.
 
-    Use num_samples if available, or heuristic from audio data size.
-    Estimation: 100 tokens per second of audio at 16kHz.
+    asr, speaker-diarization, language-diarization, and audio-lang-detection
+    all bill on real audio duration (inference_types.yaml unit: minutes), not
+    a token/byte proxy. ASR's preprocessing already decodes audio and knows
+    the exact num_samples/sample_rate; the other three pass audio through to
+    Triton as base64 untouched (AudioBase), so duration is read from the
+    encoded audio's own header via soundfile — any billing inaccuracy here
+    directly under- or over-charges the tenant.
+
+    Billed in fractional minutes (ppu_quota_usage.units_used and
+    ppu_tier_quotas.monthly_quota are Numeric columns) — no per-clip minimum.
     """
-    total = 0
+    total = 0.0
     for item in input_items:
         if isinstance(item, dict):
             num_samples = item.get("num_samples", 0) or item.get("numSamples", 0)
+            sample_rate = item.get("sample_rate", 0) or item.get("sampleRate", 0)
             audio_content = item.get("audio_content", "") or item.get("audioContent", "")
         else:
             num_samples = getattr(item, "num_samples", 0) or getattr(item, "numSamples", 0)
+            sample_rate = getattr(item, "sample_rate", 0) or getattr(item, "sampleRate", 0)
             audio_content = getattr(item, "audio_content", "") or getattr(item, "audioContent", "")
 
-        if num_samples > 0:
-            # Assume 16kHz sample rate: 100 tokens per second
-            tokens = int((num_samples / 16000.0) * 100)
-            total += max(tokens, 1)
+        duration_seconds = 0.0
+        if num_samples > 0 and sample_rate > 0:
+            duration_seconds = num_samples / float(sample_rate)
         elif audio_content:
-            # Heuristic: base64 string length / 100 as proxy
-            tokens = max(len(str(audio_content)) // 100, 1)
-            total += tokens
+            duration_seconds = _decode_audio_duration_seconds(audio_content)
+
+        if duration_seconds > 0:
+            total += duration_seconds / 60.0
 
     return total
+
+
+def _decode_audio_duration_seconds(audio_content: Any) -> float:
+    """Read exact duration (seconds) from a base64-encoded audio file's header.
+
+    Uses soundfile.info — a metadata-only read, not a full decode — so this
+    stays cheap even for long clips.
+    """
+    try:
+        import io
+
+        import soundfile as sf
+
+        raw = base64.b64decode(str(audio_content), validate=False)
+        info = sf.info(io.BytesIO(raw))
+        return info.frames / float(info.samplerate) if info.samplerate else 0.0
+    except Exception as e:
+        logger.warning(f"Error decoding audio duration for billing: {e}")
+        return 0.0
 
 
 def _count_image_tokens(input_items: List[Any]) -> int:

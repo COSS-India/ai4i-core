@@ -88,16 +88,16 @@ async def get_service_pricing(
     return pricing
 
 
-def calculate_cost(total_units: int, pricing: ServicePricing) -> Decimal:
+def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
     """
     ₹ cost for total_units.
     unit_rate (₹/unit) takes precedence; falls back to cost_per_unit / unit_size.
     Returns 0 when pricing fields are absent.
     """
     if pricing.unit_rate:
-        return Decimal(total_units) * pricing.unit_rate
+        return total_units * pricing.unit_rate
     if pricing.cost_per_unit and pricing.unit_size:
-        return (Decimal(total_units) / pricing.unit_size) * pricing.cost_per_unit
+        return (total_units / pricing.unit_size) * pricing.cost_per_unit
     return Decimal(0)
 
 
@@ -139,7 +139,7 @@ async def update_quota_usage(
     inference_name: str,
     billing_month: str,
     tier_id: str,
-    units: int,
+    units: Decimal,
 ) -> bool:
     """
     UPSERT quota usage for this tenant/inference_name/month.

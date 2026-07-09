@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 from ai4i_core.bootstrap import get_redis_client
@@ -24,8 +25,8 @@ logger = get_logger(__name__)
 def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
-    input_tokens: int = int(attrs.get("input_tokens") or 0)
-    output_tokens: int = int(attrs.get("output_tokens") or 0)
+    input_tokens: float = float(attrs.get("input_tokens") or 0)
+    output_tokens: float = float(attrs.get("output_tokens") or 0)
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
 
     return tenant_id, service_id, input_tokens, output_tokens, correlation_id
@@ -105,19 +106,19 @@ async def handle_ppu_usage(msg: Message) -> None:
         )
         return
 
-    total_tokens: int = input_tokens + output_tokens
+    total_tokens: float = input_tokens + output_tokens
     end_time_ns = data.get("end_time")
 
     logger.info(
         "Billing fields extracted | offset=%d tenant_id=%r service_id=%r"
-        " input_tokens=%d output_tokens=%d total_tokens=%d span_id=%s",
+        " input_tokens=%s output_tokens=%s total_tokens=%s span_id=%s",
         msg.offset(), tenant_id, service_id, input_tokens, output_tokens, total_tokens, span_id,
     )
 
     if not (tenant_id and service_id and total_tokens):
         logger.warning(
             "Missing required billing fields — skipping offset=%d"
-            " (tenant_id=%r service_id=%r total_tokens=%d)",
+            " (tenant_id=%r service_id=%r total_tokens=%s)",
             msg.offset(), tenant_id, service_id, total_tokens,
         )
         return
@@ -151,7 +152,7 @@ async def handle_ppu_usage(msg: Message) -> None:
         # purposes, but must not count toward cost or quota here. task_type is
         # sourced from mm_services (via get_service_pricing), so it must be
         # configured correctly on the service for billing to be accurate.
-        billed_units = total_tokens if pricing.task_type.lower() == "llm" else input_tokens
+        billed_units = Decimal(str(total_tokens if pricing.task_type.lower() == "llm" else input_tokens))
 
         cost = calculate_cost(billed_units, pricing)
         if cost == 0:
@@ -163,7 +164,7 @@ async def handle_ppu_usage(msg: Message) -> None:
             )
             return
 
-        logger.info("Cost calculated | tenant=%s cost=%s billed_units=%d", tenant_id, cost, billed_units)
+        logger.info("Cost calculated | tenant=%s cost=%s billed_units=%s", tenant_id, cost, billed_units)
 
         wallet = await deduct_balance(db, tenant_id, cost)
         if wallet.tier_id is None:
@@ -188,7 +189,7 @@ async def handle_ppu_usage(msg: Message) -> None:
             )
             logger.info(
                 "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
-                " units=%d quota_exhausted=%s",
+                " units=%s quota_exhausted=%s",
                 tenant_id, pricing.task_type, billing_month, billed_units, quota_exhausted,
             )
         else:
@@ -209,7 +210,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     await _update_billing_on_cache(is_already_billed, billed_key, correlation_id)
 
     logger.info(
-        "Billing applied | tenant=%s service=%s billed_units=%d cost=%s exhausted=%s",
+        "Billing applied | tenant=%s service=%s billed_units=%s cost=%s exhausted=%s",
         tenant_id, service_id, billed_units, cost, wallet.exhausted,
     )
     await _post_billing(wallet.exhausted, quota_exhausted, tenant_id, pricing.task_type)
