@@ -65,7 +65,7 @@ class Service(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
-    billing_unit_type = Column(String(32), nullable=True)
+    task_type = Column(String(32), nullable=True)
     cost_per_unit = Column(Numeric(15, 8), nullable=True)
     unit_size = Column(BigInteger, nullable=True)
     unit_rate = Column(Numeric(15, 8), nullable=True)

@@ -218,7 +218,7 @@ class ServiceService:
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
             is_published=is_published,
             published_at=now,
-            billing_unit_type=payload.billingUnitType,
+            task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
             unit_rate=unit_rate,
@@ -315,8 +315,8 @@ class ServiceService:
             else:
                 update_data["unpublished_at"] = now
 
-        if "billingUnitType" in request_dict:
-            update_data["billing_unit_type"] = request_dict["billingUnitType"]
+        if "taskType" in request_dict:
+            update_data["task_type"] = request_dict["taskType"]
         if "costPerUnit" in request_dict:
             update_data["cost_per_unit"] = request_dict["costPerUnit"]
         if "unitSize" in request_dict:
@@ -343,7 +343,7 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, policy, billingUnitType, "
+                    "benchmarks, isPublished, policy, taskType, "
                     "costPerUnit, unitSize, tierIds. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),

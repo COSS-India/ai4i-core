@@ -72,7 +72,7 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> int:
     """
     Estimate token count for input based on modality.
 
-    Text: word count (len(text.split()))
+    Text: character count (len(text)) — matches the "characters" billing unit
     Audio: estimate from sample count (samples / 16000 * 100)
     Image: heuristic from file size or resolution
 
@@ -99,7 +99,7 @@ def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -
     """
     Estimate token count for output based on modality.
 
-    Text: word count of output text
+    Text: character count of output text
     Audio: estimate from output samples
     Image: heuristic from encoded size
 
@@ -127,7 +127,13 @@ def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -
 # ============================================================================
 
 def _count_text_tokens(input_items: List[Any]) -> int:
-    """Count tokens from text input items by word splitting."""
+    """
+    Count tokens from text input items by character count.
+
+    All text-modality billing units (nmt, tts, ner, transliteration,
+    language-detection — see inference_types.yaml) are declared as
+    "characters", so this must count characters, not words.
+    """
     total = 0
     for item in input_items:
         if isinstance(item, dict):
@@ -136,7 +142,7 @@ def _count_text_tokens(input_items: List[Any]) -> int:
             source = getattr(item, "source", "")
 
         if isinstance(source, str):
-            total += len(source.split())
+            total += len(source)
 
     return total
 
@@ -151,11 +157,11 @@ def _count_audio_tokens(input_items: List[Any]) -> int:
     total = 0
     for item in input_items:
         if isinstance(item, dict):
-            num_samples = item.get("num_samples", 0)
-            audio_content = item.get("audio_content", "")
+            num_samples = item.get("num_samples", 0) or item.get("numSamples", 0)
+            audio_content = item.get("audio_content", "") or item.get("audioContent", "")
         else:
-            num_samples = getattr(item, "num_samples", 0)
-            audio_content = getattr(item, "audio_content", "")
+            num_samples = getattr(item, "num_samples", 0) or getattr(item, "numSamples", 0)
+            audio_content = getattr(item, "audio_content", "") or getattr(item, "audioContent", "")
 
         if num_samples > 0:
             # Assume 16kHz sample rate: 100 tokens per second
@@ -178,9 +184,9 @@ def _count_image_tokens(input_items: List[Any]) -> int:
     total = 0
     for item in input_items:
         if isinstance(item, dict):
-            image_content = item.get("image_content", "")
+            image_content = item.get("image_content", "") or item.get("imageContent", "")
         else:
-            image_content = getattr(item, "image_content", "")
+            image_content = getattr(item, "image_content", "") or getattr(item, "imageContent", "")
 
         if image_content:
             # Base64 string length / 1000 as heuristic
@@ -191,7 +197,7 @@ def _count_image_tokens(input_items: List[Any]) -> int:
 
 
 def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """Count tokens from text output by word splitting."""
+    """Count tokens from text output by character count (see _count_text_tokens)."""
     total = 0
     for item in response_data:
         if isinstance(item, dict):
@@ -199,7 +205,7 @@ def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
             text = item.get("target") or item.get("output") or item.get("text") or ""
             if isinstance(text, bytes):
                 text = text.decode("utf-8", errors="replace")
-            total += len(str(text).split())
+            total += len(str(text))
 
     return total
 

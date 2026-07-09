@@ -7,10 +7,12 @@ from confluent_kafka.cimpl import Message
 
 from config import settings
 from consumers.payperuse_consumer._billing import (
+    ServicePricing,
+    calculate_cost,
     deduct_balance,
+    get_service_pricing,
     update_quota_usage,
     _get_billing_data,
-    _get_pricing_and_cost,
     _get_billed_key, _update_billing_on_cache,
 )
 from consumers.registry import kafka_listener
@@ -71,16 +73,22 @@ async def handle_ppu_usage(msg: Message) -> None:
         return
     span_id: str = (data.get("context", {})).get("span_id", "").strip()
 
-    # Deduplicate using correlation_id — the application-level request identifier
-    # injected by RequestMiddleware and stored as a span attribute.  It is unique
-    # per request and stable across Kafka redeliveries, so it makes a reliable
-    # dedup key.  We deliberately avoid span_id: OTel may emit 0x000…0 for spans
-    # with an invalid OTel context, and every span sharing that value would map to
-    # the same Redis key — poisoning the dedup set after the first hit.
+    # Deduplicate on correlation_id + span_id, not correlation_id alone.
+    # correlation_id is the application-level request identifier injected by
+    # RequestMiddleware — stable across Kafka redeliveries of the *same* span,
+    # which is what makes it useful for dedup. But a single request can emit
+    # multiple ai-inference spans sharing one correlation_id (e.g. TTS chunks
+    # text >400 chars into several per_item Triton calls, each its own span —
+    # see tts_service.py). Keying on correlation_id alone would make every
+    # chunk after the first look like a duplicate of it and get skipped,
+    # silently under-billing the request. span_id disambiguates chunks while
+    # correlation_id still catches true redeliveries of the same span. The
+    # exporter (trace/setup.py) already drops spans with span_id==0, so every
+    # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
     tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
-    billed_key: str = _get_billed_key(correlation_id)
+    billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
     if is_already_billed or is_already_billed is None:
@@ -122,9 +130,41 @@ async def handle_ppu_usage(msg: Message) -> None:
     logger.info("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
     async with db_registry.get_session(settings.db_settings.PLATFORM_CORE_DB) as db:
-        pricing, cost = await _get_pricing_and_cost(db, service_id, tenant_id, total_tokens)
-        if not (pricing and cost):
+        pricing: ServicePricing | None = await get_service_pricing(db, service_id)
+        if pricing is None:
+            logger.warning(
+                "No pricing found for service_id=%s — skipping billing for tenant=%s",
+                service_id, tenant_id,
+            )
             return
+
+        logger.info(
+            "Pricing resolved | service_id=%s task_type=%r"
+            " unit_rate=%s cost_per_unit=%s unit_size=%s",
+            service_id, pricing.task_type,
+            pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+        )
+
+        # Only llm bills on input+output (real prompt/completion tokens from the
+        # model's own API response). Every other inference type is input-only —
+        # output_tokens is still recorded on the span for trace/observability
+        # purposes, but must not count toward cost or quota here. task_type is
+        # sourced from mm_services (via get_service_pricing), so it must be
+        # configured correctly on the service for billing to be accurate.
+        billed_units = total_tokens if pricing.task_type.lower() == "llm" else input_tokens
+
+        cost = calculate_cost(billed_units, pricing)
+        if cost == 0:
+            logger.warning(
+                "Zero cost for service_id=%s — skipping billing for tenant=%s"
+                " (unit_rate=%s cost_per_unit=%s unit_size=%s)",
+                service_id, tenant_id,
+                pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+            )
+            return
+
+        logger.info("Cost calculated | tenant=%s cost=%s billed_units=%d", tenant_id, cost, billed_units)
+
         wallet = await deduct_balance(db, tenant_id, cost)
         if wallet.tier_id is None:
             # deduct_balance already logged the warning; no active assignment means
@@ -137,25 +177,25 @@ async def handle_ppu_usage(msg: Message) -> None:
         )
 
         quota_exhausted = False
-        if wallet.tier_id and pricing.billing_unit_type:
+        if wallet.tier_id and pricing.task_type:
             quota_exhausted = await update_quota_usage(
                 db,
                 tenant_id=tenant_id,
-                inference_name=pricing.billing_unit_type,
+                inference_name=pricing.task_type,
                 billing_month=billing_month,
                 tier_id=wallet.tier_id,
-                units=total_tokens,
+                units=billed_units,
                 cost=cost,
             )
             logger.info(
                 "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
                 " units=%d quota_exhausted=%s",
-                tenant_id, pricing.billing_unit_type, billing_month, total_tokens, quota_exhausted,
+                tenant_id, pricing.task_type, billing_month, billed_units, quota_exhausted,
             )
         else:
             logger.info(
-                "Quota update skipped | tenant=%s tier_id=%s billing_unit_type=%r",
-                tenant_id, wallet.tier_id, pricing.billing_unit_type,
+                "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
+                tenant_id, wallet.tier_id, pricing.task_type,
             )
 
         # Commit DB changes before any HTTP calls to avoid holding row locks
@@ -170,10 +210,10 @@ async def handle_ppu_usage(msg: Message) -> None:
     await _update_billing_on_cache(is_already_billed, billed_key, correlation_id)
 
     logger.info(
-        "Billing applied | tenant=%s service=%s tokens=%d cost=%s exhausted=%s",
-        tenant_id, service_id, total_tokens, cost, wallet.exhausted,
+        "Billing applied | tenant=%s service=%s billed_units=%d cost=%s exhausted=%s",
+        tenant_id, service_id, billed_units, cost, wallet.exhausted,
     )
-    await _post_billing(wallet.exhausted, quota_exhausted, tenant_id, pricing.billing_unit_type)
+    await _post_billing(wallet.exhausted, quota_exhausted, tenant_id, pricing.task_type)
 
 
 async def _notify_auth(path: str, body: dict) -> None:
