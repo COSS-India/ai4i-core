@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier
-from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse, TopUpRequest, TopUpResponse
+from app.schemas.pay_per_use.tenant_assignment import (
+    TierAssignRequest,
+    TierAssignResponse,
+    TierReassignRequest,
+    TopUpRequest,
+    TopUpResponse,
+)
 from app.utils.tenant_validator import require_active_tenant
 
 
@@ -137,6 +143,93 @@ async def assign_tier(
         effective_from=assignment.effective_from,
         effective_to=assignment.effective_to,
         updated_at=assignment.updated_at,
+    )
+
+
+async def reassign_tier(
+    body: TierReassignRequest,
+    db: AsyncSession,
+    user_id: Optional[str] = None,
+) -> TierAssignResponse:
+    """Move a tenant to a different tier, effective immediately.
+
+    Unlike assign_tier, this does not take a budget: available_balance and
+    budget_limit carry over unchanged from the assignment being replaced.
+    The old assignment is closed as of now(); a new one opens for the new
+    tier, running through the same original effective_to. Usage/cost tracking
+    (ppu_quota_usage) keys on tier_id, so it starts fresh under the new tier.
+    """
+    try:
+        new_tier_uuid = UUID(body.tier_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid tier_id format — expected a UUID",
+        )
+
+    result = await db.execute(
+        select(PPUTier).where(PPUTier.id == new_tier_uuid, PPUTier.is_active == True)
+    )
+    new_tier = result.scalar_one_or_none()
+    if not new_tier:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tier '{body.tier_id}' not found or is inactive",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    # Lock the tenant's current active assignment so a concurrent billing event
+    # can't read a half-updated row while this transaction is in flight.
+    result = await db.execute(
+        select(PPUTenantTierAssignment)
+        .where(
+            PPUTenantTierAssignment.tenant_id == body.tenant_id,
+            PPUTenantTierAssignment.effective_from <= now,
+            PPUTenantTierAssignment.effective_to > now,
+        )
+        .with_for_update()
+    )
+    current = result.scalar_one_or_none()
+    if current is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
+        )
+
+    if current.tier_id == new_tier.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Tenant '{body.tenant_id}' is already on tier '{new_tier.name}'",
+        )
+
+    original_effective_to = current.effective_to
+    current.effective_to = now
+    current.updated_by = user_id
+
+    new_assignment = PPUTenantTierAssignment(
+        tenant_id=body.tenant_id,
+        tier_id=new_tier.id,
+        budget_limit=current.budget_limit,
+        available_balance=current.available_balance,
+        effective_from=now,
+        effective_to=original_effective_to,
+        created_by=user_id,
+        updated_by=user_id,
+    )
+    db.add(new_assignment)
+    await db.commit()
+    await db.refresh(new_assignment)
+
+    return TierAssignResponse(
+        tenant_id=body.tenant_id,
+        tier_id=str(new_tier.id),
+        tier_name=new_tier.name,
+        budget_limit=new_assignment.budget_limit,
+        available_balance=new_assignment.available_balance,
+        effective_from=new_assignment.effective_from,
+        effective_to=new_assignment.effective_to,
+        updated_at=new_assignment.updated_at,
     )
 
 

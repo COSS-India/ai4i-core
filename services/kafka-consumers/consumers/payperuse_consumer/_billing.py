@@ -151,10 +151,11 @@ async def update_quota_usage(
     cost: Decimal,
 ) -> bool:
     """
-    UPSERT quota usage for this tenant/inference_name/month.
-    Accumulates units_used and cost_accum, and stamps tier_id with the tier
-    active at the time of this call (overwritten on every write, so it always
-    reflects the tenant's most-recently-active tier for that month).
+    UPSERT quota usage for this tenant/inference_name/month/tier.
+    Accumulates units_used and cost_accum within the active tier's row. If the
+    tenant's active tier changes mid-month (see tenant_assignment_service.
+    reassign_tier), this starts a fresh row for the new tier rather than
+    folding into the previous tier's accumulated numbers.
     Returns True if quota is now exhausted, False if unlimited or under cap.
     """
     snap_result = await db.execute(
@@ -181,10 +182,9 @@ async def update_quota_usage(
             " VALUES"
             "  (gen_random_uuid(), :tenant_id, :inference_name, :billing_month, :snap,"
             "   :units, :tier_id, :cost)"
-            " ON CONFLICT (tenant_id, inference_name, billing_month)"
+            " ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
             " DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
-            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
-            "               tier_id = EXCLUDED.tier_id"
+            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum"
             " RETURNING units_used, monthly_quota_snap"
         ),
         {

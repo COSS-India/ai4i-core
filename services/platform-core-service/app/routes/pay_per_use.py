@@ -6,7 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db, get_db
 from app.schemas.common import SuccessResponse
-from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse, TopUpRequest, TopUpResponse
+from app.schemas.pay_per_use.tenant_assignment import (
+    TierAssignRequest,
+    TierAssignResponse,
+    TierReassignRequest,
+    TopUpRequest,
+    TopUpResponse,
+)
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
 from ai4i_core.exceptions.responses import success_response
@@ -103,3 +109,19 @@ async def assign_tenant_tier(
     """
     user_id = request.headers.get("X-User-Id")
     return await tenant_assignment_service.assign_tier(body, db, auth_db, user_id)
+
+
+@router.patch("/tenant/tier/reassign", response_model=TierAssignResponse)
+async def reassign_tenant_tier(
+    request: Request,
+    body: TierReassignRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reassign a tenant's active PPU tier to a different tier, effective immediately.
+
+    Budget/available balance carry over unchanged from the previous assignment.
+    Quota and cost tracking start fresh under the new tier for the remainder
+    of the current assignment period.
+    """
+    user_id = request.headers.get("X-User-Id")
+    return await tenant_assignment_service.reassign_tier(body, db, user_id)

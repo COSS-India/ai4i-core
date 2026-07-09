@@ -14,7 +14,8 @@ class PPUQuotaUsage(Base):
             "tenant_id",
             "inference_name",
             "billing_month",
-            name="uq_ppu_quota_usage_tenant_inference_month",
+            "tier_id",
+            name="uq_ppu_quota_usage_tenant_inference_month_tier",
         ),
     )
 
