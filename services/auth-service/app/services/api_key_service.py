@@ -285,6 +285,32 @@ class APIKeyService:
             tenant_id, f"quota-{inference_name}", "1"
         )
 
+    async def clear_quota_flags_for_tenant(self, tenant_id: int) -> None:
+        """HDEL every quota-* field from this tenant's cached API key hashes.
+
+        Used when a tenant is reassigned to a new tier: ppu_quota_usage starts
+        a fresh row under the new tier_id, so any quota-exhausted flag set
+        under the previous tier is stale and must not keep 429'ing requests
+        until the monthly cron runs.
+        """
+        if self._repo is None or self._users is None:
+            return
+        inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await self._cache.delete_api_key_cache_fields(key.api_key, inference_fields)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
     async def create_api_key(
         self,
         user_id: UUID,

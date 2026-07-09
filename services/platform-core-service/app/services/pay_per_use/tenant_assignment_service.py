@@ -151,6 +151,8 @@ async def reassign_tier(
     db: AsyncSession,
     auth_db: AsyncSession,
     user_id: Optional[str] = None,
+    auth_service_url: Optional[str] = None,
+    http_client: Optional[httpx.AsyncClient] = None,
 ) -> TierAssignResponse:
     """Move a tenant to a different tier, effective immediately.
 
@@ -241,6 +243,16 @@ async def reassign_tier(
     db.add(new_assignment)
     await db.commit()
     await db.refresh(new_assignment)
+
+    if auth_service_url and http_client:
+        try:
+            resp = await http_client.post(
+                f"{auth_service_url}/internal/ppu/tenant/{body.tenant_id}/quota-reset",
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        except Exception:
+            pass  # billing stays correct; monthly cron will clear it if this call is lost
 
     return TierAssignResponse(
         tenant_id=body.tenant_id,

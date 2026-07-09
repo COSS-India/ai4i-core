@@ -93,7 +93,6 @@ async def top_up_tenant_budget(
     db: AsyncSession = Depends(get_db),
 ):
     """Add budget to a tenant's active tier assignment and reset the budget-exhausted flag."""
-    from app.core.config import settings
     return await tenant_assignment_service.top_up_budget(
         body,
         db,
@@ -130,7 +129,16 @@ async def reassign_tenant_tier(
     Validates that the tenant exists and is ACTIVE in the auth DB.
     Budget/available balance carry over unchanged from the previous assignment.
     Quota and cost tracking start fresh under the new tier for the remainder
-    of the current assignment period.
+    of the current assignment period. Any stale quota-exhausted flags from
+    the previous tier are cleared so the tenant isn't left 429'd on a tier
+    with headroom.
     """
     user_id = request.headers.get("X-User-Id")
-    return await tenant_assignment_service.reassign_tier(body, db, auth_db, user_id)
+    return await tenant_assignment_service.reassign_tier(
+        body,
+        db,
+        auth_db,
+        user_id,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )

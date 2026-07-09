@@ -67,6 +67,23 @@ async def reset_monthly_quota(svc: APIKeyService = Depends(get_api_key_service))
     await svc.reset_all_quota_fields()
 
 
+@router.post("/ppu/tenant/{tenant_id}/quota-reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_tenant_quota(
+    tenant_id: str,
+    svc: APIKeyService = Depends(get_api_key_service),
+):
+    """HDEL all quota-* fields from this tenant's active API key hashes.
+    Called after a tier reassignment, since ppu_quota_usage starts fresh
+    under the new tier_id and any quota-exhausted flag set under the
+    previous tier would otherwise stay stuck until the monthly cron.
+    """
+    try:
+        tid = int(tenant_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
+    await svc.clear_quota_flags_for_tenant(tid)
+
+
 @router.post("/ppu/tier/quota-limit-updated", status_code=status.HTTP_204_NO_CONTENT)
 async def notify_quota_limit_updated(
     body: QuotaLimitUpdatedRequest,
