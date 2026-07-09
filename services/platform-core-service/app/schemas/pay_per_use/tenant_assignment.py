@@ -12,6 +12,11 @@ class TierAssignRequest(BaseModel):
     effective_to: datetime = Field(..., description="Assignment end date (UTC)")
 
 
+class TierReassignRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant to reassign")
+    tier_id: str = Field(..., description="UUID of the new PPU tier to assign")
+
+
 class TopUpRequest(BaseModel):
     tenant_id: str = Field(..., description="ID of the tenant to top up")
     amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=4, description="Amount to add in INR")
