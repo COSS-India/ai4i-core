@@ -75,6 +75,7 @@ _TIMING_TOP = [
 ]
 _TIMING_SUB = {
     "resolve_ms": ["mms_http_ms"],
+    "preprocess_ms": ["audio_fetch_ms", "audio_decode_ms"],
     "run_inference_ms": [
         "build_payload_ms", "input_tokens_ms", "triton_ms",
         "output_convert_ms", "output_tokens_ms",
