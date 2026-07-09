@@ -133,7 +133,7 @@ class PPUUsageService:
 
         raw: list[dict] = []
         for row in breakdown_rows:
-            units = int(row.total_units or 0)
+            units = float(row.total_units or 0)
             unit_size = int(row.unit_size) if row.unit_size else 1
             total_consumption += units
             inference_types.add(row.inference_name)
