@@ -51,7 +51,7 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
-    billingUnitType: Optional[str] = None
+    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
@@ -98,7 +98,7 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
-    billingUnitType: Optional[str] = None
+    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
@@ -144,7 +144,7 @@ class ServiceResponse(BaseSchema):
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
-    billingUnitType: Optional[str] = None
+    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     unitRate: Optional[float] = None

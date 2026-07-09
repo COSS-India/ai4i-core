@@ -75,7 +75,7 @@ def service_to_dict(
         "isPublished": bool(service.is_published),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
-        "billingUnitType": service.billing_unit_type,
+        "taskType": service.task_type,
         "costPerUnit": float(service.cost_per_unit) if service.cost_per_unit is not None else None,
         "unitSize": service.unit_size,
         "unitRate": float(service.unit_rate) if service.unit_rate is not None else None,

@@ -8,11 +8,12 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-class LoggerSpanExporter(SpanExporter):
+class KafkaSpanExporter(SpanExporter):
     """
-    Custom span exporter that sends span data to Python logger and Kafka.
-    Outputs spans as structured JSON via logger.info() and publishes to a Kafka topic
-    for downstream consumption by FluentBit → OpenSearch.
+    Custom span exporter that publishes span data directly to Kafka.
+    Spans are serialised as JSON and produced to kafka-topic-otel-trace;
+    the Fluent Bit kafka consumer delivers them to OpenSearch traces-*.
+    Spans are never written to stdout — they must not appear in application logs.
     """
 
     KAFKA_TOPIC = settings.KAFKA_TOPIC_OTEL_TRACE
@@ -24,9 +25,9 @@ class LoggerSpanExporter(SpanExporter):
         if settings.KAFKA_ENABLED:
             self._init_kafka()
         else:
-            logger.info(
+            logger.warning(
                 "Kafka span export disabled (KAFKA_ENABLED=false); "
-                "spans logged to stdout only."
+                "traces will not be exported."
             )
 
     def _init_kafka(self):
@@ -44,7 +45,7 @@ class LoggerSpanExporter(SpanExporter):
             self._kafka_enabled = True
             logger.info(f"✓ Kafka span exporter initialized: topic={self.KAFKA_TOPIC}, servers={bootstrap_servers}")
         except Exception as e:
-            logger.warning(f"Kafka producer init failed, spans will only be logged: {e}")
+            logger.warning(f"Kafka producer init failed, traces will not be exported: {e}")
             self._kafka_enabled = False
 
     def export(self, spans):
@@ -97,10 +98,6 @@ class LoggerSpanExporter(SpanExporter):
                     "service_name": settings.SERVICE_NAME,
                 }
 
-                # Log to Python logger
-                logger.info(json.dumps(span_data, default=str))
-
-                # Push to Kafka
                 if self._kafka_enabled and self._producer:
                     self._producer.send(self.KAFKA_TOPIC, value=span_data)
 
@@ -122,8 +119,7 @@ class LoggerSpanExporter(SpanExporter):
                 self._producer.flush(timeout=10)
                 self._producer.close()
             except Exception:
-                # Best-effort flush during process exit — Kafka may already be
-                # unreachable; spans are still on stdout via the logger.
+                # Best-effort flush during process exit — Kafka may already be unreachable.
                 pass
 
     def force_flush(self, timeout_millis=None):
@@ -157,19 +153,21 @@ def setup_tracing() -> None:
         # Create tracer provider
         tracer_provider = TracerProvider(resource=resource)
 
-        # Create OTLP exporter (endpoint from settings / OTEL_EXPORTER_OTLP_ENDPOINT)
+        # Always register the Kafka exporter — primary trace export path.
+        tracer_provider.add_span_processor(BatchSpanProcessor(KafkaSpanExporter()))
+        logger.info("✓ OpenTelemetry tracing configured with Kafka exporter")
+
+        # Optionally register OTLP exporter if endpoint is configured.
         otlp_exporter = None
         try:
             endpoint = settings.OTEL_EXPORTER_OTLP_ENDPOINT
-            otlp_exporter = OTLPSpanExporter(
-                endpoint=endpoint,
-                insecure=True,  # Set to False if using TLS
-            )
-            tracer_provider.add_span_processor(BatchSpanProcessor(LoggerSpanExporter()))
-            logger.info("✓ OpenTelemetry tracing configured with Logger exporter")
+            if endpoint:
+                otlp_exporter = OTLPSpanExporter(
+                    endpoint=endpoint,
+                    insecure=True,
+                )
         except Exception as e:
             logger.warning(f"Could not configure OTLP exporter: {e}")
-            logger.info("Tracing will use default span processor")
 
         # Set the global tracer provider
         trace.set_tracer_provider(tracer_provider)
