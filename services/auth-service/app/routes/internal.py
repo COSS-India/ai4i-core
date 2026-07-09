@@ -10,7 +10,7 @@ from app.services.api_key_service import APIKeyService
 from app.services.ppu_notification_service import PPUNotificationService
 from app.services.tenant_service import TenantService
 
-router = APIRouter(tags=["Internal"], include_in_schema=False)
+router = APIRouter(tags=["Internal"])
 
 
 @router.get("/tenant-plan/tenant-id/{tenant_id}")
@@ -59,7 +59,7 @@ async def set_quota_exhausted(
     await svc.set_quota_exhausted_for_tenant(tid, body.inference_name)
 
 
-@router.post("/ppu/quota-reset", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/ppu/quota-reset", status_code=status.HTTP_204_NO_CONTENT,include_in_schema=False)
 async def reset_monthly_quota(svc: APIKeyService = Depends(get_api_key_service)):
     """HDEL all quota-* fields from every active tenant API key hash.
     Called by the monthly cron on the 1st of each month.
