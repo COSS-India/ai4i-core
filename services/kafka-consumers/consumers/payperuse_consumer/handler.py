@@ -7,10 +7,12 @@ from confluent_kafka.cimpl import Message
 
 from config import settings
 from consumers.payperuse_consumer._billing import (
+    ServicePricing,
+    calculate_cost,
     deduct_balance,
+    get_service_pricing,
     update_quota_usage,
     _get_billing_data,
-    _get_pricing_and_cost,
     _get_billed_key, _update_billing_on_cache,
 )
 from consumers.registry import kafka_listener
@@ -204,7 +206,7 @@ async def handle_ppu_usage(msg: Message) -> None:
         "Billing applied | tenant=%s service=%s billed_units=%d cost=%s exhausted=%s",
         tenant_id, service_id, billed_units, cost, wallet.exhausted,
     )
-    await _post_billing(wallet.exhausted, quota_exhausted, tenant_id, pricing.billing_unit_type)
+    await _post_billing(wallet.exhausted, quota_exhausted, tenant_id, pricing.task_type)
 
 
 async def _notify_auth(path: str, body: dict) -> None:

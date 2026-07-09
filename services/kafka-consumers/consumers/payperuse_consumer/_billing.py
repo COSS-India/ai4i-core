@@ -2,10 +2,9 @@
 import json
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional, Tuple
+from typing import Optional
 
 from ai4i_core.bootstrap import get_redis_client
-from ai4i_core.bootstrap.redis.aioredis import Redis as AIORedis
 from ai4i_core.logging import get_logger
 from confluent_kafka.cimpl import Message
 from sqlalchemy import text
@@ -29,28 +28,6 @@ class WalletResult:
     available_balance: Decimal
     tier_id: Optional[str]
     exhausted: bool  # balance <= 0 or no active assignment
-
-
-def _get_cached_service_pricing(cached: dict) -> ServicePricing:
-    return ServicePricing(
-        billing_unit_type=str(cached.get("billing_unit_type", "")),
-        unit_rate=Decimal(str(cached["unit_rate"])) if cached.get("unit_rate") else None,
-        cost_per_unit=Decimal(str(cached["cost_per_unit"])) if cached.get("cost_per_unit") else None,
-        unit_size=int(cached["unit_size"]) if cached.get("unit_size") else None,
-    )
-
-
-async def _set_pricing_to_hset(rcon: AIORedis, cache_key: str, pricing: ServicePricing):
-    if rcon is not None and pricing.billing_unit_type:
-        pipe = rcon.pipeline()
-        await pipe.hset(cache_key, mapping={
-            "billing_unit_type": pricing.billing_unit_type,
-            "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
-            "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
-            "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
-        })
-        await pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
-        await pipe.execute()
 
 
 async def get_service_pricing(
@@ -105,7 +82,7 @@ async def get_service_pricing(
             "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
             "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
         })
-        pipe.expire(cache_key, _PRICING_CACHE_TTL)
+        pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
         await pipe.execute()
 
     return pricing
@@ -233,37 +210,6 @@ def _get_billing_data(message: Message) -> Optional[dict]:
         return None
 
     return data
-
-
-async def _get_pricing_and_cost(db, service_id, tenant_id, total_tokens) -> Tuple[
-    Optional[ServicePricing], Optional[Decimal]]:
-    pricing: ServicePricing | None = await get_service_pricing(db, service_id)
-    if pricing is None:
-        logger.warning(
-            "No pricing found for service_id=%s — skipping billing for tenant=%s",
-            service_id, tenant_id,
-        )
-        return None, None
-
-    logger.info(
-        "Pricing resolved | service_id=%s billing_unit_type=%r"
-        " unit_rate=%s cost_per_unit=%s unit_size=%s",
-        service_id, pricing.billing_unit_type,
-        pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
-    )
-
-    cost = calculate_cost(total_tokens, pricing)
-    if cost == Decimal(0):
-        logger.warning(
-            "Zero cost for service_id=%s — skipping billing for tenant=%s"
-            " (unit_rate=%s cost_per_unit=%s unit_size=%s)",
-            service_id, tenant_id,
-            pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
-        )
-        return None, None
-
-    logger.info("Cost calculated | tenant=%s cost=%s tokens=%d", tenant_id, cost, total_tokens)
-    return pricing, cost
 
 
 def _get_billed_key(correlation_id) -> str:
