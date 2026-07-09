@@ -54,14 +54,7 @@ class PPUUsageService:
         items: list[dict] = []
         for row in rows:
             units = int(row.total_units or 0)
-            unit_size = int(row.unit_size) if row.unit_size else 1
-
-            if row.unit_rate:
-                spend = round(float(units) * float(row.unit_rate), 2)
-            elif row.cost_per_unit:
-                spend = round((float(units) / unit_size) * float(row.cost_per_unit), 2)
-            else:
-                spend = 0.0
+            spend = round(float(row.total_cost or 0), 2)
 
             items.append({
                 "modelTaskType": row.inference_name,
@@ -137,22 +130,14 @@ class PPUUsageService:
         breakdown: list[TenantUsageBreakdown] = []
         total_consumption = 0
         inference_types: set[str] = set()
-        type_unit_sizes: dict[str, int] = {}  # kept for cost_per_unit billing calc
 
         raw: list[dict] = []
         for row in breakdown_rows:
             units = int(row.total_units or 0)
-            unit_size = int(row.unit_size) if row.unit_size else 1
             total_consumption += units
             inference_types.add(row.inference_name)
-            type_unit_sizes[row.inference_name] = unit_size
 
-            if row.unit_rate:
-                spend = round(float(units) * float(row.unit_rate), 2)
-            elif row.cost_per_unit:
-                spend = round((float(units) / unit_size) * float(row.cost_per_unit), 2)
-            else:
-                spend = 0.0
+            spend = round(float(row.total_cost or 0), 2)
 
             snap = row.monthly_quota_snap
             if snap is not None:

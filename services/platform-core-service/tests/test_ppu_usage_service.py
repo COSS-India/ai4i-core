@@ -30,40 +30,22 @@ def _row(**kwargs):
 
 class TestGetSummary:
     @pytest.mark.asyncio
-    async def test_spend_via_unit_rate(self):
-        """unit_rate path: spend = units * unit_rate (not divided by unit_size first)."""
+    async def test_spend_from_cost_accum(self):
+        """spend is read directly from the aggregated cost_accum column."""
         repo = _make_repo(get_usage_with_pricing=[
-            _row(inference_name="llm", total_units=1_000_000,
-                 unit_size=1_000_000, unit_rate=Decimal("0.001"), cost_per_unit=None),
+            _row(inference_name="llm", total_units=1_000_000, total_cost=Decimal("1000")),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
 
-        # spend = 1_000_000 * 0.001 = 1000.0
         assert result.totalSpend == 1000.0
         assert result.spendByModelTaskType[0].spend == 1000.0
-        assert result.spendByModelTaskType[0].consumption == 1.0
 
     @pytest.mark.asyncio
-    async def test_spend_via_cost_per_unit(self):
-        """cost_per_unit path: spend = consumption * cost_per_unit."""
+    async def test_no_cost_accum_gives_zero_spend(self):
+        """When total_cost is None (no billed usage yet), spend is 0."""
         repo = _make_repo(get_usage_with_pricing=[
-            _row(inference_name="llm", total_units=2_000_000,
-                 unit_size=1_000_000, unit_rate=None, cost_per_unit=Decimal("50")),
-        ])
-        svc = PPUUsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        # consumption = 2_000_000 / 1_000_000 = 2.0 ; spend = 2.0 * 50 = 100.0
-        assert result.spendByModelTaskType[0].consumption == 2.0
-        assert result.spendByModelTaskType[0].spend == 100.0
-
-    @pytest.mark.asyncio
-    async def test_no_pricing_gives_zero_spend(self):
-        """When both unit_rate and cost_per_unit are None, spend is 0."""
-        repo = _make_repo(get_usage_with_pricing=[
-            _row(inference_name="asr", total_units=500,
-                 unit_size=60, unit_rate=None, cost_per_unit=None),
+            _row(inference_name="asr", total_units=500, total_cost=None),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
@@ -75,28 +57,14 @@ class TestGetSummary:
     async def test_percentage_sums_to_100(self):
         """Percentages across all items must add up to 100."""
         repo = _make_repo(get_usage_with_pricing=[
-            _row(inference_name="llm", total_units=750_000,
-                 unit_size=1_000_000, unit_rate=Decimal("1"), cost_per_unit=None),
-            _row(inference_name="asr", total_units=250_000,
-                 unit_size=1_000_000, unit_rate=Decimal("1"), cost_per_unit=None),
+            _row(inference_name="llm", total_units=750_000, total_cost=Decimal("750")),
+            _row(inference_name="asr", total_units=250_000, total_cost=Decimal("250")),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
 
         total_pct = sum(i.percentage for i in result.spendByModelTaskType)
         assert abs(total_pct - 100.0) < 0.2
-
-    @pytest.mark.asyncio
-    async def test_fallback_unit_size_when_none(self):
-        """unit_size=None falls back to 1_000_000 so consumption doesn't crash."""
-        repo = _make_repo(get_usage_with_pricing=[
-            _row(inference_name="llm", total_units=500_000,
-                 unit_size=None, unit_rate=None, cost_per_unit=None),
-        ])
-        svc = PPUUsageService(repo)
-        result = await svc.get_summary("2026-06")
-
-        assert result.spendByModelTaskType[0].consumption == 0.5
 
 
 # ── get_tenant_list ───────────────────────────────────────────────────────────
@@ -174,8 +142,8 @@ class TestGetTenantDetail:
 
     def _breakdown_row(self, **kwargs):
         defaults = dict(
-            inference_name="llm", total_units=500_000, unit_size=1_000_000,
-            unit_rate=None, cost_per_unit=None, monthly_quota_snap=None,
+            inference_name="llm", total_units=500_000, total_cost=Decimal("0"),
+            monthly_quota_snap=None,
         )
         return _row(**{**defaults, **kwargs})
 
@@ -317,8 +285,7 @@ class TestGetTenantDetail:
             get_tenant_assignment=self._assignment(),
             get_tenant_period_breakdown=[
                 self._breakdown_row(
-                    inference_name="llm", total_units=1_000_000,
-                    unit_size=1_000_000, unit_rate=Decimal("1"),
+                    inference_name="llm", total_units=1_000_000, total_cost=Decimal("1"),
                 ),
             ],
         )
@@ -334,12 +301,10 @@ class TestGetTenantDetail:
             get_tenant_assignment=self._assignment(total_quota=None),
             get_tenant_period_breakdown=[
                 self._breakdown_row(
-                    inference_name="llm", total_units=750_000,
-                    unit_size=1_000_000, unit_rate=Decimal("1"),
+                    inference_name="llm", total_units=750_000, total_cost=Decimal("0.75"),
                 ),
                 self._breakdown_row(
-                    inference_name="asr", total_units=250_000,
-                    unit_size=1_000_000, unit_rate=Decimal("1"),
+                    inference_name="asr", total_units=250_000, total_cost=Decimal("0.25"),
                 ),
             ],
         )
@@ -358,7 +323,7 @@ class TestGetTenantDetail:
         repo = _make_repo(
             get_tenant_assignment=self._assignment(),
             get_tenant_period_breakdown=[
-                self._breakdown_row(unit_rate=None, cost_per_unit=None),
+                self._breakdown_row(total_cost=None),
             ],
         )
         svc = PPUUsageService(repo)
