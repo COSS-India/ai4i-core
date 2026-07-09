@@ -212,8 +212,8 @@ def _get_billing_data(message: Message) -> Optional[dict]:
     return data
 
 
-def _get_billed_key(correlation_id) -> str:
-    return f"{Constants.PPU_BILLED_KEY_PREFIX}{correlation_id}" if correlation_id else ""
+def _get_billed_key(correlation_id: str, span_id: str) -> str:
+    return f"{Constants.PPU_BILLED_KEY_PREFIX}{correlation_id}:{span_id}" if correlation_id else ""
 
 
 async def _update_billing_on_cache(is_already_billed: bool, billed_key: str, correlation_id: str) -> None:

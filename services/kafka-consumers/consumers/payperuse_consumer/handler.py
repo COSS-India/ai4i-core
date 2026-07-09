@@ -73,16 +73,22 @@ async def handle_ppu_usage(msg: Message) -> None:
         return
     span_id: str = (data.get("context", {})).get("span_id", "").strip()
 
-    # Deduplicate using correlation_id — the application-level request identifier
-    # injected by RequestMiddleware and stored as a span attribute.  It is unique
-    # per request and stable across Kafka redeliveries, so it makes a reliable
-    # dedup key.  We deliberately avoid span_id: OTel may emit 0x000…0 for spans
-    # with an invalid OTel context, and every span sharing that value would map to
-    # the same Redis key — poisoning the dedup set after the first hit.
+    # Deduplicate on correlation_id + span_id, not correlation_id alone.
+    # correlation_id is the application-level request identifier injected by
+    # RequestMiddleware — stable across Kafka redeliveries of the *same* span,
+    # which is what makes it useful for dedup. But a single request can emit
+    # multiple ai-inference spans sharing one correlation_id (e.g. TTS chunks
+    # text >400 chars into several per_item Triton calls, each its own span —
+    # see tts_service.py). Keying on correlation_id alone would make every
+    # chunk after the first look like a duplicate of it and get skipped,
+    # silently under-billing the request. span_id disambiguates chunks while
+    # correlation_id still catches true redeliveries of the same span. The
+    # exporter (trace/setup.py) already drops spans with span_id==0, so every
+    # span_id reaching this consumer is valid and unique.
     attrs = data.get("attributes", {})
     # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
     tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
-    billed_key: str = _get_billed_key(correlation_id)
+    billed_key: str = _get_billed_key(correlation_id, span_id)
 
     is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
     if is_already_billed or is_already_billed is None:
