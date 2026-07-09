@@ -1,0 +1,14 @@
+AI4I Platform
+================================
+
+Quota limit update scheduled, {{ display_name }}
+--------------------------------------------------
+
+The monthly quota limit for your tier {{ tier_name }} has been updated.
+The new limit will take effect at the start of the next billing cycle.
+
+If you did not expect this change or have questions, please contact
+your platform administrator.
+
+--
+This is an automated message from AI4I Platform.
