@@ -88,13 +88,10 @@ class _PhaseTimer:
         return False
 
     async def __aenter__(self) -> "_PhaseTimer":
-        if _enabled():
-            self._start = time.perf_counter()
-        return self
+        return self.__enter__()
 
     async def __aexit__(self, *exc: Any) -> bool:
-        self._stop()
-        return False
+        return self.__exit__(*exc)
 
     def _stop(self) -> None:
         if self._start is not None:

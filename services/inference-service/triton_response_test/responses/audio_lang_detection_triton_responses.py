@@ -14,6 +14,9 @@ Three sizes:
 import json
 from typing import Any
 
+_LANG_TA = _LANG_TA
+_LANG_HI = _LANG_HI
+
 SMALL_ALD_TRITON_RESPONSE: dict[str, Any] = {
     "model_name": "ald",
     "model_version": "1",
@@ -22,7 +25,7 @@ SMALL_ALD_TRITON_RESPONSE: dict[str, Any] = {
             "name": "LANGUAGE_CODE",
             "shape": [1, 1],
             "datatype": "BYTES",
-            "data": [["ta: Tamil"]],
+            "data": [[_LANG_TA]],
         },
         {
             "name": "CONFIDENCE",
@@ -36,7 +39,7 @@ SMALL_ALD_TRITON_RESPONSE: dict[str, Any] = {
             "datatype": "BYTES",
             "data": [
                 [json.dumps({
-                    "predicted_language": "ta: Tamil",
+                    "predicted_language": _LANG_TA,
                     "confidence": 0.9712,
                     "top_scores": [0.9712, 0.0183, 0.0065, 0.0024, 0.0016],
                 })]
@@ -53,7 +56,7 @@ MEDIUM_ALD_TRITON_RESPONSE: dict[str, Any] = {
             "name": "LANGUAGE_CODE",
             "shape": [1, 1],
             "datatype": "BYTES",
-            "data": [["hi: Hindi"]],
+            "data": [[_LANG_HI]],
         },
         {
             "name": "CONFIDENCE",
@@ -67,7 +70,7 @@ MEDIUM_ALD_TRITON_RESPONSE: dict[str, Any] = {
             "datatype": "BYTES",
             "data": [
                 [json.dumps({
-                    "predicted_language": "hi: Hindi",
+                    "predicted_language": _LANG_HI,
                     "confidence": 0.9867,
                     "top_scores": [0.9867, 0.0091, 0.0024, 0.0012, 0.0006],
                 })]
@@ -84,7 +87,7 @@ LARGE_ALD_TRITON_RESPONSE: dict[str, Any] = {
             "name": "LANGUAGE_CODE",
             "shape": [1, 1],
             "datatype": "BYTES",
-            "data": [["ta: Tamil"]],
+            "data": [[_LANG_TA]],
         },
         {
             "name": "CONFIDENCE",
@@ -98,7 +101,7 @@ LARGE_ALD_TRITON_RESPONSE: dict[str, Any] = {
             "datatype": "BYTES",
             "data": [
                 [json.dumps({
-                    "predicted_language": "ta: Tamil",
+                    "predicted_language": _LANG_TA,
                     "confidence": 0.999923586845398,
                     "top_scores": [
                         0.999923586845398,
