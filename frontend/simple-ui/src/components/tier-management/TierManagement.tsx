@@ -3,12 +3,24 @@ import {
   Badge,
   Box,
   Button,
+  Drawer,
+  DrawerOverlay,
+  DrawerContent,
+  DrawerCloseButton,
+  DrawerHeader,
+  DrawerBody,
+  DrawerFooter,
   FormControl,
   FormLabel,
   HStack,
   IconButton,
   Input,
   Select,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   Text,
   Tooltip,
   VStack,
@@ -16,7 +28,14 @@ import {
   NumberInputField,
   Divider,
 } from "@chakra-ui/react";
-import { AddIcon, DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import {
+  AddIcon,
+  DeleteIcon,
+  EditIcon,
+  SmallCloseIcon,
+  ViewIcon,
+} from "@chakra-ui/icons";
+import { FiCalendar } from "react-icons/fi";
 import AdminDataTable, {
   TableSearchField,
   TableSelectField,
@@ -49,6 +68,26 @@ function getTaskTypeBadgeColor(taskType: string): string {
     default:
       return "gray";
   }
+}
+
+function formatQuotaAmount(
+  limit: number,
+  unit?: string,
+): { boldText: string; suffixText: string } {
+  const trimmedUnit = (unit ?? "").trim();
+  const spaceIdx = trimmedUnit.indexOf(" ");
+  if (spaceIdx === -1) {
+    return {
+      boldText: limit.toLocaleString(),
+      suffixText: trimmedUnit ? `${trimmedUnit.toLowerCase()}/month` : "/month",
+    };
+  }
+  const prefix = trimmedUnit.slice(0, spaceIdx);
+  const rest = trimmedUnit.slice(spaceIdx + 1);
+  return {
+    boldText: `${limit.toLocaleString()}${prefix}`,
+    suffixText: `${rest.toLowerCase()}/month`,
+  };
 }
 
 // ─── Column cell renderers (defined outside TierManagement to avoid S6478) ───
@@ -172,6 +211,9 @@ interface QuotaEditorProps {
   readonly onChange: (quotas: TierFormQuota[]) => void;
   readonly taskTypeNames: string[];
   readonly unitByTaskType: Record<string, string>;
+  readonly onSchedule?: (quota: TierFormQuota) => void;
+  readonly onRemove?: (quota: TierFormQuota) => void;
+  readonly removingTaskType?: string | null;
 }
 
 function QuotaEditor({
@@ -179,6 +221,9 @@ function QuotaEditor({
   onChange,
   taskTypeNames,
   unitByTaskType,
+  onSchedule,
+  onRemove,
+  removingTaskType,
 }: QuotaEditorProps) {
   const handleQuotaChange = (
     idx: number,
@@ -244,7 +289,7 @@ function QuotaEditor({
             >
               <HStack align="flex-end" spacing={3}>
                 <HStack align="flex-end" spacing={3} flexWrap="wrap" flex={1}>
-                  <FormControl w={{ base: "full", sm: "220px" }} isRequired>
+                  <FormControl w={{ base: "full", sm: "190px" }} isRequired>
                     <FormLabel fontSize="xs" mb={1}>
                       Model Task Type
                     </FormLabel>
@@ -276,7 +321,7 @@ function QuotaEditor({
                     </Select>
                   </FormControl>
 
-                  <FormControl w={{ base: "full", sm: "150px" }}>
+                  <FormControl w={{ base: "full", sm: "120px" }}>
                     <FormLabel fontSize="xs" mb={1}>
                       Unit
                     </FormLabel>
@@ -290,7 +335,7 @@ function QuotaEditor({
                     />
                   </FormControl>
 
-                  <FormControl w={{ base: "full", sm: "140px" }} isRequired>
+                  <FormControl w={{ base: "full", sm: "120px" }} isRequired>
                     <FormLabel fontSize="xs" mb={1}>
                       Limit
                     </FormLabel>
@@ -305,7 +350,40 @@ function QuotaEditor({
                   </FormControl>
                 </HStack>
 
-                {quotas.length > 1 && (
+                {quota.isExisting && onSchedule && (
+                  <Tooltip label="Schedule a change" placement="top" hasArrow>
+                    <IconButton
+                      aria-label="Schedule a change"
+                      icon={<FiCalendar />}
+                      size="sm"
+                      variant="ghost"
+                      colorScheme="blue"
+                      onClick={() => onSchedule(quota)}
+                      alignSelf="flex-end"
+                    />
+                  </Tooltip>
+                )}
+
+                {quota.isExisting && onRemove && (
+                  <Tooltip label="Remove quota" placement="top" hasArrow>
+                    <IconButton
+                      aria-label="Remove quota"
+                      icon={<SmallCloseIcon />}
+                      size="sm"
+                      variant="ghost"
+                      colorScheme="gray"
+                      isLoading={removingTaskType === quota.modelTaskType}
+                      isDisabled={
+                        !!removingTaskType &&
+                        removingTaskType !== quota.modelTaskType
+                      }
+                      onClick={() => onRemove(quota)}
+                      alignSelf="flex-end"
+                    />
+                  </Tooltip>
+                )}
+
+                {!quota.isExisting && quotas.length > 1 && (
                   <IconButton
                     aria-label="Remove quota"
                     icon={<DeleteIcon />}
@@ -330,6 +408,9 @@ interface TierFormProps {
   readonly onChange: (data: TierFormData) => void;
   readonly taskTypeNames: string[];
   readonly unitByTaskType: Record<string, string>;
+  readonly onSchedule?: (quota: TierFormQuota) => void;
+  readonly onRemove?: (quota: TierFormQuota) => void;
+  readonly removingTaskType?: string | null;
 }
 
 function TierForm({
@@ -337,6 +418,9 @@ function TierForm({
   onChange,
   taskTypeNames,
   unitByTaskType,
+  onSchedule,
+  onRemove,
+  removingTaskType,
 }: TierFormProps) {
   return (
     <VStack align="stretch" spacing={4}>
@@ -367,6 +451,9 @@ function TierForm({
         onChange={(quotas) => onChange({ ...formData, quotas })}
         taskTypeNames={taskTypeNames}
         unitByTaskType={unitByTaskType}
+        onSchedule={onSchedule}
+        onRemove={onRemove}
+        removingTaskType={removingTaskType}
       />
     </VStack>
   );
@@ -402,10 +489,22 @@ const TierManagement: React.FC = () => {
     onEditClose,
     handleOpenEdit,
     handleEditSubmit,
+    removingTaskType,
+    handleRemoveQuota,
+    scheduleTarget,
+    scheduleLimit,
+    setScheduleLimit,
+    isScheduleOpen,
+    isScheduling,
+    handleScheduleClose,
+    handleScheduleConfirm,
+    handleOpenSchedule,
     viewTier,
     isViewOpen,
     onViewClose,
     handleViewClick,
+    cancelingTaskType,
+    handleCancelPendingQuota,
     formData,
     setFormData,
     isSubmitting,
@@ -521,164 +620,336 @@ const TierManagement: React.FC = () => {
         leastDestructiveRef={cancelRef}
       />
 
-      {/* Create Tier modal */}
-      <StandardModal
+      {/* Create Tier drawer */}
+      <Drawer
         isOpen={isCreateOpen}
         onClose={onCreateClose}
-        title="Create Tier"
-        size="2xl"
+        placement="right"
+        size="md"
         closeOnOverlayClick={!isSubmitting}
-        footer={tierFormFooter}
-        contentProps={{
-          maxH: "85vh",
-          display: "flex",
-          flexDirection: "column",
-        }}
-        bodyProps={{ overflowY: "auto", flex: 1 }}
       >
-        <TierForm
-          formData={formData}
-          onChange={setFormData}
-          taskTypeNames={taskTypeNames}
-          unitByTaskType={unitByTaskType}
-        />
-      </StandardModal>
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+            Create Tier
+          </DrawerHeader>
+          <DrawerBody py={6}>
+            <TierForm
+              formData={formData}
+              onChange={setFormData}
+              taskTypeNames={taskTypeNames}
+              unitByTaskType={unitByTaskType}
+            />
+          </DrawerBody>
+          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+            {tierFormFooter}
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
 
-      {/* Edit Tier modal */}
-      <StandardModal
+      {/* Edit Tier drawer */}
+      <Drawer
         isOpen={isEditOpen}
         onClose={onEditClose}
-        title={`Edit Tier: ${editingTier?.name ?? ""}`}
-        size="2xl"
+        placement="right"
+        size="lg"
         closeOnOverlayClick={!isSubmitting}
-        footer={tierFormFooter}
-        contentProps={{
-          maxH: "85vh",
-          display: "flex",
-          flexDirection: "column",
-        }}
-        bodyProps={{ overflowY: "auto", flex: 1 }}
       >
-        <TierForm
-          formData={formData}
-          onChange={setFormData}
-          taskTypeNames={taskTypeNames}
-          unitByTaskType={unitByTaskType}
-        />
-      </StandardModal>
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+            {`Edit Tier: ${editingTier?.name ?? ""}`}
+          </DrawerHeader>
+          <DrawerBody py={6}>
+            <TierForm
+              formData={formData}
+              onChange={setFormData}
+              taskTypeNames={taskTypeNames}
+              unitByTaskType={unitByTaskType}
+              onSchedule={handleOpenSchedule}
+              onRemove={(quota) => handleRemoveQuota(quota.modelTaskType)}
+              removingTaskType={removingTaskType}
+            />
+          </DrawerBody>
+          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+            {tierFormFooter}
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
 
-      {/* View Tier modal */}
+      {/* Schedule quota change modal */}
       <StandardModal
-        isOpen={isViewOpen}
-        onClose={onViewClose}
-        title={`Tier Details — ${viewTier?.name ?? ""}`}
-        size="md"
+        isOpen={isScheduleOpen}
+        onClose={handleScheduleClose}
+        title="Schedule quota change"
+        size="sm"
+        closeOnOverlayClick={!isScheduling}
         footer={
-          <Button variant="outline" onClick={onViewClose}>
-            Close
-          </Button>
+          <HStack justify="flex-end" spacing={3}>
+            <Button variant="outline" onClick={handleScheduleClose}>
+              Cancel
+            </Button>
+            <Button
+              colorScheme="blue"
+              isLoading={isScheduling}
+              loadingText="Scheduling..."
+              onClick={handleScheduleConfirm}
+            >
+              Confirm Schedule
+            </Button>
+          </HStack>
         }
       >
-        {viewTier && (
-          <VStack align="stretch" spacing={5}>
-            {/* Name + description */}
-            <Box>
-              <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                {viewTier.name}
+        {scheduleTarget && (
+          <VStack align="stretch" spacing={4}>
+            <HStack justify="space-between">
+              <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                {formatModelTaskTypeLabel(scheduleTarget.modelTaskType)}
               </Text>
-              {viewTier.description && (
-                <Text fontSize="sm" color="gray.500" mt={0.5}>
-                  {viewTier.description}
+              <Text fontSize="sm" color="gray.600">
+                Current:{" "}
+                <Text as="span" fontWeight="semibold" color="gray.800">
+                  {scheduleTarget.limit} {scheduleTarget.unit}
                 </Text>
-              )}
-            </Box>
+              </Text>
+            </HStack>
 
-            {/* Quotas as label/value rows */}
-            <VStack align="stretch" spacing={2}>
-              {viewTier.quotas?.length ? (
-                viewTier.quotas.map((q) => (
-                  <HStack key={q.modelTaskType} spacing={2}>
-                    <Badge
-                      colorScheme={getTaskTypeBadgeColor(q.modelTaskType)}
-                      fontSize="xs"
-                    >
-                      {q.modelTaskType}
-                    </Badge>
-                    <Text fontSize="sm" color="gray.600">
-                      Quota:
-                    </Text>
-                    <Text fontSize="sm" fontWeight="semibold" color="gray.800">
-                      {q.limit.toLocaleString()}
-                    </Text>
-                  </HStack>
-                ))
-              ) : (
-                <Text fontSize="sm" color="gray.400">
-                  —
-                </Text>
-              )}
-            </VStack>
-
-            <Divider />
-
-            {/* Services Mapped — not yet provided by the tier API */}
-            <Box>
-              <Text
-                fontSize="xs"
-                fontWeight="semibold"
-                color="gray.500"
-                textTransform="uppercase"
-                mb={1}
+            <FormControl isRequired>
+              <FormLabel fontSize="sm">
+                New Quota Limit ({scheduleTarget.unit})
+              </FormLabel>
+              <NumberInput
+                size="sm"
+                min={0}
+                value={scheduleLimit}
+                onChange={setScheduleLimit}
               >
-                Services Mapped
-              </Text>
-              <Text fontSize="sm" color="gray.400">
-                —
-              </Text>
-            </Box>
+                <NumberInputField placeholder="e.g. 10" />
+              </NumberInput>
+            </FormControl>
 
-            {/* Tenants Assigned — not yet provided by the tier API */}
-            <Box>
-              <Text
-                fontSize="xs"
-                fontWeight="semibold"
-                color="gray.500"
-                textTransform="uppercase"
-                mb={1}
-              >
-                Tenants Assigned
-              </Text>
-              <Text fontSize="sm" color="gray.400">
-                —
-              </Text>
-            </Box>
-
-            <Divider />
-
-            {/* Created */}
-            {viewTier.createdAt && (
-              <Box>
-                <Text
-                  fontSize="xs"
-                  fontWeight="semibold"
-                  color="gray.500"
-                  textTransform="uppercase"
-                  mb={1}
-                >
-                  Created
-                </Text>
-                <Text fontSize="sm" color="gray.700">
-                  {new Date(viewTier.createdAt).toLocaleDateString(undefined, {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </Text>
-              </Box>
-            )}
+            <Text fontSize="xs" color="gray.500">
+              Takes effect from the next billing cycle.
+            </Text>
           </VStack>
         )}
       </StandardModal>
+
+      {/* View Tier drawer */}
+      <Drawer
+        isOpen={isViewOpen}
+        onClose={onViewClose}
+        placement="right"
+        size="md"
+      >
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
+            {`Tier Details — ${viewTier?.name ?? ""}`}
+          </DrawerHeader>
+          <DrawerBody py={6}>
+            {viewTier && (
+              <VStack align="stretch" spacing={5}>
+                {/* Name + description */}
+                <Box>
+                  <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                    {viewTier.name}
+                  </Text>
+                  {viewTier.description && (
+                    <Text fontSize="sm" color="gray.500" mt={0.5}>
+                      {viewTier.description}
+                    </Text>
+                  )}
+                </Box>
+
+                <Tabs colorScheme="blue" size="sm">
+                  <TabList>
+                    <Tab>Current</Tab>
+                    <Tab>Upcoming</Tab>
+                  </TabList>
+                  <TabPanels>
+                    <TabPanel px={0}>
+                      <VStack align="stretch" spacing={4}>
+                        <HStack justify="space-between" align="flex-start">
+                          <Text fontSize="sm" color="gray.600">
+                            Tier Name
+                          </Text>
+                          <Text
+                            fontSize="sm"
+                            fontWeight="semibold"
+                            color="gray.800"
+                          >
+                            {viewTier.name}
+                          </Text>
+                        </HStack>
+
+                        <HStack justify="space-between" align="flex-start">
+                          <Text fontSize="sm" color="gray.600">
+                            Description
+                          </Text>
+                          <Text
+                            fontSize="sm"
+                            color="gray.700"
+                            textAlign="right"
+                          >
+                            {viewTier.description || "—"}
+                          </Text>
+                        </HStack>
+
+                        <Divider />
+
+                        <Box>
+                          <Text
+                            fontSize="xs"
+                            fontWeight="semibold"
+                            color="gray.500"
+                            textTransform="uppercase"
+                            mb={2}
+                          >
+                            Quota by Model Task Type
+                          </Text>
+                          <VStack align="stretch" spacing={2}>
+                            {viewTier.quotas?.length ? (
+                              viewTier.quotas.map((q) => {
+                                const { boldText, suffixText } =
+                                  formatQuotaAmount(q.limit, q.unit);
+                                return (
+                                  <HStack
+                                    key={q.modelTaskType}
+                                    justify="space-between"
+                                  >
+                                    <Text fontSize="sm" color="gray.700">
+                                      {formatModelTaskTypeLabel(
+                                        q.modelTaskType,
+                                      )}
+                                    </Text>
+                                    <Text fontSize="sm">
+                                      <Text
+                                        as="span"
+                                        fontWeight="semibold"
+                                        color="gray.800"
+                                      >
+                                        {boldText}
+                                      </Text>{" "}
+                                      <Text as="span" color="gray.600">
+                                        {suffixText}
+                                      </Text>
+                                    </Text>
+                                  </HStack>
+                                );
+                              })
+                            ) : (
+                              <Text fontSize="sm" color="gray.400">
+                                —
+                              </Text>
+                            )}
+                          </VStack>
+                        </Box>
+
+                        <Box>
+                          <Text
+                            fontSize="xs"
+                            fontWeight="semibold"
+                            color="gray.500"
+                            textTransform="uppercase"
+                            mb={1}
+                          >
+                            Tenants Assigned · 0
+                          </Text>
+                          <Text fontSize="sm" color="gray.400">
+                            No tenants assigned
+                          </Text>
+                        </Box>
+                      </VStack>
+                    </TabPanel>
+
+                    <TabPanel px={0}>
+                      <VStack align="stretch" spacing={3}>
+                        {(() => {
+                          const pendingQuotas =
+                            viewTier.quotas?.filter(
+                              (q) => q.pendingLimit != null,
+                            ) ?? [];
+                          if (!pendingQuotas.length) {
+                            return (
+                              <Text fontSize="sm" color="gray.400">
+                                No upcoming changes.
+                              </Text>
+                            );
+                          }
+                          return pendingQuotas.map((q) => (
+                            <HStack
+                              key={q.modelTaskType}
+                              justify="space-between"
+                            >
+                              <Text fontSize="sm" color="gray.700">
+                                {formatModelTaskTypeLabel(q.modelTaskType)}{" "}
+                                Quota
+                              </Text>
+                              <HStack spacing={3}>
+                                <Text fontSize="sm" color="gray.600">
+                                  <Text
+                                    as="span"
+                                    fontWeight="semibold"
+                                    color="gray.800"
+                                  >
+                                    {q.pendingLimit?.toLocaleString()} {q.unit}
+                                  </Text>{" "}
+                                  · effective next billing cycle
+                                </Text>
+                                <Button
+                                  variant="link"
+                                  size="xs"
+                                  colorScheme="red"
+                                  isLoading={
+                                    cancelingTaskType === q.modelTaskType
+                                  }
+                                  isDisabled={
+                                    cancelingTaskType !== null &&
+                                    cancelingTaskType !== q.modelTaskType
+                                  }
+                                  onClick={() =>
+                                    handleCancelPendingQuota(q.modelTaskType)
+                                  }
+                                >
+                                  Cancel
+                                </Button>
+                              </HStack>
+                            </HStack>
+                          ));
+                        })()}
+
+                        <Box pt={2}>
+                          <Text
+                            fontSize="xs"
+                            fontWeight="semibold"
+                            color="gray.500"
+                            textTransform="uppercase"
+                            mb={1}
+                          >
+                            Tenants Assigned · 0
+                          </Text>
+                          <Text fontSize="sm" color="gray.400">
+                            No tenants assigned
+                          </Text>
+                        </Box>
+                      </VStack>
+                    </TabPanel>
+                  </TabPanels>
+                </Tabs>
+              </VStack>
+            )}
+          </DrawerBody>
+          <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
+            <Button variant="outline" onClick={onViewClose}>
+              Close
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </Box>
   );
 };
