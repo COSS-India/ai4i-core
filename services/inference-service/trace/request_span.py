@@ -28,7 +28,7 @@ def get_context_attributes() -> dict:
     handler task, so they are the single source of truth — no header re-reading.
 
     correlation_id must be captured here (request context) and stored as a span
-    attribute so that LoggerSpanExporter can read it from the span later on the
+    attribute so that KafkaSpanExporter can read it from the span later on the
     background exporter thread, where get_trace_id() would return None.
 
     Returns dict with available values (skips None).
@@ -129,6 +129,7 @@ def log_span_attributes(span_name: str, span, attributes: dict) -> None:
         logger.debug(f"Error logging span in OTel format: {e}")
 
 
+
 @contextmanager
 def traced_span(
     span_name: str,
@@ -170,51 +171,24 @@ def traced_span(
         except Exception as e:
             if error_attrs is not None:
                 attrs = error_attrs(attrs, e)
-            _finalize_traced(
-                span, span_name, attrs, start_time,
-                classify_status=classify_status, root=root, error=e,
-            )
+            attrs["total_time_ms"] = compute_total_time_ms(start_time)
+            if classify_status:
+                attrs["status"] = "failure"
+                attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
+            finalize_span(span, attrs, error=e)
             raise
         else:
-            _finalize_traced(
-                span, span_name, attrs, start_time,
-                classify_status=classify_status, root=root, mark_ok=mark_ok,
-            )
+            attrs["total_time_ms"] = compute_total_time_ms(start_time)
+            if classify_status:
+                attrs.setdefault("status", "success")
+                attrs.setdefault("status_code", 200)
+            finalize_span(span, attrs, ok=mark_ok)
 
 
-def _finalize_traced(
-    span, span_name, attrs, start_time, *,
-    classify_status, root, mark_ok=False, error=None,
-):
-    """Stamp total_time_ms + status, merge root phase timings, finalize.
-
-    Shared success/error tail of traced_span — keeps the context manager's
-    branching flat (one call per path).
+def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> None:
     """
-    attrs["total_time_ms"] = compute_total_time_ms(start_time)
-    if classify_status and error is not None:
-        attrs["status"] = "failure"
-        attrs["status_code"] = 400 if isinstance(error, ValueError) else 500
-    elif classify_status:
-        attrs.setdefault("status", "success")
-        attrs.setdefault("status_code", 200)
-    if root:
-        from trace.phase_timer import collect_phases
-        phases = collect_phases()
-        attrs.update(phases)
-        # Companion to the span JSON: one human-readable timing line per request.
-        # Only when phases were collected (timing enabled), so it never spams a
-        # bare "TIMING total=..." line.
-        if phases:
-            logger.info(format_timing_summary(attrs))
-    finalize_span(span, span_name, attrs, error=error, ok=(mark_ok and error is None))
-
-
-def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: bool = False) -> None:
-    """
-    Set attributes on a span, record its status, and emit the OTel-format log line.
-    Single helper for the request/model/ai-inference span finalization that was
-    previously copy-pasted at each site.
+    Set attributes on a span and record its status.
+    Single helper for the request/model/ai-inference span finalization.
     """
     for key, value in attributes.items():
         span.set_attribute(key, value)
@@ -222,7 +196,6 @@ def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: boo
         span.set_status(StatusCode.ERROR, str(error))
     elif ok:
         span.set_status(StatusCode.OK)
-    log_span_attributes(span_name, span, attributes)
 
 
 @asynccontextmanager
@@ -248,7 +221,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
-        # Seed correlation_id (and tenantId/authType) so LoggerSpanExporter uses
+        # Seed correlation_id (and tenantId/authType) so KafkaSpanExporter uses
         # the same context.trace_id as the sibling request/model spans.  Without
         # this the ai-inference span lands in OpenSearch under the raw OTel trace
         # ID (0x…) rather than the correlation ID, making it invisible in the UI.
