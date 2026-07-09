@@ -160,7 +160,10 @@ def traced_span(
     # ai-inference) carry their own total_time_ms and must not duplicate them.
     if root:
         from trace.phase_timer import start_root_phases
+        from process_memory import start_request_memory
+
         start_root_phases()
+        start_request_memory()
 
     start_time = time.time()
     context = otel_context.Context() if root else None
@@ -201,13 +204,19 @@ def _finalize_traced(
         attrs.setdefault("status_code", 200)
     if root:
         from trace.phase_timer import collect_phases
+        from process_memory import collect_request_memory, format_memory_summary
+
         phases = collect_phases()
         attrs.update(phases)
+        attrs.update(collect_request_memory())
         # Companion to the span JSON: one human-readable timing line per request.
         # Only when phases were collected (timing enabled), so it never spams a
         # bare "TIMING total=..." line.
         if phases:
             logger.info(format_timing_summary(attrs))
+        memory_line = format_memory_summary(attrs)
+        if memory_line:
+            logger.info(memory_line)
     finalize_span(span, span_name, attrs, error=error, ok=(mark_ok and error is None))
 
 

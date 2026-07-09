@@ -38,7 +38,10 @@ def _setup_middleware(app: FastAPI) -> None:
     """Configure observability, request-context, and CORS middleware."""
     # Observability — Prometheus /metrics + per-request middleware.
     # Reads OBSERVE_UTIL_* env vars (enabled, debug, metrics_path).
-    setup_observability(app)
+    from process_memory import ProcessMemoryCollector
+
+    collector = setup_observability(app)
+    collector.registry.register(ProcessMemoryCollector())
 
     # Request context middleware — seeds trace_id and tenant_id (from the
     # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so

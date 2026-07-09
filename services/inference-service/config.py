@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     PHASE_TIMING_ENABLED: bool = Field(
         True, description="Emit per-stage *_ms timings + a TIMING log line per request"
     )
+    MEMORY_LOG_ENABLED: bool = Field(
+        True,
+        description="Log per-request process RSS before/after each inference API call",
+    )
 
     # Telemetry/Observability
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
