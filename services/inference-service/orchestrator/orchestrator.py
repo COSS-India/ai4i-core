@@ -187,4 +187,9 @@ class Orchestrator:
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
             )
+            # resolve_service()'s returned dict never carries the id it was
+            # resolved from — stash it here so run_inference can copy it onto
+            # the ai-inference span (the PPU Kafka consumer bills on service_id
+            # read from that span only, mirroring the LLM proxy's approach).
+            service_info["serviceId"] = serviceId
             return service_info

@@ -10,20 +10,20 @@ from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 
 def _pricing_subquery():
     """
-    One pricing row per billing_unit_type (inference type name, e.g. "llm"),
+    One pricing row per task_type (inference type name, e.g. "llm"),
     choosing the most recently created non-deleted Service row.
     Prevents double-counting when multiple Service rows share the same
-    billing_unit_type (e.g. several LLM services).
+    task_type (e.g. several LLM services).
     """
     inner = (
         select(
-            Service.billing_unit_type,
+            Service.task_type,
             Service.cost_per_unit,
             Service.unit_size,
             Service.unit_rate,
             func.row_number()
             .over(
-                partition_by=Service.billing_unit_type,
+                partition_by=Service.task_type,
                 order_by=Service.created_at.desc(),
             )
             .label("rn"),
@@ -33,7 +33,7 @@ def _pricing_subquery():
     )
     return (
         select(
-            inner.c.billing_unit_type,
+            inner.c.task_type,
             inner.c.cost_per_unit,
             inner.c.unit_size,
             inner.c.unit_rate,
@@ -50,7 +50,7 @@ class PPUUsageRepository:
     async def get_usage_with_pricing(self, billing_month: str):
         """
         Aggregates units_used per inference_name for the billing month,
-        left-joined with mm_services pricing via billing_unit_type.
+        left-joined with mm_services pricing via task_type.
         """
         pricing_sq = _pricing_subquery()
         stmt = (
@@ -63,7 +63,7 @@ class PPUUsageRepository:
             )
             .outerjoin(
                 pricing_sq,
-                pricing_sq.c.billing_unit_type == func.lower(PPUQuotaUsage.inference_name),
+                pricing_sq.c.task_type == func.lower(PPUQuotaUsage.inference_name),
             )
             .where(PPUQuotaUsage.billing_month == billing_month)
             .group_by(
@@ -110,7 +110,7 @@ class PPUUsageRepository:
             unit_size_col = (
                 select(Service.unit_size)
                 .where(
-                    Service.billing_unit_type == model_task_type.lower(),
+                    Service.task_type == model_task_type.lower(),
                     Service.deleted_at.is_(None),
                 )
                 .order_by(Service.created_at.desc())
@@ -195,7 +195,7 @@ class PPUUsageRepository:
             )
             .outerjoin(
                 pricing_sq,
-                pricing_sq.c.billing_unit_type == func.lower(PPUQuotaUsage.inference_name),
+                pricing_sq.c.task_type == func.lower(PPUQuotaUsage.inference_name),
             )
             .where(
                 PPUQuotaUsage.tenant_id == tenant_id,
