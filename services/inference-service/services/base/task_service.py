@@ -316,7 +316,6 @@ class BaseTaskService:
                     # Must count only this group's items, not the full input_items list —
                     # otherwise per_item call_mode bills the whole request once per item.
                     span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
-                # In stubs mode this is the stub-dispatcher cost, not the model.
                 async with timed_phase("triton_ms"):
                     raw_triton_output = await self._call_triton_inference(
                         triton_endpoint=triton_endpoint,
@@ -363,11 +362,6 @@ class BaseTaskService:
         Raises:
             RuntimeError: If Triton call fails
         """
-        from triton_response_test.stub_dispatcher import get_stub_response
-        stub = get_stub_response(self.task_name, triton_inputs)
-        if stub is not None:
-            return stub
-
         from config import settings
 
         try:

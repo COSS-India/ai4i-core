@@ -544,13 +544,10 @@ class AuthService {
   }
 
 
-  /**
-   * PATCH `/api-keys/{keyId}` — integer PK in the path.
-   * `permissions` must be permission IDs (numbers), not display names.
-   */
+  /** PATCH `/api-keys/{keyId}` — integer PK in the path. `permissions` are names. */
   async updateApiKey(
     keyId: number,
-    updateData: { key_name?: string; permissions?: number[]; expires_days?: number; is_active?: boolean },
+    updateData: { key_name?: string; permissions?: string[]; expires_days?: number; is_active?: boolean },
   ): Promise<APIKeyResponse> {
     return this.validatedRequest(
       `${authPath.apiKeys}/${keyId}`,
@@ -627,26 +624,17 @@ class AuthService {
 
   // Permissions management (inference-only)
   async getAllPermissions(): Promise<Permission[]> {
-    const endpoints = [
-      authPath.inferencePermissions,
-      authPath.permissions,
-      '/permissions',
-    ];
-    for (const endpoint of endpoints) {
-      try {
-        const rows = await this.validatedRequest(
-          endpoint,
-          authUnwrappedSchema(permissionListSchema),
-          { method: 'GET' },
-        );
-        if (Array.isArray(rows) && rows.length > 0) {
-          return rows;
-        }
-      } catch (err) {
-        console.warn(`getAllPermissions failed for ${endpoint}:`, err);
-      }
+    try {
+      const rows = await this.validatedRequest(
+        authPath.inferencePermissions,
+        authUnwrappedSchema(permissionListSchema),
+        { method: 'GET' },
+      );
+      return Array.isArray(rows) ? rows : [];
+    } catch (err) {
+      console.warn('getAllPermissions failed:', err);
+      return [];
     }
-    return [];
   }
 
   // Utility methods

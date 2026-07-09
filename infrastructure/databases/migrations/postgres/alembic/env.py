@@ -50,6 +50,31 @@ config.set_main_option("sqlalchemy.url", get_sync_url(target_db))
 config.set_main_option("version_locations", version_path)
 
 
+def _remove_tenants_status_drift(upgrade_ops_obj) -> None:
+    """Strip the persistent cosmetic ENUM-vs-Enum drift on tenants.status.
+
+    Alembic 1.12+ reflects postgresql.ENUM differently from sa.Enum even when
+    the live schema is correct, causing spurious ALTER COLUMN on every autogenerate
+    run.  Remove only those AlterColumnOp entries targeting tenants.status so the
+    rest of the migration (if any) is preserved.
+    """
+    new_ops = []
+    for op_obj in upgrade_ops_obj.ops:
+        if isinstance(op_obj, ops.AlterColumnOp) and op_obj.table_name == "tenants" and op_obj.column_name == "status":
+            continue
+        if isinstance(op_obj, ops.ModifyTableOps) and op_obj.table_name == "tenants":
+            kept = [
+                sub for sub in op_obj.ops
+                if not (isinstance(sub, ops.AlterColumnOp) and sub.column_name == "status")
+            ]
+            if kept:
+                op_obj.ops[:] = kept
+                new_ops.append(op_obj)
+            continue
+        new_ops.append(op_obj)
+    upgrade_ops_obj.ops[:] = new_ops
+
+
 def process_revision_directives(migration_context, revision, directives) -> None:
     """Avoid creating empty autogenerate revisions."""
     if not is_autogenerate or not directives:
@@ -64,6 +89,13 @@ def process_revision_directives(migration_context, revision, directives) -> None
     if script.upgrade_ops.is_empty():
         directives[:] = []
         print(f"No schema changes detected for {target_db}.")
+        return
+
+    # Strip the persistent cosmetic tenants.status ENUM drift before checking again.
+    _remove_tenants_status_drift(script.upgrade_ops)
+    if script.upgrade_ops.is_empty():
+        directives[:] = []
+        print(f"No schema changes detected for {target_db} (tenants.status drift suppressed).")
         return
 
     needs_pgcrypto = False

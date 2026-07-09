@@ -1,11 +1,13 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.exceptions import EntityNotFoundError
-from app.dependencies.services import get_api_key_service, get_tenant_service
+from app.dependencies.services import get_api_key_service, get_ppu_notification_service, get_tenant_service
+from app.schemas.ppu import QuotaLimitUpdatedRequest
 from app.services.api_key_service import APIKeyService
+from app.services.ppu_notification_service import PPUNotificationService
 from app.services.tenant_service import TenantService
 
 router = APIRouter(tags=["Internal"])
@@ -57,9 +59,18 @@ async def set_quota_exhausted(
     await svc.set_quota_exhausted_for_tenant(tid, body.inference_name)
 
 
-@router.post("/ppu/quota-reset", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/ppu/quota-reset", status_code=status.HTTP_204_NO_CONTENT,include_in_schema=False)
 async def reset_monthly_quota(svc: APIKeyService = Depends(get_api_key_service)):
     """HDEL all quota-* fields from every active tenant API key hash.
     Called by the monthly cron on the 1st of each month.
     """
     await svc.reset_all_quota_fields()
+
+
+@router.post("/ppu/tier/quota-limit-updated", status_code=status.HTTP_204_NO_CONTENT)
+async def notify_quota_limit_updated(
+    body: QuotaLimitUpdatedRequest,
+    background_tasks: BackgroundTasks,
+    svc: PPUNotificationService = Depends(get_ppu_notification_service),
+):
+    await svc.notify_quota_limit_updated(body.tier_name, body.tenant_ids, background_tasks)

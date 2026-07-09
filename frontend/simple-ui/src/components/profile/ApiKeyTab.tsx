@@ -29,7 +29,6 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../config/constants";
-import { permissionLabelWithFallback } from "../../utils/apiKeyUtils";
 
 export interface ApiKeyTabProps {
   apiKeys: APIKeyResponse[];
@@ -156,9 +155,9 @@ export default function ApiKeyTab({
                             {key.permissions.length > 0 && (
                               <HStack flexWrap="wrap" spacing={2}>
                                 <Text fontSize="xs" color="gray.500">Permissions:</Text>
-                                {key.permissions.map((permId) => (
-                                  <Badge key={permId} colorScheme="blue" fontSize="xs">
-                                    {permissionLabelWithFallback(permId, [])}
+                                {key.permissions.map((permName) => (
+                                  <Badge key={permName} colorScheme="blue" fontSize="xs">
+                                    {permName}
                                   </Badge>
                                 ))}
                               </HStack>

@@ -288,8 +288,8 @@ export default function ApiKeyManagementTab({
                 >
                   <option value="all">All Permissions</option>
                   {mgmt.permissionFilterOptions.map((perm) => (
-                    <option key={perm} value={perm}>
-                      {perm}
+                    <option key={perm.name} value={perm.name}>
+                      {perm.label}
                     </option>
                   ))}
                 </TableSelectField>
@@ -485,7 +485,7 @@ export default function ApiKeyManagementTab({
                       <SimpleGrid columns={2} spacing={3}>
                         {mgmt.permissions.map((perm) => (
                           <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
-                            <Text fontSize="sm">{perm.name}</Text>
+                            <Text fontSize="sm">{perm.label}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>
