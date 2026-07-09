@@ -13,6 +13,7 @@ class TierQuotaIn(BaseModel):
 class TierQuotaOut(BaseModel):
     modelTaskType: str
     limit: int
+    pendingLimit: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -42,6 +43,8 @@ class TierUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     quotas: Optional[List[TierQuotaIn]] = None
+    cancel_pending_quota: Optional[List[str]] = None
+    remove_quota: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def validate_unique_quotas(self):

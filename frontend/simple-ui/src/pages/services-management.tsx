@@ -115,7 +115,7 @@ const ServicesManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
-  const { taskTypeNames } = useInferenceTypes();
+  const { taskTypeNames, unitByTaskType } = useInferenceTypes();
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
     "asc",
@@ -420,20 +420,6 @@ const ServicesManagementPage: React.FC = () => {
     }
   };
 
-  const UNIT_TYPE_BY_TASK: Record<string, string> = {
-    asr: "Audio minutes",
-    tts: "Characters",
-    nmt: "Characters",
-    llm: "Tokens",
-    transliteration: "Characters",
-    ocr: "Pages",
-    ner: "Characters",
-    "language-detection": "Characters",
-    "speaker-diarization": "Audio minutes",
-    "audio-lang-detection": "Audio minutes",
-    "language-diarization": "Audio minutes",
-  };
-
   const handleInputChange = (field: keyof Service, value: string) => {
     setFormData((prev) => ({
       ...prev,
@@ -604,8 +590,7 @@ const ServicesManagementPage: React.FC = () => {
     }
   };
 
-  const unitType =
-    UNIT_TYPE_BY_TASK[formData.task_type?.toLowerCase() || ""] || "";
+  const unitType = unitByTaskType[formData.task_type || ""] || "";
 
   const filteredModelsForDropdown = formData.task_type
     ? modelsForDropdown.filter((model) => {
@@ -620,6 +605,8 @@ const ServicesManagementPage: React.FC = () => {
       })
     : modelsForDropdown;
 
+  const isUnitSizeValid = /^\d+$/.test(unitSize.trim()) && Number(unitSize) > 0;
+
   const canCreateService =
     !!formData.name?.trim() &&
     !!formData.serviceDescription?.trim() &&
@@ -627,6 +614,7 @@ const ServicesManagementPage: React.FC = () => {
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
     !!pricePerUnit.trim() &&
+    isUnitSizeValid &&
     selectedTiers.length > 0;
 
   const isCreateFormModelSelected = !!formData.modelId?.trim();
@@ -1592,11 +1580,31 @@ const ServicesManagementPage: React.FC = () => {
                                 </FormControl>
                               </SimpleGrid>
 
-                              {/* Model ID | Model Submission Date */}
-                              <SimpleGrid
-                                columns={{ base: 1, md: 2 }}
-                                spacing={4}
+                              {/* Unit Size | Model ID | Model Submission Date */}
+                              <Grid
+                                templateColumns={{
+                                  base: "1fr",
+                                  md: "1fr 1.5fr 1.5fr",
+                                }}
+                                gap={4}
                               >
+                                <FormControl isRequired>
+                                  <FormLabel fontWeight="semibold">
+                                    Unit Size
+                                  </FormLabel>
+                                  <Input
+                                    value={unitSize}
+                                    onChange={(e) =>
+                                      setUnitSize(e.target.value)
+                                    }
+                                    placeholder="e.g. 100"
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    bg="white"
+                                  />
+                                </FormControl>
+
                                 <FormControl isRequired>
                                   <FormLabel fontWeight="semibold">
                                     Model ID
@@ -1631,7 +1639,7 @@ const ServicesManagementPage: React.FC = () => {
                                     isReadOnly
                                   />
                                 </FormControl>
-                              </SimpleGrid>
+                              </Grid>
 
                               <HStack justify="flex-end" spacing={4} pt={4}>
                                 <Button
