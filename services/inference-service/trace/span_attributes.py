@@ -6,8 +6,11 @@ All functions return safe defaults on error to prevent trace enrichment from bre
 """
 
 import base64
+import io
 import logging
 from typing import Any, Dict, List
+
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +130,20 @@ def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -
 # Private helpers
 # ============================================================================
 
+def _field(item: Any, *names: str, default: Any = None) -> Any:
+    """First truthy value among ``names``, read from a dict key or object attribute.
+
+    Handles the snake_case/camelCase aliasing of the same logical field
+    (e.g. ``num_samples``/``numSamples``) that inference payloads use
+    interchangeably, so callers don't repeat the dict-vs-attr boilerplate.
+    """
+    for name in names:
+        value = item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+        if value:
+            return value
+    return default
+
+
 def _count_text_tokens(input_items: List[Any]) -> int:
     """
     Count tokens from text input items by character count.
@@ -137,11 +154,7 @@ def _count_text_tokens(input_items: List[Any]) -> int:
     """
     total = 0
     for item in input_items:
-        if isinstance(item, dict):
-            source = item.get("source", "")
-        else:
-            source = getattr(item, "source", "")
-
+        source = _field(item, "source", default="")
         if isinstance(source, str):
             total += len(source)
 
@@ -165,14 +178,9 @@ def _count_audio_tokens(input_items: List[Any]) -> float:
     """
     total = 0.0
     for item in input_items:
-        if isinstance(item, dict):
-            num_samples = item.get("num_samples", 0) or item.get("numSamples", 0)
-            sample_rate = item.get("sample_rate", 0) or item.get("sampleRate", 0)
-            audio_content = item.get("audio_content", "") or item.get("audioContent", "")
-        else:
-            num_samples = getattr(item, "num_samples", 0) or getattr(item, "numSamples", 0)
-            sample_rate = getattr(item, "sample_rate", 0) or getattr(item, "sampleRate", 0)
-            audio_content = getattr(item, "audio_content", "") or getattr(item, "audioContent", "")
+        num_samples = _field(item, "num_samples", "numSamples", default=0)
+        sample_rate = _field(item, "sample_rate", "sampleRate", default=0)
+        audio_content = _field(item, "audio_content", "audioContent", default="")
 
         duration_seconds = 0.0
         if num_samples > 0 and sample_rate > 0:
@@ -191,17 +199,21 @@ def _decode_audio_duration_seconds(audio_content: Any) -> float:
 
     Uses soundfile.info — a metadata-only read, not a full decode — so this
     stays cheap even for long clips.
+
+    Returns 0.0 if the audio can't be decoded — this runs inside trace
+    enrichment, which must never break inference, so it can't raise. But a
+    0.0 here means the request bills nothing, so the failure is logged at
+    ERROR (not warning) as a billing-loss signal ops should alert on, rather
+    than being swallowed silently.
     """
     try:
-        import io
-
-        import soundfile as sf
-
         raw = base64.b64decode(str(audio_content), validate=False)
         info = sf.info(io.BytesIO(raw))
         return info.frames / float(info.samplerate) if info.samplerate else 0.0
     except Exception as e:
-        logger.warning(f"Error decoding audio duration for billing: {e}")
+        logger.error(
+            "Audio duration decode failed — request will bill 0 units: %s", e
+        )
         return 0.0
 
 
