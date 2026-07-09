@@ -75,7 +75,7 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> float:
 
     Text: character count (len(text)) — matches the "characters" billing unit
     Audio: real duration in minutes, fractional (see _count_audio_tokens)
-    Image: heuristic from file size or resolution
+    Image: count of images in the request (see _count_image_tokens)
 
     Returns: billed unit count, or 0 on error
     """
@@ -207,23 +207,14 @@ def _decode_audio_duration_seconds(audio_content: Any) -> float:
 
 def _count_image_tokens(input_items: List[Any]) -> int:
     """
-    Estimate tokens from image input items.
+    Billed input units for image input items — count of images.
 
-    Heuristic: use image_content size (bytes) / 1000 as token estimate.
+    OCR (the only image-modality service today, see inference_types.yaml
+    unit: images) bills per image, not per byte: a request with N images
+    in payload["image"] bills N units regardless of each image's
+    resolution or file size.
     """
-    total = 0
-    for item in input_items:
-        if isinstance(item, dict):
-            image_content = item.get("image_content", "") or item.get("imageContent", "")
-        else:
-            image_content = getattr(item, "image_content", "") or getattr(item, "imageContent", "")
-
-        if image_content:
-            # Base64 string length / 1000 as heuristic
-            tokens = max(len(str(image_content)) // 1000, 1)
-            total += tokens
-
-    return total
+    return len(input_items)
 
 
 def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
