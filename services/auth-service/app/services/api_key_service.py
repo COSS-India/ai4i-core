@@ -228,26 +228,38 @@ class APIKeyService:
                 break
             offset += _USERS_PAGE_SIZE
 
+    async def _for_each_active_tenant_key(self, tenant_id: Optional[int], op) -> None:
+        """Apply ``op(key)`` to every active, non-expired API key for a tenant
+        (or across all tenants when ``tenant_id`` is None). Callers must check
+        for missing repositories before calling."""
+        offset = 0
+        while True:
+            if tenant_id is not None:
+                users = await self._users.list_by_tenant(
+                    tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+                )
+            else:
+                users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await op(key)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
     async def _patch_all_tenant_key_caches(
         self, tenant_id: int, field: str, value: str
     ) -> None:
         """Patch a single Redis hash field on every cached API key for the tenant."""
         if self._repo is None or self._users is None:
             return
-        offset = 0
-        while True:
-            users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
-            )
-            if not users:
-                break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if key.is_active and not key.is_expired():
-                        await self._cache.patch_api_key_cache_field(key.api_key, field, value)
-            if len(users) < _USERS_PAGE_SIZE:
-                break
-            offset += _USERS_PAGE_SIZE
+        await self._for_each_active_tenant_key(
+            tenant_id,
+            lambda key: self._cache.patch_api_key_cache_field(key.api_key, field, value),
+        )
 
     async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on all cached API key hashes for the tenant."""
@@ -263,19 +275,10 @@ class APIKeyService:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
             return
         inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
-        offset = 0
-        while True:
-            # list_by_tenant with tenant_id=None isn't available; iterate all users via repo
-            users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
-            if not users:
-                break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if key.is_active and not key.is_expired():
-                        await self._cache.delete_api_key_cache_fields(key.api_key, inference_fields)
-            if len(users) < _USERS_PAGE_SIZE:
-                break
-            offset += _USERS_PAGE_SIZE
+        await self._for_each_active_tenant_key(
+            None,
+            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
+        )
 
     async def set_quota_exhausted_for_tenant(
         self, tenant_id: int, inference_name: str
@@ -294,22 +297,16 @@ class APIKeyService:
         until the monthly cron runs.
         """
         if self._repo is None or self._users is None:
+            logger.warning(
+                "clear_quota_flags_for_tenant skipped: missing repositories (tenant_id=%s)",
+                tenant_id,
+            )
             return
         inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
-        offset = 0
-        while True:
-            users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
-            )
-            if not users:
-                break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if key.is_active and not key.is_expired():
-                        await self._cache.delete_api_key_cache_fields(key.api_key, inference_fields)
-            if len(users) < _USERS_PAGE_SIZE:
-                break
-            offset += _USERS_PAGE_SIZE
+        await self._for_each_active_tenant_key(
+            tenant_id,
+            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
+        )
 
     async def create_api_key(
         self,
