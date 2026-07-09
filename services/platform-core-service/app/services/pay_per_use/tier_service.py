@@ -179,6 +179,15 @@ async def update_tier(
                 PPUTierQuota.inference_name.in_(body.remove_quota),
             )
         )
+        await session.flush()
+        remaining_result = await session.execute(
+            select(func.count()).select_from(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id)
+        )
+        if remaining_result.scalar() == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot remove all quotas: at least one model task type must remain in the tier",
+            )
 
     await session.commit()
     await session.refresh(tier)
