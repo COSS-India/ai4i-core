@@ -180,11 +180,16 @@ def _classify(length):
 
 def get_stub_response(task_name, triton_inputs):
     """
-    Return a deep copy of the appropriate stub response dict, or None if no
-    stub is registered for this service.
+    Return a deep copy of the appropriate stub response dict, or None if stub
+    mode is disabled or no stub is registered for this service.
 
+    Gated by TRITON_STUB_MODE (config.py) — when false (the default), this
+    always returns None so the real Triton endpoint is called.
     A deep copy is returned so callers cannot mutate the shared stub constants.
     """
+    from config import settings
+    if not settings.TRITON_STUB_MODE:
+        return None
     entry = _STUBS.get(task_name)
     if entry is None:
         return None

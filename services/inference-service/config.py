@@ -53,6 +53,10 @@ class Settings(BaseSettings):
 
     # Triton configuration
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
+    # Stub mode — when true, _call_triton_inference returns pre-defined sine-wave
+    # responses instead of calling the real Triton endpoint. Intended for load
+    # testing and local dev without a live model. Off by default.
+    TRITON_STUB_MODE: bool = Field(False, description="Return stub Triton responses instead of calling the real endpoint")
 
     # OpenAI-compatible LLM proxy configuration
     # Base URL for the upstream LLM server (e.g. "http://13.206.126.62:8000").
