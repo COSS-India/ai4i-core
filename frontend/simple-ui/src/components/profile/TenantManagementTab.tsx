@@ -1715,7 +1715,7 @@ export default function TenantManagementTab({
                       Budget Limit
                     </Text>
                     <Text fontSize="sm">
-                      ₹ {parseFloat(a.budget_limit).toLocaleString()}
+                      ₹ {Number.parseFloat(a.budget_limit).toLocaleString()}
                     </Text>
                   </Box>
                   <Box>
@@ -1723,7 +1723,7 @@ export default function TenantManagementTab({
                       Available Balance
                     </Text>
                     <Text fontSize="sm">
-                      ₹ {parseFloat(a.available_balance).toLocaleString()}
+                      ₹ {Number.parseFloat(a.available_balance).toLocaleString()}
                     </Text>
                   </Box>
                   <Box>

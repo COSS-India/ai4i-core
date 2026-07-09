@@ -170,13 +170,20 @@ class MeteringService:
     async def active_tenants(self, time_range: Optional[str]) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
-        results = await self._client.query(promql)
+        prom_results, valid_ids = await asyncio.gather(
+            self._client.query(promql),
+            self._fetch_valid_tenant_ids(),
+        )
+        # Filter Prometheus results to only tenants that currently exist in the
+        # DB. Without this, deleted tenants whose Prometheus series are still
+        # within the retention window inflate 7d/30d counts after a DB flush.
         tenants = [
             {
                 "tenant": r["metric"].get("tenant", "unknown"),
                 "request_count": int(float(r["value"][1])),
             }
-            for r in results
+            for r in prom_results
+            if valid_ids is None or r["metric"].get("tenant") in valid_ids
         ]
         return {
             "active_tenants": tenants,
@@ -577,3 +584,18 @@ class MeteringService:
             return f"sum by(tenant) ({windowed_change_expr(metric, f'{metric} offset {window}')}) > 0"
         base = f"sum by(tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base
+
+    async def _fetch_valid_tenant_ids(self) -> Optional[set]:
+        """Return the set of currently-valid tenant ID strings from the auth DB.
+
+        Returns None when the auth DB is unavailable so callers fall back to
+        unfiltered Prometheus results rather than returning an empty count.
+        """
+        if self._auth_db is None:
+            return None
+        try:
+            rows = await self._auth_db.execute(text("SELECT id FROM tenants"))
+            return {str(r[0]) for r in rows.all()}
+        except Exception:
+            logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
+            return None

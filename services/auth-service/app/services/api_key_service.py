@@ -83,16 +83,52 @@ class APIKeyService:
     def _is_api_key(token: str) -> bool:
         return bool(_HEX_KEY_RE.fullmatch(token))
 
-    async def _validate_permission_ids(self, permission_ids: list[int]) -> None:
-        """Raise ValidationError if any permission IDs do not exist in the DB."""
-        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
-        missing_ids = [pid for pid in permission_ids if pid not in id_to_name]
-        if missing_ids:
+    async def _resolve_permission_names(self, permission_names: list[str]) -> list[int]:
+        """Resolve stable permission names to DB IDs; raise ValidationError for unknown names."""
+        unique_names = list(dict.fromkeys(permission_names or []))
+        if not unique_names:
+            return []
+        name_to_id = await self._repo.get_permission_ids_by_names(unique_names)
+        missing = [name for name in unique_names if name not in name_to_id]
+        if missing:
             raise ValidationError(
-                message="Invalid permission IDs in request.",
-                code="INVALID_PERMISSION_IDS",
-                errors=[f"Unknown permission_id={pid}" for pid in missing_ids],
+                message="Invalid permission names in request.",
+                code="INVALID_PERMISSION_NAMES",
+                errors=[f"Unknown permission: {name}" for name in missing],
             )
+        return [name_to_id[name] for name in unique_names]
+
+    async def permission_ids_to_names(
+        self, permission_ids: list[int], *, api_key_id: int | None = None
+    ) -> list[str]:
+        """Map stored permission IDs to stable names for client-facing responses."""
+        if not permission_ids:
+            return []
+        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
+        names = []
+        for pid in permission_ids:
+            name = id_to_name.get(pid)
+            if name is None:
+                if api_key_id is not None:
+                    logger.warning(
+                        "api_key id=%s references unknown permission id=%s",
+                        api_key_id,
+                        pid,
+                    )
+                else:
+                    logger.warning("unknown permission id=%s (no name mapping)", pid)
+                continue
+            names.append(name)
+        return names
+
+    async def permission_name_map_for_keys(self, keys: list[APIKey]) -> dict[int, str]:
+        """Batch-fetch id→name for all permission IDs referenced by the given keys."""
+        all_ids: set[int] = set()
+        for key in keys:
+            all_ids.update(key.permissions or [])
+        if not all_ids:
+            return {}
+        return await self._repo.get_permission_names_by_ids(list(all_ids))
 
     async def _refresh_redis_cache(
         self, db_key: APIKey, tenant_id: Optional[str]
@@ -253,7 +289,7 @@ class APIKeyService:
         self,
         user_id: UUID,
         key_name: str,
-        permissions: list[int],
+        permissions: list[str],
         expires_days: Optional[int] = None,
         tenant_id: Optional[str] = None,
         platform_core_db: Optional[AsyncSession] = None,
@@ -270,11 +306,7 @@ class APIKeyService:
                     code="INVALID_EXPIRES_DAYS",
                 )
 
-        permission_ids = list(dict.fromkeys(permissions or []))
-
-        # Validate permission IDs
-        if permission_ids:
-            await self._validate_permission_ids(permission_ids)
+        permission_ids = await self._resolve_permission_names(permissions)
 
         raw_key = self.generate_api_key()
         days = expires_days or settings.api_key_expire_days
@@ -448,7 +480,7 @@ class APIKeyService:
 
         permissions = data.get("permissions")
         if permissions is not None:
-            await self._validate_permission_ids(permissions)
+            data["permissions"] = await self._resolve_permission_names(permissions)
 
         expires_days = data.pop("expires_days", None)
         if expires_days is not None:

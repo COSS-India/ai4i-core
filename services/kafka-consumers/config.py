@@ -6,6 +6,18 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+class Constants:
+    """
+    Constants That will be used as class variables.
+    All
+    """
+    # PPU Settings constants
+    PPU_PRICING_CACHE_PREFIX = "ppu:svc:"
+    PPU_PRICING_CACHE_TTL = 3600
+    PPU_BILLED_KEY_PREFIX = "ppu:billed:"
+    PPU_BILLED_KEY_TTL = 86400
+
+
 class Topics(BaseSettings):
     TOPIC_PAY_PER_USE: str = Field(
         description="Kafka topic for pay-per-use usage events",
@@ -23,7 +35,6 @@ class DatabaseSettings(BaseSettings):
     POSTGRES_PASSWORD: str = Field(description="PostgreSQL password")
     POSTGRES_HOST: str = Field(description="PostgreSQL host")
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
-    INFERENCE_DB: str = Field(description="Database name for the inference service")
     PLATFORM_CORE_DB: str = Field(description="Database name for the platform core service")
     DB_POOL_SIZE: int = Field(20, description="SQLAlchemy connection pool size")
     DB_MAX_OVERFLOW: int = Field(10, description="SQLAlchemy max overflow connections")

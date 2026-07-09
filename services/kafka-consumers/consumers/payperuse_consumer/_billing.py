@@ -1,18 +1,19 @@
 """Billing helpers for the pay-per-use Kafka consumer."""
+import json
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Tuple
 
+from ai4i_core.bootstrap import get_redis_client
+from ai4i_core.bootstrap.redis.aioredis import Redis as AIORedis
+from ai4i_core.logging import get_logger
+from confluent_kafka.cimpl import Message
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4i_core.bootstrap import get_redis_client
-from ai4i_core.logging import get_logger
+from config import Constants
 
 logger = get_logger(__name__)
-
-_PRICING_CACHE_PREFIX = "ppu:svc:"
-_PRICING_CACHE_TTL = 3600  # 1 hour
 
 
 @dataclass
@@ -30,6 +31,28 @@ class WalletResult:
     exhausted: bool  # balance <= 0 or no active assignment
 
 
+def _get_cached_service_pricing(cached: dict) -> ServicePricing:
+    return ServicePricing(
+        billing_unit_type=str(cached.get("billing_unit_type", "")),
+        unit_rate=Decimal(str(cached["unit_rate"])) if cached.get("unit_rate") else None,
+        cost_per_unit=Decimal(str(cached["cost_per_unit"])) if cached.get("cost_per_unit") else None,
+        unit_size=int(cached["unit_size"]) if cached.get("unit_size") else None,
+    )
+
+
+async def _set_pricing_to_hset(rcon: AIORedis, cache_key: str, pricing: ServicePricing):
+    if rcon is not None and pricing.billing_unit_type:
+        pipe = rcon.pipeline()
+        await pipe.hset(cache_key, mapping={
+            "billing_unit_type": pricing.billing_unit_type,
+            "unit_rate": str(pricing.unit_rate) if pricing.unit_rate is not None else "",
+            "cost_per_unit": str(pricing.cost_per_unit) if pricing.cost_per_unit is not None else "",
+            "unit_size": str(pricing.unit_size) if pricing.unit_size is not None else "",
+        })
+        await pipe.expire(cache_key, Constants.PPU_PRICING_CACHE_TTL)
+        await pipe.execute()
+
+
 async def get_service_pricing(
     db: AsyncSession,
     service_id: str,
@@ -39,7 +62,7 @@ async def get_service_pricing(
         redis = get_redis_client()
     except RuntimeError:
         redis = None
-    cache_key = f"{_PRICING_CACHE_PREFIX}{service_id}"
+    cache_key = f"{Constants.PPU_PRICING_CACHE_PREFIX}{service_id}"
 
     if redis is not None:
         cached = await redis.hgetall(cache_key)
@@ -181,3 +204,81 @@ async def update_quota_usage(
     )
     row = result.first()
     return row is not None and row.units_used >= row.monthly_quota_snap
+
+
+def _get_billing_data(message: Message) -> Optional[dict]:
+    payload_bytes = message.value()
+    logger.info(
+        "Message received | topic=%s partition=%d offset=%d size=%d bytes",
+        message.topic(),
+        message.partition(),
+        message.offset(),
+        len(payload_bytes) if payload_bytes else 0,
+    )
+
+    if not payload_bytes:
+        logger.warning("Empty message payload — skipping offset=%d", message.offset())
+        return None
+
+    try:
+        data = json.loads(payload_bytes)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse Kafka message as JSON: %s", exc)
+        return None
+
+    # Only process ai-inference spans — the model and request spans are noise for billing.
+    span_name = data.get("name", "")
+    if span_name != "ai-inference":
+        logger.debug("Skipping non-billing span | span_name=%r offset=%d", span_name, message.offset())
+        return None
+
+    return data
+
+
+async def _get_pricing_and_cost(db, service_id, tenant_id, total_tokens) -> Tuple[
+    Optional[ServicePricing], Optional[Decimal]]:
+    pricing: ServicePricing | None = await get_service_pricing(db, service_id)
+    if pricing is None:
+        logger.warning(
+            "No pricing found for service_id=%s — skipping billing for tenant=%s",
+            service_id, tenant_id,
+        )
+        return None, None
+
+    logger.info(
+        "Pricing resolved | service_id=%s billing_unit_type=%r"
+        " unit_rate=%s cost_per_unit=%s unit_size=%s",
+        service_id, pricing.billing_unit_type,
+        pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+    )
+
+    cost = calculate_cost(total_tokens, pricing)
+    if cost == Decimal(0):
+        logger.warning(
+            "Zero cost for service_id=%s — skipping billing for tenant=%s"
+            " (unit_rate=%s cost_per_unit=%s unit_size=%s)",
+            service_id, tenant_id,
+            pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+        )
+        return None, None
+
+    logger.info("Cost calculated | tenant=%s cost=%s tokens=%d", tenant_id, cost, total_tokens)
+    return pricing, cost
+
+
+def _get_billed_key(correlation_id) -> str:
+    return f"{Constants.PPU_BILLED_KEY_PREFIX}{correlation_id}" if correlation_id else ""
+
+
+async def _update_billing_on_cache(is_already_billed: bool, billed_key: str, correlation_id: str) -> None:
+    # Do not change the following strict check of False to not(is_already_billed)
+    # noinspection PySimplifyBooleanCheck
+    if is_already_billed is False:
+        try:
+            redis = get_redis_client()
+            await redis.set(billed_key, "1", ex=Constants.PPU_BILLED_KEY_TTL)
+        except Exception as exc:
+            logger.warning(
+                "Failed to set Redis dedup key for correlation_id=%s: %s",
+                correlation_id, exc,
+            )
