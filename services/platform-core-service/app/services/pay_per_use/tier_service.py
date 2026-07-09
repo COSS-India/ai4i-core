@@ -183,7 +183,7 @@ async def update_tier(
     await session.commit()
     await session.refresh(tier)
 
-    if (body.quotas is not None or body.cancel_pending_quota) and auth_service_url and http_client:
+    if (body.quotas is not None or body.cancel_pending_quota or body.remove_quota) and auth_service_url and http_client:
         tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, session)
         try:
             resp = await http_client.post(
