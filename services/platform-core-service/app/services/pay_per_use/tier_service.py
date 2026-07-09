@@ -148,11 +148,13 @@ async def update_tier(
                 existing.pending_monthly_quota = q.limit
                 existing.updated_by = updated_by
             else:
+                # New quota type: no active value to preserve, so apply immediately.
+                # Setting monthly_quota=0 with the real value only in pending would
+                # make units_used >= 0 always true and block all tenants until cycle reset.
                 session.add(PPUTierQuota(
                     tier_id=tier.id,
                     inference_name=q.modelTaskType,
-                    monthly_quota=0,
-                    pending_monthly_quota=q.limit,
+                    monthly_quota=q.limit,
                     created_by=updated_by,
                     updated_by=updated_by,
                 ))
@@ -169,6 +171,14 @@ async def update_tier(
             if row:
                 row.pending_monthly_quota = None
                 row.updated_by = updated_by
+
+    if body.remove_quota:
+        await session.execute(
+            delete(PPUTierQuota).where(
+                PPUTierQuota.tier_id == tier.id,
+                PPUTierQuota.inference_name.in_(body.remove_quota),
+            )
+        )
 
     await session.commit()
     await session.refresh(tier)
