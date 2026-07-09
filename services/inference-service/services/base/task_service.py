@@ -277,6 +277,7 @@ class BaseTaskService:
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
+        service_id = serviceInfo.get('serviceId', '')
         self._adapter_config = serviceInfo.get('adapter_config')
         if not model_name or not triton_endpoint:
             raise RuntimeError(
@@ -307,8 +308,14 @@ class BaseTaskService:
                 )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
             async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
+                # service_id is not in context vars — must be copied explicitly.
+                # The PPU Kafka consumer reads only the ai-inference span for
+                # billing, so it must always be present there (mirrors llm_service.py).
+                span_ctx["service_id"] = service_id
                 with timed_phase("input_tokens_ms"):
-                    span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
+                    # Must count only this group's items, not the full input_items list —
+                    # otherwise per_item call_mode bills the whole request once per item.
+                    span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
                 # In stubs mode this is the stub-dispatcher cost, not the model.
                 async with timed_phase("triton_ms"):
                     raw_triton_output = await self._call_triton_inference(
@@ -318,13 +325,15 @@ class BaseTaskService:
                         api_key=api_key,
                     )
                 async with timed_phase("output_convert_ms"):
-                    response_data.extend(
-                        await self.convert_triton_output_to_task_format(raw_triton_output)
-                    )
+                    group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
+                    response_data.extend(group_response_data)
                 with timed_phase("output_tokens_ms"):
-                    span_ctx["output_type"] = get_output_type(response_data)
-                    span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
-
+                    span_ctx["output_type"] = get_output_type(group_response_data)
+                    # Recorded on the span for observability/trace inspection, but
+                    # PPU billing for non-LLM services is input-only by design — the
+                    # Kafka consumer (payperuse_consumer/handler.py) ignores this
+                    # field for every inference_name except llm.
+                    span_ctx["output_tokens"] = count_output_tokens(group_response_data, span_ctx["output_type"])
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
