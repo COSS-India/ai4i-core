@@ -10,6 +10,7 @@ from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAss
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
 from ai4i_core.exceptions.responses import success_response
+from app.core.config import settings
 
 
 router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
@@ -51,7 +52,13 @@ async def update_tier(
     session: AsyncSession = Depends(get_db),
 ):
     updated_by = request.headers.get("X-User-Id")
-    return await tier_service.update_tier(body, session, updated_by=updated_by)
+    return await tier_service.update_tier(
+        body,
+        session,
+        updated_by=updated_by,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )
 
 
 @router.delete("/tier", status_code=status.HTTP_204_NO_CONTENT)
