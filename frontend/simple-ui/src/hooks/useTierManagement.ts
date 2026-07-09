@@ -41,10 +41,20 @@ export function useTierManagement() {
   const [tierToDelete, setTierToDelete] = useState<Tier | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [viewTier, setViewTier] = useState<Tier | null>(null);
+  const [viewTierId, setViewTierId] = useState<string | null>(null);
   const [formData, setFormData] = useState<TierFormData>(defaultFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingTier, setEditingTier] = useState<Tier | null>(null);
+
+  const [scheduleTarget, setScheduleTarget] = useState<TierFormQuota | null>(
+    null,
+  );
+  const [scheduleLimit, setScheduleLimit] = useState("");
+  const [isScheduling, setIsScheduling] = useState(false);
+  const [cancelingTaskType, setCancelingTaskType] = useState<string | null>(
+    null,
+  );
+  const [removingTaskType, setRemovingTaskType] = useState<string | null>(null);
 
   const {
     isOpen: isDeleteOpen,
@@ -66,6 +76,11 @@ export function useTierManagement() {
     onOpen: onViewOpen,
     onClose: onViewClose,
   } = useDisclosure();
+  const {
+    isOpen: isScheduleOpen,
+    onOpen: onScheduleOpen,
+    onClose: onScheduleClose,
+  } = useDisclosure();
 
   const tiersQuery = useQuery({
     queryKey: [TIER_QUERY_KEY, filterTaskType],
@@ -75,6 +90,11 @@ export function useTierManagement() {
   });
 
   const tiers = tiersQuery.data?.data ?? [];
+
+  const viewTier = useMemo(
+    () => tiers.find((t) => t.id === viewTierId) ?? null,
+    [tiers, viewTierId],
+  );
 
   const filteredTiers = useMemo(() => {
     let result = tiers;
@@ -223,12 +243,13 @@ export function useTierManagement() {
               modelTaskType: q.modelTaskType,
               unit: q.unit || unitByTaskType[q.modelTaskType] || "",
               limit: String(q.limit),
+              isExisting: true,
             }))
           : [newQuota()],
       });
       onEditOpen();
     },
-    [checkSessionExpiry, onEditOpen],
+    [checkSessionExpiry, onEditOpen, unitByTaskType],
   );
 
   const handleEditSubmit = useCallback(async () => {
@@ -280,12 +301,187 @@ export function useTierManagement() {
     }
   }, [checkSessionExpiry, formData, toast, onEditClose, refreshTiers]);
 
+  const handleRemoveQuota = useCallback(
+    async (modelTaskType: string) => {
+      if (!checkSessionExpiry()) return;
+      if (!editingTier) return;
+      const currentQuota = formData.quotas.find(
+        (q) => q.modelTaskType === modelTaskType,
+      );
+      setRemovingTaskType(modelTaskType);
+      try {
+        await updateTier(editingTier.id, {
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          quotas: currentQuota
+            ? [{ modelTaskType, limit: Number(currentQuota.limit) }]
+            : undefined,
+          remove_quota: [modelTaskType],
+        });
+        setFormData((prev) => ({
+          ...prev,
+          quotas: prev.quotas.filter((q) => q.modelTaskType !== modelTaskType),
+        }));
+        toast({
+          title: "Quota removed",
+          description: `${modelTaskType} quota has been removed from this tier.`,
+          status: "success",
+          duration: 4000,
+          isClosable: true,
+        });
+        refreshTiers();
+      } catch (error: any) {
+        const {
+          title: errTitle,
+          message: errMsg,
+          showOnlyMessage,
+        } = extractErrorInfo(error);
+        toast({
+          title: showOnlyMessage ? undefined : errTitle,
+          description: errMsg,
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setRemovingTaskType(null);
+      }
+    },
+    [checkSessionExpiry, editingTier, formData, toast, refreshTiers],
+  );
+
+  const handleOpenSchedule = useCallback(
+    (quota: TierFormQuota) => {
+      setScheduleTarget(quota);
+      setScheduleLimit("");
+      onScheduleOpen();
+    },
+    [onScheduleOpen],
+  );
+
+  const handleScheduleClose = useCallback(() => {
+    onScheduleClose();
+    setScheduleTarget(null);
+    setScheduleLimit("");
+  }, [onScheduleClose]);
+
+  const handleScheduleConfirm = useCallback(async () => {
+    if (!checkSessionExpiry()) return;
+    if (!scheduleTarget || !editingTier) return;
+    const newLimit = Number(scheduleLimit);
+    if (!scheduleLimit || !Number.isFinite(newLimit) || newLimit <= 0) {
+      toast({
+        title: "Enter a valid quota limit",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    setIsScheduling(true);
+    try {
+      await updateTier(editingTier.id, {
+        name: formData.name.trim(),
+        description: formData.description.trim() || undefined,
+        quotas: [
+          { modelTaskType: scheduleTarget.modelTaskType, limit: newLimit },
+        ],
+      });
+      setFormData((prev) => ({
+        ...prev,
+        quotas: prev.quotas.map((q) =>
+          q.modelTaskType === scheduleTarget.modelTaskType
+            ? { ...q, limit: scheduleLimit }
+            : q,
+        ),
+      }));
+      toast({
+        title: "Quota updated",
+        description: `${scheduleTarget.modelTaskType} quota limit has been updated.`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      handleScheduleClose();
+      refreshTiers();
+    } catch (error: any) {
+      const {
+        title: errTitle,
+        message: errMsg,
+        showOnlyMessage,
+      } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errTitle,
+        description: errMsg,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsScheduling(false);
+    }
+  }, [
+    checkSessionExpiry,
+    scheduleTarget,
+    editingTier,
+    scheduleLimit,
+    formData,
+    toast,
+    handleScheduleClose,
+    refreshTiers,
+  ]);
+
   const handleViewClick = useCallback(
     (tier: Tier) => {
-      setViewTier(tier);
+      setViewTierId(tier.id);
       onViewOpen();
     },
     [onViewOpen],
+  );
+
+  const handleCancelPendingQuota = useCallback(
+    async (modelTaskType: string) => {
+      if (!checkSessionExpiry()) return;
+      if (!viewTier) return;
+      setCancelingTaskType(modelTaskType);
+      try {
+        const currentQuota = viewTier.quotas.find(
+          (q) => q.modelTaskType === modelTaskType,
+        );
+        await updateTier(viewTier.id, {
+          name: viewTier.name,
+          description: viewTier.description,
+          quotas: currentQuota
+            ? [{ modelTaskType, limit: currentQuota.limit }]
+            : undefined,
+          cancel_pending_quota: [modelTaskType],
+        });
+        toast({
+          title: "Pending change canceled",
+          description: `${modelTaskType} quota change has been canceled.`,
+          status: "success",
+          duration: 4000,
+          isClosable: true,
+        });
+        refreshTiers();
+      } catch (error: any) {
+        const {
+          title: errTitle,
+          message: errMsg,
+          showOnlyMessage,
+        } = extractErrorInfo(error);
+        toast({
+          title: showOnlyMessage ? undefined : errTitle,
+          description: errMsg,
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setCancelingTaskType(null);
+      }
+    },
+    [checkSessionExpiry, viewTier, toast, refreshTiers],
   );
 
   return {
@@ -319,11 +515,24 @@ export function useTierManagement() {
     onEditClose,
     handleOpenEdit,
     handleEditSubmit,
+    removingTaskType,
+    handleRemoveQuota,
+    // Schedule quota change
+    scheduleTarget,
+    scheduleLimit,
+    setScheduleLimit,
+    isScheduleOpen,
+    isScheduling,
+    handleOpenSchedule,
+    handleScheduleClose,
+    handleScheduleConfirm,
     // View
     viewTier,
     isViewOpen,
     onViewClose,
     handleViewClick,
+    cancelingTaskType,
+    handleCancelPendingQuota,
     // Shared form
     formData,
     setFormData,
