@@ -103,7 +103,7 @@ export const createApiKeyResponseSchema = z
     id: z.coerce.number(),
     api_key: z.string(),
     key_name: z.string(),
-    permissions: z.array(z.coerce.number()),
+    permissions: z.array(z.string()),
     expires_at: z.string().nullable().optional(),
   })
   .passthrough()
@@ -121,7 +121,7 @@ const apiKeyResponseRawSchema = z
     user_id: z.string().optional(),
     permissions: z.preprocess(
       (value) => (value == null ? [] : value),
-      z.array(z.coerce.number()),
+      z.array(z.string()),
     ),
     is_active: z.boolean().optional(),
     is_revoked: z.boolean().optional(),
@@ -173,11 +173,8 @@ export const oauth2ProviderSchema = z.object({
 
 export const permissionSchema = z
   .object({
-    id: z.coerce.number(),
     name: z.string(),
-    resource: z.string(),
-    action: z.string(),
-    created_at: z.string(),
+    label: z.string(),
   })
   .passthrough();
 

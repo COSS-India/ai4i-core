@@ -149,7 +149,7 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
                   <SimpleGrid columns={2} spacing={3}>
                     {create.permissions.map((p) => (
                       <Checkbox key={p.name} value={p.name} colorScheme="blue">
-                        <Text fontSize="sm">{p.name}</Text>
+                        <Text fontSize="sm">{p.label}</Text>
                       </Checkbox>
                     ))}
                   </SimpleGrid>

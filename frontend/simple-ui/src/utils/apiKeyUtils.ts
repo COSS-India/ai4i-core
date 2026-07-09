@@ -1,5 +1,4 @@
 import type { APIKeyResponse } from "../types/auth";
-import { INFERENCE_PERMISSION_LABEL_BY_ID } from "../config/constants";
 import { SESSION_STORAGE_KEYS } from "../config/sessionStorageKeys";
 
 type ApiKeyLike = {
@@ -70,27 +69,4 @@ export function mergeApiKeyHexFromCache<T extends APIKeyResponse>(keys: T[]): T[
     const hex = byName ?? byId;
     return hex ? { ...key, api_key: hex } : key;
   });
-}
-
-/** Resolve a permission ID (or legacy string) to a display label. */
-export function permissionLabelWithFallback(
-  raw: number | string,
-  catalog: { id: number; name: string }[],
-): string {
-  const id =
-    typeof raw === "number" && Number.isInteger(raw)
-      ? raw
-      : /^\d+$/.test(String(raw))
-        ? Number.parseInt(String(raw), 10)
-        : null;
-  if (id != null) {
-    const fromCatalog = catalog.find((p) => p.id === id);
-    if (fromCatalog?.name) return fromCatalog.name;
-    const fallback = INFERENCE_PERMISSION_LABEL_BY_ID[id];
-    if (fallback) return fallback;
-    return String(id);
-  }
-  const name = String(raw);
-  const fromCatalog = catalog.find((p) => p.name === name);
-  return fromCatalog?.name ?? name;
 }
