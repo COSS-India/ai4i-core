@@ -80,23 +80,29 @@ class ASRTaskService(AudioBase):
         Items are returned with samples as a numpy array; the config mapper
         sends it to Triton as a binary tensor (no Python float list).
         """
+        from trace.phase_timer import timed_phase
+
         input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
 
+        # Split preprocess_ms into fetch vs decode so perf traces can tell
+        # transport (base64/URI download) apart from CPU decode.
         # Concurrent URI downloads (base64 items resolve instantly)
-        audio_bytes_list = await asyncio.gather(
-            *[self._get_audio_bytes(item) for item in input_data]
-        )
+        async with timed_phase("audio_fetch_ms"):
+            audio_bytes_list = await asyncio.gather(
+                *[self._get_audio_bytes(item) for item in input_data]
+            )
 
         # CPU-bound decode + resample in thread pool, bounded by the semaphore
         # so parallel requests don't stack unbounded numpy arrays in memory.
-        processed = await asyncio.gather(
-            *[
-                self._preprocess_item(item, ab)
-                for item, ab in zip(input_data, audio_bytes_list)
-            ]
-        )
+        async with timed_phase("audio_decode_ms"):
+            processed = await asyncio.gather(
+                *[
+                    self._preprocess_item(item, ab)
+                    for item, ab in zip(input_data, audio_bytes_list)
+                ]
+            )
 
         payload[self.payload_key] = list(processed)
         return payload
