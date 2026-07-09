@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -50,7 +50,7 @@ class PPUTierQuota(Base):
         index=True,
     )
     inference_name = Column(String(64), nullable=False)
-    monthly_quota = Column(BigInteger, nullable=False)
+    monthly_quota = Column(Numeric(15, 2), nullable=False)
     pending_monthly_quota = Column(BigInteger, nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
