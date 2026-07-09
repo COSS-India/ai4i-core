@@ -1,3 +1,4 @@
+
 """Pre-defined NER responses for response-size load testing.
 
 Tag format matches the real dev instance output:

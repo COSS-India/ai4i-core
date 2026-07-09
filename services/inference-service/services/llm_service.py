@@ -121,9 +121,6 @@ class OpenAIProxyService:
             logger.warning("LLM upstream request failed (path=%s): %s", path, exc)
             return 502, {"error": {"message": str(exc), "type": "upstream_error"}}
 
-    async def _proxy_upstream(self, path: str, payload: Any) -> Tuple[int, Any]:
-        return await self.proxy(path, payload)
-
     async def proxy_multipart(
         self,
         path: str,
