@@ -1,4 +1,4 @@
-"""PPU usage repository — reads usage and pricing data."""
+"""PPU usage repository — reads usage and accrued cost data."""
 from sqlalchemy import func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,70 +8,25 @@ from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssig
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 
 
-def _pricing_subquery():
-    """
-    One pricing row per task_type (inference type name, e.g. "llm"),
-    choosing the most recently created non-deleted Service row.
-    Prevents double-counting when multiple Service rows share the same
-    task_type (e.g. several LLM services).
-    """
-    inner = (
-        select(
-            Service.task_type,
-            Service.cost_per_unit,
-            Service.unit_size,
-            Service.unit_rate,
-            func.row_number()
-            .over(
-                partition_by=Service.task_type,
-                order_by=Service.created_at.desc(),
-            )
-            .label("rn"),
-        )
-        .where(Service.deleted_at.is_(None))
-        .subquery()
-    )
-    return (
-        select(
-            inner.c.task_type,
-            inner.c.cost_per_unit,
-            inner.c.unit_size,
-            inner.c.unit_rate,
-        )
-        .where(inner.c.rn == 1)
-        .subquery()
-    )
-
-
 class PPUUsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
     async def get_usage_with_pricing(self, billing_month: str):
         """
-        Aggregates units_used per inference_name for the billing month,
-        left-joined with mm_services pricing via task_type.
+        Aggregates units_used and cost_accum per inference_name for the billing month.
+        cost_accum is accrued by the payperuse consumer at the price in effect when
+        each request was made, so this reflects actual billed cost rather than a
+        current-price projection.
         """
-        pricing_sq = _pricing_subquery()
         stmt = (
             select(
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
-                pricing_sq.c.cost_per_unit,
-                pricing_sq.c.unit_size,
-                pricing_sq.c.unit_rate,
-            )
-            .outerjoin(
-                pricing_sq,
-                pricing_sq.c.task_type == func.lower(PPUQuotaUsage.inference_name),
+                func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
             )
             .where(PPUQuotaUsage.billing_month == billing_month)
-            .group_by(
-                PPUQuotaUsage.inference_name,
-                pricing_sq.c.cost_per_unit,
-                pricing_sq.c.unit_size,
-                pricing_sq.c.unit_rate,
-            )
+            .group_by(PPUQuotaUsage.inference_name)
         )
         result = await self._db.execute(stmt)
         return result.all()
@@ -182,31 +137,19 @@ class PPUUsageRepository:
         return result.first()
 
     async def get_tenant_period_breakdown(self, tenant_id: str, billing_month: str):
-        """Per-inference-name usage with pricing for a single tenant and billing month."""
-        pricing_sq = _pricing_subquery()
+        """Per-inference-name usage and accrued cost for a single tenant and billing month."""
         stmt = (
             select(
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
+                func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
                 func.max(PPUQuotaUsage.monthly_quota_snap).label("monthly_quota_snap"),
-                pricing_sq.c.unit_size,
-                pricing_sq.c.unit_rate,
-                pricing_sq.c.cost_per_unit,
-            )
-            .outerjoin(
-                pricing_sq,
-                pricing_sq.c.task_type == func.lower(PPUQuotaUsage.inference_name),
             )
             .where(
                 PPUQuotaUsage.tenant_id == tenant_id,
                 PPUQuotaUsage.billing_month == billing_month,
             )
-            .group_by(
-                PPUQuotaUsage.inference_name,
-                pricing_sq.c.unit_size,
-                pricing_sq.c.unit_rate,
-                pricing_sq.c.cost_per_unit,
-            )
+            .group_by(PPUQuotaUsage.inference_name)
         )
         result = await self._db.execute(stmt)
         return result.all()
