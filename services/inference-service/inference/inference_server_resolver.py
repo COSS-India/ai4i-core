@@ -37,18 +37,11 @@ class InferenceServerResolver:
             LookupError: If the service does not exist in MMS
             ConnectionError: If MMS is unreachable/unhealthy
         """
-        # resolve_ms is timed one level up (Orchestrator) so it matches the
-        # model span scope. Here we only record cache_hit and time the MMS
-        # round-trip (mms_http_ms, inside _query_model_management_service).
-        from trace.phase_timer import record_attr
-
         cached = self._memory_cache.get(service_id)
         if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
             logger.debug(f"Cache hit for service {service_id}")
-            record_attr("cache_hit", True)
             return cached[0]
 
-        record_attr("cache_hit", False)
         service_info = await self._query_model_management_service(service_id)
         self._memory_cache[service_id] = (service_info, time.time())
         return service_info
@@ -79,13 +72,10 @@ class InferenceServerResolver:
             logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
             raise RuntimeError("Model management service not configured")
 
-        from trace.phase_timer import timed_phase
-
         try:
             http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
             url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
-            async with timed_phase("mms_http_ms"):
-                raw = await http_client.get_json(url)
+            raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
             # Never log the full service_info dict — it contains the resolved
             # Triton endpoint URL and api_key. Log only the safe identifiers

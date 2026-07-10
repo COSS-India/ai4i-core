@@ -113,9 +113,6 @@ class BaseTaskService:
         Raises:
             ValueError: If validation fails
         """
-        # Lazy import — trace setup happens at app init, after this module loads.
-        from trace.phase_timer import timed_phase
-
         if serviceInfo is not None:
             self.logger.debug("Adopting injected service_info for Triton inference")
             self.service_info = serviceInfo
@@ -123,16 +120,10 @@ class BaseTaskService:
         # Shallow copy so preprocessing mutations don't affect the caller's original dict
         payload = dict(payload)
 
-        # Phase timing wraps self.<step>() calls (not the methods) so subclass
-        # overrides of any step are timed too — dispatch is via self.
-        async with timed_phase("validate_ms"):
-            await self.validate_request(payload)
-        async with timed_phase("preprocess_ms"):
-            preprocessed = await self.preprocess_input(payload)
-        async with timed_phase("run_inference_ms"):
-            result = await self.run_inference(preprocessed, serviceInfo)
-        async with timed_phase("postprocess_ms"):
-            return await self.postprocess_output(result)
+        await self.validate_request(payload)
+        preprocessed = await self.preprocess_input(payload)
+        result = await self.run_inference(preprocessed, serviceInfo)
+        return await self.postprocess_output(result)
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
@@ -270,9 +261,7 @@ class BaseTaskService:
         """
         # Lazy import — trace setup happens at app init, after this module loads.
         from trace.request_span import traced_inference
-        from trace.phase_timer import timed_phase
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
-
 
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
@@ -300,39 +289,32 @@ class BaseTaskService:
 
         response_data = []
         for group in groups:
-            # Sub-phase timings accumulate across groups (per_item / per_chunk
-            # loops sum into one *_ms total per stage).
-            async with timed_phase("build_payload_ms"):
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    group, config_data
-                )
+            triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                group, config_data
+            )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
             async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
                 # service_id is not in context vars — must be copied explicitly.
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
-                with timed_phase("input_tokens_ms"):
-                    # Must count only this group's items, not the full input_items list —
-                    # otherwise per_item call_mode bills the whole request once per item.
-                    span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
-                async with timed_phase("triton_ms"):
-                    raw_triton_output = await self._call_triton_inference(
-                        triton_endpoint=triton_endpoint,
-                        triton_inputs=triton_inputs,
-                        triton_outputs=triton_outputs,
-                        api_key=api_key,
-                    )
-                async with timed_phase("output_convert_ms"):
-                    group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
-                    response_data.extend(group_response_data)
-                with timed_phase("output_tokens_ms"):
-                    span_ctx["output_type"] = get_output_type(group_response_data)
-                    # Recorded on the span for observability/trace inspection, but
-                    # PPU billing for non-LLM services is input-only by design — the
-                    # Kafka consumer (payperuse_consumer/handler.py) ignores this
-                    # field for every inference_name except llm.
-                    span_ctx["output_tokens"] = count_output_tokens(group_response_data, span_ctx["output_type"])
+                # Must count only this group's items, not the full input_items list —
+                # otherwise per_item call_mode bills the whole request once per item.
+                span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
+                raw_triton_output = await self._call_triton_inference(
+                    triton_endpoint=triton_endpoint,
+                    triton_inputs=triton_inputs,
+                    triton_outputs=triton_outputs,
+                    api_key=api_key,
+                )
+                group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
+                response_data.extend(group_response_data)
+                span_ctx["output_type"] = get_output_type(group_response_data)
+                # Recorded on the span for observability/trace inspection, but
+                # PPU billing for non-LLM services is input-only by design — the
+                # Kafka consumer (payperuse_consumer/handler.py) ignores this
+                # field for every inference_name except llm.
+                span_ctx["output_tokens"] = count_output_tokens(group_response_data, span_ctx["output_type"])
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,

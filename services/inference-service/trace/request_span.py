@@ -67,69 +67,6 @@ def compute_total_time_ms(start_time: float) -> float:
     return round((time.time() - start_time) * 1000, 2)
 
 
-# Ordered phase groups for the human-readable "TIMING" line. Sub-phases render
-# in parentheses under their parent so the line mirrors the request tree. Only
-# keys actually present are shown, so this stays correct as phases change.
-_TIMING_TOP = [
-    "resolve_ms", "validate_ms", "preprocess_ms", "run_inference_ms", "postprocess_ms",
-]
-_TIMING_SUB = {
-    "resolve_ms": ["mms_http_ms"],
-    "run_inference_ms": [
-        "build_payload_ms", "input_tokens_ms", "triton_ms",
-        "output_convert_ms", "output_tokens_ms",
-    ],
-}
-
-
-def format_timing_summary(attrs: dict) -> str:
-    """Build the one-line 'TIMING ...' summary from the merged phase attrs on
-    the root request span (companion to the span JSON, for humans reading logs).
-    """
-    parts = [f"total={attrs.get('total_time_ms', 0)}ms"]
-    for key in _TIMING_TOP:
-        if key not in attrs:
-            continue
-        entry = f"{key[:-3]}={attrs[key]}"
-        subs = [f"{s[:-3]}={attrs[s]}" for s in _TIMING_SUB.get(key, []) if s in attrs]
-        if subs:
-            entry += " (" + " ".join(subs) + ")"
-        parts.append(entry)
-    if "cache_hit" in attrs:
-        parts.append(f"cache_hit={str(attrs['cache_hit']).lower()}")
-    return "TIMING " + " ".join(parts)
-
-
-def log_span_attributes(span_name: str, span, attributes: dict) -> None:
-    """
-    Log span attributes in OpenTelemetry standard JSON format.
-
-    Uses the request correlation_id (seeded by RequestMiddleware from
-    X-Correlation-ID) as context.trace_id so OpenSearch queries from
-    platform-core correlate correctly. The OTel SDK trace ID is preserved
-    as context.otel_trace_id for cross-service OTel joins.
-    """
-    import json
-    try:
-        span_context = span.get_span_context()
-        correlation_id = attributes.get("correlation_id")
-        otel_format = {
-            "name": span_name,
-            "context": {
-                "trace_id": correlation_id or f"0x{span_context.trace_id:032x}",
-                "otel_trace_id": f"0x{span_context.trace_id:032x}",
-                "span_id": f"0x{span_context.span_id:016x}",
-                "trace_state": str(span_context.trace_state or "")
-            },
-            "kind": "SpanKind.INTERNAL",
-            "attributes": attributes
-        }
-        logger.info(json.dumps(otel_format))
-    except Exception as e:
-        logger.debug(f"Error logging span in OTel format: {e}")
-
-
-
 @contextmanager
 def traced_span(
     span_name: str,
@@ -156,12 +93,6 @@ def traced_span(
         error_attrs: optional fn(attrs, exc) -> attrs to reshape the
             collected attrs on failure (e.g. zero token counts)
     """
-    # Per-block phase timings ride the root span only — child spans (model,
-    # ai-inference) carry their own total_time_ms and must not duplicate them.
-    if root:
-        from trace.phase_timer import start_root_phases
-        start_root_phases()
-
     start_time = time.time()
     context = otel_context.Context() if root else None
     with tracer.start_as_current_span(span_name, context=context) as span:
