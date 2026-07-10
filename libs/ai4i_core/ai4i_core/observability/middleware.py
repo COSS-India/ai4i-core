@@ -31,7 +31,7 @@ from .inference_tasks import (
 )
 from .metrics import MetricsCollector
 from .payload_analysis import analyze_payload, build_observability_metrics
-from .tracing_headers import inject_tracing_headers
+from .tracing_headers import inject_tracing_headers, is_empty_tracing_value
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def _emit_payload_metrics(
     """Emit Prometheus payload metrics from a pre-computed trace_metrics snapshot."""
     for emission in emissions:
         raw = trace_metrics.get(emission.metric_field)
-        if raw is None or raw == 0 or raw == 0.0:
+        if is_empty_tracing_value(raw):
             continue
         kwargs: Dict[str, Any] = {
             "tenant": tenant,

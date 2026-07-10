@@ -189,8 +189,9 @@ async def traced_inference(
             "ocr_characters",
             "ocr_image_kb",
         ):
-            if tracing.get(passthrough_key) is not None and tracing.get(passthrough_key) != "":
-                attrs[passthrough_key] = tracing[passthrough_key]
+            value = tracing.get(passthrough_key)
+            if value is not None and value != "":
+                attrs[passthrough_key] = value
         try:
             yield attrs
         except Exception:

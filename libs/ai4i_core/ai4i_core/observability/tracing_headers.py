@@ -4,6 +4,7 @@ ObservabilityMiddleware injects ``X-Tracing-*`` headers into the request scope
 before handlers run. Downstream tracing code reads them via ``read_tracing_headers``.
 """
 
+import math
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from starlette.requests import Request
@@ -42,12 +43,25 @@ _TRACING_HEADER_MAP = {
 }
 
 
+def is_empty_tracing_value(value: Any) -> bool:
+    """Return True when a tracing/metric value should be omitted (unset or zero)."""
+    if value is None or value == "":
+        return True
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value == 0
+    if isinstance(value, float):
+        return math.isclose(value, 0.0, abs_tol=1e-12)
+    return False
+
+
 def build_tracing_header_pairs(analysis: Dict[str, Any]) -> Tuple[Tuple[str, str], ...]:
     """Return (header_name, value) pairs for a payload analysis snapshot."""
     pairs = []
     for field, header_name in _TRACING_HEADER_MAP.items():
         value = analysis.get(field)
-        if value is None or value == "" or value == 0 or value == 0.0:
+        if is_empty_tracing_value(value):
             continue
         pairs.append((header_name, str(value)))
     return tuple(pairs)
