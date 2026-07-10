@@ -38,6 +38,7 @@ class PPUUsageRepository:
         usage_sq = select(
             PPUQuotaUsage.tenant_id,
             func.sum(PPUQuotaUsage.units_used).label("total_units"),
+            func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
         ).where(PPUQuotaUsage.billing_month == billing_month)
         if model_task_type:
             usage_sq = usage_sq.where(PPUQuotaUsage.inference_name == model_task_type)
@@ -83,6 +84,7 @@ class PPUUsageRepository:
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 func.coalesce(usage_sq.c.total_units, 0).label("total_units"),
+                func.coalesce(usage_sq.c.total_cost, 0).label("total_cost"),
                 quota_col,
                 unit_size_col,
             )

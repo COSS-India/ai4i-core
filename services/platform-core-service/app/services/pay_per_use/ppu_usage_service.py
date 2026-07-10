@@ -95,6 +95,7 @@ class PPUUsageService:
             budget_limit = float(row.budget_limit)
             remaining_budget = float(row.available_balance)
             total_units = float(row.total_units or 0)
+            spend_to_date = round(float(row.total_cost or 0), 2)
             raw_quota = row.total_quota  # None means unlimited (no quota rows for this tier)
             quota_display = float(raw_quota) if raw_quota is not None else None
 
@@ -103,7 +104,7 @@ class PPUUsageService:
                 tenantName=org_map.get(row.tenant_id, row.tenant_id),
                 tier=row.tier_name,
                 budgetLimit=round(budget_limit, 2),
-                spendToDate=round(budget_limit - remaining_budget, 2),
+                spendToDate=spend_to_date,
                 remainingBudget=round(remaining_budget, 2),
                 quotaLimit=quota_display,
                 quotaUnit=unit_label,
@@ -189,7 +190,7 @@ class PPUUsageService:
             tenantName=org_map.get(tenant_id, tenant_id),
             tier=assignment.tier_name,
             budgetLimit=round(budget_limit, 2),
-            spendToDate=round(budget_limit - remaining_budget, 2),
+            spendToDate=round(total_spend, 2),
             remainingBudget=round(remaining_budget, 2),
             quotaLimit=None if multi_type else quota_display,
             quotaUnit=quota_unit,
