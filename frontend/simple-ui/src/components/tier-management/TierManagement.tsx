@@ -95,19 +95,25 @@ function formatQuotaAmount(
 const TIER_NAME_COLUMN: AdminTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
+  thProps: { w: "450px", maxW: "450px" },
+  tdProps: { maxW: "450px" },
   cell: (tier) => (
-    <Text fontSize="sm" fontWeight="medium">
-      {tier.name}
-    </Text>
+    <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
+      <Text fontSize="sm" fontWeight="medium" isTruncated maxW="430px">
+        {tier.name}
+      </Text>
+    </Tooltip>
   ),
 };
+
+const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
 const TIER_TASK_TYPES_COLUMN: AdminTableColumn<Tier> = {
   id: "taskTypes",
   header: "Model Task Types",
   cell: (tier) => (
     <HStack spacing={1} flexWrap="wrap">
-      {tier.quotas?.map((q) => (
+      {(tier.quotas ?? []).slice(0, TIER_TASK_TYPES_VISIBLE_COUNT).map((q) => (
         <Badge
           key={q.modelTaskType}
           colorScheme={getTaskTypeBadgeColor(q.modelTaskType)}
@@ -117,7 +123,13 @@ const TIER_TASK_TYPES_COLUMN: AdminTableColumn<Tier> = {
         >
           {q.modelTaskType}
         </Badge>
-      )) ?? (
+      ))}
+      {(tier.quotas?.length ?? 0) > TIER_TASK_TYPES_VISIBLE_COUNT && (
+        <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+          +{tier.quotas!.length - TIER_TASK_TYPES_VISIBLE_COUNT}
+        </Badge>
+      )}
+      {!tier.quotas?.length && (
         <Text fontSize="sm" color="gray.400">
           —
         </Text>
@@ -625,7 +637,7 @@ const TierManagement: React.FC = () => {
         isOpen={isCreateOpen}
         onClose={onCreateClose}
         placement="right"
-        size="md"
+        size="lg"
         closeOnOverlayClick={!isSubmitting}
       >
         <DrawerOverlay />

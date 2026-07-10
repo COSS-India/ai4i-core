@@ -150,7 +150,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     };
 
     // Add billing/pricing fields if provided
-    if (serviceData.billingUnitType) apiPayload.billingUnitType = serviceData.billingUnitType;
+    if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
     if (serviceData.costPerUnit !== undefined) apiPayload.costPerUnit = serviceData.costPerUnit;
     if (serviceData.unitSize !== undefined) apiPayload.unitSize = serviceData.unitSize;
     if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;

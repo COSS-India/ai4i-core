@@ -79,3 +79,18 @@ export async function fetchTenantTiers(): Promise<TenantTiersResponse> {
   const response = await apiClient.get(apiEndpoints.tiers.assignTenant);
   return response.data;
 }
+
+export interface ReassignTenantTierPayload {
+  tenant_id: string;
+  tier_id: string;
+}
+
+export async function reassignTenantTier(
+  payload: ReassignTenantTierPayload,
+): Promise<TenantTierAssignment> {
+  const response = await apiClient.patch(
+    apiEndpoints.tiers.reassignTenant,
+    payload,
+  );
+  return response.data;
+}

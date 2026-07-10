@@ -12,6 +12,13 @@ import {
   CardBody,
   CardHeader,
   Center,
+  Drawer,
+  DrawerBody,
+  DrawerCloseButton,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerOverlay,
   FormControl,
   FormErrorMessage,
   FormHelperText,
@@ -45,12 +52,13 @@ import {
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@chakra-ui/react";
 import {
   fetchTiers,
   assignTenantTier,
   fetchTenantTiers,
+  reassignTenantTier,
   type TenantTierAssignment,
 } from "../../services/tierManagementService";
 import {
@@ -144,6 +152,7 @@ export default function TenantManagementTab({
     resolveTenantUserDisplayStatus(u, userListTenantStatus);
 
   const toast = useToast();
+  const queryClient = useQueryClient();
 
   // Assign Tier modal state
   const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
@@ -182,11 +191,59 @@ export default function TenantManagementTab({
 
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
+  const [manageTenant, setManageTenant] = useState<TenantView | null>(null);
+  const [manageTierId, setManageTierId] = useState("");
+  const [manageBudget, setManageBudget] = useState(0);
+  const [isSavingPlan, setIsSavingPlan] = useState(false);
   const {
     isOpen: isViewTierOpen,
     onOpen: onViewTierOpen,
     onClose: onViewTierClose,
   } = useDisclosure();
+
+  const handleCloseManagePlan = () => {
+    if (isSavingPlan) return;
+    onViewTierClose();
+    setViewTierTenant(null);
+    setManageTenant(null);
+  };
+
+  const handleSaveManagePlan = async () => {
+    if (!viewTierTenant || !manageTierId) return;
+    setIsSavingPlan(true);
+    try {
+      await reassignTenantTier({
+        tenant_id: String(viewTierTenant.tenant_id),
+        tier_id: manageTierId,
+      });
+      toast({
+        title: "Plan updated",
+        description: `Tier updated for "${manageTenant?.organisation ?? ""}".`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      handleCloseManagePlan();
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      const message =
+        (typeof detail === "object" && detail !== null
+          ? detail.message
+          : detail) ??
+        err?.message ??
+        "An error occurred.";
+      toast({
+        title: "Failed to update plan",
+        description: String(message),
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsSavingPlan(false);
+    }
+  };
 
   const handleOpenAssignTier = (t: TenantView) => {
     setAssignTierTenant(t);
@@ -855,6 +912,13 @@ export default function TenantManagementTab({
                     (a) => String(a.tenant_id) === String(t.tenant_id),
                   ) ?? null;
                 setViewTierTenant(assignment);
+                setManageTenant(t);
+                setManageTierId(assignment?.tier_id ?? "");
+                setManageBudget(
+                  assignment
+                    ? Number.parseFloat(assignment.budget_limit) || 0
+                    : 0,
+                );
                 onViewTierOpen();
               }}
             />
@@ -1032,9 +1096,7 @@ export default function TenantManagementTab({
                   onChange={(e) =>
                     tm.handleTenantContactNameChange(e.target.value)
                   }
-                  onBlur={(e) =>
-                    tm.handleTenantContactNameBlur(e.target.value)
-                  }
+                  onBlur={(e) => tm.handleTenantContactNameBlur(e.target.value)}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.contact_name}
@@ -1677,85 +1739,78 @@ export default function TenantManagementTab({
   function renderViewTierModal() {
     const a = viewTierTenant;
     return (
-      <Modal
+      <Drawer
         isOpen={isViewTierOpen}
-        onClose={() => {
-          onViewTierClose();
-          setViewTierTenant(null);
-        }}
-        isCentered
+        onClose={handleCloseManagePlan}
+        placement="right"
         size="md"
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader fontSize="md" fontWeight="semibold">
-            Tier Details
-          </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader
+            fontSize="md"
+            fontWeight="semibold"
+            borderBottomWidth="1px"
+            borderColor="gray.200"
+          >
+            {`Manage Plan${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+          </DrawerHeader>
+          <DrawerBody py={6}>
             {a ? (
-              <VStack align="stretch" spacing={3}>
-                <SimpleGrid columns={2} spacing={3}>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Tier Name
-                    </Text>
-                    <Text fontSize="sm">{a.tier_name}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Tenant ID
-                    </Text>
-                    <Text fontSize="sm" fontFamily="mono">
-                      {a.tenant_id}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Budget Limit
-                    </Text>
-                    <Text fontSize="sm">
-                      ₹ {Number.parseFloat(a.budget_limit).toLocaleString()}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Available Balance
-                    </Text>
-                    <Text fontSize="sm">
-                      ₹ {Number.parseFloat(a.available_balance).toLocaleString()}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Effective From
-                    </Text>
-                    <Text fontSize="sm">{fmtDate(a.effective_from)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Effective To
-                    </Text>
-                    <Text fontSize="sm">{fmtDate(a.effective_to)}</Text>
-                  </Box>
-                </SimpleGrid>
+              <VStack align="stretch" spacing={5}>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">
+                    Tier
+                  </FormLabel>
+                  <Select
+                    size="sm"
+                    value={manageTierId}
+                    onChange={(e) => setManageTierId(e.target.value)}
+                    isDisabled={isSavingPlan}
+                  >
+                    {tierOptions.map((tOpt) => (
+                      <option key={tOpt.id} value={tOpt.id}>
+                        {tOpt.name}
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">
+                    Budget (₹)
+                  </FormLabel>
+                  <Input
+                    size="sm"
+                    value={manageBudget.toLocaleString()}
+                    isReadOnly
+                    bg="gray.50"
+                    cursor="default"
+                  />
+                </FormControl>
               </VStack>
             ) : (
               <Text>No tier data available.</Text>
             )}
-          </ModalBody>
-          <ModalFooter>
+          </DrawerBody>
+          <DrawerFooter
+            justifyContent="space-between"
+            borderTopWidth="1px"
+            borderColor="gray.200"
+          >
             <Button
-              onClick={() => {
-                onViewTierClose();
-                setViewTierTenant(null);
-              }}
+              colorScheme="blue"
+              onClick={handleSaveManagePlan}
+              isLoading={isSavingPlan}
+              loadingText="Saving..."
+              isDisabled={!manageTierId}
             >
-              Close
+              Save Changes
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     );
   }
 }
