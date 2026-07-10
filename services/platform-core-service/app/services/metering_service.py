@@ -362,14 +362,14 @@ class MeteringService:
         totals = self._endpoint_dict(_safe_list(raw[0]))
         successes = self._endpoint_dict(_safe_list(raw[1]))
 
-        # Unpack native results (start after fixed queries).
-        # Only store when > 0: a 0.0 result means the metric doesn't exist yet
-        # (the or vector(0) fallback fires), so we return null rather than 0.
+        # Unpack native results (start after fixed queries). A 0.0 result means
+        # either no usage occurred or the metric doesn't exist yet (the
+        # `or vector(0)` fallback fires) — both cases legitimately report 0.
         native_offset = len(fixed_queries)
         natives: dict = {}
         for i, task in enumerate(native_tasks):
             v = _safe_float(raw[native_offset + i])
-            if v is not None and v > 0:
+            if v is not None:
                 natives[task] = round(v)
 
         # ── Assemble service rows ────────────────────────────────────────────
@@ -379,10 +379,10 @@ class MeteringService:
             success_v = successes.get(task, 0)
 
             if cfg.get("use_success_as_native"):
-                native_v = success_v or None
+                native_v = success_v
             else:
-                raw_native = natives.get(task)
-                if raw_native is not None and cfg.get("divide_by_60"):
+                raw_native = natives.get(task, 0)
+                if cfg.get("divide_by_60"):
                     native_v = round(raw_native / 60, 2)
                 else:
                     native_v = raw_native
