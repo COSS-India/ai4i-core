@@ -3,16 +3,16 @@ Main FastAPI application factory for inference service.
 Creates and configures the unified inference service with all components.
 """
 
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai4i_core.observability import setup_observability
 from ai4i_core.logging import RequestMiddleware
-from routes import router
+from ai4i_core.observability import setup_observability
 from config import settings
+from routes import router
 from trace.setup import setup_tracing
 
 logger = logging.getLogger(__name__)
@@ -22,15 +22,22 @@ _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
+    """Startup/shutdown lifecycle: init the shared inference connection pool
+    on startup, flush tracing spans and close the pool on graceful shutdown."""
+    from connection_pools.httpx_async_pools import (
+        init_connection_pool,
+        get_inference_connection_pool,
+        get_general_connection_pool,
+    )
+    init_connection_pool()
     logger.info("✓ Inference service started")
     yield
     from opentelemetry import trace
     provider = trace.get_tracer_provider()
     if hasattr(provider, "shutdown"):
         provider.shutdown()  # flushes the Kafka span exporter
-    from services.base.task_service import close_triton_client
-    await close_triton_client()
+    await get_inference_connection_pool().close()
+    await get_general_connection_pool().close()
     logger.info("✓ Inference service shutting down")
 
 

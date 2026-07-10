@@ -3,14 +3,13 @@ InferenceServerResolver — looks up Triton endpoints and adapter config from th
 model management service, with a TTL'd in-memory cache.
 """
 
-from typing import Any, Dict, Tuple
 import logging
+from typing import Any, Dict, Tuple
+
 import time
 
 from config import settings
-
-from utils import HTTPServiceClient
-
+from connection_pools.httpx_async_pools import get_general_connection_pool
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +72,13 @@ class InferenceServerResolver:
             raise RuntimeError("Model management service not configured")
 
         try:
-            http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
+            http_client = get_general_connection_pool()
             url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
-            raw = await http_client.get_json(url)
+            raw = await http_client.query(
+                endpoint=url,
+                method="GET",
+                timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT,
+            )
             service_info = self._normalize_mms_response(raw, service_id)
             # Never log the full service_info dict — it contains the resolved
             # Triton endpoint URL and api_key. Log only the safe identifiers

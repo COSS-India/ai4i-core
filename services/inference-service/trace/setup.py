@@ -1,5 +1,5 @@
-import logging
 import json
+import logging
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
@@ -131,6 +131,7 @@ class KafkaSpanExporter(SpanExporter):
                 pass
         return True
 
+
 def setup_tracing() -> None:
     """
     Initialize OpenTelemetry tracing for inference service.
@@ -172,7 +173,7 @@ def setup_tracing() -> None:
         # Set the global tracer provider
         trace.set_tracer_provider(tracer_provider)
 
-         # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
+        # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
         # Always include send/receive spans for inference service for detailed breakdown
         if otlp_exporter is not None:
             exporter = FilteringSpanExporter(otlp_exporter, service_name=service_name)
@@ -214,7 +215,7 @@ class FilteringSpanExporter(SpanExporter):
         "http receive",
         "http send",
         " http receive",  # With leading space (common in ASGI spans)
-        " http send",     # With leading space
+        " http send",  # With leading space
     ]
 
     def __init__(self, base_exporter: SpanExporter, service_name: str = None):

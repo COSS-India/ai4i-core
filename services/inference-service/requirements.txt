@@ -16,6 +16,7 @@ pydantic-settings==2.14.1
 
 # HTTP client
 httpx==0.28.1
+h2==4.3.0  # required for httpx AsyncClient(http2=True) in the inference connection pool
 
 # Utilities
 python-dotenv==1.2.2

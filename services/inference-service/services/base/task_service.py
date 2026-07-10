@@ -8,28 +8,7 @@ from dataclasses import dataclass, field
 from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
 
-# ── Persistent Triton HTTP client (Fix 5) ────────────────────────────────────
-# One shared httpx.AsyncClient reuses TCP connections across Triton calls instead
-# of opening and closing a new connection on every request.
-_TRITON_CLIENT: Optional[Any] = None  # httpx.AsyncClient, imported lazily
-
-
-def _get_triton_client() -> Any:
-    global _TRITON_CLIENT
-    if _TRITON_CLIENT is None:
-        import httpx
-        _TRITON_CLIENT = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-        )
-    return _TRITON_CLIENT
-
-
-async def close_triton_client() -> None:
-    """Close the shared Triton client; called from the app lifespan on shutdown."""
-    global _TRITON_CLIENT
-    if _TRITON_CLIENT is not None:
-        await _TRITON_CLIENT.aclose()
-        _TRITON_CLIENT = None
+from connection_pools.httpx_async_pools import get_inference_connection_pool
 
 
 @dataclass
@@ -342,68 +321,47 @@ class BaseTaskService:
             Raw output from Triton
 
         Raises:
-            RuntimeError: If Triton call fails
+            LookupError: If the Triton endpoint returns 404
+            RuntimeError: If the Triton call otherwise fails
         """
         from config import settings
 
-        try:
-            headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
-            # Endpoint URL deliberately omitted from log message — it
-            # identifies internal infra (Triton host/port + model name)
-            # and would leak via the Logs Dashboard pipeline. The traced
-            # span carries the model_name attribute when correlation is
-            # needed server-side.
-            self.logger.debug("Calling Triton (model=%s)", self.service_info.get("name", ""))
+        # Endpoint URL deliberately omitted from log message — it
+        # identifies internal infra (Triton host/port + model name)
+        # and would leak via the Logs Dashboard pipeline. The traced
+        # span carries the model_name attribute when correlation is
+        # needed server-side.
+        self.logger.debug("Calling Triton (model=%s)", self.service_info.get("name", ""))
 
-            client = _get_triton_client()
+        pool = get_inference_connection_pool()
 
-            # Inputs carrying raw bytes (e.g. ASR AUDIO_SIGNAL float samples)
-            # use the KServe binary tensor extension: raw bytes appended after
-            # a JSON header, avoiding multi-MB JSON float serialization.
-            if any("_raw" in inp for inp in triton_inputs):
-                body, binary_headers = self._build_binary_request(triton_inputs, triton_outputs)
-                headers.update(binary_headers)
-                response = await client.post(
-                    triton_endpoint,
-                    content=body,
-                    headers=headers,
-                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
-                )
-            else:
-                payload = {
-                    "inputs": triton_inputs,
-                    "outputs": [{"name": name} for name in triton_outputs],
-                }
-                response = await client.post(
-                    triton_endpoint,
-                    json=payload,
-                    headers=headers,
-                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
-                )
-            if response.status_code == 404:
-                raise LookupError("Triton endpoint not found")
-            response.raise_for_status()
-            return response.json()
-
-        except Exception as e:
-            # Log only the exception TYPE — httpx/urllib3 error reprs embed
-            # the request URL, which would leak the Triton endpoint into
-            # any log sink (Logs Dashboard, etc.). Full traceback is still
-            # captured by the upstream `exc_info=True` log in routes/inference.py.
-            self.logger.error(
-                "Triton inference call failed for task=%s: %s",
-                self.task_name, type(e).__name__,
+        # Inputs carrying raw bytes (e.g. ASR AUDIO_SIGNAL float samples)
+        # use the KServe binary tensor extension: raw bytes appended after
+        # a JSON header, avoiding multi-MB JSON float serialization.
+        if any("_raw" in inp for inp in triton_inputs):
+            body, binary_headers = self._build_binary_request(triton_inputs, triton_outputs)
+            headers.update(binary_headers)
+            return await pool.query(
+                triton_endpoint,
+                content=body,
+                headers=headers,
+                timeout=settings.DEFAULT_TRITON_TIMEOUT,
             )
-            # Don't embed triton_endpoint or str(e) in the RuntimeError
-            # message — the exception message can surface in logs ingested
-            # to client-visible sinks. The chained `from e` preserves the
-            # original exception for server-side debugging only.
-            raise RuntimeError(
-                f"{self.task_name}: Triton inference call failed"
-            ) from e
+
+        payload = {
+            "inputs": triton_inputs,
+            "outputs": [{"name": name} for name in triton_outputs],
+        }
+        return await pool.query(
+            triton_endpoint,
+            json=payload,
+            headers=headers,
+            timeout=settings.DEFAULT_TRITON_TIMEOUT,
+        )
 
     @staticmethod
     def _build_binary_request(triton_inputs, triton_outputs):
