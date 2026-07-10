@@ -1,7 +1,9 @@
 """ASR TaskService — Automatic Speech Recognition inference."""
 
+import asyncio
 import base64
 from io import BytesIO
+from math import gcd
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -64,37 +66,49 @@ class ASRTaskService(AudioBase):
 
     async def preprocess_input(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Float-PCM preprocessing pipeline, applied to each item in sequence:
-          1. Get raw audio bytes (base64 decode or URI download)
-          2. _decode_audio_bytes → float32 numpy array + original sample rate
-          3. _stereo_to_mono
-          4. _resample to TARGET_SAMPLE_RATE
-          5. _equalize_amplitude
-        Returns list of item dicts enriched with samples / num_samples / sample_rate.
+        Float-PCM preprocessing pipeline:
+          1. Fetch raw audio bytes for all items (async — supports URI downloads)
+          2. Offload CPU-bound work to thread pool per item so the event loop
+             is free to serve other requests during soundfile decode + resample
+        Items are returned with samples as a numpy array; the config mapper
+        sends it to Triton as a binary tensor (no Python float list).
         """
         input_data = payload.get(self.payload_key) or []
         if not input_data:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
-        items = []
 
-        for item in input_data:
-            d = item
+        # Concurrent URI downloads (base64 items resolve instantly)
+        audio_bytes_list = await asyncio.gather(
+            *[self._get_audio_bytes(item) for item in input_data]
+        )
 
-            audio_bytes             = await self._get_audio_bytes(item)
-            audio_data, sample_rate = await self._decode_audio_bytes(audio_bytes)
-            audio_data              = self._stereo_to_mono(audio_data)
-            audio_data              = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
-            audio_data              = self._equalize_amplitude(audio_data)
+        # CPU-bound decode + resample offloaded to the thread pool, concurrent
+        # across items so the event loop stays free during soundfile/scipy work.
+        processed = await asyncio.gather(
+            *[
+                asyncio.to_thread(self._preprocess_item_sync, item, ab)
+                for item, ab in zip(input_data, audio_bytes_list)
+            ]
+        )
 
-            # samples must be a plain Python list — the config mapper's _cast_dtype
-            # operates on Python lists, not numpy arrays.
-            d["samples"]     = audio_data.tolist()
-            d["num_samples"] = len(audio_data)
-            d["sample_rate"] = self.TARGET_SAMPLE_RATE
-            items.append(d)
-
-        payload[self.payload_key] = items
+        payload[self.payload_key] = list(processed)
         return payload
+
+    def _preprocess_item_sync(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
+        """Sync preprocessing pipeline — runs in a thread-pool worker.
+
+        Keeps the numpy array as-is so the config mapper can route it through
+        the KServe binary tensor extension (_as_binary_tensor), bypassing the
+        Python float list and JSON serialization entirely.
+        """
+        audio_data, sample_rate = self._decode_audio_bytes_sync(audio_bytes)
+        audio_data = self._stereo_to_mono(audio_data)
+        audio_data = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
+        audio_data = self._equalize_amplitude(audio_data)
+        item["samples"]     = audio_data          # numpy array → binary tensor path
+        item["num_samples"] = len(audio_data)
+        item["sample_rate"] = self.TARGET_SAMPLE_RATE
+        return item
 
     # ------------------------------------------------------------------
     # Triton format hooks
@@ -130,7 +144,9 @@ class ASRTaskService(AudioBase):
         resolution — populated by preprocess_input before the Triton loop.
         """
         def build(item, index, config):
-            samples = item.get("samples") or []
+            samples = item.get("samples")
+            if samples is None:
+                samples = []
             return {
                 "audio": {
                     "samples":     samples,
@@ -163,12 +179,16 @@ class ASRTaskService(AudioBase):
         )
 
     async def _decode_audio_bytes(self, audio_bytes: bytes) -> Tuple[Any, int]:
+        """Async wrapper kept for backward compatibility with tests."""
+        return self._decode_audio_bytes_sync(audio_bytes)
+
+    def _decode_audio_bytes_sync(self, audio_bytes: bytes) -> Tuple[Any, int]:
+        """Decode raw audio bytes → (float32 numpy array, sample_rate).
+
+        Sync so it can be called from a thread-pool worker via asyncio.to_thread.
+        No fallback on decode failure: silently reinterpreting undecodable bytes
+        as raw PCM produced "valid" noise that transcribed to garbage.
         """
-        Decode raw audio bytes → (float32 numpy array, sample_rate).
-        """
-        # No fallback on decode failure: silently reinterpreting undecodable
-        # bytes as raw PCM produced "valid" noise that transcribed to garbage.
-        # Undecodable audio is a client error -> ValueError -> 400.
         try:
             import soundfile as sf
             audio_data, sample_rate = sf.read(
@@ -191,14 +211,17 @@ class ASRTaskService(AudioBase):
         return audio
 
     def _resample(self, data: Any, from_rate: int, to_rate: int) -> Any:
-        """
-        Resample a float32 numpy array from from_rate to to_rate.
-        No-op if rates are equal.
+        """Resample a float32 numpy array from from_rate to to_rate.
+
+        Uses resample_poly (polyphase filter) instead of resample (full FFT).
+        For typical rates (44100→16000, 48000→16000) this is 3–10x faster because
+        the filter operates on a downsampled signal rather than an FFT over the
+        full array length.
         """
         if from_rate == to_rate:
             return data
-        num_samples = round(len(data) * float(to_rate) / from_rate)
-        resampled = sps.resample(data, num_samples)
+        g = gcd(int(from_rate), int(to_rate))
+        resampled = sps.resample_poly(data, to_rate // g, from_rate // g)
         return resampled.astype(np.float32)
 
     def _equalize_amplitude(self, audio: Any) -> Any:
@@ -206,10 +229,13 @@ class ASRTaskService(AudioBase):
         Normalize audio amplitude to the [-1, 1] range.
         Returns normalized float32 numpy array.
         """
+        audio = audio.astype(np.float32, copy=False)
         max_val = np.max(np.abs(audio))
         if max_val > 0:
-            audio = audio / max_val
-        return audio.astype(np.float32)
+            # In place: we own this array (fresh from resample/decode), so avoid
+            # allocating another full copy per request.
+            audio *= np.float32(1.0 / max_val)
+        return audio
 
     # postprocess_output: adapter_config-driven — the mapper decodes the
     # transcript from the Triton JSON (always a plain str; the old numpy/bytes
