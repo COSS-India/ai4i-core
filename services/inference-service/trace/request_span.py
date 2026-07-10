@@ -32,7 +32,7 @@ def get_context_attributes() -> dict:
     handler task, so they are the single source of truth — no header re-reading.
 
     correlation_id must be captured here (request context) and stored as a span
-    attribute so that LoggerSpanExporter can read it from the span later on the
+    attribute so that KafkaSpanExporter can read it from the span later on the
     background exporter thread, where get_trace_id() would return None.
 
     Returns dict with available values (skips None).
@@ -69,35 +69,6 @@ def get_endpoint_path() -> str:
 def compute_total_time_ms(start_time: float) -> float:
     """Compute elapsed time in milliseconds from a time.time() start."""
     return round((time.time() - start_time) * 1000, 2)
-
-
-def log_span_attributes(span_name: str, span, attributes: dict) -> None:
-    """
-    Log span attributes in OpenTelemetry standard JSON format.
-
-    Uses the request correlation_id (seeded by RequestMiddleware from
-    X-Correlation-ID) as context.trace_id so OpenSearch queries from
-    platform-core correlate correctly. The OTel SDK trace ID is preserved
-    as context.otel_trace_id for cross-service OTel joins.
-    """
-    import json
-    try:
-        span_context = span.get_span_context()
-        correlation_id = attributes.get("correlation_id")
-        otel_format = {
-            "name": span_name,
-            "context": {
-                "trace_id": correlation_id or f"0x{span_context.trace_id:032x}",
-                "otel_trace_id": f"0x{span_context.trace_id:032x}",
-                "span_id": f"0x{span_context.span_id:016x}",
-                "trace_state": str(span_context.trace_state or "")
-            },
-            "kind": "SpanKind.INTERNAL",
-            "attributes": attributes
-        }
-        logger.info(json.dumps(otel_format))
-    except Exception as e:
-        logger.debug(f"Error logging span in OTel format: {e}")
 
 
 @contextmanager
@@ -139,21 +110,20 @@ def traced_span(
             if classify_status:
                 attrs["status"] = "failure"
                 attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
-            finalize_span(span, span_name, attrs, error=e)
+            finalize_span(span, attrs, error=e)
             raise
         else:
             attrs["total_time_ms"] = compute_total_time_ms(start_time)
             if classify_status:
                 attrs.setdefault("status", "success")
                 attrs.setdefault("status_code", 200)
-            finalize_span(span, span_name, attrs, ok=mark_ok)
+            finalize_span(span, attrs, ok=mark_ok)
 
 
-def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: bool = False) -> None:
+def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> None:
     """
-    Set attributes on a span, record its status, and emit the OTel-format log line.
-    Single helper for the request/model/ai-inference span finalization that was
-    previously copy-pasted at each site.
+    Set attributes on a span and record its status.
+    Single helper for the request/model/ai-inference span finalization.
     """
     for key, value in attributes.items():
         span.set_attribute(key, value)
@@ -161,7 +131,6 @@ def finalize_span(span, span_name: str, attributes: dict, *, error=None, ok: boo
         span.set_status(StatusCode.ERROR, str(error))
     elif ok:
         span.set_status(StatusCode.OK)
-    log_span_attributes(span_name, span, attributes)
 
 
 @asynccontextmanager
@@ -195,12 +164,20 @@ async def traced_inference(
     with traced_span(
         "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
     ) as attrs:
+        # Seed correlation_id (and tenantId/authType) so KafkaSpanExporter uses
+        # the same context.trace_id as the sibling request/model spans.  Without
+        # this the ai-inference span lands in OpenSearch under the raw OTel trace
+        # ID (0x…) rather than the correlation ID, making it invisible in the UI.
         attrs.update(get_context_attributes())
         attrs.update({
             "input_type": tracing.get("input_type") or get_input_type(payload),
             "output_type": "unknown",
             "input_tokens": tracing.get("input_tokens", 0),
             "output_tokens": 0,
+            # For trace/observability only — the PPU consumer's LLM/non-LLM
+            # billing decision reads mm_services.task_type instead (via
+            # get_service_pricing), not this span attribute.
+            "task_type": task_name.lower(),
         })
         if tracing.get("service_id"):
             attrs["service_id"] = tracing["service_id"]

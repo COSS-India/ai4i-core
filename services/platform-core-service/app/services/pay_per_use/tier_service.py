@@ -1,6 +1,8 @@
+import logging
 from typing import List, Optional
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
+
+logger = logging.getLogger(__name__)
 
 
 def _build_out(tier: PPUTier, quotas: List[PPUTierQuota]) -> TierOut:
@@ -20,6 +24,7 @@ def _build_out(tier: PPUTier, quotas: List[PPUTierQuota]) -> TierOut:
             TierQuotaOut(
                 modelTaskType=q.inference_name,
                 limit=q.monthly_quota,
+                pendingLimit=q.pending_monthly_quota,
             )
             for q in quotas
         ],
@@ -96,7 +101,24 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
     return _build_out(tier, quotas)
 
 
-async def update_tier(body: TierUpdate, session: AsyncSession, updated_by: Optional[str] = None) -> TierOut:
+async def _fetch_tenant_ids_for_tier(tier_id, session: AsyncSession) -> list:
+    result = await session.execute(
+        select(PPUTenantTierAssignment.tenant_id).where(
+            PPUTenantTierAssignment.tier_id == tier_id,
+            PPUTenantTierAssignment.effective_from <= func.now(),
+            PPUTenantTierAssignment.effective_to > func.now(),
+        )
+    )
+    return [row.tenant_id for row in result.all()]
+
+
+async def update_tier(
+    body: TierUpdate,
+    session: AsyncSession,
+    updated_by: Optional[str] = None,
+    auth_service_url: str = "",
+    http_client: Optional[httpx.AsyncClient] = None,
+) -> TierOut:
     try:
         uid = UUID(body.tier_id)
     except ValueError:
@@ -114,25 +136,93 @@ async def update_tier(body: TierUpdate, session: AsyncSession, updated_by: Optio
     tier.updated_by = updated_by
 
     if body.quotas is not None:
-        await session.execute(delete(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
-        quotas = []
         for q in body.quotas:
-            quota = PPUTierQuota(
-                tier_id=tier.id,
-                inference_name=q.modelTaskType,
-                monthly_quota=q.limit,
-                created_by=updated_by,
-                updated_by=updated_by,
+            q_result = await session.execute(
+                select(PPUTierQuota).where(
+                    PPUTierQuota.tier_id == tier.id,
+                    PPUTierQuota.inference_name == q.modelTaskType,
+                )
             )
-            session.add(quota)
-            quotas.append(quota)
-    else:
-        q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
-        quotas = q_result.scalars().all()
+            existing = q_result.scalar_one_or_none()
+            if existing:
+                existing.pending_monthly_quota = q.limit
+                existing.updated_by = updated_by
+            else:
+                # New quota type: no active value to preserve, so apply immediately.
+                # Setting monthly_quota=0 with the real value only in pending would
+                # make units_used >= 0 always true and block all tenants until cycle reset.
+                session.add(PPUTierQuota(
+                    tier_id=tier.id,
+                    inference_name=q.modelTaskType,
+                    monthly_quota=q.limit,
+                    created_by=updated_by,
+                    updated_by=updated_by,
+                ))
+
+    if body.cancel_pending_quota:
+        for inference_name in body.cancel_pending_quota:
+            q_result = await session.execute(
+                select(PPUTierQuota).where(
+                    PPUTierQuota.tier_id == tier.id,
+                    PPUTierQuota.inference_name == inference_name,
+                )
+            )
+            row = q_result.scalar_one_or_none()
+            if row:
+                row.pending_monthly_quota = None
+                row.updated_by = updated_by
+
+    if body.remove_quota:
+        await session.execute(
+            delete(PPUTierQuota).where(
+                PPUTierQuota.tier_id == tier.id,
+                PPUTierQuota.inference_name.in_(body.remove_quota),
+            )
+        )
+        await session.flush()
+        remaining_result = await session.execute(
+            select(func.count()).select_from(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id)
+        )
+        if remaining_result.scalar() == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot remove all quotas: at least one model task type must remain in the tier",
+            )
 
     await session.commit()
     await session.refresh(tier)
+
+    if (body.quotas is not None or body.cancel_pending_quota or body.remove_quota) and auth_service_url and http_client:
+        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, session)
+        try:
+            resp = await http_client.post(
+                f"{auth_service_url}/internal/ppu/tier/quota-limit-updated",
+                json={"tier_name": tier.name, "tenant_ids": tenant_ids},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
+
+    q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
+    quotas = list(q_result.scalars().all())
     return _build_out(tier, quotas)
+
+
+async def apply_pending_quotas(session: AsyncSession) -> int:
+    """Promote pending_monthly_quota → monthly_quota for all tiers.
+    Called by the monthly billing-cycle cron on the 1st of each month.
+    Returns the number of quota rows updated.
+    """
+    result = await session.execute(
+        select(PPUTierQuota).where(PPUTierQuota.pending_monthly_quota.isnot(None))
+    )
+    rows = result.scalars().all()
+    for row in rows:
+        row.monthly_quota = row.pending_monthly_quota
+        row.pending_monthly_quota = None
+    await session.commit()
+    return len(rows)
 
 
 async def delete_tier(tier_id: str, session: AsyncSession) -> None:

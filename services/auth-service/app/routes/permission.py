@@ -9,7 +9,7 @@ from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
 from app.models.role_name import RoleName
 from app.models.user import User
-from app.schemas.role import PermissionResponse
+from app.schemas.role import InferencePermissionResponse, PermissionResponse, permission_display_label
 from app.services.role_service import RoleService
 
 router = APIRouter(prefix="/auth/permissions", tags=["Permissions"])
@@ -32,5 +32,8 @@ async def list_inference_permissions(
     svc: RoleService = Depends(get_role_service),
 ):
     permissions = await svc.list_inference_permissions()
-    items = [to_response(p, PermissionResponse, json_mode=False) for p in permissions]
+    items = [
+        InferencePermissionResponse(name=p.name, label=permission_display_label(p.name)).model_dump()
+        for p in permissions
+    ]
     return success_response(data=items)

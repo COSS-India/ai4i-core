@@ -5,8 +5,12 @@ Functions to detect input/output types, count tokens, and calculate payload size
 All functions return safe defaults on error to prevent trace enrichment from breaking inference.
 """
 
+import base64
+import io
 import logging
 from typing import Any, Dict, List
+
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +72,15 @@ def get_output_type(response_data: List[Dict[str, Any]]) -> str:
         return "unknown"
 
 
-def count_input_tokens(input_items: List[Any], input_type: str) -> int:
+def count_input_tokens(input_items: List[Any], input_type: str) -> float:
     """
-    Estimate token count for input based on modality.
+    Billed input units, computed per modality (see inference_types.yaml).
 
-    Text: word count (len(text.split()))
-    Audio: estimate from sample count (samples / 16000 * 100)
-    Image: heuristic from file size or resolution
+    Text: character count (len(text)) — matches the "characters" billing unit
+    Audio: real duration in minutes, fractional (see _count_audio_tokens)
+    Image: count of images in the request (see _count_image_tokens)
 
-    Returns: estimated token count, or 0 on error
+    Returns: billed unit count, or 0 on error
     """
     try:
         if not input_items:
@@ -99,7 +103,7 @@ def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -
     """
     Estimate token count for output based on modality.
 
-    Text: word count of output text
+    Text: character count of output text
     Audio: estimate from output samples
     Image: heuristic from encoded size
 
@@ -126,72 +130,107 @@ def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -
 # Private helpers
 # ============================================================================
 
+def _field(item: Any, *names: str, default: Any = None) -> Any:
+    """First truthy value among ``names``, read from a dict key or object attribute.
+
+    Handles the snake_case/camelCase aliasing of the same logical field
+    (e.g. ``num_samples``/``numSamples``) that inference payloads use
+    interchangeably, so callers don't repeat the dict-vs-attr boilerplate.
+    """
+    for name in names:
+        value = item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+        if value:
+            return value
+    return default
+
+
 def _count_text_tokens(input_items: List[Any]) -> int:
-    """Count tokens from text input items by word splitting."""
+    """
+    Count tokens from text input items by character count.
+
+    All text-modality billing units (nmt, tts, ner, transliteration,
+    language-detection — see inference_types.yaml) are declared as
+    "characters", so this must count characters, not words.
+    """
     total = 0
     for item in input_items:
-        if isinstance(item, dict):
-            source = item.get("source", "")
-        else:
-            source = getattr(item, "source", "")
-
+        source = _field(item, "source", default="")
         if isinstance(source, str):
-            total += len(source.split())
+            total += len(source)
 
     return total
 
 
-def _count_audio_tokens(input_items: List[Any]) -> int:
+def _count_audio_tokens(input_items: List[Any]) -> float:
     """
-    Estimate tokens from audio input items.
+    Billed units for audio input items — real minutes of audio, fractional.
 
-    Use num_samples if available, or heuristic from audio data size.
-    Estimation: 100 tokens per second of audio at 16kHz.
+    asr, speaker-diarization, language-diarization, and audio-lang-detection
+    all bill on real audio duration (inference_types.yaml unit: minutes), not
+    a token/byte proxy. ASR's preprocessing already decodes audio and knows
+    the exact num_samples/sample_rate; the other three pass audio through to
+    Triton as base64 untouched (AudioBase), so duration is read from the
+    encoded audio's own header via soundfile — any billing inaccuracy here
+    directly under- or over-charges the tenant.
+
+    Billed in fractional minutes (ppu_quota_usage.units_used and
+    ppu_tier_quotas.monthly_quota are Numeric columns) — no per-clip minimum.
     """
-    total = 0
+    total = 0.0
     for item in input_items:
-        if isinstance(item, dict):
-            num_samples = item.get("num_samples", 0)
-            audio_content = item.get("audio_content", "")
-        else:
-            num_samples = getattr(item, "num_samples", 0)
-            audio_content = getattr(item, "audio_content", "")
+        num_samples = _field(item, "num_samples", "numSamples", default=0)
+        sample_rate = _field(item, "sample_rate", "sampleRate", default=0)
+        audio_content = _field(item, "audio_content", "audioContent", default="")
 
-        if num_samples > 0:
-            # Assume 16kHz sample rate: 100 tokens per second
-            tokens = int((num_samples / 16000.0) * 100)
-            total += max(tokens, 1)
+        duration_seconds = 0.0
+        if num_samples > 0 and sample_rate > 0:
+            duration_seconds = num_samples / float(sample_rate)
         elif audio_content:
-            # Heuristic: base64 string length / 100 as proxy
-            tokens = max(len(str(audio_content)) // 100, 1)
-            total += tokens
+            duration_seconds = _decode_audio_duration_seconds(audio_content)
+
+        if duration_seconds > 0:
+            total += duration_seconds / 60.0
 
     return total
+
+
+def _decode_audio_duration_seconds(audio_content: Any) -> float:
+    """Read exact duration (seconds) from a base64-encoded audio file's header.
+
+    Uses soundfile.info — a metadata-only read, not a full decode — so this
+    stays cheap even for long clips.
+
+    Returns 0.0 if the audio can't be decoded — this runs inside trace
+    enrichment, which must never break inference, so it can't raise. But a
+    0.0 here means the request bills nothing, so the failure is logged at
+    ERROR (not warning) as a billing-loss signal ops should alert on, rather
+    than being swallowed silently.
+    """
+    try:
+        raw = base64.b64decode(str(audio_content), validate=False)
+        info = sf.info(io.BytesIO(raw))
+        return info.frames / float(info.samplerate) if info.samplerate else 0.0
+    except Exception as e:
+        logger.error(
+            "Audio duration decode failed — request will bill 0 units: %s", e
+        )
+        return 0.0
 
 
 def _count_image_tokens(input_items: List[Any]) -> int:
     """
-    Estimate tokens from image input items.
+    Billed input units for image input items — count of images.
 
-    Heuristic: use image_content size (bytes) / 1000 as token estimate.
+    OCR (the only image-modality service today, see inference_types.yaml
+    unit: images) bills per image, not per byte: a request with N images
+    in payload["image"] bills N units regardless of each image's
+    resolution or file size.
     """
-    total = 0
-    for item in input_items:
-        if isinstance(item, dict):
-            image_content = item.get("image_content", "")
-        else:
-            image_content = getattr(item, "image_content", "")
-
-        if image_content:
-            # Base64 string length / 1000 as heuristic
-            tokens = max(len(str(image_content)) // 1000, 1)
-            total += tokens
-
-    return total
+    return len(input_items)
 
 
 def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """Count tokens from text output by word splitting."""
+    """Count tokens from text output by character count (see _count_text_tokens)."""
     total = 0
     for item in response_data:
         if isinstance(item, dict):
@@ -199,7 +238,7 @@ def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
             text = item.get("target") or item.get("output") or item.get("text") or ""
             if isinstance(text, bytes):
                 text = text.decode("utf-8", errors="replace")
-            total += len(str(text).split())
+            total += len(str(text))
 
     return total
 

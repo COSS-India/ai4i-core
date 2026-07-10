@@ -6,10 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db, get_db
 from app.schemas.common import SuccessResponse
-from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierAssignResponse, TopUpRequest, TopUpResponse
+from app.schemas.pay_per_use.tenant_assignment import (
+    TierAssignRequest,
+    TierAssignResponse,
+    TierReassignRequest,
+    TopUpRequest,
+    TopUpResponse,
+)
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
 from ai4i_core.exceptions.responses import success_response
+from app.core.config import settings
 
 
 router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
@@ -51,7 +58,13 @@ async def update_tier(
     session: AsyncSession = Depends(get_db),
 ):
     updated_by = request.headers.get("X-User-Id")
-    return await tier_service.update_tier(body, session, updated_by=updated_by)
+    return await tier_service.update_tier(
+        body,
+        session,
+        updated_by=updated_by,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )
 
 
 @router.delete("/tier", status_code=status.HTTP_204_NO_CONTENT)
@@ -80,7 +93,6 @@ async def top_up_tenant_budget(
     db: AsyncSession = Depends(get_db),
 ):
     """Add budget to a tenant's active tier assignment and reset the budget-exhausted flag."""
-    from app.core.config import settings
     return await tenant_assignment_service.top_up_budget(
         body,
         db,
@@ -103,3 +115,30 @@ async def assign_tenant_tier(
     """
     user_id = request.headers.get("X-User-Id")
     return await tenant_assignment_service.assign_tier(body, db, auth_db, user_id)
+
+
+@router.patch("/tenant/tier/reassign", response_model=TierAssignResponse)
+async def reassign_tenant_tier(
+    request: Request,
+    body: TierReassignRequest,
+    db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Reassign a tenant's active PPU tier to a different tier, effective immediately.
+
+    Validates that the tenant exists and is ACTIVE in the auth DB.
+    Budget/available balance carry over unchanged from the previous assignment.
+    Quota and cost tracking start fresh under the new tier for the remainder
+    of the current assignment period. Any stale quota-exhausted flags from
+    the previous tier are cleared so the tenant isn't left 429'd on a tier
+    with headroom.
+    """
+    user_id = request.headers.get("X-User-Id")
+    return await tenant_assignment_service.reassign_tier(
+        body,
+        db,
+        auth_db,
+        user_id,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )

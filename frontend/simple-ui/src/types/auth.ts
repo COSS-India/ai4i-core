@@ -118,7 +118,7 @@ export interface LogoutResponse {
 
 export interface APIKeyCreate {
   key_name: string;
-  permissions: number[]; // Permission IDs
+  permissions: string[]; // Permission names
   expires_days?: number;
   user_id?: string; // Optional: for admin creating keys for other users (UUID)
 }
@@ -129,7 +129,7 @@ export interface APIKeyResponse {
   key_name: string;
   /** Only present immediately after creation — never returned by list endpoints. */
   api_key?: string;
-  permissions: number[];
+  permissions: string[];
   is_active?: boolean;
   is_revoked?: boolean;
   created_at?: string;
@@ -145,7 +145,7 @@ export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
 
 /**
  * Form state for the admin “update API key” modal only — not sent to the API.
- * Multi-select uses permission names; convert to IDs via catalog before PATCH.
+ * Multi-select uses permission names, sent to the API as-is.
  */
 export interface APIKeyUpdate {
   key_name?: string;
@@ -165,11 +165,8 @@ export interface OAuth2Provider {
 }
 
 export interface Permission {
-  id: number;
   name: string;
-  resource: string;
-  action: string;
-  created_at: string;
+  label: string;
 }
 
 export interface AuthState {

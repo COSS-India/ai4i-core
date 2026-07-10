@@ -16,7 +16,7 @@ inference_types:
     unit: characters
   - name: ocr
     endpoint_pattern: /api/v1/ocr/inference
-    unit: characters
+    unit: images
   - name: transliteration
     endpoint_pattern: /api/v1/transliteration/inference
     unit: characters

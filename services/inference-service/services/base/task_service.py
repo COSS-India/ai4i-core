@@ -2,10 +2,34 @@
 Base class defining the contract and shared pipeline for all inference task services.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
+
+# ── Persistent Triton HTTP client (Fix 5) ────────────────────────────────────
+# One shared httpx.AsyncClient reuses TCP connections across Triton calls instead
+# of opening and closing a new connection on every request.
+_TRITON_CLIENT: Optional[Any] = None  # httpx.AsyncClient, imported lazily
+
+
+def _get_triton_client() -> Any:
+    global _TRITON_CLIENT
+    if _TRITON_CLIENT is None:
+        import httpx
+        _TRITON_CLIENT = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _TRITON_CLIENT
+
+
+async def close_triton_client() -> None:
+    """Close the shared Triton client; called from the app lifespan on shutdown."""
+    global _TRITON_CLIENT
+    if _TRITON_CLIENT is not None:
+        await _TRITON_CLIENT.aclose()
+        _TRITON_CLIENT = None
 
 
 @dataclass
@@ -240,10 +264,10 @@ class BaseTaskService:
         from trace.request_span import traced_inference
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
 
-        
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
+        service_id = serviceInfo.get('serviceId', '')
         self._adapter_config = serviceInfo.get('adapter_config')
         if not model_name or not triton_endpoint:
             raise RuntimeError(
@@ -271,20 +295,28 @@ class BaseTaskService:
             )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
             async with traced_inference(payload, self.task_name, self.logger, request=request) as span_ctx:
+                # service_id is not in context vars — must be copied explicitly.
+                # The PPU Kafka consumer reads only the ai-inference span for
+                # billing, so it must always be present there (mirrors llm_service.py).
+                span_ctx["service_id"] = service_id
+                # Must count only this group's items, not the full input_items list —
+                # otherwise per_item call_mode bills the whole request once per item.
                 if not span_ctx.get("input_tokens"):
-                    span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
+                    span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
                     triton_outputs=triton_outputs,
                     api_key=api_key,
                 )
-                response_data.extend(
-                    await self.convert_triton_output_to_task_format(raw_triton_output)
-                )
-                span_ctx["output_type"] = get_output_type(response_data)
-                span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
-    
+                group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
+                response_data.extend(group_response_data)
+                span_ctx["output_type"] = get_output_type(group_response_data)
+                # Recorded on the span for observability/trace inspection, but
+                # PPU billing for non-LLM services is input-only by design — the
+                # Kafka consumer (payperuse_consumer/handler.py) ignores this
+                # field for every inference_name except llm.
+                span_ctx["output_tokens"] = count_output_tokens(group_response_data, span_ctx["output_type"])
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
@@ -315,14 +347,8 @@ class BaseTaskService:
             RuntimeError: If Triton call fails
         """
         from config import settings
-        from utils.http_client import HTTPServiceClient
 
         try:
-            payload = {
-                "inputs": triton_inputs,
-                "outputs": [{"name": name} for name in triton_outputs],
-            }
-
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -333,9 +359,36 @@ class BaseTaskService:
             # span carries the model_name attribute when correlation is
             # needed server-side.
             self.logger.debug("Calling Triton (model=%s)", self.service_info.get("name", ""))
-            return await HTTPServiceClient(
-                timeout=settings.DEFAULT_TRITON_TIMEOUT
-            ).post_json(triton_endpoint, payload, headers)
+
+            client = _get_triton_client()
+
+            # Inputs carrying raw bytes (e.g. ASR AUDIO_SIGNAL float samples)
+            # use the KServe binary tensor extension: raw bytes appended after
+            # a JSON header, avoiding multi-MB JSON float serialization.
+            if any("_raw" in inp for inp in triton_inputs):
+                body, binary_headers = self._build_binary_request(triton_inputs, triton_outputs)
+                headers.update(binary_headers)
+                response = await client.post(
+                    triton_endpoint,
+                    content=body,
+                    headers=headers,
+                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
+                )
+            else:
+                payload = {
+                    "inputs": triton_inputs,
+                    "outputs": [{"name": name} for name in triton_outputs],
+                }
+                response = await client.post(
+                    triton_endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=settings.DEFAULT_TRITON_TIMEOUT,
+                )
+            if response.status_code == 404:
+                raise LookupError("Triton endpoint not found")
+            response.raise_for_status()
+            return response.json()
 
         except Exception as e:
             # Log only the exception TYPE — httpx/urllib3 error reprs embed
@@ -353,3 +406,41 @@ class BaseTaskService:
             raise RuntimeError(
                 f"{self.task_name}: Triton inference call failed"
             ) from e
+
+    @staticmethod
+    def _build_binary_request(triton_inputs, triton_outputs):
+        """Assemble a KServe v2 binary tensor request (header + raw bytes).
+
+        Inputs carrying '_raw' bytes are declared with binary_data_size and
+        their bytes appended after the JSON header, in input order. Outputs are
+        requested as JSON (binary_data: false) so the response parses normally.
+
+        Returns (body_bytes, extra_headers).
+        """
+        header_inputs = []
+        raw_chunks = []
+        for inp in triton_inputs:
+            if "_raw" in inp:
+                raw = inp["_raw"]
+                header_inputs.append({
+                    "name": inp["name"],
+                    "datatype": inp["datatype"],
+                    "shape": inp["shape"],
+                    "parameters": {"binary_data_size": len(raw)},
+                })
+                raw_chunks.append(raw)
+            else:
+                header_inputs.append(inp)
+        header = {
+            "inputs": header_inputs,
+            "outputs": [
+                {"name": name, "parameters": {"binary_data": False}}
+                for name in triton_outputs
+            ],
+        }
+        header_bytes = json.dumps(header).encode("utf-8")
+        body = header_bytes + b"".join(raw_chunks)
+        return body, {
+            "Content-Type": "application/octet-stream",
+            "Inference-Header-Content-Length": str(len(header_bytes)),
+        }
