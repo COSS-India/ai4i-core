@@ -18,16 +18,6 @@ TIME_RANGES: dict = {
     "all": None,
 }
 
-# Two-window offsets used to query the *previous* period.
-# e.g. for a 24h window, prev_period = counter@48h_ago - counter@24h_ago.
-# Prometheus duration strings don't support arithmetic so we precompute them.
-DOUBLE_TIME_RANGES: dict = {
-    "1h":  "2h",
-    "24h": "48h",
-    "7d":  "14d",
-    "30d": "60d",
-}
-
 # Bucket configuration for throughput peak detection.
 # Each entry describes how to split the time window into labelled sub-buckets
 # (M = minute, H = hour, D = day) so the peak RPS bucket can be identified.
@@ -83,23 +73,30 @@ def apply_time_range(metric_expr: str, time_range: str | None) -> str:
 def sum_over_window(metric_expr: str, time_range: str | None) -> str:
     """Build a PromQL sum that captures every request, including very recent ones.
 
-    Two-part approach so no data is lost:
-    1. increase() >= 0  — established series (2+ scrape points); handles counter
-       resets across service restarts automatically.
-    2. metric unless metric offset window — raw counter for brand-new series that
-       have only 1 scrape point (increase() returns NaN for them). The `unless`
-       guard ensures only truly new series (didn't exist at window-start) use the
-       raw counter, preventing old series from inflating the total with their
-       all-time value.
+    Two-part hybrid so no data is lost:
+    1. metric unless metric offset window — raw counter for brand-new pods that
+       have no data at offset w (increase() would extrapolate on those). The
+       `unless` guard ensures only truly new series use the raw counter.
+    2. increase() — established series (existed before window-start); reset-aware
+       and falls through only when arm 1 yields empty.
+
+    Arm order matters: `unless` must be first so new pods (multiple scrape points
+    but none at offset w) never reach the increase() arm. If increase() fired first,
+    its large extrapolated value (observed_increase × window/observed_duration) would
+    be > 0 and the unless arm would never run.
+
     Falls back to a plain sum for time_range="all"/None.
+    Accepts a TIME_RANGES key ("7d") or a raw Prometheus duration string ("1d").
     """
-    window = TIME_RANGES.get(time_range or "all")
+    window = TIME_RANGES.get(time_range or "all") or (
+        time_range if time_range and time_range != "all" else None
+    )
     if not window:
         return f"sum({metric_expr})"
     return (
         f"sum("
-        f"(increase({metric_expr}[{window}]) > 0)"
-        f" or ({metric_expr} unless {metric_expr} offset {window})"
+        f"({metric_expr} unless {metric_expr} offset {window})"
+        f" or (increase({metric_expr}[{window}]) > 0)"
         f")"
     )
 

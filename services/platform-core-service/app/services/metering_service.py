@@ -321,8 +321,8 @@ class MeteringService:
                 return f"sum by(endpoint) ({metric})"
             return (
                 f"sum by(endpoint) ("
-                f"(increase({metric}[{window}]) > 0)"
-                f" or ({metric} unless {metric} offset {window})"
+                f"({metric} unless {metric} offset {window})"
+                f" or (increase({metric}[{window}]) > 0)"
                 f")"
             )
 
@@ -410,11 +410,6 @@ class MeteringService:
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
     ) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
-        # Offset subtraction avoids increase() extrapolation errors on short-lived series.
-        # increase() scales down the raw counter by (observed_duration / window_duration),
-        # so a series that's only a few hours old in a 7d query returns ~0 instead of its
-        # real counter value. Subtracting the offset snapshot gives exact integer deltas and
-        # correctly handles series that didn't exist at the start of the window (implied 0).
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
 
@@ -481,8 +476,8 @@ class MeteringService:
         if window:
             promql = (
                 f"sum by(tenant, endpoint) ("
-                f"(increase({metric}[{window}]) > 0)"
-                f" or ({metric} unless {metric} offset {window})"
+                f"({metric} unless {metric} offset {window})"
+                f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         else:
@@ -596,8 +591,8 @@ class MeteringService:
             return f"sum by(tenant) ({metric}) > 0"
         return (
             f"sum by(tenant) ("
-            f"(increase({metric}[{window}]) > 0)"
-            f" or ({metric} unless {metric} offset {window})"
+            f"({metric} unless {metric} offset {window})"
+            f" or (increase({metric}[{window}]) > 0)"
             f") > 0"
         )
 
@@ -607,8 +602,8 @@ class MeteringService:
         if window:
             return (
                 f"sum by(tenant) ("
-                f"(increase({metric}[{window}]) > 0)"
-                f" or ({metric} unless {metric} offset {window})"
+                f"({metric} unless {metric} offset {window})"
+                f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         base = f"sum by(tenant) ({metric})"

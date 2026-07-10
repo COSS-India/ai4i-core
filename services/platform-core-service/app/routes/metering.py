@@ -169,7 +169,7 @@ async def _request_volume_chart(
     """
     if window not in WINDOW_STEP:
         return None
-    from app.utils.metering_promql_builder import build_base_selectors
+    from app.utils.metering_promql_builder import build_base_selectors, sum_over_window
 
     success_sel = build_base_selectors(
         inference_only=True, tenant=tenant, extra=['status_code=~"2.."']
@@ -194,8 +194,8 @@ async def _request_volume_chart(
     # `or vector(0)` fills idle buckets with 0 so the timeline is continuous.
     # Without it increase() emits no sample for a zero-traffic bucket, the chart
     # drops it, and the axis shows gaps (missing days / jumping intervals).
-    success_q = f"sum(increase({success_metric}[{step}])) or vector(0)"
-    failed_q = f"sum(increase({failed_metric}[{step}])) or vector(0)"
+    success_q = f"{sum_over_window(success_metric, step)} or vector(0)"
+    failed_q  = f"{sum_over_window(failed_metric,  step)} or vector(0)"
 
     succ_res, fail_res = await asyncio.gather(
         svc._client.query_range(success_q, start=start, end=now, step=step),
