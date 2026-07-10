@@ -11,13 +11,6 @@ import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
 
-# Cap concurrent decode + resample work across all in-flight requests. Each job
-# holds several MB of numpy arrays; without a bound, a burst of parallel
-# requests stacks that memory at once on a pod with no memory limit. The pod is
-# also single-core, so extra threads past this only add scheduler churn.
-_PREPROCESS_MAX_CONCURRENCY = 4
-_preprocess_semaphore = asyncio.Semaphore(_PREPROCESS_MAX_CONCURRENCY)
-
 
 class ASRTaskService(AudioBase):
     """
@@ -89,22 +82,17 @@ class ASRTaskService(AudioBase):
             *[self._get_audio_bytes(item) for item in input_data]
         )
 
-        # CPU-bound decode + resample in thread pool, bounded by the semaphore
-        # so parallel requests don't stack unbounded numpy arrays in memory.
+        # CPU-bound decode + resample offloaded to the thread pool, concurrent
+        # across items so the event loop stays free during soundfile/scipy work.
         processed = await asyncio.gather(
             *[
-                self._preprocess_item(item, ab)
+                asyncio.to_thread(self._preprocess_item_sync, item, ab)
                 for item, ab in zip(input_data, audio_bytes_list)
             ]
         )
 
         payload[self.payload_key] = list(processed)
         return payload
-
-    async def _preprocess_item(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
-        """Run one item's CPU-bound preprocessing in a bounded thread-pool slot."""
-        async with _preprocess_semaphore:
-            return await asyncio.to_thread(self._preprocess_item_sync, item, audio_bytes)
 
     def _preprocess_item_sync(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
         """Sync preprocessing pipeline — runs in a thread-pool worker.
