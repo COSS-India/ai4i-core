@@ -302,6 +302,18 @@ class TestServiceBreakdown:
         # native_units should be the success count, not a histogram value
         assert ocr_row["native_units"] == 250
 
+    async def test_native_units_zero_not_null_when_no_usage(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client)
+
+        result = await svc.service_breakdown(tenant=None, time_range="24h")
+
+        for row in result["services"]:
+            assert row["native_units"] is not None
+            assert row["native_units"] >= 0
+
     async def test_tenant_unknown_excluded_from_selectors(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
