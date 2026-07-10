@@ -1,6 +1,6 @@
 
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.2
+ai4i-core>=1.0.7
 
 confluent-kafka
 sqlalchemy[asyncio]>=2.0.0

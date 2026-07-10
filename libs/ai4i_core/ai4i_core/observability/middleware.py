@@ -22,42 +22,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from .config import PluginConfig
+from .inference_tasks import (
+    BODY_METRIC_SERVICE_TYPES,
+    INFERENCE_JSON_PATH_HINTS,
+    PayloadMetricEmission,
+    SERVICE_TYPE_METRIC_EMISSIONS,
+    service_type_from_path,
+)
 from .metrics import MetricsCollector
 from .payload_analysis import analyze_payload, build_observability_metrics
 from .tracing_headers import inject_tracing_headers
 
 logger = logging.getLogger(__name__)
-
-# Service types whose request bodies carry payload-size metrics worth
-# extracting. Membership check is O(1). LLM is handled separately because its
-# token counts come from the response (vLLM `usage` block), not the request.
-_BODY_METRIC_SERVICES = frozenset({
-    "tts", "translation", "asr", "ocr", "transliteration",
-    "language_detection", "audio_lang_detection",
-    "speaker_diarization", "language_diarization", "ner",
-})
-
-_INFERENCE_JSON_PATH_HINTS = (
-    "/inference",
-    "/nmt",
-    "/asr",
-    "/tts",
-    "/ocr",
-    "/ner",
-    "/transliteration",
-    "/translate",
-    "/translation",
-    "/language-detection",
-    "/lang-detect",
-    "/audio-lang-detection",
-    "/audio-language-detection",
-    "/speaker-diarization",
-    "/language-diarization",
-    "/chat",
-    "/completion",
-    "/generate",
-    "/llm",
-)
 
 
 def _has_llm_metrics(trace_metrics: Optional[Dict[str, Any]]) -> bool:
@@ -70,131 +46,39 @@ def _has_llm_metrics(trace_metrics: Optional[Dict[str, Any]]) -> bool:
     )
 
 
-def _track_characters(
+def _coerce_metric_value(value_kwarg: str, raw: Any) -> Any:
+    if value_kwarg in ("audio_seconds", "image_size_kb"):
+        return float(raw)
+    return int(raw)
+
+
+def _emit_payload_metrics(
+    collector: MetricsCollector,
     trace_metrics: Dict[str, Any],
-    track_fn,
-    **extra_labels,
+    emissions: Tuple[PayloadMetricEmission, ...],
+    *,
+    source_lang: str,
+    target_lang: str,
+    tenant: str,
+    service_id: str,
 ) -> None:
-    chars = int(trace_metrics.get("characters") or 0)
-    if chars > 0:
-        track_fn(characters=chars, **extra_labels)
-
-
-def _track_audio_seconds(
-    trace_metrics: Dict[str, Any],
-    track_fn,
-    **extra_labels,
-) -> None:
-    seconds = float(trace_metrics.get("audio_seconds") or 0.0)
-    if seconds > 0:
-        track_fn(audio_seconds=seconds, **extra_labels)
-
-
-def _emit_tts_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_characters(
-        trace_metrics,
-        collector.track_tts_characters,
-        language=source_lang,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_translation_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_characters(
-        trace_metrics,
-        collector.track_nmt_characters,
-        source_lang=source_lang,
-        target_lang=target_lang,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_asr_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_audio_seconds(
-        trace_metrics,
-        collector.track_asr_audio_length,
-        language=source_lang,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_ocr_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    chars = int(trace_metrics.get("ocr_characters") or 0)
-    if chars > 0:
-        collector.track_ocr_characters(characters=chars, tenant=tenant, service_id=service_id)
-    kb = float(trace_metrics.get("ocr_image_kb") or 0.0)
-    if kb > 0:
-        collector.track_ocr_image_size(image_size_kb=kb, tenant=tenant, service_id=service_id)
-
-
-def _emit_transliteration_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_characters(
-        trace_metrics,
-        collector.track_transliteration_characters,
-        source_lang=source_lang,
-        target_lang=target_lang,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_language_detection_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_characters(
-        trace_metrics,
-        collector.track_language_detection_characters,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_audio_lang_detection_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_audio_seconds(
-        trace_metrics,
-        collector.track_audio_lang_detection_length,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_speaker_diarization_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_audio_seconds(
-        trace_metrics,
-        collector.track_speaker_diarization_length,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_language_diarization_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    _track_audio_seconds(
-        trace_metrics,
-        collector.track_language_diarization_length,
-        tenant=tenant,
-        service_id=service_id,
-    )
-
-
-def _emit_ner_metrics(collector, trace_metrics, source_lang, target_lang, tenant, service_id):
-    tokens = int(trace_metrics.get("ner_tokens") or 0)
-    if tokens > 0:
-        collector.track_ner_tokens(tokens=tokens, tenant=tenant, service_id=service_id)
-
-
-_TRACE_PAYLOAD_EMITTERS = {
-    "tts": _emit_tts_metrics,
-    "translation": _emit_translation_metrics,
-    "asr": _emit_asr_metrics,
-    "ocr": _emit_ocr_metrics,
-    "transliteration": _emit_transliteration_metrics,
-    "language_detection": _emit_language_detection_metrics,
-    "audio_lang_detection": _emit_audio_lang_detection_metrics,
-    "speaker_diarization": _emit_speaker_diarization_metrics,
-    "language_diarization": _emit_language_diarization_metrics,
-    "ner": _emit_ner_metrics,
-}
+    """Emit Prometheus payload metrics from a pre-computed trace_metrics snapshot."""
+    for emission in emissions:
+        raw = trace_metrics.get(emission.metric_field)
+        if raw is None or raw == 0 or raw == 0.0:
+            continue
+        kwargs: Dict[str, Any] = {
+            "tenant": tenant,
+            "service_id": service_id,
+            emission.value_kwarg: _coerce_metric_value(emission.value_kwarg, raw),
+        }
+        if emission.language_from_source:
+            kwargs["language"] = source_lang
+        if emission.source_lang:
+            kwargs["source_lang"] = source_lang
+        if emission.target_lang:
+            kwargs["target_lang"] = target_lang
+        getattr(collector, emission.collector_method)(**kwargs)
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -340,7 +224,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if method.upper() not in {"POST", "PUT", "PATCH"}:
             return False
         path_lower = path.lower()
-        if not any(hint in path_lower for hint in _INFERENCE_JSON_PATH_HINTS):
+        if not any(hint in path_lower for hint in INFERENCE_JSON_PATH_HINTS):
             return False
         content_type = (request.headers.get("content-type") or "").lower()
         if content_type and "application/json" not in content_type:
@@ -352,43 +236,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     # ------------------------------------------------------------------
     @staticmethod
     def _detect_service_type(path: str) -> str:
-        """Detect service type from URL path.
-
-        Pure path-based; never inspects the body. The unified
-        ``/api/v1/inference`` endpoint resolves to ``"unknown"`` because the
-        task is only knowable from the body — dedicated per-task paths like
-        ``/nmt/inference`` resolve to a specific type.
-        """
-        path_lower = path.lower()
-        if any(p in path_lower for p in ("/translation", "/nmt", "/translate")):
-            return "translation"
-        if any(p in path_lower for p in ("/asr", "/transcribe", "/speech")):
-            return "asr"
-        if any(p in path_lower for p in ("/tts", "/synthesize")):
-            return "tts"
-        if any(p in path_lower for p in ("/ocr", "/text-recognition")):
-            return "ocr"
-        if any(p in path_lower for p in ("/transliteration", "/xlit", "/transliterate")):
-            return "transliteration"
-        if any(p in path_lower for p in ("/audio-lang-detection", "/audio-language-detection", "/audio-detect")):
-            return "audio_lang_detection"
-        if any(p in path_lower for p in ("/language-detection", "/lang-detect", "/detect-language")):
-            return "language_detection"
-        if any(p in path_lower for p in ("/language-diarization", "/language-diarization-compute-call")):
-            return "language_diarization"
-        if any(p in path_lower for p in ("/speaker-diarization", "/speaker-diarization-compute-call")):
-            return "speaker_diarization"
-        if any(p in path_lower for p in ("/ner", "/entity", "/entities")):
-            return "ner"
-        if any(p in path_lower for p in ("/speaker", "/speaker-enrollment", "/speaker-verification", "/speak")):
-            return "speaker_verification"
-        if any(p in path_lower for p in ("/llm", "/generate", "/chat", "/completion")):
-            return "llm"
-        if any(p in path_lower for p in ("/enterprise", "/health", "/metrics", "/config")):
-            return "enterprise"
-        if any(p in path_lower for p in ("/docs", "/openapi", "/redoc")):
-            return "documentation"
-        return "unknown"
+        """Detect service type from URL path via the shared task registry."""
+        return service_type_from_path(path)
 
     # ------------------------------------------------------------------
     # Background processing — runs AFTER the response is returned.
@@ -442,7 +291,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 )
                 return
 
-            if trace_metrics and effective_service_type in _BODY_METRIC_SERVICES:
+            if trace_metrics and effective_service_type in BODY_METRIC_SERVICE_TYPES:
                 self._emit_trace_payload_metrics(
                     trace_metrics=trace_metrics,
                     service_type=effective_service_type,
@@ -461,19 +310,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_id: str,
     ) -> None:
         """Emit Prometheus payload metrics from a pre-computed snapshot."""
-        emitter = _TRACE_PAYLOAD_EMITTERS.get(service_type)
-        if emitter is None:
+        emissions = SERVICE_TYPE_METRIC_EMISSIONS.get(service_type)
+        if not emissions:
             return
         source_lang = str(trace_metrics.get("source_lang") or "")
         target_lang = str(trace_metrics.get("target_lang") or "")
         try:
-            emitter(
+            _emit_payload_metrics(
                 self.metrics_collector,
                 trace_metrics,
-                source_lang,
-                target_lang,
-                tenant,
-                service_id,
+                emissions,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                tenant=tenant,
+                service_id=service_id,
             )
         except Exception:
             if self.config.debug:

@@ -4,7 +4,9 @@
 # To upgrade: bump the pin, rebuild, run the test suite.
 
 # ── Shared platform library (consolidated) ──
-ai4i-core>=1.0.6
+# PyPI / Docker: ai4i-core>=1.0.7
+# Local monorepo (before upload): pip install -e ../../libs/ai4i_core  then re-run this file
+ai4i-core>=1.0.7
 
 # FastAPI and ASGI server
 fastapi==0.136.3

@@ -1,7 +1,9 @@
 """Single-pass inference payload analysis for observability and tracing headers.
 
-Runs in ObservabilityMiddleware before handlers execute so downstream tracing
-can read pre-computed attributes from ``X-Tracing-*`` request headers.
+Runs in ObservabilityMiddleware before handlers execute. Produces one analysis
+snapshot that is (a) injected as ``X-Tracing-*`` headers for the Trace module
+and (b) projected into Prometheus metrics. Trace layers must consume headers
+rather than re-parsing the payload for the same fields.
 """
 
 import base64
@@ -10,21 +12,9 @@ import logging
 import wave
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from .inference_tasks import INFERENCE_TASKS, service_type_from_task_type
 
-_TASK_TYPE_TO_SERVICE = {
-    "NMT": "translation",
-    "TTS": "tts",
-    "ASR": "asr",
-    "OCR": "ocr",
-    "NER": "ner",
-    "TRANSLITERATION": "transliteration",
-    "LANGUAGE_DETECTION": "language_detection",
-    "AUDIO_LANGUAGE_DETECTION": "audio_lang_detection",
-    "SPEAKER_DIARIZATION": "speaker_diarization",
-    "LANGUAGE_DIARIZATION": "language_diarization",
-    "LLM": "llm",
-}
+logger = logging.getLogger(__name__)
 
 
 def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -34,13 +24,14 @@ def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     input_type = _detect_input_type(payload)
     input_items = _input_items(payload, input_type)
+    task_type = _resolve_task_type(payload)
 
     if input_type == "text":
-        input_tokens = _count_text_tokens(input_items)
+        input_tokens = _count_text_billing_units(input_items)
     elif input_type == "audio":
-        input_tokens = _count_audio_tokens(input_items)
+        input_tokens = _count_audio_billing_units(input_items)
     elif input_type == "image":
-        input_tokens = _count_image_tokens(input_items)
+        input_tokens = _count_image_billing_units(input_items)
     else:
         input_tokens = 0
 
@@ -48,6 +39,7 @@ def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     service_id = _extract_service_id(payload)
 
     return {
+        "task_type": task_type,
         "input_type": input_type,
         "input_tokens": input_tokens,
         "characters": _sum_input_characters(payload),
@@ -58,7 +50,7 @@ def analyze_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "source_lang": source_lang,
         "target_lang": target_lang,
         "service_id": service_id,
-        "service_type": _service_type_from_payload(payload),
+        "service_type": _service_type_from_payload(payload, task_type),
     }
 
 
@@ -82,6 +74,15 @@ def build_observability_metrics(
     }
 
 
+def _resolve_task_type(payload: Dict[str, Any]) -> str:
+    task_type = str(payload.get("task_type") or "").upper()
+    if task_type in INFERENCE_TASKS:
+        return task_type
+    if payload.get("messages") is not None:
+        return "LLM"
+    return ""
+
+
 def _detect_input_type(payload: Dict[str, Any]) -> str:
     if not payload or not isinstance(payload, dict):
         return "unknown"
@@ -96,47 +97,46 @@ def _detect_input_type(payload: Dict[str, Any]) -> str:
     return "unknown"
 
 
-def _count_text_tokens(input_items: List[Any]) -> int:
+def _field(item: Any, *names: str, default: Any = None) -> Any:
+    for name in names:
+        value = item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+        if value:
+            return value
+    return default
+
+
+def _count_text_billing_units(input_items: List[Any]) -> int:
+    """PPU billing unit for text modalities: character count."""
     total = 0
     for item in input_items:
-        if isinstance(item, dict):
-            source = item.get("source", "")
-        else:
-            source = getattr(item, "source", "")
+        source = _field(item, "source", default="")
         if isinstance(source, str):
-            total += len(source.split())
+            total += len(source)
     return total
 
 
-def _count_audio_tokens(input_items: List[Any]) -> int:
-    total = 0
+def _count_audio_billing_units(input_items: List[Any]) -> float:
+    """PPU billing unit for audio modalities: fractional minutes."""
+    total = 0.0
     for item in input_items:
-        if isinstance(item, dict):
-            num_samples = item.get("num_samples", 0)
-            audio_content = item.get("audio_content", "")
-        else:
-            num_samples = getattr(item, "num_samples", 0)
-            audio_content = getattr(item, "audio_content", "")
-        if num_samples > 0:
-            tokens = int((num_samples / 16000.0) * 100)
-            total += max(tokens, 1)
+        num_samples = _field(item, "num_samples", "numSamples", default=0)
+        sample_rate = _field(item, "sample_rate", "sampleRate", default=0)
+        audio_content = _field(item, "audio_content", "audioContent", default="")
+
+        duration_seconds = 0.0
+        if num_samples > 0 and sample_rate > 0:
+            duration_seconds = num_samples / float(sample_rate)
         elif audio_content:
-            tokens = max(len(str(audio_content)) // 100, 1)
-            total += tokens
+            duration_seconds = _audio_length_from_base64(str(audio_content))
+
+        if duration_seconds > 0:
+            total += duration_seconds / 60.0
     return total
 
 
-def _count_image_tokens(input_items: List[Any]) -> int:
-    total = 0
-    for item in input_items:
-        if isinstance(item, dict):
-            image_content = item.get("image_content", "")
-        else:
-            image_content = getattr(item, "image_content", "")
-        if image_content:
-            tokens = max(len(str(image_content)) // 1000, 1)
-            total += tokens
-    return total
+def _count_image_billing_units(input_items: List[Any]) -> int:
+    """PPU billing unit for image modalities: image count."""
+    return len(input_items)
 
 
 def _nested_payload_list(payload: Dict[str, Any], key: str, input_data_key: Optional[str] = None) -> List[Any]:
@@ -163,12 +163,13 @@ def _input_items(payload: Dict[str, Any], input_type: str) -> List[Any]:
     return _nested_payload_list(payload, top_key, nested_key)
 
 
-def _service_type_from_payload(payload: Dict[str, Any]) -> str:
-    task_type = str(payload.get("task_type") or "").upper()
-    if task_type in _TASK_TYPE_TO_SERVICE:
-        return _TASK_TYPE_TO_SERVICE[task_type]
+def _service_type_from_payload(payload: Dict[str, Any], task_type: str) -> str:
+    if task_type:
+        mapped = service_type_from_task_type(task_type)
+        if mapped != "unknown":
+            return mapped
     if payload.get("messages") is not None:
-        return "llm"
+        return INFERENCE_TASKS["LLM"].service_type
     return "unknown"
 
 
@@ -212,6 +213,7 @@ def _sum_input_characters(payload: Dict[str, Any]) -> int:
 
 
 def _sum_ner_tokens(payload: Dict[str, Any]) -> int:
+    """Prometheus NER metric: word count (observability-only, not PPU billing)."""
     items = payload.get("input")
     if not isinstance(items, list):
         return 0

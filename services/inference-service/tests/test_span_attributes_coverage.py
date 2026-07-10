@@ -8,22 +8,6 @@ import pytest
 from trace import span_attributes as sa
 
 
-class TestGetInputTypeEdgeCases:
-    def test_image_payload(self):
-        assert sa.get_input_type({"image": [{"imageContent": "abc"}]}) == "image"
-
-    def test_non_dict_payload(self):
-        assert sa.get_input_type(None) == "unknown"
-        assert sa.get_input_type([]) == "unknown"
-
-    def test_exception_returns_unknown(self):
-        class BadPayload(dict):
-            def get(self, key, default=None):
-                raise RuntimeError("boom")
-
-        assert sa.get_input_type(BadPayload({"input": [{"source": "x"}]})) == "unknown"
-
-
 class TestGetOutputTypeEdgeCases:
     def test_transcription_and_translation_keys(self):
         assert sa.get_output_type([{"transcription": "hello"}]) == "text"
@@ -51,15 +35,15 @@ class TestGetOutputTypeEdgeCases:
 class TestCountInputTokensEdgeCases:
     def test_text_with_object_items(self):
         item = SimpleNamespace(source="one two three")
-        assert sa.count_input_tokens([item], "text") == 3
+        assert sa.count_input_tokens([item], "text") == len("one two three")
 
-    def test_audio_with_content_heuristic(self):
-        items = [{"audio_content": "x" * 250}]
-        assert sa.count_input_tokens(items, "audio") >= 2
+    def test_audio_with_num_samples(self):
+        items = [{"num_samples": 960000, "sample_rate": 16000}]
+        assert sa.count_input_tokens(items, "audio") == pytest.approx(1.0)
 
     def test_image_tokens(self):
-        items = [{"image_content": "x" * 2500}]
-        assert sa.count_input_tokens(items, "image") >= 2
+        items = [{"image_content": "x" * 2500}, {"image_content": "y" * 100}]
+        assert sa.count_input_tokens(items, "image") == 2
 
     def test_empty_items(self):
         assert sa.count_input_tokens([], "text") == 0
@@ -75,11 +59,11 @@ class TestCountInputTokensEdgeCases:
 class TestCountOutputTokensEdgeCases:
     def test_text_output_and_bytes(self):
         data = [{"target": b"hello world"}]
-        assert sa.count_output_tokens(data, "text") == 2
+        assert sa.count_output_tokens(data, "text") == len("hello world")
 
     def test_text_output_field_variants(self):
-        assert sa.count_output_tokens([{"output": "one"}], "text") == 1
-        assert sa.count_output_tokens([{"text": "two words"}], "text") == 2
+        assert sa.count_output_tokens([{"output": "one"}], "text") == len("one")
+        assert sa.count_output_tokens([{"text": "two words"}], "text") == len("two words")
 
     def test_audio_output(self):
         data = [{"audio": "x" * 300}]

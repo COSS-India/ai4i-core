@@ -299,10 +299,13 @@ class BaseTaskService:
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
-                # Must count only this group's items, not the full input_items list —
-                # otherwise per_item call_mode bills the whole request once per item.
-                if not span_ctx.get("input_tokens"):
-                    span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
+                # per_item call_mode creates one ai-inference span per group;
+                # X-Tracing-* headers carry the full-payload snapshot, so Trace
+                # must derive per-group billing units locally for that mode only.
+                if call_mode == "per_item":
+                    span_ctx["input_tokens"] = count_input_tokens(
+                        group, span_ctx.get("input_type", "unknown")
+                    )
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,

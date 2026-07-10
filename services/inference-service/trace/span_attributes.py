@@ -1,8 +1,14 @@
 """
 Compute span attributes for inference tracing.
 
-Functions to detect input/output types, count tokens, and calculate payload sizes.
-All functions return safe defaults on error to prevent trace enrichment from breaking inference.
+Trace-specific enrichment that Observability cannot provide via X-Tracing-*
+headers: output type detection and output token counting after inference.
+Input-side attributes are produced once by ObservabilityMiddleware and consumed
+from headers in request_span.traced_inference.
+
+count_input_tokens() is retained only for per_item call_mode, where each
+ai-inference span covers a subset of the request and header values reflect
+the full payload.
 """
 
 import base64
@@ -13,27 +19,6 @@ from typing import Any, Dict, List
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
-
-
-def get_input_type(payload: Dict[str, Any]) -> str:
-    """
-    Detect input modality type from payload.
-
-    Returns: "text", "audio", "image", or "unknown"
-    """
-    try:
-        if not payload or not isinstance(payload, dict):
-            return "unknown"
-        if payload.get("input"):
-            return "text"
-        if payload.get("audio"):
-            return "audio"
-        if payload.get("image"):
-            return "image"
-        return "unknown"
-    except Exception as e:
-        logger.warning(f"Error detecting input type: {e}")
-        return "unknown"
 
 
 def get_output_type(response_data: List[Dict[str, Any]]) -> str:
@@ -74,13 +59,11 @@ def get_output_type(response_data: List[Dict[str, Any]]) -> str:
 
 def count_input_tokens(input_items: List[Any], input_type: str) -> float:
     """
-    Billed input units, computed per modality (see inference_types.yaml).
+    Per-group billed input units for per_item call_mode only.
 
-    Text: character count (len(text)) — matches the "characters" billing unit
-    Audio: real duration in minutes, fractional (see _count_audio_tokens)
-    Image: count of images in the request (see _count_image_tokens)
-
-    Returns: billed unit count, or 0 on error
+    ObservabilityMiddleware injects full-payload billing units via
+    X-Tracing-Input-Tokens; use this helper only when a single request
+    produces multiple ai-inference spans (one per item).
     """
     try:
         if not input_items:

@@ -24,7 +24,10 @@ HEADER_NER_TOKENS = f"{TRACING_HEADER_PREFIX}Ner-Tokens"
 HEADER_OCR_CHARACTERS = f"{TRACING_HEADER_PREFIX}Ocr-Characters"
 HEADER_OCR_IMAGE_KB = f"{TRACING_HEADER_PREFIX}Ocr-Image-Kb"
 
+HEADER_TASK_TYPE = f"{TRACING_HEADER_PREFIX}Task-Type"
+
 _TRACING_HEADER_MAP = {
+    "task_type": HEADER_TASK_TYPE,
     "input_type": HEADER_INPUT_TYPE,
     "input_tokens": HEADER_INPUT_TOKENS,
     "service_type": HEADER_SERVICE_TYPE,
@@ -69,6 +72,10 @@ def read_tracing_headers(headers: Mapping[str, str]) -> Dict[str, Any]:
     if raw_input_type:
         result["input_type"] = raw_input_type
 
+    raw_task_type = _get(HEADER_TASK_TYPE)
+    if raw_task_type:
+        result["task_type"] = raw_task_type
+
     raw_service_type = _get(HEADER_SERVICE_TYPE)
     if raw_service_type:
         result["service_type"] = raw_service_type
@@ -86,7 +93,6 @@ def read_tracing_headers(headers: Mapping[str, str]) -> Dict[str, Any]:
         result["target_lang"] = raw_target_lang
 
     for int_field, header in (
-        ("input_tokens", HEADER_INPUT_TOKENS),
         ("characters", HEADER_CHARACTERS),
         ("ner_tokens", HEADER_NER_TOKENS),
         ("ocr_characters", HEADER_OCR_CHARACTERS),
@@ -97,6 +103,13 @@ def read_tracing_headers(headers: Mapping[str, str]) -> Dict[str, Any]:
                 result[int_field] = int(raw)
             except ValueError:
                 pass
+
+    raw_input_tokens = _get(HEADER_INPUT_TOKENS)
+    if raw_input_tokens is not None and raw_input_tokens != "":
+        try:
+            result["input_tokens"] = float(raw_input_tokens)
+        except ValueError:
+            pass
 
     for float_field, header in (("audio_seconds", HEADER_AUDIO_SECONDS), ("ocr_image_kb", HEADER_OCR_IMAGE_KB)):
         raw = _get(header)

@@ -143,16 +143,15 @@ async def traced_inference(
     """
     The 'ai-inference' span around an inference call, built on traced_span.
 
-    Yields a mutable attrs dict pre-seeded with input_type and other payload
-    attributes from ObservabilityMiddleware ``X-Tracing-*`` headers. The
-    wrapped code fills in output_tokens / output_type after inference completes.
+    Yields a mutable attrs dict pre-seeded from ObservabilityMiddleware
+    ``X-Tracing-*`` headers. The wrapped code fills in output_tokens /
+    output_type after inference completes — the only attributes Trace derives
+    locally because they are not available until inference finishes.
     On failure token counts are zeroed and the error is logged with traceback.
 
     Single definition shared by the base run_inference and TTS's override —
     keep span attribute changes here only.
     """
-    from trace.span_attributes import get_input_type
-
     def _zero_tokens(attrs, exc):
         logger_.error(f"{task_name}: inference failed: {exc}", exc_info=True)
         attrs["input_tokens"] = 0
@@ -170,17 +169,28 @@ async def traced_inference(
         # ID (0x…) rather than the correlation ID, making it invisible in the UI.
         attrs.update(get_context_attributes())
         attrs.update({
-            "input_type": tracing.get("input_type") or get_input_type(payload),
+            "input_type": tracing.get("input_type", "unknown"),
             "output_type": "unknown",
             "input_tokens": tracing.get("input_tokens", 0),
             "output_tokens": 0,
             # For trace/observability only — the PPU consumer's LLM/non-LLM
             # billing decision reads mm_services.task_type instead (via
             # get_service_pricing), not this span attribute.
-            "task_type": task_name.lower(),
+            "task_type": tracing.get("task_type") or task_name.lower(),
         })
-        if tracing.get("service_id"):
-            attrs["service_id"] = tracing["service_id"]
+        for passthrough_key in (
+            "service_id",
+            "service_type",
+            "source_lang",
+            "target_lang",
+            "characters",
+            "audio_seconds",
+            "ner_tokens",
+            "ocr_characters",
+            "ocr_image_kb",
+        ):
+            if tracing.get(passthrough_key) is not None and tracing.get(passthrough_key) != "":
+                attrs[passthrough_key] = tracing[passthrough_key]
         try:
             yield attrs
         except Exception:

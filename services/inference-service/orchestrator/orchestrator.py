@@ -20,13 +20,7 @@ from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-# Allowed task types — kept here (not derived from the registry) because SMR
-# routes without a registry entry of its own.
-ALLOWED_TASK_TYPES = [
-    "NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION",
-    "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION",
-    "AUDIO_LANGUAGE_DETECTION", "SMR",
-]
+from ai4i_core.observability.inference_tasks import ALLOWED_TASK_TYPES
 
 
 class Orchestrator:

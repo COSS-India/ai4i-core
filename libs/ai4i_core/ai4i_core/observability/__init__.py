@@ -10,6 +10,7 @@ Usage::
 """
 
 from .config import PluginConfig
+from .inference_tasks import ALLOWED_TASK_TYPES, INFERENCE_TASKS, TASK_TYPE_TO_SERVICE_TYPE
 from .metrics import MetricsCollector
 from .middleware import ObservabilityMiddleware
 from .payload_analysis import analyze_payload
@@ -29,4 +30,7 @@ __all__ = [
     "TRACING_HEADER_PREFIX",
     "read_tracing_headers",
     "read_tracing_headers_from_request",
+    "ALLOWED_TASK_TYPES",
+    "INFERENCE_TASKS",
+    "TASK_TYPE_TO_SERVICE_TYPE",
 ]

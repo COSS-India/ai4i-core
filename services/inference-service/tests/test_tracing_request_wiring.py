@@ -30,8 +30,7 @@ OpenAIProxyService = _LLM_MODULE.OpenAIProxyService
 def _otel_tracer():
     provider = TracerProvider()
     with patch("trace.request_span.tracer", provider.get_tracer("test")):
-        with patch("trace.request_span.log_span_attributes"):
-            yield
+        yield
 
 
 def _request_with_analysis(payload: dict) -> Request:

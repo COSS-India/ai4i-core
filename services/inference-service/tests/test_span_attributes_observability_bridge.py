@@ -26,8 +26,7 @@ from trace.tracing_headers import get_tracing_attributes
 def _otel_tracer():
     provider = TracerProvider()
     with patch("trace.request_span.tracer", provider.get_tracer("test")):
-        with patch("trace.request_span.log_span_attributes"):
-            yield
+        yield
 
 
 def _wav_base64(seconds: float = 1.0, rate: int = 16000) -> str:
@@ -69,9 +68,10 @@ class TestAnalyzePayload:
         analysis = analyze_payload(payload)
 
         assert analysis["input_type"] == "text"
-        assert analysis["input_tokens"] == 2
+        assert analysis["input_tokens"] == 11
         assert analysis["characters"] == 11
         assert analysis["ner_tokens"] == 2
+        assert analysis["task_type"] == "NMT"
         assert analysis["service_type"] == "translation"
         assert analysis["service_id"] == "nmt-svc-1"
         assert analysis["source_lang"] == "en"
@@ -149,25 +149,21 @@ class TestTracedInferenceIntegration:
             attrs["output_type"] = "text"
 
         assert captured["input_type"] == "audio"
-        assert captured["input_tokens"] == analysis["input_tokens"]
+        assert captured["input_tokens"] == pytest.approx(analysis["input_tokens"])
         assert captured["service_id"] == "asr-svc"
 
     @pytest.mark.asyncio
-    async def test_traced_inference_falls_back_without_headers(self):
+    async def test_traced_inference_without_headers_uses_defaults(self):
         payload = {"input": [{"source": "hello"}]}
         logger = logging.getLogger("test.trace.fallback")
 
         async with traced_inference(payload, "NER", logger) as attrs:
-            assert attrs["input_type"] == "text"
+            assert attrs["input_type"] == "unknown"
             assert attrs["input_tokens"] == 0
+            assert attrs["task_type"] == "ner"
 
 
 class TestSpanAttributes:
-    def test_get_input_type(self):
-        assert sa.get_input_type({"input": [{"source": "hi"}]}) == "text"
-        assert sa.get_input_type({"audio": [{}]}) == "audio"
-        assert sa.get_input_type({}) == "unknown"
-
     def test_get_output_type_text_audio_image(self):
         assert sa.get_output_type([{"target": "hello"}]) == "text"
         assert sa.get_output_type([{"audio_content": "abc"}]) == "audio"
@@ -175,12 +171,12 @@ class TestSpanAttributes:
         assert sa.get_output_type([]) == "unknown"
 
     def test_count_output_tokens_by_modality(self):
-        assert sa.count_output_tokens([{"target": "one two"}], "text") == 2
+        assert sa.count_output_tokens([{"target": "one two"}], "text") == len("one two")
         assert sa.count_output_tokens([{"audio_content": "x" * 200}], "audio") >= 1
         assert sa.count_output_tokens([{"image_content": "x" * 2000}], "image") >= 1
 
     def test_count_input_tokens(self):
-        items = [{"num_samples": 16000}]
+        items = [{"num_samples": 960000, "sample_rate": 16000}]
         assert sa.count_input_tokens(items, "audio") >= 1
 
 
