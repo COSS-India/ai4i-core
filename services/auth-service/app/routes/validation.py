@@ -11,7 +11,6 @@ Two-step flow:
 
 import base64
 import binascii
-import json
 import logging
 
 from ai4i_core.ppu import get_inference_types
@@ -142,16 +141,19 @@ async def _validate_api_key(
 
     service = _resolve_service(request.headers.get("X-Original-URI", ""))
     if service and service["unit"] == "requests":
-        response.headers["X-Quota-Exhausted"] = "false"
         exhausted_services = sorted(
             k[len("quota-"):]
             for k, v in result.items()
             if k.startswith("quota-") and v == "1"
         )
+        response.headers["X-Quota-Exhausted"] = "true" if exhausted_services else "false"
         if exhausted_services:
-            response.headers["X-Quota-Exhausted-Services"] = json.dumps(exhausted_services)
+            response.headers["X-Quota-Exhausted-Services"] = ",".join(exhausted_services)
     elif service:
-        response.headers["X-Quota-Exhausted"] = "true" if result.get(f"quota-{service['name']}") == "1" else "false"
+        exhausted = result.get(f"quota-{service['name']}") == "1"
+        response.headers["X-Quota-Exhausted"] = "true" if exhausted else "false"
+        if exhausted:
+            response.headers["X-Quota-Exhausted-Services"] = service["name"]
 
     response.headers["X-Auth-Type"] = "api_key"
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
