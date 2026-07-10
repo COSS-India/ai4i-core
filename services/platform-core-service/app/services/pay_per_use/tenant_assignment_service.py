@@ -171,6 +171,66 @@ async def assign_tier(
     return _to_assign_response(body.tenant_id, tier, assignment)
 
 
+async def _carry_forward_quota_usage(
+    db: AsyncSession,
+    tenant_id: str,
+    old_tier_id: UUID,
+    new_tier_id: UUID,
+    billing_month: str,
+) -> None:
+    """Seed the new tier's ppu_quota_usage row(s) with the old tier's accumulated
+    cost_accum for this billing month, so a reader keyed on the tenant's current
+    tier never sees a missing row between reassignment and the tenant's next
+    usage call under the new tier. Quota (units_used) is scoped per-tier by
+    design — it starts at 0 under the new tier — while cost/budget is scoped
+    per-tenant, so cost_accum carries forward. Only carries forward
+    inference_name rows the new tier also has a quota configured for —
+    update_quota_usage skips recording usage entirely when no ppu_tier_quotas
+    row exists, so seeding one here would create an orphaned row nothing else
+    would ever update.
+    """
+    old_rows = await db.execute(
+        text(
+            "SELECT inference_name, cost_accum"
+            " FROM ppu_quota_usage"
+            " WHERE tenant_id = :tenant_id AND billing_month = :billing_month"
+            "   AND tier_id = :old_tier_id"
+        ),
+        {"tenant_id": tenant_id, "billing_month": billing_month, "old_tier_id": old_tier_id},
+    )
+    for row in old_rows.all():
+        snap_result = await db.execute(
+            text(
+                "SELECT monthly_quota FROM ppu_tier_quotas"
+                " WHERE tier_id = :tier_id AND inference_name = :inference_name"
+            ),
+            {"tier_id": new_tier_id, "inference_name": row.inference_name},
+        )
+        monthly_quota = snap_result.scalar()
+        if monthly_quota is None:
+            continue
+
+        await db.execute(
+            text(
+                "INSERT INTO ppu_quota_usage"
+                "  (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
+                "   units_used, tier_id, cost_accum)"
+                " VALUES"
+                "  (gen_random_uuid(), :tenant_id, :inference_name, :billing_month, :snap,"
+                "   0, :tier_id, :cost_accum)"
+                " ON CONFLICT (tenant_id, inference_name, billing_month, tier_id) DO NOTHING"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "inference_name": row.inference_name,
+                "billing_month": billing_month,
+                "snap": monthly_quota,
+                "tier_id": new_tier_id,
+                "cost_accum": row.cost_accum,
+            },
+        )
+
+
 async def reassign_tier(
     body: TierReassignRequest,
     db: AsyncSession,
@@ -185,7 +245,10 @@ async def reassign_tier(
     budget_limit carry over unchanged from the assignment being replaced.
     The old assignment is closed as of now(); a new one opens for the new
     tier, running through the same original effective_to. Usage/cost tracking
-    (ppu_quota_usage) keys on tier_id, so it starts fresh under the new tier.
+    (ppu_quota_usage) keys on tier_id, so the old tier's row(s) stay as-is;
+    new row(s) are seeded under the new tier via _carry_forward_quota_usage
+    so units_used/cost_accum keep accumulating across the reassignment
+    instead of appearing to reset.
     """
     # 1. Confirm tenant exists and is ACTIVE via auth DB.
     await require_active_tenant(body.tenant_id, auth_db)
@@ -250,6 +313,11 @@ async def reassign_tier(
         updated_by=user_id,
     )
     db.add(new_assignment)
+
+    await _carry_forward_quota_usage(
+        db, body.tenant_id, current.tier_id, new_tier.id, now.strftime("%Y-%m")
+    )
+
     await db.commit()
     await db.refresh(new_assignment)
 

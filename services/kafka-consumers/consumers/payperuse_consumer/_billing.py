@@ -145,9 +145,10 @@ async def update_quota_usage(
     """
     UPSERT quota usage for this tenant/inference_name/month/tier.
     Accumulates units_used and cost_accum within the active tier's row. If the
-    tenant's active tier changes mid-month (see tenant_assignment_service.
-    reassign_tier), this starts a fresh row for the new tier rather than
-    folding into the previous tier's accumulated numbers.
+    tenant's active tier changes mid-month, tenant_assignment_service.
+    reassign_tier already seeds a row for the new tier carried forward from
+    the old tier's totals, so this upsert keeps accumulating onto that seeded
+    row rather than starting from zero.
     Returns True if quota is now exhausted, False if unlimited or under cap.
     """
     snap_result = await db.execute(
