@@ -108,7 +108,7 @@ class TestGetTenantList:
         repo = _make_repo(get_tenant_usages=[
             _row(tenant_id="t1", tier_name="Pro",
                  budget_limit=Decimal("1000"), available_balance=Decimal("700"),
-                 total_units=1800, total_quota=3600, unit_size=60),
+                 total_units=1800, total_cost=Decimal("300"), total_quota=3600, unit_size=60),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, "asr", auth_db=None)
@@ -124,7 +124,8 @@ class TestGetTenantList:
         repo = _make_repo(get_tenant_usages=[
             _row(tenant_id="t1", tier_name="Pro",
                  budget_limit=Decimal("1000"), available_balance=Decimal("1000"),
-                 total_units=500_000, total_quota=1_000_000, unit_size=None),
+                 total_units=500_000, total_cost=Decimal("0"),
+                 total_quota=1_000_000, unit_size=None),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -135,11 +136,11 @@ class TestGetTenantList:
 
     @pytest.mark.asyncio
     async def test_remaining_budget_calculation(self):
-        """spendToDate = budgetLimit - availableBalance; remainingBudget = availableBalance."""
+        """spendToDate = sum(cost_accum) for the period; remainingBudget = availableBalance."""
         repo = _make_repo(get_tenant_usages=[
             _row(tenant_id="t1", tier_name="Free",
                  budget_limit=Decimal("500"), available_balance=Decimal("300"),
-                 total_units=0, total_quota=0, unit_size=None),
+                 total_units=0, total_cost=Decimal("200"), total_quota=0, unit_size=None),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -154,7 +155,8 @@ class TestGetTenantList:
         repo = _make_repo(get_tenant_usages=[
             _row(tenant_id="t1", tier_name="Free",
                  budget_limit=Decimal("1000"), available_balance=Decimal("1000"),
-                 total_units=2_000_000, total_quota=1_000_000, unit_size=1_000_000),
+                 total_units=2_000_000, total_cost=Decimal("0"),
+                 total_quota=1_000_000, unit_size=1_000_000),
         ])
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
