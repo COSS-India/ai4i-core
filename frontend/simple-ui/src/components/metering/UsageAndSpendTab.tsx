@@ -27,7 +27,7 @@ import {
 } from "../../services/usageSpendService";
 import { fetchTiers } from "../../services/tierManagementService";
 import { parseError } from "../../utils/errorHandler";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import { formatModelTaskTypeLabel } from "../../constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";

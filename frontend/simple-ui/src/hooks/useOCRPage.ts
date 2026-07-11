@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mapToServiceOptions } from "../components/service-page";
-import { OCR_ERRORS } from "../config/constants";
+import { OCR_ERRORS } from "../constants";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import type { OCRInferenceResponse } from "../types/inference";
 import { parseError } from "../utils/errorHandler";

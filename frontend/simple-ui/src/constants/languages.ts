@@ -1,138 +1,113 @@
 // Supported languages and script codes
 
-// Supported languages with script codes
-export const SUPPORTED_LANGUAGES = [
-  { code: "en", label: "English", scriptCode: "Latn" },
-  { code: "hi", label: "Hindi", scriptCode: "Deva" },
-  { code: "ta", label: "Tamil", scriptCode: "Taml" },
-  { code: "te", label: "Telugu", scriptCode: "Telu" },
-  { code: "kn", label: "Kannada", scriptCode: "Knda" },
-  { code: "ml", label: "Malayalam", scriptCode: "Mlym" },
-  { code: "bn", label: "Bengali", scriptCode: "Beng" },
-  { code: "gu", label: "Gujarati", scriptCode: "Gujr" },
-  { code: "mr", label: "Marathi", scriptCode: "Deva" },
-  { code: "pa", label: "Punjabi", scriptCode: "Guru" },
-  { code: "or", label: "Oriya", scriptCode: "Orya" },
-  { code: "as", label: "Assamese", scriptCode: "Beng" },
-  { code: "ur", label: "Urdu", scriptCode: "Arab" },
-  { code: "sa", label: "Sanskrit", scriptCode: "Deva" },
-  { code: "ks", label: "Kashmiri", scriptCode: "Arab" },
-  { code: "ne", label: "Nepali", scriptCode: "Deva" },
-  { code: "sd", label: "Sindhi", scriptCode: "Arab" },
-  { code: "kok", label: "Konkani", scriptCode: "Deva" },
-  { code: "doi", label: "Dogri", scriptCode: "Deva" },
-  { code: "mai", label: "Maithili", scriptCode: "Deva" },
-  { code: "brx", label: "Bodo", scriptCode: "Deva" },
-  { code: "mni", label: "Manipuri", scriptCode: "Beng" },
-  { code: "gom", label: "Goan Konkani", scriptCode: "Latn" },
-  { code: "sat", label: "Santali", scriptCode: "Latn" },
-  // Custom additions
-  // African languages
-  { code: "sw", label: "Swahili", scriptCode: "Latn" },
-  { code: "yo", label: "Yoruba", scriptCode: "Latn" },
-  { code: "ha", label: "Hausa", scriptCode: "Latn" },
-  { code: "so", label: "Somali", scriptCode: "Latn" },
-  { code: "am", label: "Amharic", scriptCode: "Ethi" },
-  { code: "ti", label: "Tigrinya", scriptCode: "Ethi" },
-  { code: "ig", label: "Igbo", scriptCode: "Latn" },
-  { code: "zu", label: "Zulu", scriptCode: "Latn" },
-  { code: "xh", label: "Xhosa", scriptCode: "Latn" },
-  { code: "sn", label: "Shona", scriptCode: "Latn" },
-  { code: "rw", label: "Kinyarwanda", scriptCode: "Latn" },
-  { code: "om", label: "Oromo", scriptCode: "Latn" },
-  { code: "lg", label: "Ganda", scriptCode: "Latn" },
-  { code: "wo", label: "Wolof", scriptCode: "Latn" },
-  { code: "ts", label: "Tsonga", scriptCode: "Latn" },
-  { code: "tn", label: "Tswana", scriptCode: "Latn" },
-  { code: "af", label: "Afrikaans", scriptCode: "Latn" },
-  { code: "fr", label: "French", scriptCode: "Latn" },
-  { code: "ar", label: "Arabic", scriptCode: "Arab" },
-];
+export type LanguageDef = {
+  code: string;
+  label: string;
+  scriptCode: string;
+};
 
-//LLM-supported languages (matching LLM service supported languages)
-export const LLM_SUPPORTED_LANGUAGES = [
-  { code: "en", label: "English", scriptCode: "Latn" },
-  { code: "hi", label: "Hindi", scriptCode: "Deva" },
-  { code: "ta", label: "Tamil", scriptCode: "Taml" },
-  { code: "te", label: "Telugu", scriptCode: "Telu" },
-  { code: "kn", label: "Kannada", scriptCode: "Knda" },
-  { code: "ml", label: "Malayalam", scriptCode: "Mlym" },
-  { code: "bn", label: "Bengali", scriptCode: "Beng" },
-  { code: "gu", label: "Gujarati", scriptCode: "Gujr" },
-  { code: "mr", label: "Marathi", scriptCode: "Deva" },
-  { code: "pa", label: "Punjabi", scriptCode: "Guru" },
-  { code: "or", label: "Oriya", scriptCode: "Orya" },
-  { code: "as", label: "Assamese", scriptCode: "Beng" },
-  { code: "ur", label: "Urdu", scriptCode: "Arab" },
-  { code: "sa", label: "Sanskrit", scriptCode: "Deva" },
-  { code: "ks", label: "Kashmiri", scriptCode: "Arab" },
-  { code: "ne", label: "Nepali", scriptCode: "Deva" },
-  { code: "sd", label: "Sindhi", scriptCode: "Arab" },
-  { code: "kok", label: "Konkani", scriptCode: "Deva" },
-  { code: "doi", label: "Dogri", scriptCode: "Deva" },
-  { code: "mai", label: "Maithili", scriptCode: "Deva" },
-  { code: "brx", label: "Bodo", scriptCode: "Deva" },
-  { code: "mni", label: "Manipuri", scriptCode: "Beng" },
-  { code: "gom", label: "Goan Konkani", scriptCode: "Latn" },
-  { code: "sat", label: "Santali", scriptCode: "Latn" },
-];
+const LANGUAGE_BY_CODE = {
+  en: { code: "en", label: "English", scriptCode: "Latn" },
+  hi: { code: "hi", label: "Hindi", scriptCode: "Deva" },
+  ta: { code: "ta", label: "Tamil", scriptCode: "Taml" },
+  te: { code: "te", label: "Telugu", scriptCode: "Telu" },
+  kn: { code: "kn", label: "Kannada", scriptCode: "Knda" },
+  ml: { code: "ml", label: "Malayalam", scriptCode: "Mlym" },
+  bn: { code: "bn", label: "Bengali", scriptCode: "Beng" },
+  gu: { code: "gu", label: "Gujarati", scriptCode: "Gujr" },
+  mr: { code: "mr", label: "Marathi", scriptCode: "Deva" },
+  pa: { code: "pa", label: "Punjabi", scriptCode: "Guru" },
+  or: { code: "or", label: "Oriya", scriptCode: "Orya" },
+  as: { code: "as", label: "Assamese", scriptCode: "Beng" },
+  ur: { code: "ur", label: "Urdu", scriptCode: "Arab" },
+  sa: { code: "sa", label: "Sanskrit", scriptCode: "Deva" },
+  ks: { code: "ks", label: "Kashmiri", scriptCode: "Arab" },
+  ne: { code: "ne", label: "Nepali", scriptCode: "Deva" },
+  sd: { code: "sd", label: "Sindhi", scriptCode: "Arab" },
+  kok: { code: "kok", label: "Konkani", scriptCode: "Deva" },
+  doi: { code: "doi", label: "Dogri", scriptCode: "Deva" },
+  mai: { code: "mai", label: "Maithili", scriptCode: "Deva" },
+  brx: { code: "brx", label: "Bodo", scriptCode: "Deva" },
+  mni: { code: "mni", label: "Manipuri", scriptCode: "Beng" },
+  gom: { code: "gom", label: "Goan Konkani", scriptCode: "Latn" },
+  sat: { code: "sat", label: "Santali", scriptCode: "Latn" },
+  sw: { code: "sw", label: "Swahili", scriptCode: "Latn" },
+  yo: { code: "yo", label: "Yoruba", scriptCode: "Latn" },
+  ha: { code: "ha", label: "Hausa", scriptCode: "Latn" },
+  so: { code: "so", label: "Somali", scriptCode: "Latn" },
+  am: { code: "am", label: "Amharic", scriptCode: "Ethi" },
+  ti: { code: "ti", label: "Tigrinya", scriptCode: "Ethi" },
+  ig: { code: "ig", label: "Igbo", scriptCode: "Latn" },
+  zu: { code: "zu", label: "Zulu", scriptCode: "Latn" },
+  xh: { code: "xh", label: "Xhosa", scriptCode: "Latn" },
+  sn: { code: "sn", label: "Shona", scriptCode: "Latn" },
+  rw: { code: "rw", label: "Kinyarwanda", scriptCode: "Latn" },
+  om: { code: "om", label: "Oromo", scriptCode: "Latn" },
+  lg: { code: "lg", label: "Ganda", scriptCode: "Latn" },
+  wo: { code: "wo", label: "Wolof", scriptCode: "Latn" },
+  ts: { code: "ts", label: "Tsonga", scriptCode: "Latn" },
+  tn: { code: "tn", label: "Tswana", scriptCode: "Latn" },
+  af: { code: "af", label: "Afrikaans", scriptCode: "Latn" },
+  fr: { code: "fr", label: "French", scriptCode: "Latn" },
+  ar: { code: "ar", label: "Arabic", scriptCode: "Arab" },
+} as const satisfies Record<string, LanguageDef>;
 
-// ASR-supported languages (matching ASR service supported languages)
-export const ASR_SUPPORTED_LANGUAGES = [
-  { code: "as", label: "Assamese", scriptCode: "Beng" },
-  { code: "bn", label: "Bengali", scriptCode: "Beng" },
-  { code: "brx", label: "Bodo", scriptCode: "Deva" },
-  { code: "doi", label: "Dogri", scriptCode: "Deva" },
-  { code: "gu", label: "Gujarati", scriptCode: "Gujr" },
-  { code: "hi", label: "Hindi", scriptCode: "Deva" },
-  { code: "kn", label: "Kannada", scriptCode: "Knda" },
-  { code: "ks", label: "Kashmiri", scriptCode: "Arab" },
-  { code: "mai", label: "Maithili", scriptCode: "Deva" },
-  { code: "ml", label: "Malayalam", scriptCode: "Mlym" },
-  { code: "mni", label: "Manipuri", scriptCode: "Beng" },
-  { code: "mr", label: "Marathi", scriptCode: "Deva" },
-  { code: "ne", label: "Nepali", scriptCode: "Deva" },
-  { code: "or", label: "Odia", scriptCode: "Orya" },
-  { code: "pa", label: "Punjabi", scriptCode: "Guru" },
-  { code: "sa", label: "Sanskrit", scriptCode: "Deva" },
-  { code: "sd", label: "Sindhi", scriptCode: "Arab" },
-  { code: "ta", label: "Tamil", scriptCode: "Taml" },
-  { code: "te", label: "Telugu", scriptCode: "Telu" },
-  { code: "ur", label: "Urdu", scriptCode: "Arab" },
-];
+const LLM_LANGUAGE_CODES = [
+  "en", "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", "or", "as", "ur", "sa", "ks", "ne",
+  "sd", "kok", "doi", "mai", "brx", "mni", "gom", "sat",
+] as const;
 
-// TTS-supported languages (matching TTS service supported languages)
-export const TTS_SUPPORTED_LANGUAGES = [
-  { code: "hi", label: "Hindi", scriptCode: "Deva" },
-  { code: "mr", label: "Marathi", scriptCode: "Deva" },
-  { code: "as", label: "Assamese", scriptCode: "Beng" },
-  { code: "bn", label: "Bengali", scriptCode: "Beng" },
-  { code: "gu", label: "Gujarati", scriptCode: "Gujr" },
-  { code: "or", label: "Odia", scriptCode: "Orya" },
-  { code: "pa", label: "Punjabi", scriptCode: "Guru" },
-];
+const AFRICAN_LANGUAGE_CODES = [
+  "sw", "yo", "ha", "so", "am", "ti", "ig", "zu", "xh", "sn", "rw", "om", "lg", "wo", "ts", "tn",
+  "af", "fr", "ar",
+] as const;
 
-// Language code to label mapping
-export const LANG_CODE_TO_LABEL: { [key: string]: string } =
-  SUPPORTED_LANGUAGES.reduce((acc, lang) => {
-    acc[lang.code] = lang.label;
-    return acc;
-  }, {} as { [key: string]: string });
+const ASR_LANGUAGE_CODES = [
+  "as", "bn", "brx", "doi", "gu", "hi", "kn", "ks", "mai", "ml", "mni", "mr", "ne", "or", "pa",
+  "sa", "sd", "ta", "te", "ur",
+] as const;
+
+const TTS_LANGUAGE_CODES = ["hi", "mr", "as", "bn", "gu", "or", "pa"] as const;
+
+const ODIA_LABEL = "Odia";
+
+function languagesFromCodes(
+  codes: readonly string[],
+  labelOverrides?: Partial<Record<string, string>>,
+): LanguageDef[] {
+  return codes.map((code) => {
+    const base = LANGUAGE_BY_CODE[code as keyof typeof LANGUAGE_BY_CODE];
+    const label = labelOverrides?.[code];
+    return label ? { ...base, label } : { ...base };
+  });
+}
+
+/** All languages in the UI catalog (Indic + African). */
+export const SUPPORTED_LANGUAGES = languagesFromCodes([
+  ...LLM_LANGUAGE_CODES,
+  ...AFRICAN_LANGUAGE_CODES,
+]);
+
+/** LLM-supported languages (matching LLM service supported languages). */
+export const LLM_SUPPORTED_LANGUAGES = languagesFromCodes(LLM_LANGUAGE_CODES);
+
+/** ASR-supported languages (matching ASR service supported languages). */
+export const ASR_SUPPORTED_LANGUAGES = languagesFromCodes(ASR_LANGUAGE_CODES, {
+  or: ODIA_LABEL,
+});
+
+/** TTS-supported languages (matching TTS service supported languages). */
+export const TTS_SUPPORTED_LANGUAGES = languagesFromCodes(TTS_LANGUAGE_CODES, {
+  or: ODIA_LABEL,
+});
+
+export const LANG_CODE_TO_LABEL: Record<string, string> = Object.fromEntries(
+  SUPPORTED_LANGUAGES.map((lang) => [lang.code, lang.label]),
+);
 
 /** Core Indic language codes used by NER, transliteration, and similar services. */
 export const INDIC_LANGUAGE_CODES = [
-  "en",
-  "hi",
-  "ta",
-  "te",
-  "kn",
-  "ml",
-  "mr",
-  "gu",
-  "bn",
-  "pa",
-  "or",
-  "as",
+  "en", "hi", "ta", "te", "kn", "ml", "mr", "gu", "bn", "pa", "or", "as",
 ] as const;
 
 export type IndicLanguageCode = (typeof INDIC_LANGUAGE_CODES)[number];

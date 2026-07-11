@@ -49,13 +49,14 @@ import {
   normalizeTenantUserRoles,
   tenantUserHasRole,
   tenantUserMatchesSearch,
-  TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
+import { isDefaultTenant } from "../../../utils/defaultTenant";
 import {
-  DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
-  isDefaultTenant,
-} from "../../../utils/defaultTenant";
-import { DEFAULT_TENANT_USER_ROLE, PLATFORM_ROLES } from "../../../constants/roles";
+  DEFAULT_TENANT_USER_ROLE,
+  PLATFORM_ROLE_FILTER_LIST,
+  PLATFORM_ROLES,
+  TENANT_ASSIGNABLE_ROLES,
+} from "../../../constants/roles";
 import { PAGINATION } from "../../../constants/limits";
 import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../../../utils/rbac";
 
@@ -261,8 +262,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const tenantUserRoleFilterOptions = useMemo(
     () =>
       isDefaultTenantUsersView
-        ? DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST
-        : TENANT_USER_ROLE_FILTER_LIST,
+        ? PLATFORM_ROLE_FILTER_LIST
+        : TENANT_ASSIGNABLE_ROLES,
     [isDefaultTenantUsersView],
   );
 

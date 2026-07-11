@@ -29,7 +29,6 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../constants";
-import { permissionLabelWithFallback } from "../../utils/apiKeyUtils";
 
 export interface ApiKeyTabProps {
   apiKeys: APIKeyResponse[];

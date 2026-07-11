@@ -46,7 +46,7 @@ import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import { formatModelTaskTypeLabel } from "../../constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 
 function getTaskTypeBadgeColor(taskType: string): string {

@@ -1,4 +1,4 @@
-import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
+import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../constants";
 import { showToast } from "./toast";
 import { isSafeUserImageUrl } from "./safeImageUrl";
 

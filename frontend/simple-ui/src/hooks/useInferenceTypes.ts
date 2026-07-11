@@ -3,7 +3,7 @@ import {
   fetchInferenceTypes,
   type InferenceTypeItem,
 } from "../services/inferenceTypesService";
-import { MODEL_TASK_TYPE_LIST } from "../config/constants";
+import { MODEL_TASK_TYPE_LIST } from "../constants";
 
 const INFERENCE_TYPES_QUERY_KEY = "inferenceTypes";
 
