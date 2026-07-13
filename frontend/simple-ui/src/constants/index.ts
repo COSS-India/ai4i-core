@@ -14,7 +14,6 @@ export * from "./auth";
 export * from "./roles";
 export * from "./alerting";
 export * from "./validation";
-export * from "./labels";
 export * from "./serviceMetadata";
 export * from "./servicePageConfig";
 

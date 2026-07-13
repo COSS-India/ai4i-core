@@ -13,7 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import type { ServiceDropdownProps } from "../../types/servicePage";
-import { LABELS } from "../../constants/labels";
+import { LABELS } from "../../constants";
 
 const ServiceDropdown: React.FC<ServiceDropdownProps> = ({
   label = "Service",

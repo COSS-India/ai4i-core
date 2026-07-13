@@ -9,7 +9,7 @@ import {
   Button,
   useColorModeValue,
 } from "@chakra-ui/react";
-import { LABELS } from "../../constants/labels";
+import { LABELS } from "../../constants";
 
 export interface ConfirmDialogProps {
   /** Whether the dialog is visible. */

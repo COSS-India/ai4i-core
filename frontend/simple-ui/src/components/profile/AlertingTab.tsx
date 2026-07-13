@@ -68,7 +68,7 @@ import {
 } from "@chakra-ui/icons";
 import { isTenantStatus, TENANT, PAGINATION } from '../../constants';
 import { PLATFORM_ROLES } from "../../constants/roles";
-import { LABELS } from "../../constants/labels";
+import { LABELS } from "../../constants";
 import * as tenantService from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 import type { NotificationReceiver } from "../../types/alerting";

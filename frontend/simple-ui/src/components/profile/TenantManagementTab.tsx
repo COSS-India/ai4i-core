@@ -92,7 +92,7 @@ import {
   isTenantStatus,
   resolveTenantUserDisplayStatus,
 } from "../../constants";
-import { LABELS } from "../../constants/labels";
+import { LABELS } from "../../constants";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 function dash(v?: string | null): string {

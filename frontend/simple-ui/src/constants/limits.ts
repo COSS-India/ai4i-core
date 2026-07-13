@@ -57,3 +57,22 @@ export const PAGINATION = {
   MAX_REGISTRY_FETCH_PAGES: 500,
   USER_LIST_PAGE_SIZE: 100,
 } as const;
+
+/** Shared UI labels for buttons, dialogs, and async states. */
+export const LABELS = {
+  ACTIONS: {
+    SAVE: "Save",
+    CANCEL: "Cancel",
+    DELETE: "Delete",
+    CONFIRM: "Confirm",
+    UPDATE: "Update",
+    REFRESH: "Refresh",
+    SUBMIT: "Submit",
+    CLOSE: "Close",
+  },
+  STATUS: {
+    LOADING: "Loading...",
+    SUCCESS: "Success",
+    ERROR: "Error",
+  },
+} as const;

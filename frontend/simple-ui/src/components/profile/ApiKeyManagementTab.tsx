@@ -40,7 +40,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import StandardModal from "../common/StandardModal";
-import { LABELS } from "../../constants/labels";
+import { LABELS } from "../../constants";
 import {
   API_KEY,
   API_KEY_FILTER_STATUS_LIST,

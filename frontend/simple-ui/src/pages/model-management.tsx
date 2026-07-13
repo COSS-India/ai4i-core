@@ -53,7 +53,7 @@ import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
-import { LABELS } from "../constants/labels";
+import { LABELS } from "../constants";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
 import AdminDataTable, {
