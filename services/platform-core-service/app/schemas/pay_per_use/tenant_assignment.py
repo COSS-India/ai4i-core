@@ -43,17 +43,6 @@ class TierReassignRequest(BaseModel):
     tier_id: str = Field(..., description="UUID of the new PPU tier to assign")
 
 
-class TopUpRequest(BaseModel):
-    tenant_id: str = Field(..., description="ID of the tenant to top up")
-    amount: PositiveDecimal = Field(..., max_digits=15, decimal_places=4, description="Amount to add in INR")
-
-
-class TopUpResponse(BaseModel):
-    tenant_id: str
-    added: Decimal
-    available_balance: Decimal
-
-
 class ReviseBudgetRequest(BaseModel):
     tenant_id: str = Field(..., description="ID of the tenant whose budget is being revised")
     action: Literal["top-up", "top-down"] = Field(..., description="Whether to increase (top-up) or decrease (top-down) the current budget by amount")

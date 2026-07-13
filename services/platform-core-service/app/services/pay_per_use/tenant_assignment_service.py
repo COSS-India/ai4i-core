@@ -2,13 +2,12 @@
 
 import logging
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
@@ -19,8 +18,6 @@ from app.schemas.pay_per_use.tenant_assignment import (
     TierAssignRequest,
     TierAssignResponse,
     TierReassignRequest,
-    TopUpRequest,
-    TopUpResponse,
 )
 from app.utils.tenant_validator import require_active_tenant
 
@@ -112,49 +109,6 @@ def _to_assign_response(
         effective_from=assignment.effective_from,
         effective_to=assignment.effective_to,
         updated_at=assignment.updated_at,
-    )
-
-
-async def top_up_budget(
-    body: TopUpRequest,
-    db: AsyncSession,
-    auth_service_url: str,
-    http_client: httpx.AsyncClient,
-) -> TopUpResponse:
-    result = await db.execute(
-        text(
-            "UPDATE ppu_tenant_tier_assignments"
-            "   SET available_balance = available_balance + :amount,"
-            "       budget_limit      = budget_limit + :amount,"
-            "       updated_at        = now()"
-            " WHERE tenant_id = :tenant_id"
-            "   AND effective_from <= now()"
-            "   AND effective_to   >  now()"
-            " RETURNING available_balance"
-        ),
-        {"amount": body.amount, "tenant_id": body.tenant_id},
-    )
-    row = result.fetchone()
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
-        )
-    await db.commit()
-
-    new_balance: Decimal = row.available_balance
-    if new_balance > 0 and auth_service_url:
-        # Best-effort: billing stays correct; Redis flag will self-correct on next consumer event.
-        await _notify_auth_best_effort(
-            http_client,
-            f"{auth_service_url}/internal/ppu/tenant/{body.tenant_id}/budget-exhausted",
-            json={"exhausted": False},
-        )
-
-    return TopUpResponse(
-        tenant_id=body.tenant_id,
-        added=body.amount,
-        available_balance=new_balance,
     )
 
 
