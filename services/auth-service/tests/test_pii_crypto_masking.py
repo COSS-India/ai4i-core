@@ -25,6 +25,7 @@ from app.models.types import EncryptedEmail, EncryptedPhone  # noqa: E402
 from app.utils.masking import (  # noqa: E402
     drop_masked_pii,
     looks_masked,
+    mask_api_key,
     mask_email,
     mask_phone,
 )
@@ -138,6 +139,20 @@ class TestMaskPhone:
 
     def test_output_is_detected_as_masked(self):
         assert looks_masked(mask_phone("+919876543210"))
+
+
+class TestMaskApiKey:
+    def test_keeps_first_and_last_four(self):
+        assert mask_api_key("ab12cd34ef56gh78") == "ab12******gh78"
+
+    def test_none(self):
+        assert mask_api_key(None) is None
+
+    def test_short_value_returned_unchanged(self):
+        assert mask_api_key("abcd1234") == "abcd1234"
+
+    def test_output_is_detected_as_masked(self):
+        assert looks_masked(mask_api_key("ab12cd34ef56gh78"))
 
 
 class TestLooksMasked:

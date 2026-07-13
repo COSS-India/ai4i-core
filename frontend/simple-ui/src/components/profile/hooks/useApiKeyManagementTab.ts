@@ -18,25 +18,17 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
-import {
-  formatApiKeyDisplayId,
-  mergeApiKeyHexFromCache,
-  normalizeApiKeyRecord,
-} from "../../../utils/apiKeyUtils";
+import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
-}
-
-function normalizeListedKeys(keys: APIKeyResponse[]): APIKeyResponse[] {
-  return mergeApiKeyHexFromCache(keys.map((key) => normalizeApiKeyRecord(key)));
 }
 
 function mapKeysToAdminRows(
   keys: APIKeyResponse[],
   currentUser: User | null,
 ): AdminAPIKeyWithUserResponse[] {
-  return normalizeListedKeys(keys).map((key) => ({
+  return keys.map(normalizeApiKeyRecord).map((key) => ({
     ...key,
     user_id: currentUser?.user_id ?? "",
     user_email: currentUser?.email ?? "",
@@ -278,7 +270,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
 
-  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);
+  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => key.api_key ?? "—";
 
   return {
     allApiKeys,
