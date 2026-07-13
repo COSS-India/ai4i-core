@@ -19,7 +19,7 @@ export function formatVttTimestamp(seconds: number): string {
 
 /** Build a single-cue WebVTT document for plain-text captions. */
 export function buildWebVttDocument(text: string, durationSeconds?: number): string {
-  const cueText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const cueText = text.replaceAll(/\r\n/g, '\n').replaceAll(/\r/g, '\n').trim();
   const end = formatVttTimestamp(durationSeconds ?? 3600);
   return `WEBVTT\n\n00:00:00.000 --> ${end}\n${cueText}\n`;
 }

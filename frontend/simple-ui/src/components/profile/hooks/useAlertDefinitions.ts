@@ -57,7 +57,7 @@ function normalizeServiceForUi(raw: string): string {
   if (allowedSet.has(hyphen)) return hyphen;
   if (allowedSet.has(bare)) return bare;
 
-  const canonical = bare.replaceAll(/-/g, "_");
+  const canonical = bare.replaceAll("-", "_");
   if (INFERENCE_TASK_TO_UI_VALUE[canonical]) {
     return INFERENCE_TASK_TO_UI_VALUE[canonical];
   }
@@ -80,7 +80,7 @@ function normalizeServiceForApi(raw: string): string {
     return UI_VALUE_TO_INFERENCE_TASK[bare];
   }
 
-  const canonical = bare.replaceAll(/-/g, "_");
+  const canonical = bare.replaceAll("-", "_");
   if (Object.values(UI_VALUE_TO_INFERENCE_TASK).includes(canonical)) {
     return canonical;
   }
