@@ -91,22 +91,24 @@ async def revise_tenant_budget(
     request: Request,
     body: ReviseBudgetRequest,
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ):
     """Top-up or top-down a tenant's Budget by an amount, effective immediately.
 
-    action='top-up' adds amount to the current budget_limit; action='top-down'
-    subtracts it. Permitted at any time regardless of whether the current
-    budget is fully exhausted or partially consumed — as long as the result
-    is not below cumulative spend to date, in which case the request is
-    rejected with 409 (nothing is written). A result exactly equal to
+    Validates that the tenant exists and is ACTIVE in the auth DB, matching
+    assign_tenant_tier/reassign_tenant_tier below. action='top-up' adds
+    amount to the current budget_limit and always succeeds once the tenant
+    is found and active. action='top-down' subtracts it, and is rejected
+    with 409 (nothing written) if the result would drop below cumulative
+    spend to date, or 422 if it would go negative. A result exactly equal to
     cumulative spend is accepted and blocks the tenant's next request
-    immediately. A top-down larger than the current budget is rejected with
-    422. Does not change the tenant's Tier, Quota Limit, or Rate Limit.
+    immediately. Does not change the tenant's Tier, Quota Limit, or Rate Limit.
     """
     user_id = request.headers.get("X-User-Id")
     return await tenant_assignment_service.revise_budget(
         body,
         db,
+        auth_db,
         auth_service_url=settings.auth_service_url,
         http_client=request.app.state.http_client,
         user_id=user_id,

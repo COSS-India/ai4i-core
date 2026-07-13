@@ -7,7 +7,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
@@ -63,37 +63,53 @@ async def _resolve_active_tier(db: AsyncSession, tier_id: str) -> PPUTier:
 async def _lock_active_assignment(
     db: AsyncSession,
     tenant_id: str,
-    now: datetime,
-    *,
-    retry_on_miss: bool = False,
 ) -> Optional[PPUTenantTierAssignment]:
     """Lock the tenant's currently-active assignment row, or None if it has none.
 
-    retry_on_miss=True re-queries once (a fresh statement/snapshot) if the
-    first lookup comes up empty. Needed by callers that don't themselves
-    retire the row (e.g. revise_budget): under READ COMMITTED, if this query
-    blocks on a row a concurrent reassign_tier is retiring, EvalPlanQual
-    re-checks the WHERE only against that same row's new (now-retired)
-    values once unblocked — it does not look at reassign_tier's newly
-    inserted replacement row — so the first lookup can spuriously miss an
-    assignment that, moments later, clearly exists. reassign_tier itself
-    doesn't need the retry: it's the one retiring/replacing the row, and
-    nothing else changes effective_to out from under it.
+    Always retries once (a fresh statement, with a freshly re-read "now") if
+    the first lookup comes up empty. This guards against races with any
+    concurrent call that retires this exact row rather than updating it in
+    place (e.g. two overlapping reassign_tier calls, or reassign_tier racing
+    revise_budget): under READ COMMITTED, if the first query blocks on a row
+    being retired, EvalPlanQual re-checks the WHERE only against that same
+    row's new (now-retired) values once unblocked — it does not look at the
+    newly inserted replacement row — so the first lookup can spuriously miss
+    an assignment that, moments later, clearly exists. The retry must
+    re-evaluate "now" fresh (not reuse the first attempt's timestamp): the
+    replacement row's effective_from is set by the other transaction's own
+    now(), which can be later than our first snapshot, so a stale "now"
+    would still fail to match it.
     """
-    query = (
-        select(PPUTenantTierAssignment)
-        .where(
-            PPUTenantTierAssignment.tenant_id == tenant_id,
-            PPUTenantTierAssignment.effective_from <= now,
-            PPUTenantTierAssignment.effective_to > now,
+    def _query(now: datetime):
+        return (
+            select(PPUTenantTierAssignment)
+            .where(
+                PPUTenantTierAssignment.tenant_id == tenant_id,
+                PPUTenantTierAssignment.effective_from <= now,
+                PPUTenantTierAssignment.effective_to > now,
+            )
+            .with_for_update()
         )
-        .with_for_update()
-    )
-    result = await db.execute(query)
+
+    result = await db.execute(_query(datetime.now(timezone.utc)))
     assignment = result.scalar_one_or_none()
-    if assignment is None and retry_on_miss:
-        result = await db.execute(query)
+    if assignment is None:
+        result = await db.execute(_query(datetime.now(timezone.utc)))
         assignment = result.scalar_one_or_none()
+    return assignment
+
+
+async def _require_active_assignment(
+    db: AsyncSession,
+    tenant_id: str,
+) -> PPUTenantTierAssignment:
+    """_lock_active_assignment, raising 404 if the tenant has no active assignment."""
+    assignment = await _lock_active_assignment(db, tenant_id)
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No active tier assignment found for tenant '{tenant_id}'",
+        )
     return assignment
 
 
@@ -115,68 +131,85 @@ def _to_assign_response(
 async def revise_budget(
     body: ReviseBudgetRequest,
     db: AsyncSession,
+    auth_db: AsyncSession,
     auth_service_url: str,
     http_client: httpx.AsyncClient,
     user_id: Optional[str] = None,
 ) -> ReviseBudgetResponse:
     """Adjust a tenant's Budget by a top-up or top-down amount, effective immediately.
 
+    Validates that the tenant exists and is ACTIVE in the auth DB, matching
+    assign_tier/reassign_tier.
+
     Unlike an absolute set, the new budget is derived from the current
     budget_limit +/- body.amount, matching the Adjust Budget UI (single
     amount field + top-up/top-down toggle) so the caller never has to know
     or compute the current budget_limit itself.
 
-    Rejected outright (409, nothing written) if the resulting budget would be
-    below cumulative spend to date (old budget_limit - old available_balance)
-    — the Admin must pick a smaller top-down amount, or top up instead. A
-    result exactly equal to cumulative spend is accepted and leaves
-    available_balance at 0, which blocks the tenant's next request
-    immediately. A top-down larger than the current budget_limit (negative
-    result) is rejected with 422. Tier, Quota Limit, and Rate Limit are
-    untouched.
+    The reject-on-underflow guards only apply to action='top-down': a
+    top-down larger than the current budget_limit (negative result) is
+    rejected with 422, and a top-down that would drop below cumulative spend
+    to date (old budget_limit - old available_balance) is rejected outright
+    with 409 (nothing written) — the Admin must pick a smaller amount, or
+    top up instead. A result exactly equal to cumulative spend is accepted
+    and leaves available_balance at 0, which blocks the tenant's next
+    request immediately. action='top-up' always succeeds once the tenant is
+    found and active — it only ever adds headroom, so it must never be
+    rejected for being "below spend," even for an already over-spent tenant
+    (available_balance already negative from real usage). Tier, Quota
+    Limit, and Rate Limit are untouched.
     """
-    now = datetime.now(timezone.utc)
+    await require_active_tenant(body.tenant_id, auth_db)
 
-    # retry_on_miss guards against a concurrent reassign_tier retiring this
-    # row out from under us — see _lock_active_assignment's docstring.
-    assignment = await _lock_active_assignment(db, body.tenant_id, now, retry_on_miss=True)
-    if assignment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
-        )
+    assignment = await _require_active_assignment(db, body.tenant_id)
 
     delta = body.amount if body.action == "top-up" else -body.amount
     new_budget = assignment.budget_limit + delta
-    if new_budget < 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Top-down amount ({body.amount}) exceeds the current budget "
-                f"({assignment.budget_limit})"
-            ),
-        )
 
-    consumed = assignment.budget_limit - assignment.available_balance
-    if new_budget < consumed:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "budget_exceeded",
-                "message": (
-                    f"Revised budget ({new_budget}) is below cumulative spend "
-                    f"to date ({consumed}) — revision rejected"
+    if body.action == "top-down":
+        if new_budget < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Top-down amount ({body.amount}) exceeds the current budget "
+                    f"({assignment.budget_limit})"
                 ),
-            },
-        )
+            )
+        consumed = assignment.budget_limit - assignment.available_balance
+        if new_budget < consumed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "budget_exceeded",
+                    "message": (
+                        f"Revised budget ({new_budget}) is below cumulative spend "
+                        f"to date ({consumed}) — revision rejected"
+                    ),
+                },
+            )
 
-    assignment.budget_limit = new_budget
-    assignment.available_balance += delta
-    assignment.updated_by = user_id
+    new_balance = assignment.available_balance + delta
+    result = await db.execute(
+        text(
+            "UPDATE ppu_tenant_tier_assignments"
+            "   SET budget_limit      = :new_budget,"
+            "       available_balance = :new_balance,"
+            "       updated_by        = :updated_by,"
+            "       updated_at        = now()"
+            " WHERE id = :id"
+            " RETURNING updated_at"
+        ),
+        {
+            "new_budget": new_budget,
+            "new_balance": new_balance,
+            "updated_by": user_id,
+            "id": assignment.id,
+        },
+    )
+    updated_at = result.scalar_one()
     await db.commit()
-    await db.refresh(assignment)
 
-    exhausted = assignment.available_balance <= 0
+    exhausted = new_balance <= 0
     if auth_service_url:
         # Best-effort: billing stays correct; Redis flag will self-correct on next consumer event.
         await _notify_auth_best_effort(
@@ -187,9 +220,9 @@ async def revise_budget(
 
     return ReviseBudgetResponse(
         tenant_id=body.tenant_id,
-        budget_limit=assignment.budget_limit,
-        available_balance=assignment.available_balance,
-        updated_at=assignment.updated_at,
+        budget_limit=new_budget,
+        available_balance=new_balance,
+        updated_at=updated_at,
     )
 
 
@@ -270,12 +303,7 @@ async def reassign_tier(
 
     # Lock the tenant's current active assignment so a concurrent billing event
     # can't read a half-updated row while this transaction is in flight.
-    current = await _lock_active_assignment(db, body.tenant_id, now)
-    if current is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
-        )
+    current = await _require_active_assignment(db, body.tenant_id)
 
     if current.tier_id == new_tier.id:
         raise HTTPException(

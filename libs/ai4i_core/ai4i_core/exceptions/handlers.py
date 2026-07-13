@@ -46,14 +46,24 @@ _JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
 
 def _json_safe(value):
     """Recursively coerce a value into something JSONResponse can serialize,
-    stringifying anything that isn't already a JSON-safe scalar/list/dict."""
+    stringifying anything that isn't already a JSON-safe scalar/list/dict.
+
+    This function backstops a 422 response — it must never itself raise, or
+    the error response degrades into an unhandled 500. str(value) can fail
+    (a broken/overridden __str__, exotic third-party types), so the fallback
+    is defensive: on any failure, fall back to a fixed placeholder rather
+    than let the exception escape.
+    """
     if isinstance(value, _JSON_SAFE_SCALARS):
         return value
     if isinstance(value, dict):
         return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    return str(value)
+    try:
+        return str(value)
+    except Exception:
+        return "<unserializable>"
 
 # ---------------------------------------------------------------------------
 # Telemetry helpers (optional -- works without OpenTelemetry installed)
