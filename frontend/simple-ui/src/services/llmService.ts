@@ -10,7 +10,7 @@ export const AGRINET_MODEL = 'agrinet-model';
 
 /** serviceId (from platform-core service registry) keyed by model name. */
 export const MODEL_SERVICE_IDS: Record<string, string> = {
-  [LLM_CHAT_MODEL]: '8e588907767a26835acbf29d83de9e31',
+  [LLM_CHAT_MODEL]: 'd4f4dd9d87b6e821302938974af23dac',
   [AGRINET_MODEL]: '30622e0a5b1cfb70dd008281adfd7d8c',
 };
 
