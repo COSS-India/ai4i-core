@@ -28,12 +28,6 @@ export function resolveApiKeyHex(key: ApiKeyLike): string | null {
   return /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
 }
 
-export function formatApiKeyDisplayId(key: ApiKeyLike): string {
-  const id = key.id ?? key.key_id ?? key.keyId;
-  if (id != null && Number.isFinite(Number(id))) return String(id);
-  return "—";
-}
-
 export function readApiKeyHexCache(): Record<string, string> {
   if (typeof window === "undefined") return {};
   try {

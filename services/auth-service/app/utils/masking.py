@@ -46,6 +46,17 @@ def mask_email(value: Optional[str]) -> Optional[str]:
     return f"{masked_local}@{masked_domain}"
 
 
+def mask_api_key(value: Optional[str]) -> Optional[str]:
+    """Mask an API key, keeping only the first 4 and last 4 characters.
+    e.g. ``ab12cd34ef56gh78`` -> ``ab12******gh78``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) <= 8:
+        return value
+    return f"{value[:4]}{_MASK_CHAR * 6}{value[-4:]}"
+
+
 def mask_phone(value: Optional[str]) -> Optional[str]:
     """Mask a phone number, leaving only the last 4 digits visible.
     e.g. ``+919876543210`` -> ``*********3210``.

@@ -19,7 +19,6 @@ import {
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
 import {
-  formatApiKeyDisplayId,
   mergeApiKeyHexFromCache,
   normalizeApiKeyRecord,
 } from "../../../utils/apiKeyUtils";
@@ -278,7 +277,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
 
-  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);
+  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => key.api_key ?? "—";
 
   return {
     allApiKeys,
