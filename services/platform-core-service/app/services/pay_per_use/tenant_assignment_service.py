@@ -146,29 +146,40 @@ async def revise_budget(
     """
     now = datetime.now(timezone.utc)
 
+    def _lock_query():
+        return (
+            select(PPUTenantTierAssignment)
+            .where(
+                PPUTenantTierAssignment.tenant_id == body.tenant_id,
+                PPUTenantTierAssignment.effective_from <= now,
+                PPUTenantTierAssignment.effective_to > now,
+            )
+            .with_for_update()
+        )
+
     # Lock the active assignment so a concurrent billing event can't shift
     # cumulative spend between the compare and the write.
-    result = await db.execute(
-        select(PPUTenantTierAssignment)
-        .where(
-            PPUTenantTierAssignment.tenant_id == body.tenant_id,
-            PPUTenantTierAssignment.effective_from <= now,
-            PPUTenantTierAssignment.effective_to > now,
-        )
-        .with_for_update()
-    )
+    result = await db.execute(_lock_query())
     assignment = result.scalar_one_or_none()
+    if assignment is None:
+        # A concurrent reassign_tier may have just retired this exact row and
+        # inserted its replacement. Under READ COMMITTED, if the query above
+        # blocked on that row's lock, Postgres's EvalPlanQual re-checks the
+        # WHERE only against that same row's new (now-retired) values once
+        # unblocked — it does not look at the newly inserted replacement row,
+        # so this can spuriously come back empty even though a valid active
+        # assignment exists moments later. A fresh query (its own snapshot)
+        # reliably finds the replacement if one now exists.
+        result = await db.execute(_lock_query())
+        assignment = result.scalar_one_or_none()
     if assignment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
         )
 
-    new_budget = (
-        assignment.budget_limit + body.amount
-        if body.action == "top-up"
-        else assignment.budget_limit - body.amount
-    )
+    delta = body.amount if body.action == "top-up" else -body.amount
+    new_budget = assignment.budget_limit + delta
     if new_budget < 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -192,7 +203,7 @@ async def revise_budget(
         )
 
     assignment.budget_limit = new_budget
-    assignment.available_balance = new_budget - consumed
+    assignment.available_balance += delta
     assignment.updated_by = user_id
     await db.commit()
     await db.refresh(assignment)
