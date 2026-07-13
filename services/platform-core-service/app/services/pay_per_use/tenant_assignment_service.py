@@ -131,35 +131,54 @@ async def revise_budget(
     """Set a tenant's Budget to a new absolute value, effective immediately.
 
     Unlike top_up_budget (which adds to the budget), this replaces budget_limit
-    outright. available_balance shifts by the same delta so cumulative spend to
-    date (old budget_limit - old available_balance) is preserved rather than
-    reset — a decrease can drive available_balance to zero or below, blocking
-    further requests immediately; an increase can restore headroom. Tier,
-    Quota Limit, and Rate Limit are untouched.
+    outright. Rejected outright (409, nothing written) if the new budget is
+    below cumulative spend to date (old budget_limit - old available_balance)
+    — the revision is not applied in that case; the Admin must pick a value
+    at or above cumulative spend, or top up instead. A value exactly equal to
+    cumulative spend is accepted and leaves available_balance at 0, which
+    blocks the tenant's next request immediately. Tier, Quota Limit, and Rate
+    Limit are untouched.
     """
+    now = datetime.now(timezone.utc)
+
+    # Lock the active assignment so a concurrent billing event can't shift
+    # cumulative spend between the compare and the write.
     result = await db.execute(
-        text(
-            "UPDATE ppu_tenant_tier_assignments"
-            "   SET available_balance = available_balance + (:new_budget - budget_limit),"
-            "       budget_limit      = :new_budget,"
-            "       updated_by        = :updated_by,"
-            "       updated_at        = now()"
-            " WHERE tenant_id = :tenant_id"
-            "   AND effective_from <= now()"
-            "   AND effective_to   >  now()"
-            " RETURNING available_balance, budget_limit, updated_at"
-        ),
-        {"new_budget": body.budget, "tenant_id": body.tenant_id, "updated_by": user_id},
+        select(PPUTenantTierAssignment)
+        .where(
+            PPUTenantTierAssignment.tenant_id == body.tenant_id,
+            PPUTenantTierAssignment.effective_from <= now,
+            PPUTenantTierAssignment.effective_to > now,
+        )
+        .with_for_update()
     )
-    row = result.fetchone()
-    if row is None:
+    assignment = result.scalar_one_or_none()
+    if assignment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
         )
-    await db.commit()
 
-    exhausted = row.available_balance <= 0
+    consumed = assignment.budget_limit - assignment.available_balance
+    if body.budget < consumed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "budget_exceeded",
+                "message": (
+                    f"Revised budget ({body.budget}) is below cumulative spend "
+                    f"to date ({consumed}) — revision rejected"
+                ),
+            },
+        )
+
+    assignment.budget_limit = body.budget
+    assignment.available_balance = body.budget - consumed
+    assignment.updated_by = user_id
+    await db.commit()
+    await db.refresh(assignment)
+
+    exhausted = assignment.available_balance <= 0
     if auth_service_url:
         # Best-effort: billing stays correct; Redis flag will self-correct on next consumer event.
         await _notify_auth_best_effort(
@@ -170,9 +189,9 @@ async def revise_budget(
 
     return ReviseBudgetResponse(
         tenant_id=body.tenant_id,
-        budget_limit=row.budget_limit,
-        available_balance=row.available_balance,
-        updated_at=row.updated_at,
+        budget_limit=assignment.budget_limit,
+        available_balance=assignment.available_balance,
+        updated_at=assignment.updated_at,
     )
 
 

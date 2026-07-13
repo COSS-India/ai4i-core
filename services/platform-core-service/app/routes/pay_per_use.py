@@ -113,9 +113,11 @@ async def revise_tenant_budget(
 
     Permitted at any time, regardless of whether the current budget is fully
     exhausted or partially consumed, and whether the new value is higher or
-    lower than the current one. Does not change the tenant's Tier, Quota
-    Limit, or Rate Limit. If the revised budget is below cumulative spend to
-    date, further requests are blocked immediately with a budget-exceeded error.
+    lower than the current one — as long as it is not below cumulative spend
+    to date, in which case the revision is rejected with 409 (nothing is
+    written). A value exactly equal to cumulative spend is accepted and
+    blocks the tenant's next request immediately. Does not change the
+    tenant's Tier, Quota Limit, or Rate Limit.
     """
     user_id = request.headers.get("X-User-Id")
     return await tenant_assignment_service.revise_budget(
