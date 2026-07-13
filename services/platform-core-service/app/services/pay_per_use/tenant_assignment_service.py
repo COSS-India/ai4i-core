@@ -128,16 +128,21 @@ async def revise_budget(
     http_client: httpx.AsyncClient,
     user_id: Optional[str] = None,
 ) -> ReviseBudgetResponse:
-    """Set a tenant's Budget to a new absolute value, effective immediately.
+    """Adjust a tenant's Budget by a top-up or top-down amount, effective immediately.
 
-    Unlike top_up_budget (which adds to the budget), this replaces budget_limit
-    outright. Rejected outright (409, nothing written) if the new budget is
+    Unlike an absolute set, the new budget is derived from the current
+    budget_limit +/- body.amount, matching the Adjust Budget UI (single
+    amount field + top-up/top-down toggle) so the caller never has to know
+    or compute the current budget_limit itself.
+
+    Rejected outright (409, nothing written) if the resulting budget would be
     below cumulative spend to date (old budget_limit - old available_balance)
-    — the revision is not applied in that case; the Admin must pick a value
-    at or above cumulative spend, or top up instead. A value exactly equal to
-    cumulative spend is accepted and leaves available_balance at 0, which
-    blocks the tenant's next request immediately. Tier, Quota Limit, and Rate
-    Limit are untouched.
+    — the Admin must pick a smaller top-down amount, or top up instead. A
+    result exactly equal to cumulative spend is accepted and leaves
+    available_balance at 0, which blocks the tenant's next request
+    immediately. A top-down larger than the current budget_limit (negative
+    result) is rejected with 422. Tier, Quota Limit, and Rate Limit are
+    untouched.
     """
     now = datetime.now(timezone.utc)
 
@@ -159,21 +164,35 @@ async def revise_budget(
             detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
         )
 
+    new_budget = (
+        assignment.budget_limit + body.amount
+        if body.action == "top-up"
+        else assignment.budget_limit - body.amount
+    )
+    if new_budget < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Top-down amount ({body.amount}) exceeds the current budget "
+                f"({assignment.budget_limit})"
+            ),
+        )
+
     consumed = assignment.budget_limit - assignment.available_balance
-    if body.budget < consumed:
+    if new_budget < consumed:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error": "budget_exceeded",
                 "message": (
-                    f"Revised budget ({body.budget}) is below cumulative spend "
+                    f"Revised budget ({new_budget}) is below cumulative spend "
                     f"to date ({consumed}) — revision rejected"
                 ),
             },
         )
 
-    assignment.budget_limit = body.budget
-    assignment.available_balance = body.budget - consumed
+    assignment.budget_limit = new_budget
+    assignment.available_balance = new_budget - consumed
     assignment.updated_by = user_id
     await db.commit()
     await db.refresh(assignment)
