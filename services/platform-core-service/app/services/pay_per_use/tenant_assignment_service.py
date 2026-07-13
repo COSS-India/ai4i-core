@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier
 from app.schemas.pay_per_use.tenant_assignment import (
+    ReviseBudgetRequest,
+    ReviseBudgetResponse,
     TierAssignRequest,
     TierAssignResponse,
     TierReassignRequest,
@@ -116,6 +118,61 @@ async def top_up_budget(
         tenant_id=body.tenant_id,
         added=body.amount,
         available_balance=new_balance,
+    )
+
+
+async def revise_budget(
+    body: ReviseBudgetRequest,
+    db: AsyncSession,
+    auth_service_url: str,
+    http_client: httpx.AsyncClient,
+    user_id: Optional[str] = None,
+) -> ReviseBudgetResponse:
+    """Set a tenant's Budget to a new absolute value, effective immediately.
+
+    Unlike top_up_budget (which adds to the budget), this replaces budget_limit
+    outright. available_balance shifts by the same delta so cumulative spend to
+    date (old budget_limit - old available_balance) is preserved rather than
+    reset — a decrease can drive available_balance to zero or below, blocking
+    further requests immediately; an increase can restore headroom. Tier,
+    Quota Limit, and Rate Limit are untouched.
+    """
+    result = await db.execute(
+        text(
+            "UPDATE ppu_tenant_tier_assignments"
+            "   SET available_balance = available_balance + (:new_budget - budget_limit),"
+            "       budget_limit      = :new_budget,"
+            "       updated_by        = :updated_by,"
+            "       updated_at        = now()"
+            " WHERE tenant_id = :tenant_id"
+            "   AND effective_from <= now()"
+            "   AND effective_to   >  now()"
+            " RETURNING available_balance, budget_limit, updated_at"
+        ),
+        {"new_budget": body.budget, "tenant_id": body.tenant_id, "updated_by": user_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No active tier assignment found for tenant '{body.tenant_id}'",
+        )
+    await db.commit()
+
+    exhausted = row.available_balance <= 0
+    if auth_service_url:
+        # Best-effort: billing stays correct; Redis flag will self-correct on next consumer event.
+        await _notify_auth_best_effort(
+            http_client,
+            f"{auth_service_url}/internal/ppu/tenant/{body.tenant_id}/budget-exhausted",
+            json={"exhausted": exhausted},
+        )
+
+    return ReviseBudgetResponse(
+        tenant_id=body.tenant_id,
+        budget_limit=row.budget_limit,
+        available_balance=row.available_balance,
+        updated_at=row.updated_at,
     )
 
 

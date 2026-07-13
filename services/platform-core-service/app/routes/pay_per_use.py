@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_auth_db, get_db
 from app.schemas.common import SuccessResponse
 from app.schemas.pay_per_use.tenant_assignment import (
+    ReviseBudgetRequest,
+    ReviseBudgetResponse,
     TierAssignRequest,
     TierAssignResponse,
     TierReassignRequest,
@@ -98,6 +100,30 @@ async def top_up_tenant_budget(
         db,
         auth_service_url=settings.auth_service_url,
         http_client=request.app.state.http_client,
+    )
+
+
+@router.patch("/tenant/budget", response_model=ReviseBudgetResponse)
+async def revise_tenant_budget(
+    request: Request,
+    body: ReviseBudgetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Revise a tenant's Budget to a new absolute value, effective immediately.
+
+    Permitted at any time, regardless of whether the current budget is fully
+    exhausted or partially consumed, and whether the new value is higher or
+    lower than the current one. Does not change the tenant's Tier, Quota
+    Limit, or Rate Limit. If the revised budget is below cumulative spend to
+    date, further requests are blocked immediately with a budget-exceeded error.
+    """
+    user_id = request.headers.get("X-User-Id")
+    return await tenant_assignment_service.revise_budget(
+        body,
+        db,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+        user_id=user_id,
     )
 
 

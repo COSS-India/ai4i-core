@@ -28,6 +28,18 @@ class TopUpResponse(BaseModel):
     available_balance: Decimal
 
 
+class ReviseBudgetRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant whose budget is being revised")
+    budget: Decimal = Field(..., ge=0, max_digits=15, decimal_places=4, description="New budget limit in INR, replacing the current budget_limit")
+
+
+class ReviseBudgetResponse(BaseModel):
+    tenant_id: str
+    budget_limit: Decimal
+    available_balance: Decimal
+    updated_at: datetime
+
+
 class TierAssignResponse(BaseModel):
     tenant_id: str
     tier_id: str
