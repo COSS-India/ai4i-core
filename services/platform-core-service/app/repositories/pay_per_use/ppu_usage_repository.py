@@ -1,5 +1,5 @@
 """PPU usage repository — reads usage and accrued cost data."""
-from sqlalchemy import func, null, select
+from sqlalchemy import case, func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_management.service import Service
@@ -139,13 +139,37 @@ class PPUUsageRepository:
         return result.first()
 
     async def get_tenant_period_breakdown(self, tenant_id: str, billing_month: str):
-        """Per-inference-name usage and accrued cost for a single tenant and billing month."""
+        """Per-inference-name usage and accrued cost for a single tenant and billing month.
+
+        units_used/cost_accum are summed across all tier rows in the month, since total
+        consumption/spend must include usage recorded before a mid-month tier reassignment.
+        monthly_quota_snap, however, must reflect only the tenant's CURRENT tier — a mid-month
+        reassignment inserts a new (tenant_id, inference_name, billing_month, tier_id) row
+        rather than updating the old one, so a plain MAX()/SUM() across rows would mix the old
+        tier's quota in with the new one.
+        """
+        current_tier_sq = (
+            select(PPUTenantTierAssignment.tier_id)
+            .where(
+                PPUTenantTierAssignment.tenant_id == tenant_id,
+                PPUTenantTierAssignment.effective_from <= func.now(),
+                PPUTenantTierAssignment.effective_to > func.now(),
+            )
+            .order_by(PPUTenantTierAssignment.effective_from.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         stmt = (
             select(
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
                 func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
-                func.max(PPUQuotaUsage.monthly_quota_snap).label("monthly_quota_snap"),
+                func.max(
+                    case(
+                        (PPUQuotaUsage.tier_id == current_tier_sq, PPUQuotaUsage.monthly_quota_snap),
+                        else_=null(),
+                    )
+                ).label("monthly_quota_snap"),
             )
             .where(
                 PPUQuotaUsage.tenant_id == tenant_id,
