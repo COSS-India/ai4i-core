@@ -37,7 +37,7 @@ function tryParseDictLikeString(raw: string): string | null {
   }
 
   try {
-    const jsonLike = trimmed.replaceAll(/'/g, '"');
+    const jsonLike = trimmed.replaceAll("'", '"');
     const parsed = JSON.parse(jsonLike) as unknown;
     const messages = extractMessagesFromValue(parsed);
     return messages[0] ?? null;

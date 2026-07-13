@@ -463,7 +463,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       const found = types.find((t) => t.value === val);
       if (found) return found.label;
     }
-    return val.replaceAll(/_/g, " ").replaceAll(/\b\w/g, (c) => c.toUpperCase());
+    return val.replaceAll("_", " ").replaceAll(/\b\w/g, (c) => c.toUpperCase());
   };
 
   const formatThreshold = (d: { threshold_value?: number | null; threshold_unit?: string | null; promql_expr?: string }) => {
@@ -515,7 +515,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       header: "Subcategory",
       cell: (d) => (
         <Text fontSize="sm">
-          {d.sub_category ? titleCase(d.sub_category.replaceAll(/_/g, " ")) : "—"}
+          {d.sub_category ? titleCase(d.sub_category.replaceAll("_", " ")) : "—"}
         </Text>
       ),
     },
@@ -1289,10 +1289,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               const v = defs.viewItem;
               const signalMetricLabel = v.signal_metric
                 ? (SIGNAL_METRICS_BY_SIGNAL[v.signal ?? ""]?.find((m) => m.value === v.signal_metric)?.label
-                    ?? titleCase(v.signal_metric.replaceAll(/_/g, " ")))
+                    ?? titleCase(v.signal_metric.replaceAll("_", " ")))
                 : "—";
               const signalLabel = v.signal
-                ? titleCase(v.signal.replaceAll(/_/g, " "))
+                ? titleCase(v.signal.replaceAll("_", " "))
                 : v.alert_type ? alertTypeLabel(v.alert_type) : "—";
               const targetLabel = v.service && v.service.length > 0
                 ? v.service.map((s) => TARGET_SERVICES.find((t) => t.value === normalizeServiceValue(s))?.label ?? s).join(", ")
@@ -2906,7 +2906,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 {[
                   ["Category", titleCase(history.viewItem.category || "—")],
                   ["Severity", titleCase(history.viewItem.severity || "—")],
-                  ["Status", (history.viewItem.status || "—").replaceAll(/_/g, " ")],
+                  ["Status", (history.viewItem.status || "—").replaceAll("_", " ")],
                   ["Triggered", history.viewItem.triggered_at ?? "—"],
                   ["Resolved", history.viewItem.resolved_at ?? "—"],
                   ["Receiver", history.viewItem.receiver ?? "—"],
