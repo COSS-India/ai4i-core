@@ -63,6 +63,43 @@ async def _resolve_active_tier(db: AsyncSession, tier_id: str) -> PPUTier:
     return tier
 
 
+async def _lock_active_assignment(
+    db: AsyncSession,
+    tenant_id: str,
+    now: datetime,
+    *,
+    retry_on_miss: bool = False,
+) -> Optional[PPUTenantTierAssignment]:
+    """Lock the tenant's currently-active assignment row, or None if it has none.
+
+    retry_on_miss=True re-queries once (a fresh statement/snapshot) if the
+    first lookup comes up empty. Needed by callers that don't themselves
+    retire the row (e.g. revise_budget): under READ COMMITTED, if this query
+    blocks on a row a concurrent reassign_tier is retiring, EvalPlanQual
+    re-checks the WHERE only against that same row's new (now-retired)
+    values once unblocked — it does not look at reassign_tier's newly
+    inserted replacement row — so the first lookup can spuriously miss an
+    assignment that, moments later, clearly exists. reassign_tier itself
+    doesn't need the retry: it's the one retiring/replacing the row, and
+    nothing else changes effective_to out from under it.
+    """
+    query = (
+        select(PPUTenantTierAssignment)
+        .where(
+            PPUTenantTierAssignment.tenant_id == tenant_id,
+            PPUTenantTierAssignment.effective_from <= now,
+            PPUTenantTierAssignment.effective_to > now,
+        )
+        .with_for_update()
+    )
+    result = await db.execute(query)
+    assignment = result.scalar_one_or_none()
+    if assignment is None and retry_on_miss:
+        result = await db.execute(query)
+        assignment = result.scalar_one_or_none()
+    return assignment
+
+
 def _to_assign_response(
     tenant_id: str, tier: PPUTier, assignment: PPUTenantTierAssignment
 ) -> TierAssignResponse:
@@ -146,32 +183,9 @@ async def revise_budget(
     """
     now = datetime.now(timezone.utc)
 
-    def _lock_query():
-        return (
-            select(PPUTenantTierAssignment)
-            .where(
-                PPUTenantTierAssignment.tenant_id == body.tenant_id,
-                PPUTenantTierAssignment.effective_from <= now,
-                PPUTenantTierAssignment.effective_to > now,
-            )
-            .with_for_update()
-        )
-
-    # Lock the active assignment so a concurrent billing event can't shift
-    # cumulative spend between the compare and the write.
-    result = await db.execute(_lock_query())
-    assignment = result.scalar_one_or_none()
-    if assignment is None:
-        # A concurrent reassign_tier may have just retired this exact row and
-        # inserted its replacement. Under READ COMMITTED, if the query above
-        # blocked on that row's lock, Postgres's EvalPlanQual re-checks the
-        # WHERE only against that same row's new (now-retired) values once
-        # unblocked — it does not look at the newly inserted replacement row,
-        # so this can spuriously come back empty even though a valid active
-        # assignment exists moments later. A fresh query (its own snapshot)
-        # reliably finds the replacement if one now exists.
-        result = await db.execute(_lock_query())
-        assignment = result.scalar_one_or_none()
+    # retry_on_miss guards against a concurrent reassign_tier retiring this
+    # row out from under us — see _lock_active_assignment's docstring.
+    assignment = await _lock_active_assignment(db, body.tenant_id, now, retry_on_miss=True)
     if assignment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -302,16 +316,7 @@ async def reassign_tier(
 
     # Lock the tenant's current active assignment so a concurrent billing event
     # can't read a half-updated row while this transaction is in flight.
-    result = await db.execute(
-        select(PPUTenantTierAssignment)
-        .where(
-            PPUTenantTierAssignment.tenant_id == body.tenant_id,
-            PPUTenantTierAssignment.effective_from <= now,
-            PPUTenantTierAssignment.effective_to > now,
-        )
-        .with_for_update()
-    )
-    current = result.scalar_one_or_none()
+    current = await _lock_active_assignment(db, body.tenant_id, now)
     if current is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
