@@ -51,12 +51,14 @@ async def get_usage_summary(
         Optional[str],
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
+    tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
+    modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_summary(month)
+    return await svc.get_summary(month, tier_id, modelTaskType.lower() if modelTaskType else None)
 
 
 @router.get("/usage-tenants", response_model=TenantUsageListResponse)
@@ -66,7 +68,7 @@ async def get_tenant_usage_list(
         Optional[str],
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
-    tier: Optional[str] = Query(None, description="Filter by tier name."),
+    tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
@@ -74,7 +76,7 @@ async def get_tenant_usage_list(
     _require_admin(request)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_tenant_list(month, tier, modelTaskType.lower() if modelTaskType else None, auth_db)
+    return await svc.get_tenant_list(month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db)
 
 
 @router.get("/usage-tenant", response_model=TenantUsageDetailResponse)

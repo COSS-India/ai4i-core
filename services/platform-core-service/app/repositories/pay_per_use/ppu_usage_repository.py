@@ -12,12 +12,20 @@ class PPUUsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def get_usage_with_pricing(self, billing_month: str):
+    async def get_usage_with_pricing(
+        self,
+        billing_month: str,
+        tier_id: str | None = None,
+        model_task_type: str | None = None,
+    ):
         """
         Aggregates units_used and cost_accum per inference_name for the billing month.
         cost_accum is accrued by the payperuse consumer at the price in effect when
         each request was made, so this reflects actual billed cost rather than a
         current-price projection.
+
+        tier_id filters to tenants currently assigned to that tier; model_task_type
+        filters to a single inference_name.
         """
         stmt = (
             select(
@@ -26,13 +34,25 @@ class PPUUsageRepository:
                 func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
             )
             .where(PPUQuotaUsage.billing_month == billing_month)
-            .group_by(PPUQuotaUsage.inference_name)
         )
+        if model_task_type:
+            stmt = stmt.where(PPUQuotaUsage.inference_name == model_task_type)
+        if tier_id:
+            tier_tenant_sq = (
+                select(PPUTenantTierAssignment.tenant_id)
+                .where(
+                    PPUTenantTierAssignment.tier_id == tier_id,
+                    PPUTenantTierAssignment.effective_from <= func.now(),
+                    PPUTenantTierAssignment.effective_to > func.now(),
+                )
+            )
+            stmt = stmt.where(PPUQuotaUsage.tenant_id.in_(tier_tenant_sq))
+        stmt = stmt.group_by(PPUQuotaUsage.inference_name)
         result = await self._db.execute(stmt)
         return result.all()
 
     async def get_tenant_usages(
-        self, billing_month: str, tier: str | None, model_task_type: str | None
+        self, billing_month: str, tier_id: str | None, model_task_type: str | None
     ):
         """One row per tenant with aggregated period consumption and tier quota."""
         usage_sq = select(
@@ -97,8 +117,8 @@ class PPUUsageRepository:
         )
         if quota_sq is not None:
             stmt = stmt.outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
-        if tier:
-            stmt = stmt.where(PPUTier.name == tier)
+        if tier_id:
+            stmt = stmt.where(PPUTenantTierAssignment.tier_id == tier_id)
 
         result = await self._db.execute(stmt)
         return result.all()

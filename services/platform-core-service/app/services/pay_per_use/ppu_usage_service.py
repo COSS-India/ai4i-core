@@ -25,6 +25,21 @@ _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
 
 
+def _prev_month(billing_month: str) -> str:
+    year, month = (int(part) for part in billing_month.split("-"))
+    month -= 1
+    if month < 1:
+        month, year = 12, year - 1
+    return f"{year:04d}-{month:02d}"
+
+
+def _count_budget_exceeded(tenant_rows) -> int:
+    return sum(
+        1 for row in tenant_rows
+        if float(row.total_cost or 0) >= float(row.budget_limit)
+    )
+
+
 async def _resolve_tenant_names(
     tenant_ids: list[str], auth_db: Optional[AsyncSession]
 ) -> dict[str, str]:
@@ -48,8 +63,13 @@ class PPUUsageService:
     def __init__(self, repo: PPUUsageRepository) -> None:
         self._repo = repo
 
-    async def get_summary(self, billing_month: str) -> UsageSummaryResponse:
-        rows = await self._repo.get_usage_with_pricing(billing_month)
+    async def get_summary(
+        self,
+        billing_month: str,
+        tier_id: str | None = None,
+        model_task_type: str | None = None,
+    ) -> UsageSummaryResponse:
+        rows = await self._repo.get_usage_with_pricing(billing_month, tier_id, model_task_type)
 
         items: list[dict] = []
         for row in rows:
@@ -72,21 +92,38 @@ class PPUUsageService:
             for i in items
         ]
 
+        tenant_rows = await self._repo.get_tenant_usages(billing_month, tier_id, model_task_type)
+        active_tenants = len(tenant_rows)
+        budget_exceeded = _count_budget_exceeded(tenant_rows)
+
+        prev_tenant_rows = await self._repo.get_tenant_usages(
+            _prev_month(billing_month), tier_id, model_task_type
+        )
+        prev_budget_exceeded = _count_budget_exceeded(prev_tenant_rows)
+        budget_exceeded_change_percent = (
+            round((budget_exceeded - prev_budget_exceeded) / prev_budget_exceeded * 100, 1)
+            if prev_budget_exceeded > 0
+            else None
+        )
+
         return UsageSummaryResponse(
             billingPeriod=billing_month,
             totalSpend=round(total_spend, 2),
             currency=_CURRENCY,
+            activeTenants=active_tenants,
+            budgetExceededTenants=budget_exceeded,
+            budgetExceededChangePercent=budget_exceeded_change_percent,
             spendByModelTaskType=spend_items,
         )
 
     async def get_tenant_list(
         self,
         billing_month: str,
-        tier: str | None,
+        tier_id: str | None,
         model_task_type: str | None,
         auth_db: Optional[AsyncSession],
     ) -> TenantUsageListResponse:
-        rows = await self._repo.get_tenant_usages(billing_month, tier, model_task_type)
+        rows = await self._repo.get_tenant_usages(billing_month, tier_id, model_task_type)
         org_map = await _resolve_tenant_names([row.tenant_id for row in rows], auth_db)
         unit_label = _UNIT_LABELS.get(model_task_type, "Units") if model_task_type else "Units"
 
