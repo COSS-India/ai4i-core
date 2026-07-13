@@ -16,6 +16,7 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
+  Portal,
   Select,
   Badge,
   Text,
@@ -526,7 +527,6 @@ const ServicesManagementPage: React.FC = () => {
         hardwareDescription: "Default hardware",
         api_key: "",
         status: "active",
-        billingUnitType: "INR",
         costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
         unitSize: unitSize ? Number(unitSize) : undefined,
         tierIds,
@@ -1531,12 +1531,13 @@ const ServicesManagementPage: React.FC = () => {
                                       *
                                     </Box>
                                   </FormLabel>
-                                  <Menu closeOnSelect={false}>
+                                  <Menu closeOnSelect={false} matchWidth>
                                     <MenuButton
                                       as={Button}
                                       type="button"
                                       rightIcon={<ChevronDownIcon />}
                                       w="full"
+                                      maxW="full"
                                       textAlign="left"
                                       fontWeight="normal"
                                       variant="outline"
@@ -1546,36 +1547,49 @@ const ServicesManagementPage: React.FC = () => {
                                       fontSize="sm"
                                       justifyContent="space-between"
                                     >
-                                      {selectedTiers.length > 0
-                                        ? selectedTiers
-                                            .map(
-                                              (id) =>
-                                                availableTiers.find(
-                                                  (t) => t.id === id,
-                                                )?.name ?? id,
-                                            )
-                                            .join(", ")
-                                        : "Select Tiers"}
+                                      <Text
+                                        as="span"
+                                        isTruncated
+                                        display="block"
+                                        minW={0}
+                                      >
+                                        {selectedTiers.length > 0
+                                          ? selectedTiers
+                                              .map(
+                                                (id) =>
+                                                  availableTiers.find(
+                                                    (t) => t.id === id,
+                                                  )?.name ?? id,
+                                              )
+                                              .join(", ")
+                                          : "Select Tiers"}
+                                      </Text>
                                     </MenuButton>
-                                    <MenuList>
-                                      {availableTiers.map((tier) => (
-                                        <MenuItem
-                                          key={tier.id}
-                                          onClick={() => toggleTier(tier.id)}
-                                          closeOnSelect={false}
-                                        >
-                                          <Checkbox
-                                            isChecked={selectedTiers.includes(
-                                              tier.id,
-                                            )}
-                                            onChange={() => toggleTier(tier.id)}
-                                            onClick={(e) => e.stopPropagation()}
-                                            mr={2}
-                                          />
-                                          {tier.name}
-                                        </MenuItem>
-                                      ))}
-                                    </MenuList>
+                                    <Portal>
+                                      <MenuList maxH="280px" overflowY="auto">
+                                        {availableTiers.map((tier) => (
+                                          <MenuItem
+                                            key={tier.id}
+                                            onClick={() => toggleTier(tier.id)}
+                                            closeOnSelect={false}
+                                          >
+                                            <Checkbox
+                                              isChecked={selectedTiers.includes(
+                                                tier.id,
+                                              )}
+                                              onChange={() =>
+                                                toggleTier(tier.id)
+                                              }
+                                              onClick={(e) =>
+                                                e.stopPropagation()
+                                              }
+                                              mr={2}
+                                            />
+                                            {tier.name}
+                                          </MenuItem>
+                                        ))}
+                                      </MenuList>
+                                    </Portal>
                                   </Menu>
                                 </FormControl>
                               </SimpleGrid>
