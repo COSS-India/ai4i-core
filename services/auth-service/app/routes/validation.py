@@ -10,13 +10,19 @@ Two-step flow:
 """
 
 import base64
-import binascii
 import json
 import logging
 
-from ai4i_core.ppu import get_inference_types
+import binascii
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
+
+from ai4i_core.bootstrap import get_db
+from ai4i_core.ppu import get_inference_types
+from app.dependencies.services import get_api_key_service
+from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.tenant_repository import TenantRepository
+from app.repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +218,7 @@ async def validate_token(
     request: Request,
     response: Response,
     redis=Depends(get_redis),
+    api_key_svc=Depends(get_api_key_service),
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
 
@@ -228,5 +235,4 @@ async def validate_token(
         return await _validate_jwt(token, request, response, cache_svc)
 
     # API key path — validates against Redis cache only, no DB needed
-    api_key_svc = APIKeyService(None, cache_svc)
     return await _validate_api_key(token, request, response, api_key_svc)

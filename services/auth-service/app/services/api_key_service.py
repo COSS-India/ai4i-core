@@ -17,11 +17,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_types
-
 from app.core.config import settings
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
@@ -30,7 +29,7 @@ from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
-from app.services.cache_service import CacheService
+from app.services.cache_service import CacheService, REDIS_API_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +368,10 @@ class APIKeyService:
         logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
         return raw_key, api_key
 
+    async def _get_api_key_from_db(self, token: str) -> Optional[APIKey]:
+        return await self._repo.get_by_api_key_if_valid(token)
+
+
     async def validate_api_key(self, token: str) -> dict:
         """
         Validate a hex API key. Redis-only — zero DB calls.
@@ -379,7 +382,14 @@ class APIKeyService:
 
         cached = await self._cache.get_api_key_cache(token)
         if cached is None:
-            raise InvalidAPIKeyError()
+            # Check in DB
+            api_key_db = await self._get_api_key_from_db(token)
+            if not api_key_db:
+                raise InvalidAPIKeyError()
+            # Set in cache
+            # await self._refresh_redis_cache(api_key_db,)
+            tenant = api_key_db.user.tenant
+            await self.refresh_keys_cache_for_tenant(tenant.id)
 
         return {
             **cached,
