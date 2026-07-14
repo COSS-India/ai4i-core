@@ -173,6 +173,40 @@ class TestGetTenantList:
         assert item.tierBreakdown[0].taskTypes[0].remaining == 0.0
 
     @pytest.mark.asyncio
+    async def test_zero_quota_with_usage_shows_fully_exhausted(self):
+        """A 0 quota is a deliberate 'blocked for this cycle' setting, not missing data.
+        Any usage against it must show percentage=100, not 0 (which `if quota` would
+        give since 0.0 is falsy)."""
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(total_units=5.0, quota_snap=0.0),
+            ],
+            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
+
+        usage = result.data[0].usage
+        assert usage.quotaLimit == 0.0
+        assert usage.remaining == 0.0
+        assert usage.percentage == 100.0
+
+    @pytest.mark.asyncio
+    async def test_zero_quota_with_no_usage_shows_zero_percent(self):
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(total_units=0.0, quota_snap=0.0),
+            ],
+            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
+
+        assert result.data[0].usage.percentage == 0.0
+
+    @pytest.mark.asyncio
     async def test_multi_tier_breakdown_ordered_oldest_first(self):
         """A tenant reassigned mid-period shows both tiers, oldest tier first, and spend
         is the sum across every tier they held that month."""

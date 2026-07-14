@@ -150,13 +150,23 @@ def _build_hierarchical_item(
             if current_tier_row is not None and current_tier_row.quota_snap is not None
             else None
         )
+        if quota is None:
+            percentage = 0.0
+        elif quota == 0:
+            # A 0 quota is a deliberate "blocked for this cycle" tier setting (see
+            # tier_service.py), not missing data — any usage against it is fully
+            # exhausted, not 0% used.
+            percentage = 100.0 if total_consumed > 0 else 0.0
+        else:
+            percentage = round(total_consumed / quota * 100, 1)
+
         usage_count = TenantUsageCount(
             taskTypeCount=len(distinct_task_types),
             unit=_UNIT_LABELS.get(effective_task_type, effective_task_type),
             quotaLimit=round(quota, 2) if quota is not None else None,
             consumed=round(total_consumed, 2),
             remaining=round(max(0.0, quota - total_consumed), 2) if quota is not None else None,
-            percentage=round(total_consumed / quota * 100, 1) if quota else 0.0,
+            percentage=percentage,
         )
 
     return TenantHierarchicalItem(
