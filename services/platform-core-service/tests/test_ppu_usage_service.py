@@ -155,6 +155,24 @@ class TestGetTenantList:
         assert item.tierBreakdown[0].taskTypes[0].percentage == 100.0
 
     @pytest.mark.asyncio
+    async def test_remaining_quota_clamped_at_zero_when_overused(self):
+        """remaining must never go negative, even when consumed exceeds the quota —
+        both on the flat `usage` block and on each tierBreakdown taskType entry."""
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(total_units=150.0, quota_snap=100.0),
+            ],
+            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
+
+        item = result.data[0]
+        assert item.usage.remaining == 0.0
+        assert item.tierBreakdown[0].taskTypes[0].remaining == 0.0
+
+    @pytest.mark.asyncio
     async def test_multi_tier_breakdown_ordered_oldest_first(self):
         """A tenant reassigned mid-period shows both tiers, oldest tier first, and spend
         is the sum across every tier they held that month."""

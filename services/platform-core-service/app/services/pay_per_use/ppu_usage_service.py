@@ -93,7 +93,7 @@ def _build_hierarchical_item(
             units = float(row.total_units or 0)
             spend = round(float(row.total_cost or 0), 2)
             quota = float(row.quota_snap) if row.quota_snap is not None else None
-            remaining = round(quota - units, 2) if quota is not None else None
+            remaining = round(max(0.0, quota - units), 2) if quota is not None else None
             raw_task_types.append({
                 "taskType": row.inference_name,
                 "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
@@ -155,7 +155,7 @@ def _build_hierarchical_item(
             unit=_UNIT_LABELS.get(effective_task_type, effective_task_type),
             quotaLimit=round(quota, 2) if quota is not None else None,
             consumed=round(total_consumed, 2),
-            remaining=round(quota - total_consumed, 2) if quota is not None else None,
+            remaining=round(max(0.0, quota - total_consumed), 2) if quota is not None else None,
             percentage=round(total_consumed / quota * 100, 1) if quota else 0.0,
         )
 
