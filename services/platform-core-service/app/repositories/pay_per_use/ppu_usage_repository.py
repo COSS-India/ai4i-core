@@ -29,10 +29,13 @@ class PPUUsageRepository:
         tier_id: str | None = None,
         tenant_id: str | None = None,
     ):
-        """One row per tenant: whichever tier assignment was in effect at the end of
-        billing_month (the assignment with the latest effective_from at or before that
-        instant). This may differ from the tenant's assignment as of "now" when the
-        tenant has since moved to a different tier.
+        """One row per tenant: the tier assignment whose [effective_from, effective_to)
+        window actually covers the end of billing_month. This may differ from the
+        tenant's assignment as of "now" when the tenant has since moved to a different
+        tier. A tenant with no assignment covering that instant — e.g. the current,
+        still-in-progress month before any assignment has been made, or a gap between
+        an expired assignment and the next one — is excluded entirely rather than
+        surfacing a lapsed or not-yet-started assignment as their "current" tier.
         """
         end_instant = _end_of_month(billing_month)
         ranked = (
@@ -50,7 +53,10 @@ class PPUUsageRepository:
                 .label("rn"),
             )
             .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
-            .where(PPUTenantTierAssignment.effective_from <= end_instant)
+            .where(
+                PPUTenantTierAssignment.effective_from <= end_instant,
+                PPUTenantTierAssignment.effective_to > end_instant,
+            )
         )
         if tenant_id:
             ranked = ranked.where(PPUTenantTierAssignment.tenant_id == tenant_id)
