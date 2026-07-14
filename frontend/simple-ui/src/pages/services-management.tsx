@@ -592,6 +592,16 @@ const ServicesManagementPage: React.FC = () => {
 
   const unitType = unitByTaskType[formData.task_type || ""] || "";
 
+  const viewServiceTaskType =
+    selectedService?.model?.task?.type ||
+    selectedService?.task?.type ||
+    selectedService?.task_type ||
+    "";
+  const viewServiceUnitType =
+    unitByTaskType[viewServiceTaskType] ||
+    selectedService?.billingUnitType ||
+    "";
+
   const filteredModelsForDropdown = formData.task_type
     ? modelsForDropdown.filter((model) => {
         const modelTaskType =
@@ -1993,6 +2003,97 @@ const ServicesManagementPage: React.FC = () => {
                                   </Text>
                                 </Box>
                               </SimpleGrid>
+
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
+                                <Box>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
+                                    Unit Type
+                                  </Text>
+                                  <Text fontSize="md">
+                                    {viewServiceUnitType || "N/A"}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
+                                    Price per Unit
+                                  </Text>
+                                  <Text fontSize="md">
+                                    {selectedService.costPerUnit ?? "N/A"}
+                                  </Text>
+                                </Box>
+                              </SimpleGrid>
+
+                              <SimpleGrid
+                                columns={{ base: 1, md: 2 }}
+                                spacing={4}
+                              >
+                                <Box>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
+                                    Currency
+                                  </Text>
+                                  <Text fontSize="md">INR</Text>
+                                </Box>
+                                <Box>
+                                  <Text
+                                    fontWeight="bold"
+                                    color="gray.600"
+                                    fontSize="sm"
+                                    mb={1}
+                                  >
+                                    Unit Size
+                                  </Text>
+                                  <Text fontSize="md">
+                                    {selectedService.unitSize ?? "N/A"}
+                                  </Text>
+                                </Box>
+                              </SimpleGrid>
+
+                              <Box>
+                                <Text
+                                  fontWeight="bold"
+                                  color="gray.600"
+                                  fontSize="sm"
+                                  mb={1}
+                                >
+                                  Tier
+                                </Text>
+                                {selectedService.tierNames &&
+                                selectedService.tierNames.length > 0 ? (
+                                  <HStack spacing={1} flexWrap="wrap">
+                                    {selectedService.tierNames.map((name) => (
+                                      <Badge
+                                        key={name}
+                                        colorScheme="gray"
+                                        fontSize="xs"
+                                        px={2}
+                                        py={0.5}
+                                      >
+                                        {name}
+                                      </Badge>
+                                    ))}
+                                  </HStack>
+                                ) : (
+                                  <Text fontSize="md">N/A</Text>
+                                )}
+                              </Box>
 
                               {selectedService.created_at && (
                                 <Box>

@@ -648,6 +648,10 @@ export default function TenantManagementTab({
   // ── Tenant detail view ──────────────────────────────────────────────────
   function renderTenantDetail() {
     const t = tm.tenantDetailView!;
+    const tierAssignment =
+      tenantTierAssignments.find(
+        (a) => String(a.tenant_id) === String(t.tenant_id),
+      ) ?? null;
     return (
       <Card mt={4}>
         <CardHeader>
@@ -772,6 +776,18 @@ export default function TenantManagementTab({
                   <Box>
                     <Text fontWeight="semibold">Created</Text>
                     <Text>{fmtDate(t.created_at)}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold">Tier Assigned</Text>
+                    <Text>{dash(tierAssignment?.tier_name)}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold">Budget</Text>
+                    <Text>
+                      {tierAssignment
+                        ? `₹${Number(tierAssignment.budget_limit).toLocaleString()}`
+                        : "—"}
+                    </Text>
                   </Box>
                 </SimpleGrid>
               </TabPanel>
