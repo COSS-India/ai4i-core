@@ -362,8 +362,12 @@ class PPUUsageService:
         for row in usage_rows:
             usage_by_tenant.setdefault(row.tenant_id, []).append(row)
 
+        # tenant_id as a secondary key breaks spend ties deterministically — without it,
+        # tenants tied on spend (e.g. many at 0) could sort differently between two
+        # sequential paginated calls, duplicating a tenant across pages or dropping one
+        # entirely, even with the repository's own ORDER BY as a first line of defense.
         assignments.sort(
-            key=lambda a: _tenant_spend_from_rows(usage_by_tenant.get(a.tenant_id, [])),
+            key=lambda a: (_tenant_spend_from_rows(usage_by_tenant.get(a.tenant_id, [])), a.tenant_id),
             reverse=(sort_order != "asc"),
         )
         page_assignments = assignments[offset : offset + limit]

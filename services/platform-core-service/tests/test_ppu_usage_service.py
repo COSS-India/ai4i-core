@@ -306,6 +306,27 @@ class TestGetTenantList:
         repo.get_tier_first_seen.assert_called_once_with(["t2"])
 
     @pytest.mark.asyncio
+    async def test_tied_spend_breaks_deterministically_by_tenant_id(self):
+        """Tenants tied on spend (e.g. all at 0) must sort by tenant_id as a tiebreaker,
+        so identical input always produces identical page contents — otherwise two
+        sequential paginated calls could duplicate or drop a tied tenant across pages."""
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[
+                _assignment(tenant_id="t3"),
+                _assignment(tenant_id="t1"),
+                _assignment(tenant_id="t2"),
+            ],
+            get_tenant_tier_usage_breakdown=[],  # every tenant ties at spend=0
+            get_tier_first_seen=[],
+        )
+        svc = PPUUsageService(repo)
+
+        result_a = await svc.get_tenant_list("2026-06", None, None, auth_db=None, limit=2, offset=0)
+        result_b = await svc.get_tenant_list("2026-06", None, None, auth_db=None, limit=2, offset=0)
+
+        assert [i.tenantId for i in result_a.data] == [i.tenantId for i in result_b.data]
+
+    @pytest.mark.asyncio
     async def test_sort_order_desc_by_spend(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[

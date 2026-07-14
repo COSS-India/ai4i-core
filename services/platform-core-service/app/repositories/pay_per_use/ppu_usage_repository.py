@@ -63,6 +63,10 @@ class PPUUsageRepository:
         stmt = select(ranked).where(ranked.c.rn == 1)
         if tier_id:
             stmt = stmt.where(ranked.c.tier_id == tier_id)
+        # Deterministic order: without this, ties (e.g. many tenants at spend=0) can come
+        # back in a different order on every call, which breaks get_tenant_list's
+        # pagination (same tenant duplicating across pages, or never appearing on any).
+        stmt = stmt.order_by(ranked.c.tenant_id)
         result = await self._db.execute(stmt)
         return result.all()
 
