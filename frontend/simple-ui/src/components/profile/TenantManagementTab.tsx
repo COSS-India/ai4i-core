@@ -60,6 +60,7 @@ import {
   fetchTenantTiers,
   reassignTenantTier,
   type TenantTierAssignment,
+  adjustTenantBudget,
 } from "../../services/tierManagementService";
 import {
   FiArrowLeft,
@@ -193,8 +194,14 @@ export default function TenantManagementTab({
     useState<TenantTierAssignment | null>(null);
   const [manageTenant, setManageTenant] = useState<TenantView | null>(null);
   const [manageTierId, setManageTierId] = useState("");
+  const [originalTierId, setOriginalTierId] = useState("");
   const [manageBudget, setManageBudget] = useState(0);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
+  const [budgetAction, setBudgetAction] = useState<"topup" | "topdown">(
+    "topup",
+  );
+  const [isEditingTier, setIsEditingTier] = useState(false);
+  const [budgetAmount, setBudgetAmount] = useState("");
   const {
     isOpen: isViewTierOpen,
     onOpen: onViewTierOpen,
@@ -206,6 +213,13 @@ export default function TenantManagementTab({
     onViewTierClose();
     setViewTierTenant(null);
     setManageTenant(null);
+
+    setManageTierId("");
+    setOriginalTierId("");
+    setIsEditingTier(false);
+
+    setBudgetAmount("");
+    setBudgetAction("topup");
   };
 
   const handleSaveManagePlan = async () => {
@@ -304,6 +318,54 @@ export default function TenantManagementTab({
     } finally {
       setIsAssigning(false);
     }
+  };
+
+  const handleApplyBudget = async () => {
+    if (!viewTierTenant) return;
+
+    const amount = Number(budgetAmount);
+
+    if (amount <= 0) return;
+
+    try {
+      const res = await adjustTenantBudget({
+        tenant_id: String(viewTierTenant.tenant_id),
+        action: budgetAction === "topup" ? "top-up" : "top-down",
+        amount,
+      });
+
+      setManageBudget(Number(res.budget_limit));
+      setBudgetAmount("");
+
+      toast({
+        title: "Budget updated",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ["tenant-tiers"],
+      });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+
+      toast({
+        title: "Failed to update budget",
+        description:
+          typeof detail === "object"
+            ? detail.message
+            : (detail ?? "Something went wrong."),
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    }
+  };
+
+  const handleCancelTierEdit = () => {
+    setManageTierId(originalTierId);
+    setIsEditingTier(false);
   };
 
   // Initial fetch when this tab becomes active.
@@ -913,12 +975,19 @@ export default function TenantManagementTab({
                   ) ?? null;
                 setViewTierTenant(assignment);
                 setManageTenant(t);
-                setManageTierId(assignment?.tier_id ?? "");
+
+                const tierId = assignment?.tier_id ?? "";
+
+                setManageTierId(tierId);
+                setOriginalTierId(tierId);
+                setIsEditingTier(false);
+
                 setManageBudget(
                   assignment
                     ? Number.parseFloat(assignment.budget_limit) || 0
                     : 0,
                 );
+
                 onViewTierOpen();
               }}
             />
@@ -1738,6 +1807,13 @@ export default function TenantManagementTab({
 
   function renderViewTierModal() {
     const a = viewTierTenant;
+    const hasTierChanged = manageTierId !== originalTierId;
+
+    const showSaveButton = isEditingTier && hasTierChanged;
+
+    const selectedTierName =
+      tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
+
     return (
       <Drawer
         isOpen={isViewTierOpen}
@@ -1760,21 +1836,43 @@ export default function TenantManagementTab({
             {a ? (
               <VStack align="stretch" spacing={5}>
                 <FormControl>
-                  <FormLabel fontWeight="semibold" fontSize="sm">
-                    Tier
-                  </FormLabel>
-                  <Select
-                    size="sm"
-                    value={manageTierId}
-                    onChange={(e) => setManageTierId(e.target.value)}
-                    isDisabled={isSavingPlan}
-                  >
-                    {tierOptions.map((tOpt) => (
-                      <option key={tOpt.id} value={tOpt.id}>
-                        {tOpt.name}
-                      </option>
-                    ))}
-                  </Select>
+                  <FormLabel>Tier</FormLabel>
+                  {!isEditingTier ? (
+                    <HStack>
+                      <Input
+                        value={selectedTierName}
+                        isReadOnly
+                        bg="gray.50"
+                        flex={1}
+                      />
+
+                      <Button size="sm" onClick={() => setIsEditingTier(true)}>
+                        Change
+                      </Button>
+                    </HStack>
+                  ) : (
+                    <HStack align="flex-start">
+                      <Select
+                        flex={1}
+                        value={manageTierId}
+                        onChange={(e) => setManageTierId(e.target.value)}
+                      >
+                        {tierOptions.map((tier) => (
+                          <option key={tier.id} value={tier.id}>
+                            {tier.name}
+                          </option>
+                        ))}
+                      </Select>
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleCancelTierEdit}
+                      >
+                        Cancel
+                      </Button>
+                    </HStack>
+                  )}
                 </FormControl>
 
                 <FormControl>
@@ -1789,6 +1887,68 @@ export default function TenantManagementTab({
                     cursor="default"
                   />
                 </FormControl>
+                <FormControl>
+                  <Box
+                    borderWidth="1px"
+                    borderRadius="md"
+                    borderColor="gray.200"
+                    p={3}
+                    bg="gray.50"
+                  >
+                    <HStack justify="space-between" mb={3}>
+                      <Text fontSize="sm" fontWeight="medium">
+                        Adjust Budget
+                      </Text>
+
+                      <HStack spacing={0}>
+                        <Button
+                          size="xs"
+                          variant={
+                            budgetAction === "topup" ? "solid" : "outline"
+                          }
+                          colorScheme="green"
+                          borderRightRadius={0}
+                          onClick={() => setBudgetAction("topup")}
+                        >
+                          + Top-up
+                        </Button>
+
+                        <Button
+                          size="xs"
+                          variant={
+                            budgetAction === "topdown" ? "solid" : "outline"
+                          }
+                          colorScheme="gray"
+                          borderLeftRadius={0}
+                          onClick={() => setBudgetAction("topdown")}
+                        >
+                          - Top-down
+                        </Button>
+                      </HStack>
+                    </HStack>
+
+                    <HStack>
+                      <Input
+                        placeholder="Amount in ₹"
+                        type="number"
+                        value={budgetAmount}
+                        onChange={(e) => setBudgetAmount(e.target.value)}
+                      />
+
+                      <Button
+                        colorScheme="blue"
+                        onClick={handleApplyBudget}
+                        isDisabled={!budgetAmount}
+                      >
+                        Apply
+                      </Button>
+                    </HStack>
+                  </Box>
+
+                  <FormHelperText mt={3}>
+                    Tier and Budget changes apply immediately.
+                  </FormHelperText>
+                </FormControl>
               </VStack>
             ) : (
               <Text>No tier data available.</Text>
@@ -1799,15 +1959,17 @@ export default function TenantManagementTab({
             borderTopWidth="1px"
             borderColor="gray.200"
           >
-            <Button
-              colorScheme="blue"
-              onClick={handleSaveManagePlan}
-              isLoading={isSavingPlan}
-              loadingText="Saving..."
-              isDisabled={!manageTierId}
-            >
-              Save Changes
-            </Button>
+            {showSaveButton && (
+              <Button
+                colorScheme="blue"
+                onClick={handleSaveManagePlan}
+                isLoading={isSavingPlan}
+                loadingText="Saving..."
+                isDisabled={!manageTierId}
+              >
+                Save Changes
+              </Button>
+            )}
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
