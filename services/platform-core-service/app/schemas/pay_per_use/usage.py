@@ -22,34 +22,6 @@ class UsageSummaryResponse(BaseModel):
     spendByModelTaskType: list[SpendItem]
 
 
-class TenantUsageBreakdown(BaseModel):
-    modelTaskType: str
-    consumptionToDate: float
-    unit: str
-    spend: float
-    percentage: float
-    quotaLimit: Optional[float] = None
-    remainingQuota: Optional[float] = None
-
-
-class TenantUsageItem(BaseModel):
-    tenantId: str
-    tenantName: str
-    tier: str
-    budgetLimit: float
-    spendToDate: float
-    remainingBudget: float
-    quotaLimit: Optional[float] = None
-    quotaUnit: str
-    consumptionToDate: Optional[float] = None
-    remainingQuota: Optional[float] = None
-    currency: str
-
-
-class TenantUsageDetailResponse(TenantUsageItem):
-    breakdown: list[TenantUsageBreakdown]
-
-
 class TaskTypeUsage(BaseModel):
     taskType: str
     unit: str

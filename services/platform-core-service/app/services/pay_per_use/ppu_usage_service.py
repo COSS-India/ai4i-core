@@ -18,9 +18,7 @@ from app.schemas.pay_per_use.usage import (
     TenantBudget,
     TenantHierarchicalItem,
     TenantHierarchicalListResponse,
-    TenantUsageBreakdown,
     TenantUsageCount,
-    TenantUsageDetailResponse,
     TierUsageBreakdown,
     UsageSummaryResponse,
 )
@@ -41,6 +39,83 @@ def _count_budget_exceeded(tenant_rows) -> int:
     return sum(
         1 for row in tenant_rows
         if float(row.total_cost or 0) >= float(row.budget_limit)
+    )
+
+
+def _group_usage_by_tier(usage_rows) -> dict[str, dict]:
+    """Groups flat (tier_id, inference_name) usage rows into {tier_key: {tierName, rows}}."""
+    groups: dict[str, dict] = {}
+    for row in usage_rows:
+        tier_key = str(row.tier_id) if row.tier_id is not None else "unassigned"
+        bucket = groups.setdefault(tier_key, {"tierName": row.tier_name or "Unassigned", "rows": []})
+        bucket["rows"].append(row)
+    return groups
+
+
+def _build_hierarchical_item(assignment, tenant_name: str, usage_rows) -> TenantHierarchicalItem:
+    """Builds one tenant's hierarchical usage item from their end-of-period tier assignment
+    plus their flat per-(tier, inference_name) usage rows for the billing month.
+    """
+    tier_groups = _group_usage_by_tier(usage_rows)
+
+    tier_breakdown: list[TierUsageBreakdown] = []
+    distinct_task_types: set[str] = set()
+    tenant_spend = 0.0
+
+    for tier_key, bucket in tier_groups.items():
+        raw_task_types: list[dict] = []
+        tier_spend = 0.0
+        for row in bucket["rows"]:
+            units = float(row.total_units or 0)
+            spend = round(float(row.total_cost or 0), 2)
+            quota = float(row.quota_snap) if row.quota_snap is not None else None
+            remaining = round(quota - units, 2) if quota is not None else None
+            raw_task_types.append({
+                "taskType": row.inference_name,
+                "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
+                "quotaLimit": quota,
+                "consumed": units,
+                "remaining": remaining,
+                "spend": spend,
+            })
+            tier_spend += spend
+            distinct_task_types.add(row.inference_name)
+
+        task_types = [
+            TaskTypeUsage(
+                **t,
+                percentage=round(t["spend"] / tier_spend * 100, 1) if tier_spend > 0 else 0.0,
+            )
+            for t in raw_task_types
+        ]
+        tier_breakdown.append(TierUsageBreakdown(
+            tierId=tier_key,
+            tierName=bucket["tierName"],
+            spend=round(tier_spend, 2),
+            taskTypes=task_types,
+        ))
+        tenant_spend += tier_spend
+
+    tenant_spend = round(tenant_spend, 2)
+    budget_limit = round(float(assignment.budget_limit), 2)
+    remaining_budget = round(float(assignment.available_balance), 2)
+    percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else 0.0
+
+    return TenantHierarchicalItem(
+        tenantId=assignment.tenant_id,
+        tenantName=tenant_name,
+        tier=assignment.tier_name,
+        tierId=str(assignment.tier_id),
+        currency=_CURRENCY,
+        spend=tenant_spend,
+        budget=TenantBudget(
+            limit=budget_limit,
+            spent=tenant_spend,
+            remaining=remaining_budget,
+            percentageUsed=percentage_used,
+        ),
+        usage=TenantUsageCount(taskTypeCount=len(distinct_task_types)),
+        tierBreakdown=tier_breakdown,
     )
 
 
@@ -145,80 +220,19 @@ class PPUUsageService:
         )
         org_map = await _resolve_tenant_names(tenant_ids, auth_db)
 
-        usage_by_tenant: dict[str, dict] = {}
+        usage_by_tenant: dict[str, list] = {}
         for row in usage_rows:
-            tier_key = str(row.tier_id) if row.tier_id is not None else "unassigned"
-            tenant_bucket = usage_by_tenant.setdefault(row.tenant_id, {})
-            tier_bucket = tenant_bucket.setdefault(
-                tier_key, {"tierName": row.tier_name or "Unassigned", "rows": []}
-            )
-            tier_bucket["rows"].append(row)
+            usage_by_tenant.setdefault(row.tenant_id, []).append(row)
 
         items: list[TenantHierarchicalItem] = []
         for assignment in assignments:
-            tenant_id = assignment.tenant_id
-            tier_groups = usage_by_tenant.get(tenant_id)
-            if model_task_type and not tier_groups:
+            tenant_usage_rows = usage_by_tenant.get(assignment.tenant_id)
+            if model_task_type and not tenant_usage_rows:
                 continue  # no usage of the filtered task type this period — excluded entirely
-
-            tier_breakdown: list[TierUsageBreakdown] = []
-            distinct_task_types: set[str] = set()
-            tenant_spend = 0.0
-
-            for tier_key, bucket in (tier_groups or {}).items():
-                raw_task_types: list[dict] = []
-                tier_spend = 0.0
-                for row in bucket["rows"]:
-                    units = float(row.total_units or 0)
-                    spend = round(float(row.total_cost or 0), 2)
-                    quota = float(row.quota_snap) if row.quota_snap is not None else None
-                    remaining = round(quota - units, 2) if quota is not None else None
-                    raw_task_types.append({
-                        "taskType": row.inference_name,
-                        "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
-                        "quotaLimit": quota,
-                        "consumed": units,
-                        "remaining": remaining,
-                        "spend": spend,
-                    })
-                    tier_spend += spend
-                    distinct_task_types.add(row.inference_name)
-
-                task_types = [
-                    TaskTypeUsage(
-                        **t,
-                        percentage=round(t["spend"] / tier_spend * 100, 1) if tier_spend > 0 else 0.0,
-                    )
-                    for t in raw_task_types
-                ]
-                tier_breakdown.append(TierUsageBreakdown(
-                    tierId=tier_key,
-                    tierName=bucket["tierName"],
-                    spend=round(tier_spend, 2),
-                    taskTypes=task_types,
-                ))
-                tenant_spend += tier_spend
-
-            tenant_spend = round(tenant_spend, 2)
-            budget_limit = round(float(assignment.budget_limit), 2)
-            remaining_budget = round(float(assignment.available_balance), 2)
-            percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else 0.0
-
-            items.append(TenantHierarchicalItem(
-                tenantId=tenant_id,
-                tenantName=org_map.get(tenant_id, tenant_id),
-                tier=assignment.tier_name,
-                tierId=str(assignment.tier_id),
-                currency=_CURRENCY,
-                spend=tenant_spend,
-                budget=TenantBudget(
-                    limit=budget_limit,
-                    spent=tenant_spend,
-                    remaining=remaining_budget,
-                    percentageUsed=percentage_used,
-                ),
-                usage=TenantUsageCount(taskTypeCount=len(distinct_task_types)),
-                tierBreakdown=tier_breakdown,
+            items.append(_build_hierarchical_item(
+                assignment,
+                org_map.get(assignment.tenant_id, assignment.tenant_id),
+                tenant_usage_rows or [],
             ))
 
         items.sort(key=lambda item: item.spend, reverse=(sort_order != "asc"))
@@ -229,84 +243,21 @@ class PPUUsageService:
         tenant_id: str,
         billing_month: str,
         auth_db: Optional[AsyncSession],
-    ) -> TenantUsageDetailResponse:
-        assignment = await self._repo.get_tenant_assignment(tenant_id)
-        if not assignment:
+    ) -> TenantHierarchicalItem:
+        """Same hierarchical shape as get_tenant_list, scoped to a single tenant — the
+        tenant's tier/budget reflect whichever assignment was in effect at the END of
+        billing_month, and tierBreakdown covers every tier they had usage under that month.
+        """
+        assignments = await self._repo.get_tenant_tier_as_of_period_end(
+            billing_month, tenant_id=tenant_id
+        )
+        if not assignments:
             raise EntityNotFoundError(f"Tenant {tenant_id}")
+        assignment = assignments[0]
 
-        breakdown_rows = await self._repo.get_tenant_period_breakdown(tenant_id, billing_month)
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
         org_map = await _resolve_tenant_names([tenant_id], auth_db)
 
-        breakdown: list[TenantUsageBreakdown] = []
-        total_consumption = 0.0
-        inference_types: set[str] = set()
-
-        raw: list[dict] = []
-        for row in breakdown_rows:
-            units = float(row.total_units or 0)
-            total_consumption += units
-            inference_types.add(row.inference_name)
-
-            spend = round(float(row.total_cost or 0), 2)
-
-            snap = row.monthly_quota_snap
-            if snap is not None:
-                row_quota_limit = float(snap)
-                row_remaining = max(0, row_quota_limit - units)
-            else:
-                row_quota_limit = None
-                row_remaining = None
-
-            raw.append(dict(
-                modelTaskType=row.inference_name,
-                consumptionToDate=units,
-                unit=_UNIT_LABELS.get(row.inference_name, row.inference_name),
-                spend=spend,
-                quotaLimit=row_quota_limit,
-                remainingQuota=row_remaining,
-            ))
-
-        total_spend = sum(r["spend"] for r in raw)
-        breakdown = [
-            TenantUsageBreakdown(
-                **r,
-                percentage=round(r["spend"] / total_spend * 100, 1) if total_spend > 0 else 0.0,
-            )
-            for r in raw
-        ]
-
-        # Use the specific unit label only when all usage is from one inference type;
-        # fall back to "Units" when the tenant uses multiple service types.
-        if len(inference_types) == 1:
-            quota_unit = _UNIT_LABELS.get(next(iter(inference_types)), "Units")
-        else:
-            quota_unit = "Units"
-
-        budget_limit = float(assignment.budget_limit)
-        remaining_budget = float(assignment.available_balance)
-        if len(inference_types) == 1:
-            # Use the per-type quota snapshot from the breakdown row.
-            # assignment.total_quota is SUM(monthly_quota) across ALL inference types
-            # in the tier, which is wrong when the tier has quotas for multiple types
-            # (e.g. LLM 1000 + ASR 500 → shows 1500 instead of 1000 for an LLM-only tenant).
-            quota_display = raw[0].get("quotaLimit")
-        else:
-            quota_display = None
-
-        multi_type = len(inference_types) > 1
-        return TenantUsageDetailResponse(
-            tenantId=tenant_id,
-            tenantName=org_map.get(tenant_id, tenant_id),
-            tier=assignment.tier_name,
-            budgetLimit=round(budget_limit, 2),
-            spendToDate=round(total_spend, 2),
-            remainingBudget=round(remaining_budget, 2),
-            quotaLimit=None if multi_type else quota_display,
-            quotaUnit=quota_unit,
-            consumptionToDate=None if multi_type else total_consumption,
-            remainingQuota=None if multi_type else (
-                max(0, quota_display - total_consumption) if quota_display is not None else None
-            ),
-            currency=_CURRENCY,
-            breakdown=breakdown,
+        return _build_hierarchical_item(
+            assignment, org_map.get(tenant_id, tenant_id), usage_rows
         )

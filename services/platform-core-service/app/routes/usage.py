@@ -17,8 +17,8 @@ from app.core.permissions import (
 )
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
+    TenantHierarchicalItem,
     TenantHierarchicalListResponse,
-    TenantUsageDetailResponse,
     UsageSummaryResponse,
 )
 from app.services.pay_per_use.ppu_usage_service import PPUUsageService
@@ -82,7 +82,7 @@ async def get_tenant_usage_list(
     )
 
 
-@router.get("/usage-tenant", response_model=TenantUsageDetailResponse)
+@router.get("/usage-tenant", response_model=TenantHierarchicalItem)
 async def get_tenant_usage_detail(
     request: Request,
     tenant_id: str = Query(..., description="Tenant ID."),
