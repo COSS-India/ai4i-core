@@ -24,6 +24,7 @@ from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
+from app.dependencies.services import get_api_key_service
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
 from app.schemas.token import TokenValidationResponse
 from app.services.api_key_service import APIKeyService
@@ -215,6 +216,7 @@ async def validate_token(
     request: Request,
     response: Response,
     redis=Depends(get_redis),
+    api_key_svc=Depends(get_api_key_service),
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
 
@@ -231,5 +233,4 @@ async def validate_token(
         return await _validate_jwt(token, request, response, cache_svc)
 
     # API key path — validates against Redis cache only, no DB needed
-    api_key_svc = APIKeyService(None, cache_svc)
     return await _validate_api_key(token, request, response, api_key_svc)
