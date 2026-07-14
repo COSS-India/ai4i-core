@@ -15,6 +15,10 @@ class PPUTenantTierAssignment(Base):
             "ix_ppu_tenant_tier_assignments_tenant_effective",
             "tenant_id", "effective_from", "effective_to",
         ),
+        Index(
+            "ix_ppu_tenant_tier_assignments_effective_window",
+            "effective_from", "effective_to",
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
