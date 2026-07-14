@@ -52,13 +52,12 @@ async def get_usage_summary(
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
-    modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_summary(month, tier_id, modelTaskType.lower() if modelTaskType else None)
+    return await svc.get_summary(month, tier_id)
 
 
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)

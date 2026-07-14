@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ from app.schemas.pay_per_use.usage import (
 
 _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
+_FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def _prev_month(billing_month: str) -> str:
@@ -50,23 +52,41 @@ def _build_hierarchical_item(
     tenant_name: str,
     usage_rows,
     model_task_type: str | None = None,
+    tier_order: dict[str, datetime] | None = None,
 ) -> TenantHierarchicalItem:
     """Builds one tenant's hierarchical usage item from their end-of-period tier assignment
     plus their flat per-(tier, inference_name) usage rows for the billing month.
 
-    When model_task_type is set, usage_rows are already pre-filtered to that single task
-    type (by the repository query), so summing consumed/quota across rows here combines
-    that same type's allotment across every tier the tenant held that month — e.g. tier1
-    granted 500 tokens (100 used) then reassigned to tier2 granted 100 more (50 used) nets
-    quotaLimit=600, consumed=150.
+    spend/budget/tierBreakdown always reflect the tenant's FULL period totals across every
+    tier they held that month — model_task_type never narrows these, it only controls the
+    flat `usage` quota-bar fields (see below). tierBreakdown is ordered oldest-tier-first
+    per tier_order (falls back to insertion order for any tier_key missing from it).
+
+    The `usage` block shows one task type's numbers when model_task_type is explicitly
+    passed, OR automatically when the tenant only has one distinct task type this period
+    (nothing to disambiguate). consumed/spend are summed across every tier that type was
+    used under, but quotaLimit is taken ONLY from the row under the tenant's CURRENT
+    (end-of-period) tier — quotas aren't cumulative across tiers the way spend is; e.g.
+    tier1 grants 500 tokens (100 used) then reassignment to tier2 grants 100 more (50 used)
+    nets quotaLimit=100 (tier2's own grant), consumed=150 (100+50 summed).
     """
     tier_groups = _group_usage_by_tier(usage_rows)
+    ordered_tier_keys = sorted(
+        tier_groups.keys(),
+        key=lambda k: (tier_order or {}).get(k) or _FAR_FUTURE,
+    )
 
-    tier_breakdown: list[TierUsageBreakdown] = []
+    # First pass: build each tier's task-type rows and subtotal, and the tenant's grand
+    # total across every tier. Percentage (each task's share) can only be computed once
+    # the grand total is known — it's a share of the WHOLE tenant, not of its own tier's
+    # subtotal, so a tenant who changed tiers mid-period would otherwise get percentages
+    # that sum to 100% per tier group instead of 100% overall.
+    tier_raw: list[dict] = []
     distinct_task_types: set[str] = set()
     tenant_spend = 0.0
 
-    for tier_key, bucket in tier_groups.items():
+    for tier_key in ordered_tier_keys:
+        bucket = tier_groups[tier_key]
         raw_task_types: list[dict] = []
         tier_spend = 0.0
         for row in bucket["rows"]:
@@ -85,38 +105,58 @@ def _build_hierarchical_item(
             tier_spend += spend
             distinct_task_types.add(row.inference_name)
 
-        task_types = [
-            TaskTypeUsage(
-                **t,
-                percentage=round(t["spend"] / tier_spend * 100, 1) if tier_spend > 0 else 0.0,
-            )
-            for t in raw_task_types
-        ]
-        tier_breakdown.append(TierUsageBreakdown(
-            tierId=tier_key,
-            tierName=bucket["tierName"],
-            spend=round(tier_spend, 2),
-            taskTypes=task_types,
-        ))
+        tier_raw.append({
+            "tierId": tier_key,
+            "tierName": bucket["tierName"],
+            "spend": tier_spend,
+            "raw_task_types": raw_task_types,
+        })
         tenant_spend += tier_spend
 
     tenant_spend = round(tenant_spend, 2)
+
+    tier_breakdown: list[TierUsageBreakdown] = [
+        TierUsageBreakdown(
+            tierId=tg["tierId"],
+            tierName=tg["tierName"],
+            spend=round(tg["spend"], 2),
+            taskTypes=[
+                TaskTypeUsage(
+                    **t,
+                    percentage=round(t["spend"] / tenant_spend * 100, 1) if tenant_spend > 0 else 0.0,
+                )
+                for t in tg["raw_task_types"]
+            ],
+        )
+        for tg in tier_raw
+    ]
     budget_limit = round(float(assignment.budget_limit), 2)
     remaining_budget = round(float(assignment.available_balance), 2)
     percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else 0.0
 
+    effective_task_type = model_task_type
+    if effective_task_type is None and len(distinct_task_types) == 1:
+        effective_task_type = next(iter(distinct_task_types))
+
     usage_count = TenantUsageCount(taskTypeCount=len(distinct_task_types))
-    if model_task_type:
-        total_consumed = sum(float(row.total_units or 0) for row in usage_rows)
-        quota_values = [float(row.quota_snap) for row in usage_rows if row.quota_snap is not None]
-        total_quota = sum(quota_values) if quota_values else None
+    if effective_task_type:
+        matching_rows = [r for r in usage_rows if r.inference_name == effective_task_type]
+        total_consumed = sum(float(r.total_units or 0) for r in matching_rows)
+        current_tier_row = next(
+            (r for r in matching_rows if str(r.tier_id) == str(assignment.tier_id)), None
+        )
+        quota = (
+            float(current_tier_row.quota_snap)
+            if current_tier_row is not None and current_tier_row.quota_snap is not None
+            else None
+        )
         usage_count = TenantUsageCount(
             taskTypeCount=len(distinct_task_types),
-            unit=_UNIT_LABELS.get(model_task_type, model_task_type),
-            quotaLimit=round(total_quota, 2) if total_quota is not None else None,
+            unit=_UNIT_LABELS.get(effective_task_type, effective_task_type),
+            quotaLimit=round(quota, 2) if quota is not None else None,
             consumed=round(total_consumed, 2),
-            remaining=round(total_quota - total_consumed, 2) if total_quota is not None else None,
-            percentage=round(total_consumed / total_quota * 100, 1) if total_quota else 0.0,
+            remaining=round(quota - total_consumed, 2) if quota is not None else None,
+            percentage=round(total_consumed / quota * 100, 1) if quota else 0.0,
         )
 
     return TenantHierarchicalItem(
@@ -160,9 +200,7 @@ class PPUUsageService:
     def __init__(self, repo: PPUUsageRepository) -> None:
         self._repo = repo
 
-    async def _tenants_and_spend_for_period(
-        self, billing_month: str, tier_id: str | None, model_task_type: str | None
-    ):
+    async def _tenant_assignments_and_usage(self, billing_month: str, tier_id: str | None):
         """Tenants belonging to tier_id as of the END of billing_month (not "as of now"),
         plus their usage rows for that month — the same tenant-selection rule used by
         get_tenant_list/get_tenant_detail, so a tier + billing_period filter combination
@@ -171,20 +209,20 @@ class PPUUsageService:
         """
         assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
         tenant_ids = [a.tenant_id for a in assignments]
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-            billing_month, tenant_ids, model_task_type
-        )
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
         return assignments, usage_rows
 
     async def get_summary(
         self,
         billing_month: str,
         tier_id: str | None = None,
-        model_task_type: str | None = None,
     ) -> UsageSummaryResponse:
-        assignments, usage_rows = await self._tenants_and_spend_for_period(
-            billing_month, tier_id, model_task_type
-        )
+        """model_task_type is intentionally NOT a filter here — the total-spend card and
+        the spend-by-task-type chart always show every task type; only tier_id narrows
+        which tenants are counted. (A task-type filter only affects the tenant table's
+        per-row usage figure, on usage-tenants.)
+        """
+        assignments, usage_rows = await self._tenant_assignments_and_usage(billing_month, tier_id)
 
         by_task_type: dict[str, dict] = {}
         cost_by_tenant: dict[str, float] = {}
@@ -215,22 +253,16 @@ class PPUUsageService:
         active_tenants = len(assignments)
         budget_exceeded = sum(
             1 for a in assignments
-            if cost_by_tenant.get(a.tenant_id, 0.0) >= float(a.budget_limit)
+            if cost_by_tenant.get(a.tenant_id, 0.0) > float(a.budget_limit)
         )
 
-        prev_assignments, prev_usage_rows = await self._tenants_and_spend_for_period(
-            _prev_month(billing_month), tier_id, model_task_type
+        _, prev_usage_rows = await self._tenant_assignments_and_usage(
+            _prev_month(billing_month), tier_id
         )
-        prev_cost_by_tenant: dict[str, float] = {}
-        for row in prev_usage_rows:
-            prev_cost_by_tenant[row.tenant_id] = prev_cost_by_tenant.get(row.tenant_id, 0.0) + float(row.total_cost or 0)
-        prev_budget_exceeded = sum(
-            1 for a in prev_assignments
-            if prev_cost_by_tenant.get(a.tenant_id, 0.0) >= float(a.budget_limit)
-        )
-        budget_exceeded_change_percent = (
-            round((budget_exceeded - prev_budget_exceeded) / prev_budget_exceeded * 100, 1)
-            if prev_budget_exceeded > 0
+        prev_total_spend = sum(float(row.total_cost or 0) for row in prev_usage_rows)
+        spend_change_percent = (
+            round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
+            if prev_total_spend > 0
             else None
         )
 
@@ -240,7 +272,7 @@ class PPUUsageService:
             currency=_CURRENCY,
             activeTenants=active_tenants,
             budgetExceededTenants=budget_exceeded,
-            budgetExceededChangePercent=budget_exceeded_change_percent,
+            spendChangePercent=spend_change_percent,
             spendByModelTaskType=spend_items,
         )
 
@@ -257,33 +289,39 @@ class PPUUsageService:
         The tenant-level tier/budget reflect whichever tier assignment was in effect at the
         END of billing_month (which may differ from the tenant's tier "as of now" if they've
         since been reassigned). tierBreakdown covers every tier the tenant actually had usage
-        under that month — a mid-month tier change surfaces as two entries.
+        under that month, oldest first — a mid-month tier change surfaces as two entries.
+
+        model_task_type does NOT filter which tenants appear, nor narrow their spend/budget/
+        tierBreakdown — those always reflect the full period. It only populates the flat
+        `usage` quota-bar fields with that one task type's numbers (see _build_hierarchical_item).
         """
         assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
         if not assignments:
             return TenantHierarchicalListResponse(data=[], total=0)
 
         tenant_ids = [row.tenant_id for row in assignments]
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
-            billing_month, tenant_ids, model_task_type
-        )
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
+        tier_first_seen = await self._repo.get_tier_first_seen(tenant_ids)
         org_map = await _resolve_tenant_names(tenant_ids, auth_db)
 
         usage_by_tenant: dict[str, list] = {}
         for row in usage_rows:
             usage_by_tenant.setdefault(row.tenant_id, []).append(row)
 
-        items: list[TenantHierarchicalItem] = []
-        for assignment in assignments:
-            tenant_usage_rows = usage_by_tenant.get(assignment.tenant_id)
-            if model_task_type and not tenant_usage_rows:
-                continue  # no usage of the filtered task type this period — excluded entirely
-            items.append(_build_hierarchical_item(
+        order_by_tenant: dict[str, dict[str, datetime]] = {}
+        for row in tier_first_seen:
+            order_by_tenant.setdefault(row.tenant_id, {})[str(row.tier_id)] = row.first_seen
+
+        items = [
+            _build_hierarchical_item(
                 assignment,
                 org_map.get(assignment.tenant_id, assignment.tenant_id),
-                tenant_usage_rows or [],
+                usage_by_tenant.get(assignment.tenant_id, []),
                 model_task_type,
-            ))
+                order_by_tenant.get(assignment.tenant_id),
+            )
+            for assignment in assignments
+        ]
 
         items.sort(key=lambda item: item.spend, reverse=(sort_order != "asc"))
         return TenantHierarchicalListResponse(data=items, total=len(items))
@@ -296,7 +334,8 @@ class PPUUsageService:
     ) -> TenantHierarchicalItem:
         """Same hierarchical shape as get_tenant_list, scoped to a single tenant — the
         tenant's tier/budget reflect whichever assignment was in effect at the END of
-        billing_month, and tierBreakdown covers every tier they had usage under that month.
+        billing_month, and tierBreakdown covers every tier they had usage under that
+        month, oldest first.
         """
         assignments = await self._repo.get_tenant_tier_as_of_period_end(
             billing_month, tenant_id=tenant_id
@@ -306,8 +345,10 @@ class PPUUsageService:
         assignment = assignments[0]
 
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
+        tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
+        tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
         org_map = await _resolve_tenant_names([tenant_id], auth_db)
 
         return _build_hierarchical_item(
-            assignment, org_map.get(tenant_id, tenant_id), usage_rows
+            assignment, org_map.get(tenant_id, tenant_id), usage_rows, None, tier_order
         )

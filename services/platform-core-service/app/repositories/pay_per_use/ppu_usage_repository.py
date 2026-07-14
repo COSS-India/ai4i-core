@@ -61,14 +61,12 @@ class PPUUsageRepository:
         result = await self._db.execute(stmt)
         return result.all()
 
-    async def get_tenant_tier_usage_breakdown(
-        self,
-        billing_month: str,
-        tenant_ids: list[str],
-        model_task_type: str | None = None,
-    ):
+    async def get_tenant_tier_usage_breakdown(self, billing_month: str, tenant_ids: list[str]):
         """Per (tenant, tier, inference_name) usage/cost for the billing month, across
         every tier the tenant held that month — not just their tier as of period end.
+        Always unfiltered by task type: callers that need a single task type's numbers
+        filter this result in Python so the full breakdown (spend/budget/tierBreakdown)
+        stays consistent regardless of which task type is being drilled into.
         """
         if not tenant_ids:
             return []
@@ -87,14 +85,31 @@ class PPUUsageRepository:
                 PPUQuotaUsage.billing_month == billing_month,
                 PPUQuotaUsage.tenant_id.in_(tenant_ids),
             )
+            .group_by(
+                PPUQuotaUsage.tenant_id,
+                PPUQuotaUsage.tier_id,
+                PPUTier.name,
+                PPUQuotaUsage.inference_name,
+            )
         )
-        if model_task_type:
-            stmt = stmt.where(PPUQuotaUsage.inference_name == model_task_type)
-        stmt = stmt.group_by(
-            PPUQuotaUsage.tenant_id,
-            PPUQuotaUsage.tier_id,
-            PPUTier.name,
-            PPUQuotaUsage.inference_name,
+        result = await self._db.execute(stmt)
+        return result.all()
+
+    async def get_tier_first_seen(self, tenant_ids: list[str]):
+        """Earliest effective_from per (tenant_id, tier_id) — used to order a tenant's
+        tierBreakdown chronologically (oldest tier first), regardless of how many times
+        they've cycled on/off that tier since.
+        """
+        if not tenant_ids:
+            return []
+        stmt = (
+            select(
+                PPUTenantTierAssignment.tenant_id,
+                PPUTenantTierAssignment.tier_id,
+                func.min(PPUTenantTierAssignment.effective_from).label("first_seen"),
+            )
+            .where(PPUTenantTierAssignment.tenant_id.in_(tenant_ids))
+            .group_by(PPUTenantTierAssignment.tenant_id, PPUTenantTierAssignment.tier_id)
         )
         result = await self._db.execute(stmt)
         return result.all()

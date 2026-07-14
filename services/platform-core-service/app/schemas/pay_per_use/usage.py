@@ -18,7 +18,7 @@ class UsageSummaryResponse(BaseModel):
     currency: str
     activeTenants: int
     budgetExceededTenants: int
-    budgetExceededChangePercent: Optional[float] = None
+    spendChangePercent: Optional[float] = None
     spendByModelTaskType: list[SpendItem]
 
 
