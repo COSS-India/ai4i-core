@@ -434,9 +434,12 @@ class TestGetTenantDetail:
         task_types = result.tierBreakdown[0].taskTypes
         total_pct = sum(t.percentage for t in task_types)
         assert abs(total_pct - 100.0) < 0.2
-        # multiple distinct task types -> nothing to disambiguate, usage stays unset
+        # multiple distinct task types -> nothing to disambiguate, usage stays unset —
+        # except `unit`, which falls back to "Units" (matching the old flat
+        # TenantUsageItem.quotaUnit contract, which was never null).
         assert result.usage.taskTypeCount == 2
         assert result.usage.consumed is None
+        assert result.usage.unit == "Units"
 
 
 # ── _resolve_tenant_names ─────────────────────────────────────────────────────

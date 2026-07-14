@@ -149,7 +149,10 @@ def _build_hierarchical_item(
     if effective_task_type is None and len(distinct_task_types) == 1:
         effective_task_type = next(iter(distinct_task_types))
 
-    usage_count = TenantUsageCount(taskTypeCount=len(distinct_task_types))
+    # Multiple task types with nothing to disambiguate (no filter, no single-type
+    # auto-detect): matches the old flat TenantUsageItem.quotaUnit contract, which was
+    # always a concrete string and fell back to "Units" here rather than leaving it unset.
+    usage_count = TenantUsageCount(taskTypeCount=len(distinct_task_types), unit="Units")
     if effective_task_type:
         matching_rows = [r for r in usage_rows if r.inference_name == effective_task_type]
         total_consumed = sum((_to_decimal(r.total_units) for r in matching_rows), Decimal("0"))
