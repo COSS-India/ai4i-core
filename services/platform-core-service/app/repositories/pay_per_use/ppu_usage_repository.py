@@ -47,7 +47,10 @@ class PPUUsageRepository:
                 )
             )
             stmt = stmt.where(PPUQuotaUsage.tenant_id.in_(tier_tenant_sq))
-        stmt = stmt.group_by(PPUQuotaUsage.inference_name)
+        stmt = (
+            stmt.group_by(PPUQuotaUsage.inference_name)
+            .order_by(func.sum(PPUQuotaUsage.cost_accum).desc())
+        )
         result = await self._db.execute(stmt)
         return result.all()
 
