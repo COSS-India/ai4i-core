@@ -47,8 +47,8 @@ async def list_tiers(
     out = []
     for tier in tiers:
         quotas = tier.tier_quotas
-        if model_task_type:
-            quotas = [q for q in quotas if q.inference_name == model_task_type]
+        if model_task_type and not any(q.inference_name == model_task_type for q in quotas):
+            continue
         out.append(_build_out(tier, quotas))
 
     return {"data": out, "total": len(out)}
