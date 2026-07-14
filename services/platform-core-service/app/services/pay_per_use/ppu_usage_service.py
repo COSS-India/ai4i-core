@@ -187,6 +187,15 @@ def _build_hierarchical_item(
     )
 
 
+def _tenant_spend_from_rows(usage_rows) -> float:
+    """Same rounding order _build_hierarchical_item uses for a tenant's total spend
+    (round each row, sum, round again) — so sorting on this cheap pre-aggregate always
+    agrees with the `spend` value the full hierarchical build would produce, without
+    needing tier grouping or the rest of that build for tenants that get paginated out.
+    """
+    return round(sum(round(float(row.total_cost or 0), 2) for row in usage_rows), 2)
+
+
 async def _resolve_tenant_names(
     tenant_ids: list[str], auth_db: Optional[AsyncSession]
 ) -> dict[str, str]:
@@ -316,19 +325,34 @@ class PPUUsageService:
 
         limit/offset paginate the sorted list; `total` in the response is the full matching
         tenant count (before slicing), not the page size, so callers can compute page count.
+
+        Sorting/pagination happen BEFORE the per-tenant hierarchical build (tier grouping,
+        quota/percentage calcs, tier_first_seen, tenant-name resolution) — that build only
+        runs for the tenants on the requested page, not the full matching tenant list, via
+        a cheap spend pre-aggregate (_tenant_spend_from_rows) computed straight from the
+        already-fetched usage rows.
         """
         assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
+        total = len(assignments)
         if not assignments:
             return TenantHierarchicalListResponse(data=[], total=0)
 
         tenant_ids = [row.tenant_id for row in assignments]
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
-        tier_first_seen = await self._repo.get_tier_first_seen(tenant_ids)
-        org_map = await _resolve_tenant_names(tenant_ids, auth_db)
 
         usage_by_tenant: dict[str, list] = {}
         for row in usage_rows:
             usage_by_tenant.setdefault(row.tenant_id, []).append(row)
+
+        assignments.sort(
+            key=lambda a: _tenant_spend_from_rows(usage_by_tenant.get(a.tenant_id, [])),
+            reverse=(sort_order != "asc"),
+        )
+        page_assignments = assignments[offset : offset + limit]
+
+        page_tenant_ids = [a.tenant_id for a in page_assignments]
+        tier_first_seen = await self._repo.get_tier_first_seen(page_tenant_ids)
+        org_map = await _resolve_tenant_names(page_tenant_ids, auth_db)
 
         order_by_tenant: dict[str, dict[str, datetime]] = {}
         for row in tier_first_seen:
@@ -342,12 +366,10 @@ class PPUUsageService:
                 model_task_type,
                 order_by_tenant.get(assignment.tenant_id),
             )
-            for assignment in assignments
+            for assignment in page_assignments
         ]
 
-        items.sort(key=lambda item: item.spend, reverse=(sort_order != "asc"))
-        total = len(items)
-        return TenantHierarchicalListResponse(data=items[offset : offset + limit], total=total)
+        return TenantHierarchicalListResponse(data=items, total=total)
 
     async def get_tenant_detail(
         self,

@@ -278,6 +278,34 @@ class TestGetTenantList:
         assert item.usage.quotaLimit is None
 
     @pytest.mark.asyncio
+    async def test_hierarchical_build_only_runs_for_paginated_page(self):
+        """Sorting/pagination must happen before the expensive per-tenant build — so
+        tier_first_seen and tenant-name resolution should only be called for the
+        tenants on the requested page, not every matching tenant."""
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[
+                _assignment(tenant_id="t1"),
+                _assignment(tenant_id="t2"),
+                _assignment(tenant_id="t3"),
+            ],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", total_cost=Decimal("10")),
+                _usage_row(tenant_id="t2", total_cost=Decimal("90")),
+                _usage_row(tenant_id="t3", total_cost=Decimal("50")),
+            ],
+            get_tier_first_seen=[],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list(
+            "2026-06", None, None, auth_db=None, sort_order="desc", limit=1, offset=0
+        )
+
+        assert [item.tenantId for item in result.data] == ["t2"]
+        assert result.total == 3
+        # only the top-1 tenant (t2) should have been resolved/built, not t1/t3
+        repo.get_tier_first_seen.assert_called_once_with(["t2"])
+
+    @pytest.mark.asyncio
     async def test_sort_order_desc_by_spend(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[
