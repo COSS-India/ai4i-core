@@ -77,6 +77,20 @@ class Orchestrator:
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
 
+            # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
+            if request:
+                tier_id = request.headers.get("X-Tier-ID", "")
+                if tier_id:
+                    allowed_tiers = service_info.get("tier_ids", [])
+                    if tier_id not in allowed_tiers:
+                        serviceId = (
+                            (payload.get("config") or {}).get("serviceId")
+                            or payload.get("serviceId", "")
+                        )
+                        raise PermissionError(
+                            f"Service '{serviceId}' is not available for your quota"
+                        )
+
             # Instantiate and run the task service with the raw payload
             task_service = self._get_task_service(service_info)
             task_response = await task_service.process(payload, service_info)

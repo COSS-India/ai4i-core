@@ -149,6 +149,7 @@ class InferenceServerResolver:
                 "adapter_config": adapter_config,
                 "class_instance": class_instance,
                 "is_published": bool(data.get("isPublished", False)),
+                "tier_ids": data.get("tierIds") or [],
             }
 
         # Flat shape (legacy/fallback): pass through as-is, but ensure
