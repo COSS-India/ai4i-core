@@ -70,6 +70,8 @@ async def get_tenant_usage_list(
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
     sortOrder: Annotated[str, Query(pattern="^(asc|desc)$", description="Sort tenants by spend ascending or descending.")] = "desc",
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of tenants to return."),
+    offset: int = Query(0, ge=0, description="Number of tenants to skip (for pagination)."),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
@@ -77,7 +79,7 @@ async def get_tenant_usage_list(
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_tenant_list(
-        month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db, sortOrder
+        month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db, sortOrder, limit, offset
     )
 
 

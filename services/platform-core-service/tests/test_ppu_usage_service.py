@@ -242,6 +242,43 @@ class TestGetTenantList:
         assert result.data == []
         assert result.total == 0
 
+    @pytest.mark.asyncio
+    async def test_pagination_slices_page_but_total_is_full_count(self):
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[
+                _assignment(tenant_id="t1"),
+                _assignment(tenant_id="t2"),
+                _assignment(tenant_id="t3"),
+            ],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", total_cost=Decimal("10")),
+                _usage_row(tenant_id="t2", total_cost=Decimal("90")),
+                _usage_row(tenant_id="t3", total_cost=Decimal("50")),
+            ],
+            get_tier_first_seen=[],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list(
+            "2026-06", None, None, auth_db=None, sort_order="desc", limit=1, offset=1
+        )
+
+        # sorted desc by spend: t2(90), t3(50), t1(10) -> offset=1, limit=1 -> just t3
+        assert [item.tenantId for item in result.data] == ["t3"]
+        assert result.total == 3
+
+    @pytest.mark.asyncio
+    async def test_offset_past_end_returns_empty_page_with_full_total(self):
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tier_first_seen=[],
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, offset=10, limit=10)
+
+        assert result.data == []
+        assert result.total == 1
+
 
 # ── get_tenant_detail ─────────────────────────────────────────────────────────
 

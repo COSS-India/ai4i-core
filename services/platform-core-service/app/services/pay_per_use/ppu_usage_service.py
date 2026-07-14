@@ -283,6 +283,8 @@ class PPUUsageService:
         model_task_type: str | None,
         auth_db: Optional[AsyncSession],
         sort_order: str = "desc",
+        limit: int = 100,
+        offset: int = 0,
     ) -> TenantHierarchicalListResponse:
         """Hierarchical tenant usage: tenant -> tier(s) held during billing_month -> task types.
 
@@ -294,6 +296,9 @@ class PPUUsageService:
         model_task_type does NOT filter which tenants appear, nor narrow their spend/budget/
         tierBreakdown — those always reflect the full period. It only populates the flat
         `usage` quota-bar fields with that one task type's numbers (see _build_hierarchical_item).
+
+        limit/offset paginate the sorted list; `total` in the response is the full matching
+        tenant count (before slicing), not the page size, so callers can compute page count.
         """
         assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
         if not assignments:
@@ -324,7 +329,8 @@ class PPUUsageService:
         ]
 
         items.sort(key=lambda item: item.spend, reverse=(sort_order != "asc"))
-        return TenantHierarchicalListResponse(data=items, total=len(items))
+        total = len(items)
+        return TenantHierarchicalListResponse(data=items[offset : offset + limit], total=total)
 
     async def get_tenant_detail(
         self,
