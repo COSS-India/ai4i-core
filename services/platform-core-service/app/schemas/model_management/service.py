@@ -54,12 +54,22 @@ class ServiceCreateRequest(BaseSchema):
     taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
-    tierIds: Optional[List[str]] = None
+    tierIds: List[str] = Field(..., min_length=1)
 
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str) -> str:
         return validate_entity_name(v, field="Service name")
+
+    @field_validator("tierIds")
+    @classmethod
+    def _validate_tier_ids(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("tierIds must contain at least one tier ID")
+        for tid in v:
+            if not tid or not tid.strip():
+                raise ValueError("Each tier ID must be a non-empty string")
+        return v
 
     @field_validator("unitSize")
     @classmethod

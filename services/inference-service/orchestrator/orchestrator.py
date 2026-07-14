@@ -81,14 +81,14 @@ class Orchestrator:
             if request:
                 tier_id = request.headers.get("X-Tier-ID", "")
                 if tier_id:
-                    allowed_tiers = service_info.get("tier_ids", [])
+                    allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
                     if tier_id not in allowed_tiers:
-                        serviceId = (
+                        service_id = (
                             (payload.get("config") or {}).get("serviceId")
                             or payload.get("serviceId", "")
                         )
                         raise PermissionError(
-                            f"Service '{serviceId}' is not available for your quota"
+                            f"Service '{service_id}' is not available for your quota"
                         )
 
             # Instantiate and run the task service with the raw payload

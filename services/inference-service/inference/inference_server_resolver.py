@@ -153,6 +153,10 @@ class InferenceServerResolver:
             }
 
         # Flat shape (legacy/fallback): pass through as-is, but ensure
-        # is_published is always present so the orchestrator gate is never
-        # skipped by a missing key.
-        return {**raw, "is_published": bool(raw.get("is_published", False))}
+        # is_published and tier_ids are always present so the orchestrator
+        # gates are never skipped by a missing key.
+        return {
+            **raw,
+            "is_published": bool(raw.get("is_published", False)),
+            "tier_ids": raw.get("tier_ids", []),
+        }
