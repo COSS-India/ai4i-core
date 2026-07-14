@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +45,21 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
 
 
+def _validate_tier_id(tier_id: Optional[str]) -> Optional[str]:
+    """Rejects a non-UUID tier_id with a clean 400 before it reaches the UUID column
+    comparison in the repository, where it would otherwise surface as an unhandled 500."""
+    if tier_id is None:
+        return None
+    try:
+        UUID(tier_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid tier_id format — expected a UUID",
+        )
+    return tier_id
+
+
 @router.get("/usage-summary", response_model=UsageSummaryResponse)
 async def get_usage_summary(
     request: Request,
@@ -55,6 +71,7 @@ async def get_usage_summary(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
+    tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_summary(month, tier_id)
@@ -76,6 +93,7 @@ async def get_tenant_usage_list(
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
+    tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_tenant_list(
