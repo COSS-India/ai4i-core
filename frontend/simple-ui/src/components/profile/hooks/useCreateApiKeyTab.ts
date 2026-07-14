@@ -3,7 +3,6 @@ import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
-import { cacheCreatedApiKeyHex } from "../../../utils/apiKeyUtils";
 
 export interface UseCreateApiKeyTabOptions {
   onApiKeyCreated?: () => void;
@@ -77,11 +76,6 @@ export function useCreateApiKeyTab({
       onApiKeyCreated?.();
       if (createdKey.api_key) {
         setCreatedApiKeyToken(createdKey.api_key);
-        cacheCreatedApiKeyHex(
-          createdKey.key_name,
-          createdKey.api_key,
-          createdKey.id ?? createdKey.key_id,
-        );
       }
       showToast({
         type: "success",

@@ -34,6 +34,37 @@ from .exceptions import (
 
 logger = logging.getLogger(__name__)
 
+# Pydantic error ctx can carry values FastAPI's default JSONResponse can't
+# serialize on its own — not just Exception instances (ctx["error"] for
+# custom validators), but also e.g. a raw Decimal bound on a Decimal field's
+# gt/ge/lt/le constraint (ctx={"ge": Decimal("0")}). Recursing generically
+# over any type JSONResponse can't handle, rather than special-casing
+# Exception only, keeps this handler correct as Pydantic adds new error
+# shapes rather than requiring a fix per newly-discovered type.
+_JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
+
+
+def _json_safe(value):
+    """Recursively coerce a value into something JSONResponse can serialize,
+    stringifying anything that isn't already a JSON-safe scalar/list/dict.
+
+    This function backstops a 422 response — it must never itself raise, or
+    the error response degrades into an unhandled 500. str(value) can fail
+    (a broken/overridden __str__, exotic third-party types), so the fallback
+    is defensive: on any failure, fall back to a fixed placeholder rather
+    than let the exception escape.
+    """
+    if isinstance(value, _JSON_SAFE_SCALARS):
+        return value
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    try:
+        return str(value)
+    except Exception:
+        return "<unserializable>"
+
 # ---------------------------------------------------------------------------
 # Telemetry helpers (optional -- works without OpenTelemetry installed)
 # ---------------------------------------------------------------------------
@@ -301,16 +332,15 @@ def register_exception_handlers(app: FastAPI) -> None:
             extra_attrs={"validation.error_count": len(errors)},
         )
 
-        # Pydantic v2 puts the raw ValueError instance in ctx['error'], which
-        # is not JSON-serializable.  Convert any Exception in ctx to its string.
+        # Pydantic v2 error ctx can carry non-JSON-serializable values — a raw
+        # ValueError instance (custom validators), a raw Decimal bound
+        # (gt/ge/lt/le on a Decimal field), etc. Sanitize generically so
+        # JSONResponse never crashes on ctx contents.
         sanitized: list[dict] = []
         for err in errors:
             entry = dict(err)
             if isinstance(entry.get("ctx"), dict):
-                entry["ctx"] = {
-                    k: str(v) if isinstance(v, Exception) else v
-                    for k, v in entry["ctx"].items()
-                }
+                entry["ctx"] = _json_safe(entry["ctx"])
             sanitized.append(entry)
 
         return JSONResponse(

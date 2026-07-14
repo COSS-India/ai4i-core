@@ -149,6 +149,7 @@ class TestReassignTier:
         db = _make_db([
             _exec_result(scalar_one_or_none=new_tier),
             _exec_result(scalar_one_or_none=None),  # no active assignment row
+            _exec_result(scalar_one_or_none=None),  # _lock_active_assignment's built-in retry, also empty
         ])
         auth_db = _make_auth_db(_tenant_row("ACTIVE"))
 

@@ -127,7 +127,7 @@ export interface APIKeyResponse {
   id: number;
   key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  /** Only present immediately after creation — never returned by list endpoints. */
+  /** Full raw key only on creation; list/get endpoints return it masked (e.g. "ab12******gh78"). */
   api_key?: string;
   permissions: string[];
   is_active?: boolean;

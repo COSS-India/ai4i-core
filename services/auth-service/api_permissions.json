@@ -120,6 +120,7 @@
     { "endpoint": "DELETE:/api/v1/pay-per-use/tier",                       "permissionRequired": 143, "description": "Delete PPU tier (ppu.tier.delete)" },
     { "endpoint": "POST:/api/v1/pay-per-use/tenant/tier",                  "permissionRequired": 144, "description": "Assign PPU tier to tenant (ppu.tenant.assign)" },
     { "endpoint": "PATCH:/api/v1/pay-per-use/tenant/tier/reassign",        "permissionRequired": 144, "description": "Reassign PPU tier for tenant (ppu.tenant.assign)" },
+    { "endpoint": "PATCH:/api/v1/pay-per-use/tenant/budget",               "permissionRequired": 144, "description": "Revise tenant PPU budget, top-up/top-down (ppu.tenant.assign); admin (Adopter Admin) only" },
 
     { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin/moderator only (platform-wide)" },
     { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin/moderator only (platform-wide)" },

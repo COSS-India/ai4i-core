@@ -1,7 +1,16 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+# Pydantic v2 embeds the raw Decimal bound (e.g. ctx={"ge": Decimal("0")}) in
+# the error context for gt/ge/lt/le constraint failures on a Decimal field.
+# ai4i_core's RequestValidationError handler now sanitizes any non-JSON-safe
+# value in ctx generically (not just Exception instances), so plain
+# Field(ge=...)/Field(gt=...) constraints are safe to use directly here —
+# they also keep the "minimum"/"exclusiveMinimum" constraint visible in the
+# OpenAPI schema, unlike enforcing the bound via a validator.
 
 
 class TierAssignRequest(BaseModel):
@@ -17,15 +26,17 @@ class TierReassignRequest(BaseModel):
     tier_id: str = Field(..., description="UUID of the new PPU tier to assign")
 
 
-class TopUpRequest(BaseModel):
-    tenant_id: str = Field(..., description="ID of the tenant to top up")
-    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=4, description="Amount to add in INR")
+class ReviseBudgetRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant whose budget is being revised")
+    action: Literal["top-up", "top-down"] = Field(..., description="Whether to increase (top-up) or decrease (top-down) the current budget by amount")
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=4, description="Amount in INR to add (top-up) or subtract (top-down) from the current budget_limit")
 
 
-class TopUpResponse(BaseModel):
+class ReviseBudgetResponse(BaseModel):
     tenant_id: str
-    added: Decimal
+    budget_limit: Decimal
     available_balance: Decimal
+    updated_at: datetime
 
 
 class TierAssignResponse(BaseModel):
