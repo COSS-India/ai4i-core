@@ -1,181 +1,154 @@
 """PPU usage repository — reads usage and accrued cost data."""
-from sqlalchemy import case, func, null, select
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
-from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
+from app.models.pay_per_use.ppu_tier import PPUTier
+from app.utils.billing_month import shift_billing_month
+
+
+def _end_of_month(billing_month: str) -> datetime:
+    """Last instant (UTC) of the given YYYY-MM billing month."""
+    year, month = shift_billing_month(billing_month, 1)
+    next_month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    return next_month_start - timedelta(microseconds=1)
 
 
 class PPUUsageRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def get_usage_with_pricing(self, billing_month: str):
+    async def get_tenant_tier_as_of_period_end(
+        self,
+        billing_month: str,
+        tier_id: str | None = None,
+        tenant_id: str | None = None,
+    ):
+        """One row per tenant: the tier assignment whose [effective_from, effective_to)
+        window actually covers the end of billing_month. This may differ from the
+        tenant's assignment as of "now" when the tenant has since moved to a different
+        tier. A tenant with no assignment covering that instant — e.g. the current,
+        still-in-progress month before any assignment has been made, or a gap between
+        an expired assignment and the next one — is excluded entirely rather than
+        surfacing a lapsed or not-yet-started assignment as their "current" tier.
         """
-        Aggregates units_used and cost_accum per inference_name for the billing month.
-        cost_accum is accrued by the payperuse consumer at the price in effect when
-        each request was made, so this reflects actual billed cost rather than a
-        current-price projection.
+        end_instant = _end_of_month(billing_month)
+        ranked = (
+            select(
+                PPUTenantTierAssignment.tenant_id,
+                PPUTenantTierAssignment.tier_id,
+                PPUTier.name.label("tier_name"),
+                PPUTenantTierAssignment.budget_limit,
+                PPUTenantTierAssignment.available_balance,
+                func.row_number()
+                .over(
+                    partition_by=PPUTenantTierAssignment.tenant_id,
+                    order_by=PPUTenantTierAssignment.effective_from.desc(),
+                )
+                .label("rn"),
+            )
+            .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
+            .where(
+                PPUTenantTierAssignment.effective_from <= end_instant,
+                PPUTenantTierAssignment.effective_to > end_instant,
+            )
+        )
+        if tenant_id:
+            ranked = ranked.where(PPUTenantTierAssignment.tenant_id == tenant_id)
+        ranked = ranked.subquery()
+        stmt = select(ranked).where(ranked.c.rn == 1)
+        if tier_id:
+            stmt = stmt.where(ranked.c.tier_id == tier_id)
+        # Deterministic order: without this, ties (e.g. many tenants at spend=0) can come
+        # back in a different order on every call, which breaks get_tenant_list's
+        # pagination (same tenant duplicating across pages, or never appearing on any).
+        stmt = stmt.order_by(ranked.c.tenant_id)
+        result = await self._db.execute(stmt)
+        return result.all()
+
+    async def get_tenant_tier_usage_breakdown(self, billing_month: str, tenant_ids: list[str]):
+        """Per (tenant, tier, inference_name) usage/cost for the billing month, across
+        every tier the tenant held that month — not just their tier as of period end.
+        Always unfiltered by task type: callers that need a single task type's numbers
+        filter this result in Python so the full breakdown (spend/budget/tierBreakdown)
+        stays consistent regardless of which task type is being drilled into.
         """
+        if not tenant_ids:
+            return []
         stmt = (
             select(
+                PPUQuotaUsage.tenant_id,
+                PPUQuotaUsage.tier_id,
+                PPUTier.name.label("tier_name"),
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
                 func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
+                func.max(PPUQuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
-            .where(PPUQuotaUsage.billing_month == billing_month)
-            .group_by(PPUQuotaUsage.inference_name)
+            .outerjoin(PPUTier, PPUTier.id == PPUQuotaUsage.tier_id)
+            .where(
+                PPUQuotaUsage.billing_month == billing_month,
+                PPUQuotaUsage.tenant_id.in_(tenant_ids),
+            )
+            .group_by(
+                PPUQuotaUsage.tenant_id,
+                PPUQuotaUsage.tier_id,
+                PPUTier.name,
+                PPUQuotaUsage.inference_name,
+            )
         )
         result = await self._db.execute(stmt)
         return result.all()
 
-    async def get_tenant_usages(
-        self, billing_month: str, tier: str | None, model_task_type: str | None
-    ):
-        """One row per tenant with aggregated period consumption and tier quota."""
-        usage_sq = select(
-            PPUQuotaUsage.tenant_id,
-            func.sum(PPUQuotaUsage.units_used).label("total_units"),
-            func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
-        ).where(PPUQuotaUsage.billing_month == billing_month)
-        if model_task_type:
-            usage_sq = usage_sq.where(PPUQuotaUsage.inference_name == model_task_type)
-        usage_sq = usage_sq.group_by(PPUQuotaUsage.tenant_id).subquery()
-
-        # quota_sq and unit_size_col are only meaningful when filtering by a single
-        # inference type — mixing quotas across types (e.g. ASR minutes + LLM tokens)
-        # produces a dimensionally incoherent sum that cannot be displayed.
-        if model_task_type:
-            quota_sq = (
-                select(
-                    PPUTierQuota.tier_id,
-                    func.sum(PPUTierQuota.monthly_quota).label("total_quota"),
-                )
-                .where(PPUTierQuota.inference_name == model_task_type)
-                .group_by(PPUTierQuota.tier_id)
-                .subquery()
+    async def get_total_cost_for_month(self, billing_month: str) -> Decimal:
+        """Total cost_accum for billing_month, scoped to tenants with a tier assignment
+        covering the END of that month — the same rule get_tenant_tier_as_of_period_end
+        applies, via an EXISTS check instead of resolving the tenant list in Python.
+        This scoping must match the current-month calculation's rule exactly: a tenant
+        whose assignment window ended mid-month with no reassignment (a real, reachable
+        case — assign_tier lets effective_to be any caller-supplied date, not just "far
+        future") would otherwise be excluded when this month is queried as the current
+        month but included here when it's queried as the previous month, making
+        spendChangePercent reflect a scoping inconsistency rather than a real change.
+        Still one query — used only when there's no tier_id filter, so an unfiltered
+        total doesn't need the tenant-resolution step get_tenant_tier_usage_breakdown
+        requires. Returned as Decimal (cost_accum is Numeric) — this codebase does money
+        arithmetic in Decimal end-to-end to avoid float rounding error.
+        """
+        end_instant = _end_of_month(billing_month)
+        has_coverage = exists(
+            select(1).where(
+                PPUTenantTierAssignment.tenant_id == PPUQuotaUsage.tenant_id,
+                PPUTenantTierAssignment.effective_from <= end_instant,
+                PPUTenantTierAssignment.effective_to > end_instant,
             )
-            quota_col = quota_sq.c.total_quota.label("total_quota")
-        else:
-            quota_sq = None
-            quota_col = null().label("total_quota")
+        )
+        stmt = select(func.sum(PPUQuotaUsage.cost_accum)).where(
+            PPUQuotaUsage.billing_month == billing_month,
+            has_coverage,
+        )
+        result = await self._db.execute(stmt)
+        return result.scalar() or Decimal("0")
 
-        if model_task_type:
-            unit_size_col = (
-                select(Service.unit_size)
-                .where(
-                    Service.task_type == model_task_type.lower(),
-                    Service.deleted_at.is_(None),
-                )
-                .order_by(Service.created_at.desc())
-                .limit(1)
-                .scalar_subquery()
-                .label("unit_size")
-            )
-        else:
-            unit_size_col = null().label("unit_size")
-
+    async def get_tier_first_seen(self, tenant_ids: list[str]):
+        """Earliest effective_from per (tenant_id, tier_id) — used to order a tenant's
+        tierBreakdown chronologically (oldest tier first), regardless of how many times
+        they've cycled on/off that tier since.
+        """
+        if not tenant_ids:
+            return []
         stmt = (
             select(
                 PPUTenantTierAssignment.tenant_id,
-                PPUTier.name.label("tier_name"),
-                PPUTenantTierAssignment.budget_limit,
-                PPUTenantTierAssignment.available_balance,
-                func.coalesce(usage_sq.c.total_units, 0).label("total_units"),
-                func.coalesce(usage_sq.c.total_cost, 0).label("total_cost"),
-                quota_col,
-                unit_size_col,
+                PPUTenantTierAssignment.tier_id,
+                func.min(PPUTenantTierAssignment.effective_from).label("first_seen"),
             )
-            .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
-            .outerjoin(usage_sq, usage_sq.c.tenant_id == PPUTenantTierAssignment.tenant_id)
-            .where(
-                PPUTenantTierAssignment.effective_from <= func.now(),
-                PPUTenantTierAssignment.effective_to > func.now(),
-            )
-        )
-        if quota_sq is not None:
-            stmt = stmt.outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
-        if tier:
-            stmt = stmt.where(PPUTier.name == tier)
-
-        result = await self._db.execute(stmt)
-        return result.all()
-
-    async def get_tenant_assignment(self, tenant_id: str):
-        """Budget, balance, and tier name for a single tenant.
-
-        unit_size is intentionally omitted — callers derive it from breakdown rows
-        (get_tenant_period_breakdown) which already carry the correct per-type unit_size
-        via _pricing_subquery(). A single unit_size here would be arbitrary for
-        multi-quota tiers and redundant for single-type tenants.
-        """
-        quota_sq = (
-            select(
-                PPUTierQuota.tier_id,
-                func.sum(PPUTierQuota.monthly_quota).label("total_quota"),
-            )
-            .group_by(PPUTierQuota.tier_id)
-            .subquery()
-        )
-        stmt = (
-            select(
-                PPUTenantTierAssignment.budget_limit,
-                PPUTenantTierAssignment.available_balance,
-                PPUTier.name.label("tier_name"),
-                quota_sq.c.total_quota.label("total_quota"),
-            )
-            .join(PPUTier, PPUTier.id == PPUTenantTierAssignment.tier_id)
-            .outerjoin(quota_sq, quota_sq.c.tier_id == PPUTenantTierAssignment.tier_id)
-            .where(
-                PPUTenantTierAssignment.tenant_id == tenant_id,
-                PPUTenantTierAssignment.effective_from <= func.now(),
-                PPUTenantTierAssignment.effective_to > func.now(),
-            )
-            .order_by(PPUTenantTierAssignment.effective_from.desc())
-        )
-        result = await self._db.execute(stmt)
-        return result.first()
-
-    async def get_tenant_period_breakdown(self, tenant_id: str, billing_month: str):
-        """Per-inference-name usage and accrued cost for a single tenant and billing month.
-
-        units_used/cost_accum are summed across all tier rows in the month, since total
-        consumption/spend must include usage recorded before a mid-month tier reassignment.
-        monthly_quota_snap, however, must reflect only the tenant's CURRENT tier — a mid-month
-        reassignment inserts a new (tenant_id, inference_name, billing_month, tier_id) row
-        rather than updating the old one, so a plain MAX()/SUM() across rows would mix the old
-        tier's quota in with the new one.
-        """
-        current_tier_sq = (
-            select(PPUTenantTierAssignment.tier_id)
-            .where(
-                PPUTenantTierAssignment.tenant_id == tenant_id,
-                PPUTenantTierAssignment.effective_from <= func.now(),
-                PPUTenantTierAssignment.effective_to > func.now(),
-            )
-            .order_by(PPUTenantTierAssignment.effective_from.desc())
-            .limit(1)
-            .scalar_subquery()
-        )
-        stmt = (
-            select(
-                PPUQuotaUsage.inference_name,
-                func.sum(PPUQuotaUsage.units_used).label("total_units"),
-                func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
-                func.max(
-                    case(
-                        (PPUQuotaUsage.tier_id == current_tier_sq, PPUQuotaUsage.monthly_quota_snap),
-                        else_=null(),
-                    )
-                ).label("monthly_quota_snap"),
-            )
-            .where(
-                PPUQuotaUsage.tenant_id == tenant_id,
-                PPUQuotaUsage.billing_month == billing_month,
-            )
-            .group_by(PPUQuotaUsage.inference_name)
+            .where(PPUTenantTierAssignment.tenant_id.in_(tenant_ids))
+            .group_by(PPUTenantTierAssignment.tenant_id, PPUTenantTierAssignment.tier_id)
         )
         result = await self._db.execute(stmt)
         return result.all()

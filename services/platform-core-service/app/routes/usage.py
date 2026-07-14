@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +18,8 @@ from app.core.permissions import (
 )
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
-    TenantUsageDetailResponse,
-    TenantUsageListResponse,
+    TenantHierarchicalItem,
+    TenantHierarchicalListResponse,
     UsageSummaryResponse,
 )
 from app.services.pay_per_use.ppu_usage_service import PPUUsageService
@@ -44,6 +45,21 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
 
 
+def _validate_tier_id(tier_id: Optional[str]) -> Optional[str]:
+    """Rejects a non-UUID tier_id with a clean 400 before it reaches the UUID column
+    comparison in the repository, where it would otherwise surface as an unhandled 500."""
+    if tier_id is None:
+        return None
+    try:
+        UUID(tier_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid tier_id format — expected a UUID",
+        )
+    return tier_id
+
+
 @router.get("/usage-summary", response_model=UsageSummaryResponse)
 async def get_usage_summary(
     request: Request,
@@ -51,33 +67,41 @@ async def get_usage_summary(
         Optional[str],
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
+    tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
+    tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_summary(month)
+    return await svc.get_summary(month, tier_id)
 
 
-@router.get("/usage-tenants", response_model=TenantUsageListResponse)
+@router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
 async def get_tenant_usage_list(
     request: Request,
     billing_period: Annotated[
         Optional[str],
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
-    tier: Optional[str] = Query(None, description="Filter by tier name."),
+    tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
+    sortOrder: Annotated[str, Query(pattern="^(asc|desc)$", description="Sort tenants by spend ascending or descending.")] = "desc",
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of tenants to return."),
+    offset: int = Query(0, ge=0, description="Number of tenants to skip (for pagination)."),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
+    tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_tenant_list(month, tier, modelTaskType.lower() if modelTaskType else None, auth_db)
+    return await svc.get_tenant_list(
+        month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db, sortOrder, limit, offset
+    )
 
 
-@router.get("/usage-tenant", response_model=TenantUsageDetailResponse)
+@router.get("/usage-tenant", response_model=TenantHierarchicalItem)
 async def get_tenant_usage_detail(
     request: Request,
     tenant_id: str = Query(..., description="Tenant ID."),
