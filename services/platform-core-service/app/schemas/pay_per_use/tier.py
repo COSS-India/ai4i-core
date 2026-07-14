@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.enums.model_management import TaskTypeEnum
+from app.schemas.enums.model_management import resolve_task_type
 
 
 class TierQuotaIn(BaseModel):
@@ -18,12 +18,7 @@ class TierQuotaIn(BaseModel):
     @classmethod
     def normalize_model_task_type(cls, v: Any) -> Any:
         if isinstance(v, str):
-            v_normalized = v.lower()
-            for member in TaskTypeEnum:
-                if member.value.lower() == v_normalized:
-                    return member.value
-            valid = [m.value for m in TaskTypeEnum]
-            raise ValueError(f"Invalid modelTaskType '{v}'. Valid types: {', '.join(valid)}")
+            return resolve_task_type(v)
         return v
 
 

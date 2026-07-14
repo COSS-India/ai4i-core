@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_auth_db, get_db
 from app.core.exceptions import ValidationError
 from app.schemas.common import SuccessResponse
-from app.schemas.enums.model_management import TaskTypeEnum
+from app.schemas.enums.model_management import resolve_task_type
 from app.schemas.pay_per_use.tenant_assignment import (
     ReviseBudgetRequest,
     ReviseBudgetResponse,
@@ -29,10 +29,9 @@ def _resolve_model_task_type(model_task_type: Optional[str]) -> Optional[str]:
     if not model_task_type:
         return None
     try:
-        return TaskTypeEnum(model_task_type.lower()).value
-    except ValueError:
-        valid = [e.value for e in TaskTypeEnum]
-        raise ValidationError(f"Invalid modelTaskType '{model_task_type}'. Must be one of: {valid}")
+        return resolve_task_type(model_task_type)
+    except ValueError as exc:
+        raise ValidationError(str(exc))
 
 
 @router.get("/tiers")
