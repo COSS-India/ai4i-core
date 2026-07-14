@@ -35,13 +35,6 @@ def _prev_month(billing_month: str) -> str:
     return f"{year:04d}-{month:02d}"
 
 
-def _count_budget_exceeded(tenant_rows) -> int:
-    return sum(
-        1 for row in tenant_rows
-        if float(row.total_cost or 0) >= float(row.budget_limit)
-    )
-
-
 def _group_usage_by_tier(usage_rows) -> dict[str, dict]:
     """Groups flat (tier_id, inference_name) usage rows into {tier_key: {tierName, rows}}."""
     groups: dict[str, dict] = {}
@@ -52,9 +45,20 @@ def _group_usage_by_tier(usage_rows) -> dict[str, dict]:
     return groups
 
 
-def _build_hierarchical_item(assignment, tenant_name: str, usage_rows) -> TenantHierarchicalItem:
+def _build_hierarchical_item(
+    assignment,
+    tenant_name: str,
+    usage_rows,
+    model_task_type: str | None = None,
+) -> TenantHierarchicalItem:
     """Builds one tenant's hierarchical usage item from their end-of-period tier assignment
     plus their flat per-(tier, inference_name) usage rows for the billing month.
+
+    When model_task_type is set, usage_rows are already pre-filtered to that single task
+    type (by the repository query), so summing consumed/quota across rows here combines
+    that same type's allotment across every tier the tenant held that month — e.g. tier1
+    granted 500 tokens (100 used) then reassigned to tier2 granted 100 more (50 used) nets
+    quotaLimit=600, consumed=150.
     """
     tier_groups = _group_usage_by_tier(usage_rows)
 
@@ -101,6 +105,20 @@ def _build_hierarchical_item(assignment, tenant_name: str, usage_rows) -> Tenant
     remaining_budget = round(float(assignment.available_balance), 2)
     percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else 0.0
 
+    usage_count = TenantUsageCount(taskTypeCount=len(distinct_task_types))
+    if model_task_type:
+        total_consumed = sum(float(row.total_units or 0) for row in usage_rows)
+        quota_values = [float(row.quota_snap) for row in usage_rows if row.quota_snap is not None]
+        total_quota = sum(quota_values) if quota_values else None
+        usage_count = TenantUsageCount(
+            taskTypeCount=len(distinct_task_types),
+            unit=_UNIT_LABELS.get(model_task_type, model_task_type),
+            quotaLimit=round(total_quota, 2) if total_quota is not None else None,
+            consumed=round(total_consumed, 2),
+            remaining=round(total_quota - total_consumed, 2) if total_quota is not None else None,
+            percentage=round(total_consumed / total_quota * 100, 1) if total_quota else 0.0,
+        )
+
     return TenantHierarchicalItem(
         tenantId=assignment.tenant_id,
         tenantName=tenant_name,
@@ -114,7 +132,7 @@ def _build_hierarchical_item(assignment, tenant_name: str, usage_rows) -> Tenant
             remaining=remaining_budget,
             percentageUsed=percentage_used,
         ),
-        usage=TenantUsageCount(taskTypeCount=len(distinct_task_types)),
+        usage=usage_count,
         tierBreakdown=tier_breakdown,
     )
 
@@ -142,43 +160,74 @@ class PPUUsageService:
     def __init__(self, repo: PPUUsageRepository) -> None:
         self._repo = repo
 
+    async def _tenants_and_spend_for_period(
+        self, billing_month: str, tier_id: str | None, model_task_type: str | None
+    ):
+        """Tenants belonging to tier_id as of the END of billing_month (not "as of now"),
+        plus their usage rows for that month — the same tenant-selection rule used by
+        get_tenant_list/get_tenant_detail, so a tier + billing_period filter combination
+        gives consistent results across all three endpoints, including past periods where
+        a tenant has since moved to a different tier.
+        """
+        assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
+        tenant_ids = [a.tenant_id for a in assignments]
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
+            billing_month, tenant_ids, model_task_type
+        )
+        return assignments, usage_rows
+
     async def get_summary(
         self,
         billing_month: str,
         tier_id: str | None = None,
         model_task_type: str | None = None,
     ) -> UsageSummaryResponse:
-        rows = await self._repo.get_usage_with_pricing(billing_month, tier_id, model_task_type)
+        assignments, usage_rows = await self._tenants_and_spend_for_period(
+            billing_month, tier_id, model_task_type
+        )
 
-        items: list[dict] = []
-        for row in rows:
+        by_task_type: dict[str, dict] = {}
+        cost_by_tenant: dict[str, float] = {}
+        for row in usage_rows:
             units = float(row.total_units or 0)
-            spend = round(float(row.total_cost or 0), 2)
+            cost = float(row.total_cost or 0)
+            bucket = by_task_type.setdefault(
+                row.inference_name,
+                {"unit": _UNIT_LABELS.get(row.inference_name, row.inference_name), "units": 0.0, "cost": 0.0},
+            )
+            bucket["units"] += units
+            bucket["cost"] += cost
+            cost_by_tenant[row.tenant_id] = cost_by_tenant.get(row.tenant_id, 0.0) + cost
 
-            items.append({
-                "modelTaskType": row.inference_name,
-                "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
-                "consumption": units,
-                "spend": spend,
-            })
-
-        total_spend = sum(i["spend"] for i in items)
+        total_spend = sum(b["cost"] for b in by_task_type.values())
         spend_items = [
             SpendItem(
-                **i,
-                percentage=round(i["spend"] / total_spend * 100, 1) if total_spend > 0 else 0.0,
+                modelTaskType=name,
+                unit=b["unit"],
+                consumption=b["units"],
+                spend=round(b["cost"], 2),
+                percentage=round(b["cost"] / total_spend * 100, 1) if total_spend > 0 else 0.0,
             )
-            for i in items
+            for name, b in by_task_type.items()
         ]
+        spend_items.sort(key=lambda i: i.spend, reverse=True)
 
-        tenant_rows = await self._repo.get_tenant_usages(billing_month, tier_id, model_task_type)
-        active_tenants = len(tenant_rows)
-        budget_exceeded = _count_budget_exceeded(tenant_rows)
+        active_tenants = len(assignments)
+        budget_exceeded = sum(
+            1 for a in assignments
+            if cost_by_tenant.get(a.tenant_id, 0.0) >= float(a.budget_limit)
+        )
 
-        prev_tenant_rows = await self._repo.get_tenant_usages(
+        prev_assignments, prev_usage_rows = await self._tenants_and_spend_for_period(
             _prev_month(billing_month), tier_id, model_task_type
         )
-        prev_budget_exceeded = _count_budget_exceeded(prev_tenant_rows)
+        prev_cost_by_tenant: dict[str, float] = {}
+        for row in prev_usage_rows:
+            prev_cost_by_tenant[row.tenant_id] = prev_cost_by_tenant.get(row.tenant_id, 0.0) + float(row.total_cost or 0)
+        prev_budget_exceeded = sum(
+            1 for a in prev_assignments
+            if prev_cost_by_tenant.get(a.tenant_id, 0.0) >= float(a.budget_limit)
+        )
         budget_exceeded_change_percent = (
             round((budget_exceeded - prev_budget_exceeded) / prev_budget_exceeded * 100, 1)
             if prev_budget_exceeded > 0
@@ -233,6 +282,7 @@ class PPUUsageService:
                 assignment,
                 org_map.get(assignment.tenant_id, assignment.tenant_id),
                 tenant_usage_rows or [],
+                model_task_type,
             ))
 
         items.sort(key=lambda item: item.spend, reverse=(sort_order != "asc"))

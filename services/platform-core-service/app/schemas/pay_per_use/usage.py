@@ -48,6 +48,11 @@ class TenantBudget(BaseModel):
 
 class TenantUsageCount(BaseModel):
     taskTypeCount: int
+    unit: Optional[str] = None
+    quotaLimit: Optional[float] = None
+    consumed: Optional[float] = None
+    remaining: Optional[float] = None
+    percentage: Optional[float] = None
 
 
 class TenantHierarchicalItem(BaseModel):
