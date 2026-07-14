@@ -1,13 +1,25 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.schemas.enums.model_management import resolve_task_type
 
 
 class TierQuotaIn(BaseModel):
     modelTaskType: str = Field(..., min_length=1)
-    limit: int = Field(..., ge=0)
+    # Ceiling is the largest integer PPUTierQuota.monthly_quota's Numeric(15, 4)
+    # column can store exactly (11 integer digits), so an out-of-range limit is
+    # rejected here instead of persisting and breaking on read-back.
+    limit: int = Field(..., ge=0, le=99_999_999_999)
+
+    @field_validator("modelTaskType", mode="before")
+    @classmethod
+    def normalize_model_task_type(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return resolve_task_type(v)
+        return v
 
 
 class TierQuotaOut(BaseModel):
@@ -30,7 +42,7 @@ def _check_duplicate_model_task_types(quotas: List[TierQuotaIn]) -> List[TierQuo
 class TierCreate(BaseModel):
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    quotas: List[TierQuotaIn] = Field(default_factory=list)
+    quotas: List[TierQuotaIn] = Field(..., min_length=1)
 
     @model_validator(mode="after")
     def validate_unique_quotas(self):
