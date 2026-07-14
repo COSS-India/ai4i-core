@@ -46,10 +46,50 @@ class TenantUsageItem(BaseModel):
     currency: str
 
 
-class TenantUsageListResponse(BaseModel):
-    data: list[TenantUsageItem]
-    total: int
-
-
 class TenantUsageDetailResponse(TenantUsageItem):
     breakdown: list[TenantUsageBreakdown]
+
+
+class TaskTypeUsage(BaseModel):
+    taskType: str
+    unit: str
+    quotaLimit: Optional[float] = None
+    consumed: float
+    remaining: Optional[float] = None
+    percentage: float
+    spend: float
+
+
+class TierUsageBreakdown(BaseModel):
+    tierId: str
+    tierName: str
+    spend: float
+    taskTypes: list[TaskTypeUsage]
+
+
+class TenantBudget(BaseModel):
+    limit: float
+    spent: float
+    remaining: float
+    percentageUsed: float
+
+
+class TenantUsageCount(BaseModel):
+    taskTypeCount: int
+
+
+class TenantHierarchicalItem(BaseModel):
+    tenantId: str
+    tenantName: str
+    tier: str
+    tierId: str
+    currency: str
+    spend: float
+    budget: TenantBudget
+    usage: TenantUsageCount
+    tierBreakdown: list[TierUsageBreakdown]
+
+
+class TenantHierarchicalListResponse(BaseModel):
+    data: list[TenantHierarchicalItem]
+    total: int

@@ -14,10 +14,14 @@ from app.core.exceptions import EntityNotFoundError
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
     SpendItem,
+    TaskTypeUsage,
+    TenantBudget,
+    TenantHierarchicalItem,
+    TenantHierarchicalListResponse,
     TenantUsageBreakdown,
+    TenantUsageCount,
     TenantUsageDetailResponse,
-    TenantUsageItem,
-    TenantUsageListResponse,
+    TierUsageBreakdown,
     UsageSummaryResponse,
 )
 
@@ -122,35 +126,103 @@ class PPUUsageService:
         tier_id: str | None,
         model_task_type: str | None,
         auth_db: Optional[AsyncSession],
-    ) -> TenantUsageListResponse:
-        rows = await self._repo.get_tenant_usages(billing_month, tier_id, model_task_type)
-        org_map = await _resolve_tenant_names([row.tenant_id for row in rows], auth_db)
-        unit_label = _UNIT_LABELS.get(model_task_type, "Units") if model_task_type else "Units"
+        sort_order: str = "desc",
+    ) -> TenantHierarchicalListResponse:
+        """Hierarchical tenant usage: tenant -> tier(s) held during billing_month -> task types.
 
-        items = []
-        for row in rows:
-            budget_limit = float(row.budget_limit)
-            remaining_budget = float(row.available_balance)
-            total_units = float(row.total_units or 0)
-            spend_to_date = round(float(row.total_cost or 0), 2)
-            raw_quota = row.total_quota  # None means unlimited (no quota rows for this tier)
-            quota_display = float(raw_quota) if raw_quota is not None else None
+        The tenant-level tier/budget reflect whichever tier assignment was in effect at the
+        END of billing_month (which may differ from the tenant's tier "as of now" if they've
+        since been reassigned). tierBreakdown covers every tier the tenant actually had usage
+        under that month — a mid-month tier change surfaces as two entries.
+        """
+        assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
+        if not assignments:
+            return TenantHierarchicalListResponse(data=[], total=0)
 
-            items.append(TenantUsageItem(
-                tenantId=row.tenant_id,
-                tenantName=org_map.get(row.tenant_id, row.tenant_id),
-                tier=row.tier_name,
-                budgetLimit=round(budget_limit, 2),
-                spendToDate=spend_to_date,
-                remainingBudget=round(remaining_budget, 2),
-                quotaLimit=quota_display,
-                quotaUnit=unit_label,
-                consumptionToDate=total_units,
-                remainingQuota=max(0, quota_display - total_units) if quota_display is not None else None,
+        tenant_ids = [row.tenant_id for row in assignments]
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
+            billing_month, tenant_ids, model_task_type
+        )
+        org_map = await _resolve_tenant_names(tenant_ids, auth_db)
+
+        usage_by_tenant: dict[str, dict] = {}
+        for row in usage_rows:
+            tier_key = str(row.tier_id) if row.tier_id is not None else "unassigned"
+            tenant_bucket = usage_by_tenant.setdefault(row.tenant_id, {})
+            tier_bucket = tenant_bucket.setdefault(
+                tier_key, {"tierName": row.tier_name or "Unassigned", "rows": []}
+            )
+            tier_bucket["rows"].append(row)
+
+        items: list[TenantHierarchicalItem] = []
+        for assignment in assignments:
+            tenant_id = assignment.tenant_id
+            tier_groups = usage_by_tenant.get(tenant_id)
+            if model_task_type and not tier_groups:
+                continue  # no usage of the filtered task type this period — excluded entirely
+
+            tier_breakdown: list[TierUsageBreakdown] = []
+            distinct_task_types: set[str] = set()
+            tenant_spend = 0.0
+
+            for tier_key, bucket in (tier_groups or {}).items():
+                raw_task_types: list[dict] = []
+                tier_spend = 0.0
+                for row in bucket["rows"]:
+                    units = float(row.total_units or 0)
+                    spend = round(float(row.total_cost or 0), 2)
+                    quota = float(row.quota_snap) if row.quota_snap is not None else None
+                    remaining = round(quota - units, 2) if quota is not None else None
+                    raw_task_types.append({
+                        "taskType": row.inference_name,
+                        "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
+                        "quotaLimit": quota,
+                        "consumed": units,
+                        "remaining": remaining,
+                        "spend": spend,
+                    })
+                    tier_spend += spend
+                    distinct_task_types.add(row.inference_name)
+
+                task_types = [
+                    TaskTypeUsage(
+                        **t,
+                        percentage=round(t["spend"] / tier_spend * 100, 1) if tier_spend > 0 else 0.0,
+                    )
+                    for t in raw_task_types
+                ]
+                tier_breakdown.append(TierUsageBreakdown(
+                    tierId=tier_key,
+                    tierName=bucket["tierName"],
+                    spend=round(tier_spend, 2),
+                    taskTypes=task_types,
+                ))
+                tenant_spend += tier_spend
+
+            tenant_spend = round(tenant_spend, 2)
+            budget_limit = round(float(assignment.budget_limit), 2)
+            remaining_budget = round(float(assignment.available_balance), 2)
+            percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else 0.0
+
+            items.append(TenantHierarchicalItem(
+                tenantId=tenant_id,
+                tenantName=org_map.get(tenant_id, tenant_id),
+                tier=assignment.tier_name,
+                tierId=str(assignment.tier_id),
                 currency=_CURRENCY,
+                spend=tenant_spend,
+                budget=TenantBudget(
+                    limit=budget_limit,
+                    spent=tenant_spend,
+                    remaining=remaining_budget,
+                    percentageUsed=percentage_used,
+                ),
+                usage=TenantUsageCount(taskTypeCount=len(distinct_task_types)),
+                tierBreakdown=tier_breakdown,
             ))
 
-        return TenantUsageListResponse(data=items, total=len(items))
+        items.sort(key=lambda item: item.spend, reverse=(sort_order != "asc"))
+        return TenantHierarchicalListResponse(data=items, total=len(items))
 
     async def get_tenant_detail(
         self,

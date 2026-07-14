@@ -17,8 +17,8 @@ from app.core.permissions import (
 )
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.schemas.pay_per_use.usage import (
+    TenantHierarchicalListResponse,
     TenantUsageDetailResponse,
-    TenantUsageListResponse,
     UsageSummaryResponse,
 )
 from app.services.pay_per_use.ppu_usage_service import PPUUsageService
@@ -61,7 +61,7 @@ async def get_usage_summary(
     return await svc.get_summary(month, tier_id, modelTaskType.lower() if modelTaskType else None)
 
 
-@router.get("/usage-tenants", response_model=TenantUsageListResponse)
+@router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
 async def get_tenant_usage_list(
     request: Request,
     billing_period: Annotated[
@@ -70,13 +70,16 @@ async def get_tenant_usage_list(
     ] = None,
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
+    sortOrder: Annotated[str, Query(pattern="^(asc|desc)$", description="Sort tenants by spend ascending or descending.")] = "desc",
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
     _require_admin(request)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_tenant_list(month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db)
+    return await svc.get_tenant_list(
+        month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db, sortOrder
+    )
 
 
 @router.get("/usage-tenant", response_model=TenantUsageDetailResponse)
