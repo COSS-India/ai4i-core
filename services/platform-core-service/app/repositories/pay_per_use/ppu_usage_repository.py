@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
@@ -105,14 +105,31 @@ class PPUUsageRepository:
         return result.all()
 
     async def get_total_cost_for_month(self, billing_month: str) -> Decimal:
-        """Total cost_accum across every tenant for billing_month, in one query — used
-        only when there's no tier_id filter, since an unfiltered total doesn't need the
-        tenant-resolution step get_tenant_tier_usage_breakdown requires. Returned as
-        Decimal (cost_accum is Numeric) — this codebase does money arithmetic in Decimal
-        end-to-end to avoid float rounding error.
+        """Total cost_accum for billing_month, scoped to tenants with a tier assignment
+        covering the END of that month — the same rule get_tenant_tier_as_of_period_end
+        applies, via an EXISTS check instead of resolving the tenant list in Python.
+        This scoping must match the current-month calculation's rule exactly: a tenant
+        whose assignment window ended mid-month with no reassignment (a real, reachable
+        case — assign_tier lets effective_to be any caller-supplied date, not just "far
+        future") would otherwise be excluded when this month is queried as the current
+        month but included here when it's queried as the previous month, making
+        spendChangePercent reflect a scoping inconsistency rather than a real change.
+        Still one query — used only when there's no tier_id filter, so an unfiltered
+        total doesn't need the tenant-resolution step get_tenant_tier_usage_breakdown
+        requires. Returned as Decimal (cost_accum is Numeric) — this codebase does money
+        arithmetic in Decimal end-to-end to avoid float rounding error.
         """
+        end_instant = _end_of_month(billing_month)
+        has_coverage = exists(
+            select(1).where(
+                PPUTenantTierAssignment.tenant_id == PPUQuotaUsage.tenant_id,
+                PPUTenantTierAssignment.effective_from <= end_instant,
+                PPUTenantTierAssignment.effective_to > end_instant,
+            )
+        )
         stmt = select(func.sum(PPUQuotaUsage.cost_accum)).where(
-            PPUQuotaUsage.billing_month == billing_month
+            PPUQuotaUsage.billing_month == billing_month,
+            has_coverage,
         )
         result = await self._db.execute(stmt)
         return result.scalar() or Decimal("0")
