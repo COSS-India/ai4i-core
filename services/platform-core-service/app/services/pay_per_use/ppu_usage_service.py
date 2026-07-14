@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,18 @@ from app.schemas.pay_per_use.usage import (
 _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
 _FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _to_decimal(value) -> Decimal:
+    """Money/quota columns are Numeric in the DB; this codebase does all such arithmetic
+    in Decimal end-to-end (tenant_assignment_service.py, the billing consumer) to avoid
+    float rounding error compounding across sums. str(value) avoids importing an
+    existing float's own binary-rounding artifacts into the Decimal."""
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _prev_month(billing_month: str) -> str:
@@ -83,17 +96,17 @@ def _build_hierarchical_item(
     # that sum to 100% per tier group instead of 100% overall.
     tier_raw: list[dict] = []
     distinct_task_types: set[str] = set()
-    tenant_spend = 0.0
+    tenant_spend = Decimal("0")
 
     for tier_key in ordered_tier_keys:
         bucket = tier_groups[tier_key]
         raw_task_types: list[dict] = []
-        tier_spend = 0.0
+        tier_spend = Decimal("0")
         for row in bucket["rows"]:
-            units = float(row.total_units or 0)
-            spend = round(float(row.total_cost or 0), 2)
-            quota = float(row.quota_snap) if row.quota_snap is not None else None
-            remaining = round(max(0.0, quota - units), 2) if quota is not None else None
+            units = _to_decimal(row.total_units)
+            spend = round(_to_decimal(row.total_cost), 2)
+            quota = _to_decimal(row.quota_snap) if row.quota_snap is not None else None
+            remaining = round(max(Decimal("0"), quota - units), 2) if quota is not None else None
             raw_task_types.append({
                 "taskType": row.inference_name,
                 "unit": _UNIT_LABELS.get(row.inference_name, row.inference_name),
@@ -123,16 +136,16 @@ def _build_hierarchical_item(
             taskTypes=[
                 TaskTypeUsage(
                     **t,
-                    percentage=round(t["spend"] / tenant_spend * 100, 1) if tenant_spend > 0 else 0.0,
+                    percentage=round(t["spend"] / tenant_spend * 100, 1) if tenant_spend > 0 else Decimal("0"),
                 )
                 for t in tg["raw_task_types"]
             ],
         )
         for tg in tier_raw
     ]
-    budget_limit = round(float(assignment.budget_limit), 2)
-    remaining_budget = round(float(assignment.available_balance), 2)
-    percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else 0.0
+    budget_limit = round(_to_decimal(assignment.budget_limit), 2)
+    remaining_budget = round(_to_decimal(assignment.available_balance), 2)
+    percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else Decimal("0")
 
     effective_task_type = model_task_type
     if effective_task_type is None and len(distinct_task_types) == 1:
@@ -141,22 +154,22 @@ def _build_hierarchical_item(
     usage_count = TenantUsageCount(taskTypeCount=len(distinct_task_types))
     if effective_task_type:
         matching_rows = [r for r in usage_rows if r.inference_name == effective_task_type]
-        total_consumed = sum(float(r.total_units or 0) for r in matching_rows)
+        total_consumed = sum((_to_decimal(r.total_units) for r in matching_rows), Decimal("0"))
         current_tier_row = next(
             (r for r in matching_rows if str(r.tier_id) == str(assignment.tier_id)), None
         )
         quota = (
-            float(current_tier_row.quota_snap)
+            _to_decimal(current_tier_row.quota_snap)
             if current_tier_row is not None and current_tier_row.quota_snap is not None
             else None
         )
         if quota is None:
-            percentage = 0.0
+            percentage = Decimal("0")
         elif quota == 0:
             # A 0 quota is a deliberate "blocked for this cycle" tier setting (see
             # tier_service.py), not missing data — any usage against it is fully
             # exhausted, not 0% used.
-            percentage = 100.0 if total_consumed > 0 else 0.0
+            percentage = Decimal("100") if total_consumed > 0 else Decimal("0")
         else:
             percentage = round(total_consumed / quota * 100, 1)
 
@@ -165,7 +178,7 @@ def _build_hierarchical_item(
             unit=_UNIT_LABELS.get(effective_task_type, effective_task_type),
             quotaLimit=round(quota, 2) if quota is not None else None,
             consumed=round(total_consumed, 2),
-            remaining=round(max(0.0, quota - total_consumed), 2) if quota is not None else None,
+            remaining=round(max(Decimal("0"), quota - total_consumed), 2) if quota is not None else None,
             percentage=percentage,
         )
 
@@ -187,13 +200,15 @@ def _build_hierarchical_item(
     )
 
 
-def _tenant_spend_from_rows(usage_rows) -> float:
+def _tenant_spend_from_rows(usage_rows) -> Decimal:
     """Same rounding order _build_hierarchical_item uses for a tenant's total spend
     (round each row, sum, round again) — so sorting on this cheap pre-aggregate always
     agrees with the `spend` value the full hierarchical build would produce, without
     needing tier grouping or the rest of that build for tenants that get paginated out.
     """
-    return round(sum(round(float(row.total_cost or 0), 2) for row in usage_rows), 2)
+    return round(
+        sum((round(_to_decimal(row.total_cost), 2) for row in usage_rows), Decimal("0")), 2
+    )
 
 
 async def _resolve_tenant_names(
@@ -244,26 +259,26 @@ class PPUUsageService:
         assignments, usage_rows = await self._tenant_assignments_and_usage(billing_month, tier_id)
 
         by_task_type: dict[str, dict] = {}
-        cost_by_tenant: dict[str, float] = {}
+        cost_by_tenant: dict[str, Decimal] = {}
         for row in usage_rows:
-            units = float(row.total_units or 0)
-            cost = float(row.total_cost or 0)
+            units = _to_decimal(row.total_units)
+            cost = _to_decimal(row.total_cost)
             bucket = by_task_type.setdefault(
                 row.inference_name,
-                {"unit": _UNIT_LABELS.get(row.inference_name, row.inference_name), "units": 0.0, "cost": 0.0},
+                {"unit": _UNIT_LABELS.get(row.inference_name, row.inference_name), "units": Decimal("0"), "cost": Decimal("0")},
             )
             bucket["units"] += units
             bucket["cost"] += cost
-            cost_by_tenant[row.tenant_id] = cost_by_tenant.get(row.tenant_id, 0.0) + cost
+            cost_by_tenant[row.tenant_id] = cost_by_tenant.get(row.tenant_id, Decimal("0")) + cost
 
-        total_spend = sum(b["cost"] for b in by_task_type.values())
+        total_spend = sum((b["cost"] for b in by_task_type.values()), Decimal("0"))
         spend_items = [
             SpendItem(
                 modelTaskType=name,
                 unit=b["unit"],
                 consumption=b["units"],
                 spend=round(b["cost"], 2),
-                percentage=round(b["cost"] / total_spend * 100, 1) if total_spend > 0 else 0.0,
+                percentage=round(b["cost"] / total_spend * 100, 1) if total_spend > 0 else Decimal("0"),
             )
             for name, b in by_task_type.items()
         ]
@@ -272,7 +287,7 @@ class PPUUsageService:
         active_tenants = len(assignments)
         budget_exceeded = sum(
             1 for a in assignments
-            if cost_by_tenant.get(a.tenant_id, 0.0) > float(a.budget_limit)
+            if cost_by_tenant.get(a.tenant_id, Decimal("0")) > _to_decimal(a.budget_limit)
         )
 
         prev_month = _prev_month(billing_month)
@@ -281,11 +296,13 @@ class PPUUsageService:
             # usage row, so it needs the full tenant-resolution pipeline to stay
             # consistent with the current month's figure above.
             _, prev_usage_rows = await self._tenant_assignments_and_usage(prev_month, tier_id)
-            prev_total_spend = sum(float(row.total_cost or 0) for row in prev_usage_rows)
+            prev_total_spend = sum(
+                (_to_decimal(row.total_cost) for row in prev_usage_rows), Decimal("0")
+            )
         else:
             # Unfiltered: no tenant scoping needed, so skip tenant/tier resolution
             # entirely and get the same number from one lightweight aggregate query.
-            prev_total_spend = await self._repo.get_total_cost_for_month(prev_month)
+            prev_total_spend = _to_decimal(await self._repo.get_total_cost_for_month(prev_month))
         spend_change_percent = (
             round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
             if prev_total_spend > 0

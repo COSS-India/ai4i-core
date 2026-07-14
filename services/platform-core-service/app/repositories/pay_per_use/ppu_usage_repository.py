@@ -1,5 +1,6 @@
 """PPU usage repository — reads usage and accrued cost data."""
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,16 +102,18 @@ class PPUUsageRepository:
         result = await self._db.execute(stmt)
         return result.all()
 
-    async def get_total_cost_for_month(self, billing_month: str) -> float:
+    async def get_total_cost_for_month(self, billing_month: str) -> Decimal:
         """Total cost_accum across every tenant for billing_month, in one query — used
         only when there's no tier_id filter, since an unfiltered total doesn't need the
-        tenant-resolution step get_tenant_tier_usage_breakdown requires.
+        tenant-resolution step get_tenant_tier_usage_breakdown requires. Returned as
+        Decimal (cost_accum is Numeric) — this codebase does money arithmetic in Decimal
+        end-to-end to avoid float rounding error.
         """
         stmt = select(func.sum(PPUQuotaUsage.cost_accum)).where(
             PPUQuotaUsage.billing_month == billing_month
         )
         result = await self._db.execute(stmt)
-        return float(result.scalar() or 0)
+        return result.scalar() or Decimal("0")
 
     async def get_tier_first_seen(self, tenant_ids: list[str]):
         """Earliest effective_from per (tenant_id, tier_id) — used to order a tenant's
