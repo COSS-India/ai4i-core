@@ -266,10 +266,17 @@ class PPUUsageService:
             if cost_by_tenant.get(a.tenant_id, 0.0) > float(a.budget_limit)
         )
 
-        _, prev_usage_rows = await self._tenant_assignments_and_usage(
-            _prev_month(billing_month), tier_id
-        )
-        prev_total_spend = sum(float(row.total_cost or 0) for row in prev_usage_rows)
+        prev_month = _prev_month(billing_month)
+        if tier_id:
+            # tier_id scopes by tenant ("who was on this tier at period end"), not by
+            # usage row, so it needs the full tenant-resolution pipeline to stay
+            # consistent with the current month's figure above.
+            _, prev_usage_rows = await self._tenant_assignments_and_usage(prev_month, tier_id)
+            prev_total_spend = sum(float(row.total_cost or 0) for row in prev_usage_rows)
+        else:
+            # Unfiltered: no tenant scoping needed, so skip tenant/tier resolution
+            # entirely and get the same number from one lightweight aggregate query.
+            prev_total_spend = await self._repo.get_total_cost_for_month(prev_month)
         spend_change_percent = (
             round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
             if prev_total_spend > 0

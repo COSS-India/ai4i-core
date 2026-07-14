@@ -57,11 +57,18 @@ def _usage_row(**kwargs):
 # ── get_summary ───────────────────────────────────────────────────────────────
 
 class TestGetSummary:
+    """get_summary(tier_id=None) — the unfiltered path — gets its prior-month total via
+    the single-query get_total_cost_for_month, never touching tenant resolution for the
+    previous month. get_summary(tier_id=<id>) still needs full tenant-scoped resolution
+    for both months, since tier_id scopes by tenant, not by usage row (see TestGetSummaryFiltered).
+    """
+
     @pytest.mark.asyncio
     async def test_total_spend_and_active_tenants(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[_assignment()],
-            get_tenant_tier_usage_breakdown=_Seq([[_usage_row()], []]),  # current month, then prev month
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
@@ -75,7 +82,8 @@ class TestGetSummary:
     async def test_budget_exceeded_tenant_is_counted(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[_assignment(budget_limit=Decimal("10"))],
-            get_tenant_tier_usage_breakdown=_Seq([[_usage_row(total_cost=Decimal("50"))], []]),
+            get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("50"))],
+            get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
@@ -86,7 +94,8 @@ class TestGetSummary:
     async def test_spend_change_percent_none_when_no_prior_spend(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[_assignment()],
-            get_tenant_tier_usage_breakdown=_Seq([[_usage_row()], []]),
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
@@ -97,34 +106,53 @@ class TestGetSummary:
     async def test_spend_change_percent_computed_against_prior_month(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[_assignment()],
-            get_tenant_tier_usage_breakdown=_Seq([
-                [_usage_row(total_cost=Decimal("150"))],
-                [_usage_row(total_cost=Decimal("100"))],
-            ]),
+            get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("150"))],
+            get_total_cost_for_month=100.0,
         )
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
 
         # (150 - 100) / 100 * 100 = 50.0
         assert result.spendChangePercent == 50.0
+        repo.get_total_cost_for_month.assert_called_once_with("2026-05")
+        repo.get_tenant_tier_usage_breakdown.assert_called_once()  # current month only
 
     @pytest.mark.asyncio
     async def test_percentage_sums_to_100_across_task_types(self):
         repo = _make_repo(
             get_tenant_tier_as_of_period_end=[_assignment()],
-            get_tenant_tier_usage_breakdown=_Seq([
-                [
-                    _usage_row(inference_name="llm", total_cost=Decimal("75")),
-                    _usage_row(inference_name="asr", total_cost=Decimal("25")),
-                ],
-                [],
-            ]),
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(inference_name="llm", total_cost=Decimal("75")),
+                _usage_row(inference_name="asr", total_cost=Decimal("25")),
+            ],
+            get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
 
         total_pct = sum(i.percentage for i in result.spendByModelTaskType)
         assert abs(total_pct - 100.0) < 0.2
+
+
+class TestGetSummaryFiltered:
+    """get_summary(tier_id=<id>) must keep using full tenant resolution for the prior
+    month too, since tier_id scopes by "who was on this tier," not by usage row."""
+
+    @pytest.mark.asyncio
+    async def test_spend_change_percent_uses_tenant_resolution_when_tier_id_set(self):
+        repo = _make_repo(
+            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenant_tier_usage_breakdown=_Seq([
+                [_usage_row(total_cost=Decimal("150"))],
+                [_usage_row(total_cost=Decimal("100"))],
+            ]),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06", tier_id="1")
+
+        assert result.spendChangePercent == 50.0
+        assert repo.get_tenant_tier_usage_breakdown.call_count == 2
+        assert not repo.get_total_cost_for_month.called
 
 
 # ── get_tenant_list ───────────────────────────────────────────────────────────
