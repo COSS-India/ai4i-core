@@ -8,15 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier
+from app.utils.billing_month import shift_billing_month
 
 
 def _end_of_month(billing_month: str) -> datetime:
     """Last instant (UTC) of the given YYYY-MM billing month."""
-    year, month = (int(part) for part in billing_month.split("-"))
-    if month == 12:
-        next_month_start = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        next_month_start = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    year, month = shift_billing_month(billing_month, 1)
+    next_month_start = datetime(year, month, 1, tzinfo=timezone.utc)
     return next_month_start - timedelta(microseconds=1)
 
 

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai4i_core.ppu import get_inference_unit_map
 from app.core.exceptions import EntityNotFoundError
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
+from app.utils.billing_month import shift_billing_month
 from app.schemas.pay_per_use.usage import (
     SpendItem,
     TaskTypeUsage,
@@ -43,10 +44,7 @@ def _to_decimal(value) -> Decimal:
 
 
 def _prev_month(billing_month: str) -> str:
-    year, month = (int(part) for part in billing_month.split("-"))
-    month -= 1
-    if month < 1:
-        month, year = 12, year - 1
+    year, month = shift_billing_month(billing_month, -1)
     return f"{year:04d}-{month:02d}"
 
 
