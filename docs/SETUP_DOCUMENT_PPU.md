@@ -1,4 +1,4 @@
-# Updating With Tracing + Pay-Per-Use Billing
+# Updating With Tracing + Pay-Per-Use Billing(only for reference)
 
 This follows the same structure and step numbering as `docs/SETUP_GUIDE.md` — services are still started
 one at a time, in the same order. The difference: every fix from `TRACE-LOGS-FIX-RUNBOOK.md` and
