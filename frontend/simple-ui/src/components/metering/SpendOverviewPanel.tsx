@@ -10,6 +10,19 @@ import type { UsageSummaryResponse } from "../../types/usageSpend";
 import MeteringChartPanel from "./MeteringChartPanel";
 import { TaskTypeLabel } from "./UsageSpendCells";
 
+function spendChangeColor(spendChangePercent: number | null): string | undefined {
+  if (spendChangePercent == null) return undefined;
+  if (spendChangePercent > 0) return "#a8f0c6";
+  if (spendChangePercent < 0) return "#ffb3ac";
+  return undefined;
+}
+
+function spendChangeArrow(spendChangePercent: number): string {
+  if (spendChangePercent > 0) return "↑";
+  if (spendChangePercent < 0) return "↓";
+  return "→";
+}
+
 interface SpendOverviewPanelProps {
   summary?: UsageSummaryResponse;
   isLoading: boolean;
@@ -77,21 +90,10 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
                 </Flex>
                 <Flex justify="space-between" fontSize="12.5px">
                   <Text opacity={0.8}>vs last month</Text>
-                  <Text
-                    fontWeight="semibold"
-                    color={
-                      spendChangePercent == null
-                        ? undefined
-                        : spendChangePercent > 0
-                          ? "#a8f0c6"
-                          : spendChangePercent < 0
-                            ? "#ffb3ac"
-                            : undefined
-                    }
-                  >
+                  <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent)}>
                     {spendChangePercent == null
                       ? "—"
-                      : `${spendChangePercent > 0 ? "↑" : spendChangePercent < 0 ? "↓" : "→"} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+                      : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
                   </Text>
                 </Flex>
               </VStack>
