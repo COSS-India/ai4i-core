@@ -10,12 +10,32 @@ import type { UsageSummaryResponse } from "../../types/usageSpend";
 import MeteringChartPanel from "./MeteringChartPanel";
 import { TaskTypeLabel } from "./UsageSpendCells";
 
+function spendChangeColor(spendChangePercent: number | null): string | undefined {
+  if (spendChangePercent == null) return undefined;
+  if (spendChangePercent > 0) return "#a8f0c6";
+  if (spendChangePercent < 0) return "#ffb3ac";
+  return undefined;
+}
+
+function spendChangeArrow(spendChangePercent: number): string {
+  if (spendChangePercent > 0) return "↑";
+  if (spendChangePercent < 0) return "↓";
+  return "→";
+}
+
+function budgetExceededLabel(count: number | null | undefined): string {
+  if (count == null) return "—";
+  const suffix = count === 1 ? "" : "s";
+  return `${count} tenant${suffix}`;
+}
+
 interface SpendOverviewPanelProps {
   summary?: UsageSummaryResponse;
   isLoading: boolean;
   error: string | null;
   currency: string;
   spendChangePercent: number | null;
+  emptyStateMessage?: string;
 }
 
 const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
@@ -24,6 +44,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   error,
   currency,
   spendChangePercent,
+  emptyStateMessage = "No spend data for this period.",
 }) => {
   const [hlKey, setHlKey] = useState<string | null>(null);
   const items = summary?.spendByModelTaskType ?? [];
@@ -33,6 +54,110 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     value: item.spend,
     color: taskTypeColor(item.modelTaskType, i),
   }));
+
+  let spendByTaskTypeContent: React.ReactNode;
+  if (isLoading) {
+    spendByTaskTypeContent = (
+      <Center h="150px">
+        <Spinner color="blue.500" />
+      </Center>
+    );
+  } else if (error) {
+    spendByTaskTypeContent = (
+      <Text fontSize="sm" color="red.500">
+        {error}
+      </Text>
+    );
+  } else if (sorted.length === 0) {
+    spendByTaskTypeContent = (
+      <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
+        {emptyStateMessage}
+      </Text>
+    );
+  } else {
+    spendByTaskTypeContent = (
+      <Flex align="flex-start" gap={7} direction={{ base: "column", sm: "row" }}>
+        <Box position="relative" flexShrink={0} w="150px" h="150px" mt={{ base: 0, sm: "34px" }}>
+          <MeteringChartPanel height={150} minWidth={150}>
+            {(size) => (
+              <PieChart width={size.width} height={size.height}>
+                <Pie
+                  data={donutData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={48}
+                  outerRadius={68}
+                  paddingAngle={1}
+                  stroke="none"
+                  onMouseEnter={(_, i) => setHlKey(donutData[i]?.name ?? null)}
+                  onMouseLeave={() => setHlKey(null)}
+                >
+                  {donutData.map((entry) => (
+                    <Cell
+                      key={entry.name}
+                      fill={entry.color}
+                      opacity={hlKey && hlKey !== entry.name ? 0.45 : 1}
+                      cursor="pointer"
+                    />
+                  ))}
+                </Pie>
+              </PieChart>
+            )}
+          </MeteringChartPanel>
+          <Center position="absolute" inset={0} pointerEvents="none" textAlign="center" px="22px">
+            <Text fontSize="11px" fontWeight="bold" letterSpacing="0.04em" color="gray.600" lineHeight="1.3">
+              All Services
+            </Text>
+          </Center>
+        </Box>
+
+        <Box flex={1} minW={0} maxH="272px" overflowY="auto" pr={2}>
+          {sorted.map((item, i) => {
+            const color = taskTypeColor(item.modelTaskType, i);
+            const isHl = hlKey === item.modelTaskType;
+            return (
+              <Flex
+                key={item.modelTaskType}
+                align="center"
+                justify="space-between"
+                gap={3}
+                px={2}
+                py={2}
+                borderRadius="6px"
+                borderBottomWidth="1px"
+                borderColor="gray.50"
+                bg={isHl ? "gray.50" : "transparent"}
+                cursor="default"
+                onMouseEnter={() => setHlKey(item.modelTaskType)}
+                onMouseLeave={() => setHlKey(null)}
+              >
+                <HStack spacing="9px" minW={0}>
+                  <TaskTypeLabel
+                    taskType={item.modelTaskType}
+                    color={color}
+                    fontWeight="semibold"
+                  />
+                  <Text fontSize="12px" color="gray.500" noOfLines={1}>
+                    {formatSpendUnit(item.consumption, item.unit)}
+                  </Text>
+                </HStack>
+                <Box textAlign="right" flexShrink={0}>
+                  <Text fontSize="13px" fontWeight="semibold" display="block">
+                    {formatSpendMoney(item.spend, currency)}
+                  </Text>
+                  <Text fontSize="11.5px" color="gray.500">
+                    {item.percentage.toFixed(1)}%
+                  </Text>
+                </Box>
+              </Flex>
+            );
+          })}
+        </Box>
+      </Flex>
+    );
+  }
 
   return (
     <Flex gap={4} direction={{ base: "column", md: "row" }} align="stretch">
@@ -68,28 +193,15 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
                     fontWeight="semibold"
                     color={(summary?.budgetExceededTenants ?? 0) > 0 ? "#ffd7a8" : undefined}
                   >
-                    {summary?.budgetExceededTenants != null
-                      ? `${summary.budgetExceededTenants} tenant${summary.budgetExceededTenants === 1 ? "" : "s"}`
-                      : "—"}
+                    {budgetExceededLabel(summary?.budgetExceededTenants)}
                   </Text>
                 </Flex>
                 <Flex justify="space-between" fontSize="12.5px">
                   <Text opacity={0.8}>vs last month</Text>
-                  <Text
-                    fontWeight="semibold"
-                    color={
-                      spendChangePercent == null
-                        ? undefined
-                        : spendChangePercent > 0
-                          ? "#a8f0c6"
-                          : spendChangePercent < 0
-                            ? "#ffb3ac"
-                            : undefined
-                    }
-                  >
+                  <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent)}>
                     {spendChangePercent == null
                       ? "—"
-                      : `${spendChangePercent > 0 ? "↑" : spendChangePercent < 0 ? "↓" : "→"} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+                      : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
                   </Text>
                 </Flex>
               </VStack>
@@ -109,100 +221,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
         <Text fontSize="12px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb={4}>
           SPEND BY MODEL TASK TYPE
         </Text>
-        {isLoading ? (
-          <Center h="150px">
-            <Spinner color="blue.500" />
-          </Center>
-        ) : error ? (
-          <Text fontSize="sm" color="red.500">
-            {error}
-          </Text>
-        ) : sorted.length === 0 ? (
-          <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
-            No spend data for this period.
-          </Text>
-        ) : (
-          <Flex align="flex-start" gap={7} direction={{ base: "column", sm: "row" }}>
-            <Box position="relative" flexShrink={0} w="150px" h="150px" mt={{ base: 0, sm: "34px" }}>
-              <MeteringChartPanel height={150} minWidth={150}>
-                {(size) => (
-                  <PieChart width={size.width} height={size.height}>
-                    <Pie
-                      data={donutData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={48}
-                      outerRadius={68}
-                      paddingAngle={1}
-                      stroke="none"
-                      onMouseEnter={(_, i) => setHlKey(donutData[i]?.name ?? null)}
-                      onMouseLeave={() => setHlKey(null)}
-                    >
-                      {donutData.map((entry) => (
-                        <Cell
-                          key={entry.name}
-                          fill={entry.color}
-                          opacity={hlKey && hlKey !== entry.name ? 0.45 : 1}
-                          cursor="pointer"
-                        />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                )}
-              </MeteringChartPanel>
-              <Center position="absolute" inset={0} pointerEvents="none" textAlign="center" px="22px">
-                <Text fontSize="11px" fontWeight="bold" letterSpacing="0.04em" color="gray.600" lineHeight="1.3">
-                  All Services
-                </Text>
-              </Center>
-            </Box>
-
-            <Box flex={1} minW={0} maxH="272px" overflowY="auto" pr={2}>
-              {sorted.map((item, i) => {
-                const color = taskTypeColor(item.modelTaskType, i);
-                const isHl = hlKey === item.modelTaskType;
-                return (
-                  <Flex
-                    key={item.modelTaskType}
-                    align="center"
-                    justify="space-between"
-                    gap={3}
-                    px={2}
-                    py={2}
-                    borderRadius="6px"
-                    borderBottomWidth="1px"
-                    borderColor="gray.50"
-                    bg={isHl ? "gray.50" : "transparent"}
-                    cursor="default"
-                    onMouseEnter={() => setHlKey(item.modelTaskType)}
-                    onMouseLeave={() => setHlKey(null)}
-                  >
-                    <HStack spacing="9px" minW={0}>
-                      <TaskTypeLabel
-                        taskType={item.modelTaskType}
-                        color={color}
-                        fontWeight="semibold"
-                      />
-                      <Text fontSize="12px" color="gray.500" noOfLines={1}>
-                        {formatSpendUnit(item.consumption, item.unit)}
-                      </Text>
-                    </HStack>
-                    <Box textAlign="right" flexShrink={0}>
-                      <Text fontSize="13px" fontWeight="semibold" display="block">
-                        {formatSpendMoney(item.spend, currency)}
-                      </Text>
-                      <Text fontSize="11.5px" color="gray.500">
-                        {item.percentage.toFixed(1)}%
-                      </Text>
-                    </Box>
-                  </Flex>
-                );
-              })}
-            </Box>
-          </Flex>
-        )}
+        {spendByTaskTypeContent}
       </Box>
     </Flex>
   );

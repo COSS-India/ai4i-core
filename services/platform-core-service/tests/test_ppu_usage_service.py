@@ -413,13 +413,53 @@ class TestGetTenantList:
 
 class TestGetTenantDetail:
     @pytest.mark.asyncio
-    async def test_raises_when_no_assignment(self):
+    async def test_returns_zero_value_item_when_no_assignment(self):
+        # No tier/budget assignment covering this period is a valid tenant state
+        # (not an error) — the API should return a zero-value item, not a 404.
+        repo = _make_repo(get_tenant_tier_as_of_period_end=[])
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.tenantId == "t1"
+        assert result.tier == "Unassigned"
+        assert result.tierId == "unassigned"
+        assert result.spend == 0.0
+        assert result.budget.limit == 0.0
+        assert result.budget.remaining == 0.0
+        assert result.usage.taskTypeCount == 0
+        assert result.tierBreakdown == []
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_value_item_when_tenant_exists_but_unassigned(self):
+        # auth_db confirms the tenant is real (just has no tier/budget row) — still
+        # the zero-value empty state, not a 404.
+        repo = _make_repo(get_tenant_tier_as_of_period_end=[])
+        svc = PPUUsageService(repo)
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(
+            return_value=MagicMock(all=MagicMock(return_value=[(3, "No Tier Test Org")]))
+        )
+
+        result = await svc.get_tenant_detail("3", "2026-06", auth_db=auth_db)
+
+        assert result.tenantId == "3"
+        assert result.tenantName == "No Tier Test Org"
+        assert result.tier == "Unassigned"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_tenant_does_not_exist(self):
+        # An empty `assignments` list also happens for a tenant_id that was never
+        # real (typo, deleted tenant) — auth_db resolving no matching row is how we
+        # tell that apart from the legitimate unassigned case, and it must still 404.
         from app.core.exceptions import EntityNotFoundError
 
         repo = _make_repo(get_tenant_tier_as_of_period_end=[])
         svc = PPUUsageService(repo)
+        auth_db = MagicMock()
+        auth_db.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+
         with pytest.raises(EntityNotFoundError):
-            await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+            await svc.get_tenant_detail("999", "2026-06", auth_db=auth_db)
 
     @pytest.mark.asyncio
     async def test_single_tenant_hierarchical_shape(self):
