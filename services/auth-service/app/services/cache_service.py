@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 import redis.asyncio as aioredis
+from redis.exceptions import ResponseError
 from ai4i_core.bootstrap.cache import CacheService as _BaseCacheService
 
 logger = logging.getLogger(__name__)
@@ -56,15 +57,30 @@ class CacheService(_BaseCacheService):
         """Update a single field on an existing API key hash. No-op if key is absent from Redis."""
         key = f"{REDIS_API_KEY_PREFIX}{api_key}"
         if await self._redis.exists(key):
-            await self._redis.hset(key, field, value)
+            try:
+                await self._redis.hset(key, field, value)
+            except ResponseError:
+                logger.warning("Skipping HSET on non-hash key %s — stale/legacy data, deleting", key)
+                await self._redis.delete(key)
+                return False
             return True
         return False
 
     async def delete_api_key_cache_field(self, api_key: str, field: str) -> None:
         """Remove a single field from an existing API key hash (e.g. quota-* on month rollover)."""
-        await self._redis.hdel(f"{REDIS_API_KEY_PREFIX}{api_key}", field)
+        key = f"{REDIS_API_KEY_PREFIX}{api_key}"
+        try:
+            await self._redis.hdel(key, field)
+        except ResponseError:
+            logger.warning("Skipping HDEL on non-hash key %s — stale/legacy data, deleting", key)
+            await self._redis.delete(key)
 
     async def delete_api_key_cache_fields(self, api_key: str, fields: list[str]) -> None:
         """Remove multiple fields from an API key hash in a single HDEL call."""
         if fields:
-            await self._redis.hdel(f"{REDIS_API_KEY_PREFIX}{api_key}", *fields)
+            key = f"{REDIS_API_KEY_PREFIX}{api_key}"
+            try:
+                await self._redis.hdel(key, *fields)
+            except ResponseError:
+                logger.warning("Skipping HDEL on non-hash key %s — stale/legacy data, deleting", key)
+                await self._redis.delete(key)
