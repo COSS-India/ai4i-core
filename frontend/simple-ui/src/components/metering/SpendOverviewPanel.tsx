@@ -16,6 +16,7 @@ interface SpendOverviewPanelProps {
   error: string | null;
   currency: string;
   spendChangePercent: number | null;
+  emptyStateMessage?: string;
 }
 
 const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
@@ -24,6 +25,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   error,
   currency,
   spendChangePercent,
+  emptyStateMessage = "No spend data for this period.",
 }) => {
   const [hlKey, setHlKey] = useState<string | null>(null);
   const items = summary?.spendByModelTaskType ?? [];
@@ -119,7 +121,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
           </Text>
         ) : sorted.length === 0 ? (
           <Text fontSize="sm" color="gray.400" py={8} textAlign="center">
-            No spend data for this period.
+            {emptyStateMessage}
           </Text>
         ) : (
           <Flex align="flex-start" gap={7} direction={{ base: "column", sm: "row" }}>
