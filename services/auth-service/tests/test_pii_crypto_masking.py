@@ -28,6 +28,7 @@ from app.utils.masking import (  # noqa: E402
     mask_api_key,
     mask_email,
     mask_phone,
+    mask_pii_in_dict,
 )
 
 pii_crypto.configure_key(_TEST_KEY)
@@ -165,6 +166,31 @@ class TestLooksMasked:
     def test_false_for_none_and_non_str(self):
         assert not looks_masked(None)
         assert not looks_masked(12345)  # type: ignore[arg-type]
+
+
+class TestMaskPiiInDict:
+    def test_masks_both_by_default(self):
+        out = mask_pii_in_dict(
+            {"email": "john@example.com", "phone_number": "+919876543210"}
+        )
+        assert out == {"email": "j***@e***.com", "phone_number": "*********3210"}
+
+    def test_can_reveal_phone_only(self):
+        # Edit Tenant User: phone is editable, email stays masked.
+        out = mask_pii_in_dict(
+            {"email": "john@example.com", "phone_number": "+919876543210"},
+            mask_phones=False,
+        )
+        assert out == {"email": "j***@e***.com", "phone_number": "+919876543210"}
+
+    def test_can_reveal_email_and_phone(self):
+        # Edit Tenant while PENDING: both correctable, so both revealed.
+        out = mask_pii_in_dict(
+            {"email": "john@example.com", "phone_number": "+919876543210"},
+            mask_emails=False,
+            mask_phones=False,
+        )
+        assert out == {"email": "john@example.com", "phone_number": "+919876543210"}
 
 
 class TestDropMaskedPii:

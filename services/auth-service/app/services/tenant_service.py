@@ -245,16 +245,26 @@ class TenantService:
                 await self._roles.remove_role(user_id, assignable, commit=commit)
         await self._roles.assign_role(user_id, target, commit=commit)
 
-    async def build_tenant_user_response(self, user: User) -> dict:
+    async def build_tenant_user_response(
+        self, user: User, *, unmask_phone: bool = False
+    ) -> dict:
         roles = await self._roles.get_user_roles(user.id)
         role = self.resolve_tenant_user_role(roles)
         base = to_response(user, UserListResponse)
         return mask_pii_in_dict(
-            TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+            TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True),
+            mask_phones=not unmask_phone,
         )
 
-    async def build_tenant_user_responses(self, users: list[User]) -> list[dict]:
-        """Build list responses with a single batched role lookup."""
+    async def build_tenant_user_responses(
+        self, users: list[User], *, unmask_phone: bool = False
+    ) -> list[dict]:
+        """Build list responses with a single batched role lookup.
+
+        ``unmask_phone=True`` returns each user's phone number in cleartext so
+        the Edit Tenant User form can pre-fill an editable value; the email is
+        always masked (it is non-editable for tenant users).
+        """
         if not users:
             return []
         roles_by_user = await self._roles.get_roles_for_users([u.id for u in users])
@@ -264,7 +274,8 @@ class TenantService:
             base = to_response(user, UserListResponse)
             responses.append(
                 mask_pii_in_dict(
-                    TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+                    TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True),
+                    mask_phones=not unmask_phone,
                 )
             )
         return responses
