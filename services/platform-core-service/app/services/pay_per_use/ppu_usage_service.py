@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_unit_map
-from app.core.exceptions import AppError, EntityNotFoundError
+from app.core.exceptions import EntityNotFoundError
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.utils.billing_month import shift_billing_month
 from app.schemas.pay_per_use.usage import (
@@ -404,27 +404,44 @@ class PPUUsageService:
         billing_month, and tierBreakdown covers every tier they had usage under that
         month, oldest first.
         """
-        org_map = await _resolve_tenant_names([tenant_id], auth_db)
-
         assignments = await self._repo.get_tenant_tier_as_of_period_end(
             billing_month, tenant_id=tenant_id
         )
         if not assignments:
-            if tenant_id in org_map:
-                raise AppError(
-                    message=(
-                        f"Tenant {tenant_id} has no tier assignment covering billing "
-                        f"period {billing_month}."
-                    ),
-                    code="NO_TIER_ASSIGNMENT",
-                    status_code=404,
-                )
-            raise EntityNotFoundError(f"Tenant {tenant_id}")
+            # No tier/budget assignment covering this period is a valid tenant
+            # configuration (not an error) — surface a zero-value item so the UI can
+            # render an empty state instead of a 404. But an empty `assignments` also
+            # comes back for a tenant_id that doesn't exist at all (no existence check
+            # upstream), so confirm the tenant is real before treating this as the
+            # unassigned case — otherwise a typo'd/deleted tenant_id would silently look
+            # like a legitimate empty state instead of a 404. When auth_db isn't
+            # available we can't verify either way, so fall back to trusting tenant_id
+            # (matches _resolve_tenant_names' own no-auth_db behavior elsewhere).
+            org_map = await _resolve_tenant_names([tenant_id], auth_db)
+            if auth_db is not None and tenant_id not in org_map:
+                raise EntityNotFoundError(f"Tenant {tenant_id}")
+            return TenantHierarchicalItem(
+                tenantId=tenant_id,
+                tenantName=org_map.get(tenant_id, tenant_id),
+                tier="Unassigned",
+                tierId="unassigned",
+                currency=_CURRENCY,
+                spend=Decimal("0"),
+                budget=TenantBudget(
+                    limit=Decimal("0"),
+                    spent=Decimal("0"),
+                    remaining=Decimal("0"),
+                    percentageUsed=Decimal("0"),
+                ),
+                usage=TenantUsageCount(taskTypeCount=0),
+                tierBreakdown=[],
+            )
         assignment = assignments[0]
 
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
         tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
         tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
+        org_map = await _resolve_tenant_names([tenant_id], auth_db)
 
         return _build_hierarchical_item(
             assignment, org_map.get(tenant_id, tenant_id), usage_rows, None, tier_order

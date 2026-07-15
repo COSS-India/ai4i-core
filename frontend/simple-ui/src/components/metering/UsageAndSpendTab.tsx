@@ -123,6 +123,11 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         error={data.summaryError}
         currency={data.currency}
         spendChangePercent={data.spendChangePercent}
+        emptyStateMessage={
+          data.hasNoTierAssigned
+            ? "No tier or budget assigned. Contact your administrator."
+            : undefined
+        }
       />
 
       {!data.isScoped ? (
