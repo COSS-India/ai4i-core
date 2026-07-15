@@ -297,6 +297,7 @@ export default function TenantManagementTab({
         effective_from: new Date(assignEffectiveFrom).toISOString(),
         effective_to: new Date(assignEffectiveTo).toISOString(),
       });
+      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
