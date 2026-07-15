@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_unit_map
-from app.core.exceptions import EntityNotFoundError
+from app.core.exceptions import AppError, EntityNotFoundError
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.utils.billing_month import shift_billing_month
 from app.schemas.pay_per_use.usage import (
@@ -404,17 +404,27 @@ class PPUUsageService:
         billing_month, and tierBreakdown covers every tier they had usage under that
         month, oldest first.
         """
+        org_map = await _resolve_tenant_names([tenant_id], auth_db)
+
         assignments = await self._repo.get_tenant_tier_as_of_period_end(
             billing_month, tenant_id=tenant_id
         )
         if not assignments:
+            if tenant_id in org_map:
+                raise AppError(
+                    message=(
+                        f"Tenant {tenant_id} has no tier assignment covering billing "
+                        f"period {billing_month}."
+                    ),
+                    code="NO_TIER_ASSIGNMENT",
+                    status_code=404,
+                )
             raise EntityNotFoundError(f"Tenant {tenant_id}")
         assignment = assignments[0]
 
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
         tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
         tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
-        org_map = await _resolve_tenant_names([tenant_id], auth_db)
 
         return _build_hierarchical_item(
             assignment, org_map.get(tenant_id, tenant_id), usage_rows, None, tier_order
