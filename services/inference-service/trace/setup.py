@@ -154,8 +154,20 @@ def setup_tracing() -> None:
         tracer_provider = TracerProvider(resource=resource)
 
         # Always register the Kafka exporter — primary trace export path.
-        tracer_provider.add_span_processor(BatchSpanProcessor(KafkaSpanExporter()))
-        logger.info("✓ OpenTelemetry tracing configured with Kafka exporter")
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(
+                KafkaSpanExporter(),
+                max_queue_size=settings.OTEL_BSP_MAX_QUEUE_SIZE,
+                max_export_batch_size=settings.OTEL_BSP_MAX_EXPORT_BATCH_SIZE,
+                schedule_delay_millis=settings.OTEL_BSP_SCHEDULE_DELAY_MS,
+            )
+        )
+        logger.info(
+            "✓ OpenTelemetry tracing configured with Kafka exporter "
+            "(queue=%s, batch=%s)",
+            settings.OTEL_BSP_MAX_QUEUE_SIZE,
+            settings.OTEL_BSP_MAX_EXPORT_BATCH_SIZE,
+        )
 
         # Optionally register OTLP exporter if endpoint is configured.
         otlp_exporter = None

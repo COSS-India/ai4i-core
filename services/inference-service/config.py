@@ -69,6 +69,18 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
         None, description="OpenTelemetry OTLP exporter endpoint"
     )
+    OTEL_BSP_MAX_QUEUE_SIZE: int = Field(
+        65536,
+        description="Max queued spans before OTel drops new spans (default SDK: 2048)",
+    )
+    OTEL_BSP_MAX_EXPORT_BATCH_SIZE: int = Field(
+        2048,
+        description="Spans per Kafka export batch (default SDK: 512)",
+    )
+    OTEL_BSP_SCHEDULE_DELAY_MS: int = Field(
+        1000,
+        description="Max delay (ms) before flushing a partial export batch",
+    )
     # Off by default — only the logging/streaming compose profiles bring Kafka
     # up. When false, traces are not exported (spans never written to stdout).
     # Never imports kafka-python when false, avoiding the bootstrap retry storm
