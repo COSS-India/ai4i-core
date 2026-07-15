@@ -111,7 +111,7 @@ class ServiceUpdateRequest(BaseSchema):
     taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
-    tierIds: List[str] = Field(..., min_length=1)
+    tierIds: Optional[List[str]] = None
 
     @field_validator("unitSize")
     @classmethod
@@ -122,7 +122,9 @@ class ServiceUpdateRequest(BaseSchema):
 
     @field_validator("tierIds")
     @classmethod
-    def _validate_tier_ids(cls, v: List[str]) -> List[str]:
+    def _validate_tier_ids(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
         if not v:
             raise ValueError("tierIds must contain at least one tier ID")
         for tid in v:
