@@ -66,6 +66,8 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
         cause = cause.__cause__
 
     for e in chain:
+        if isinstance(e, PermissionError):
+            return HTTPException(status_code=403, detail=str(e))
         if isinstance(e, ValueError):
             return HTTPException(status_code=400, detail=str(e))
         if isinstance(e, NotImplementedError):
