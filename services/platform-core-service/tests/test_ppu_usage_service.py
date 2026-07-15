@@ -413,21 +413,13 @@ class TestGetTenantList:
 
 class TestGetTenantDetail:
     @pytest.mark.asyncio
-    async def test_returns_zero_value_item_when_no_assignment(self):
-        # No tier/budget assignment covering this period is a valid tenant state
-        # (not an error) — the API should return a zero-value item, not a 404.
+    async def test_raises_when_no_assignment(self):
+        from app.core.exceptions import EntityNotFoundError
+
         repo = _make_repo(get_tenant_tier_as_of_period_end=[])
         svc = PPUUsageService(repo)
-        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
-
-        assert result.tenantId == "t1"
-        assert result.tier == "Unassigned"
-        assert result.tierId == "unassigned"
-        assert result.spend == 0.0
-        assert result.budget.limit == 0.0
-        assert result.budget.remaining == 0.0
-        assert result.usage.taskTypeCount == 0
-        assert result.tierBreakdown == []
+        with pytest.raises(EntityNotFoundError):
+            await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
     @pytest.mark.asyncio
     async def test_single_tenant_hierarchical_shape(self):
