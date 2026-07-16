@@ -2,7 +2,6 @@ import { Box, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
-import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { MeteringAlerts } from "./MeteringAsyncState";
 import MeteringControls from "./MeteringControls";
@@ -71,7 +70,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
 
   return (
     <VStack align="stretch" spacing={isTenantView ? 4 : 5}>
-      {isTenantView ? (
+      {isTenantView && subTab !== METERING.SUB_TAB.USAGE_SPEND ? (
         <TenantDashboardHeader organisationLabel={organisationLabel} />
       ) : null}
 
@@ -84,8 +83,8 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       <MeteringControls
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
-        lastRefreshed={formatMeteringRefreshTime(lastGeneratedAt)}
-        onRefresh={handleRefresh}
+        lastGeneratedAt={lastGeneratedAt}
+        onRefresh={isTenantView ? undefined : handleRefresh}
         isRefreshing={isRefreshing}
         showTenantFilter={isTenantView === false}
         tenantOptions={previewTenants.map((t) => ({ id: t.id, label: t.organisation }))}
@@ -107,6 +106,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           serviceQuery={serviceQuery}
           parseQueryError={parseQueryError}
           tenantId={effectiveTenantId}
+          organisationLabel={organisationLabel}
           refreshNonce={refreshNonce}
         />
       ) : null}

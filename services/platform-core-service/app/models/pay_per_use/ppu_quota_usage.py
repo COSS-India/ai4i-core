@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -16,6 +16,10 @@ class PPUQuotaUsage(Base):
             "billing_month",
             "tier_id",
             name="uq_ppu_quota_usage_tenant_inference_month_tier",
+        ),
+        Index(
+            "ix_ppu_quota_usage_billing_month_tenant",
+            "billing_month", "tenant_id",
         ),
     )
 

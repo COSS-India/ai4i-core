@@ -176,7 +176,18 @@ class ServiceService:
                 code="MODEL_NOT_FOUND",
             )
 
-        # 2. Validate the endpoint (live probe + SSRF guard)
+        # 2. For LLM task type, service name must match the model name
+        task_type = (model.task or {}).get("type", "")
+        if task_type == "llm" and payload.name != model.name:
+            raise ValidationError(
+                message=(
+                    f"For LLM services, service name must match the model name. "
+                    f"Expected '{model.name}', got '{payload.name}'."
+                ),
+                code="LLM_SERVICE_NAME_MISMATCH",
+            )
+
+        # 3. Validate the endpoint (live probe + SSRF guard)
         await self._validate_endpoint_for_model(
             endpoint=payload.endpoint,
             api_key=payload.api_key,
@@ -184,13 +195,13 @@ class ServiceService:
             task_type=(model.task or {}).get("type"),
         )
 
-        # 3. Duplicate name check
+        # 4. Duplicate name check
         if await self._services.get_by_name(payload.name):
             raise DuplicateServiceNameError(
                 f"Service with name '{payload.name}' already exists."
             )
 
-        # 4. Persist
+        # 5. Persist
         service_id = generate_service_id(payload.name)
         is_published = bool(payload.isPublished)
         now = datetime.now(timezone.utc) if is_published else None
@@ -233,7 +244,7 @@ class ServiceService:
             logger.exception("DB error creating service")
             raise
 
-        # 5. Warm cache
+        # 6. Warm cache
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
         tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)

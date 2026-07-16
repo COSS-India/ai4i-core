@@ -52,17 +52,22 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
     };
   }, [isRecording, timer]);
 
-  // Cleanup on unmount
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  useEffect(() => {
+    audioStreamRef.current = audioStream;
+  }, [audioStream]);
+
+  // Cleanup on unmount only
   useEffect(() => {
     return () => {
-      if (audioStream) {
-        audioStream.getTracks().forEach(track => track.stop());
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(track => track.stop());
       }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
     };
-  }, [audioStream]);
+  }, []);
 
   const startRecording = useCallback(async () => {
     let streamToUse = audioStream;

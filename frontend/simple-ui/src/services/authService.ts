@@ -478,10 +478,11 @@ class AuthService {
 
   /**
    * Re-issue a welcome/set-password link for a user who has not activated yet.
+   * @param data.tenant_id — required from Tenant Management when email is masked.
    * @param withAuth — true when an admin triggers this from Tenant Management (Bearer JWT).
    */
   async resendSetupLink(
-    data: { email: string },
+    data: { email: string; tenant_id?: number },
     options: { withAuth?: boolean } = {}
   ): Promise<{ message: string }> {
     const withAuth = options.withAuth === true;

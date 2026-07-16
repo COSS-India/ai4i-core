@@ -8,7 +8,12 @@ import type {
   UsageSummaryParams,
 } from "../types/usageSpend";
 
-export type { UsageSummaryResponse, TenantUsageListResponse, TenantUsageItem, TenantUsageDetail } from "../types/usageSpend";
+export type {
+  UsageSummaryResponse,
+  TenantUsageListResponse,
+  TenantUsageItem,
+  TenantUsageDetail,
+} from "../types/usageSpend";
 
 export async function fetchUsageSummary(
   params?: UsageSummaryParams,
@@ -24,10 +29,13 @@ export async function fetchUsageSummary(
 export async function fetchTenantUsageList(
   params?: TenantUsageParams,
 ): Promise<TenantUsageListResponse> {
-  const query: Record<string, string> = {};
+  const query: Record<string, string | number> = {};
   if (params?.billingPeriod) query.billing_period = params.billingPeriod;
-  if (params?.tier) query.tier = params.tier;
+  if (params?.tierId) query.tier_id = params.tierId;
   if (params?.modelTaskType) query.modelTaskType = params.modelTaskType;
+  if (params?.sortOrder) query.sortOrder = params.sortOrder;
+  if (params?.limit != null) query.limit = params.limit;
+  if (params?.offset != null) query.offset = params.offset;
   const response = await apiClient.get(apiEndpoints.usage.tenants, { params: query });
   return response.data;
 }

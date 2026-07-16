@@ -5,13 +5,15 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db, get_db
+from app.core.exceptions import ValidationError
 from app.schemas.common import SuccessResponse
+from app.schemas.enums.model_management import resolve_task_type
 from app.schemas.pay_per_use.tenant_assignment import (
+    ReviseBudgetRequest,
+    ReviseBudgetResponse,
     TierAssignRequest,
     TierAssignResponse,
     TierReassignRequest,
-    TopUpRequest,
-    TopUpResponse,
 )
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
@@ -22,15 +24,26 @@ from app.core.config import settings
 router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
 
 
+def _resolve_model_task_type(model_task_type: Optional[str]) -> Optional[str]:
+    """Normalize and validate the modelTaskType filter against TaskTypeEnum."""
+    if not model_task_type:
+        return None
+    try:
+        return resolve_task_type(model_task_type)
+    except ValueError as exc:
+        raise ValidationError(str(exc))
+
+
 @router.get("/tiers")
 async def list_tiers(
     modelTaskType: Optional[str] = Query(
         None,
-        description="Filter by model task type: LLM, NMT, ASR, TTS, OCR, Pipeline, Transliteration, NER, Text LD, Speaker Diarization, Audio LD",
+        description="Filter by model task type: nmt, llm, asr, tts, ocr, transliteration, ner, language-detection, speaker-diarization, audio-lang-detection, language-diarization",
     ),
     session: AsyncSession = Depends(get_db),
 ):
-    return await tier_service.list_tiers(session, model_task_type=modelTaskType)
+    resolved = _resolve_model_task_type(modelTaskType)
+    return await tier_service.list_tiers(session, model_task_type=resolved)
 
 
 @router.get("/tier", response_model=TierOut)
@@ -86,18 +99,32 @@ async def list_tenant_tiers(
     return success_response(data=data)
 
 
-@router.post("/tenant/top-up", response_model=TopUpResponse)
-async def top_up_tenant_budget(
+@router.patch("/tenant/budget", response_model=ReviseBudgetResponse)
+async def revise_tenant_budget(
     request: Request,
-    body: TopUpRequest,
+    body: ReviseBudgetRequest,
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ):
-    """Add budget to a tenant's active tier assignment and reset the budget-exhausted flag."""
-    return await tenant_assignment_service.top_up_budget(
+    """Top-up or top-down a tenant's Budget by an amount, effective immediately.
+
+    Validates that the tenant exists and is ACTIVE in the auth DB, matching
+    assign_tenant_tier/reassign_tenant_tier below. action='top-up' adds
+    amount to the current budget_limit and always succeeds once the tenant
+    is found and active. action='top-down' subtracts it, and is rejected
+    with 409 (nothing written) if the result would drop below cumulative
+    spend to date, or 422 if it would go negative. A result exactly equal to
+    cumulative spend is accepted and blocks the tenant's next request
+    immediately. Does not change the tenant's Tier, Quota Limit, or Rate Limit.
+    """
+    user_id = request.headers.get("X-User-Id")
+    return await tenant_assignment_service.revise_budget(
         body,
         db,
+        auth_db,
         auth_service_url=settings.auth_service_url,
         http_client=request.app.state.http_client,
+        user_id=user_id,
     )
 
 

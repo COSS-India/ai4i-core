@@ -21,6 +21,22 @@ class TaskTypeEnum(str, Enum):
     ner = "ner"
 
 
+def resolve_task_type(value: str) -> str:
+    """Case-insensitively resolve a string to its canonical TaskTypeEnum value.
+
+    Single source of truth for "normalize + validate" so callers can't drift
+    out of sync (e.g. one comparing .lower() values, another relying on
+    TaskTypeEnum(x.lower()) — those only agree today because every member
+    happens to already be lowercase).
+    """
+    v_normalized = value.lower()
+    for member in TaskTypeEnum:
+        if member.value.lower() == v_normalized:
+            return member.value
+    valid = [m.value for m in TaskTypeEnum]
+    raise ValueError(f"Invalid task type '{value}'. Valid types: {', '.join(valid)}")
+
+
 class LicenseEnum(str, Enum):
     """Permitted license identifiers for registered models."""
 

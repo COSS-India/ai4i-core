@@ -27,7 +27,7 @@ from app.schemas.api_key import (
 )
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
-from app.utils.masking import mask_email
+from app.utils.masking import mask_api_key, mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ def _key_dict(k, *, permission_names: list[str]) -> dict:
     return {
         "id": k.id,
         "key_name": k.key_name,
+        "api_key": mask_api_key(k.api_key),
         "user_id": str(k.user_id),
         "permissions": permission_names,
         "expires_at": k.expires_at.isoformat() if k.expires_at else None,

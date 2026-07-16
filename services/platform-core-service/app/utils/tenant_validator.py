@@ -29,7 +29,9 @@ async def require_active_tenant(tenant_id: str, auth_db: AsyncSession) -> Dict[s
 
     Raises:
         422 if tenant_id is not a valid integer.
-        404 if no tenant with that ID exists.
+        404 if no tenant with that ID exists (including a well-formed
+            numeric ID outside Postgres' int4 range, since ``tenants.id``
+            can never hold such a value).
         422 if the tenant exists but is not ACTIVE
              (PENDING / SUSPENDED / DEACTIVATED).
     """
@@ -39,6 +41,15 @@ async def require_active_tenant(tenant_id: str, auth_db: AsyncSession) -> Dict[s
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid tenant ID '{tenant_id}': must be a numeric identifier",
+        )
+
+    # tenants.id is a Postgres int4 column; a value outside its range would
+    # otherwise reach asyncpg and raise an unhandled NumericValueOutOfRange
+    # error (500) instead of the documented 404.
+    if not (-2147483648 <= tenant_int_id <= 2147483647):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant '{tenant_id}' not found",
         )
 
     row = await auth_db.execute(
