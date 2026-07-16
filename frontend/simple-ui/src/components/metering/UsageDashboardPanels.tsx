@@ -36,6 +36,7 @@ interface TenantPanelsProps {
   serviceQuery: MeteringDashboardState["serviceQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
   tenantId?: string | null;
+  organisationLabel?: string | null;
   refreshNonce?: number;
 }
 
@@ -46,6 +47,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   serviceQuery,
   parseQueryError,
   tenantId,
+  organisationLabel,
   refreshNonce,
 }) => (
   <Box pt={2}>
@@ -66,6 +68,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
       <UsageAndSpendTab
         isTenantView
         tenantId={tenantId}
+        organisationLabel={organisationLabel}
         refreshNonce={refreshNonce}
       />
     )}
