@@ -115,8 +115,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               />
               {!editingService && (
                 <Text fontSize="xs" color="gray.500" mt={1}>
-                  Enter service name e.g. asr-conformer-gpu. Service ID will be
-                  auto-generated based on this.
+                  Enter service name e.g. asr-conformer-gpu.
                 </Text>
               )}
             </FormControl>
@@ -143,17 +142,16 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 onChange={(e) =>
                   onInputChange(
                     "serviceId",
-                    e.target.value.replace(/[^a-zA-Z0-9]/g, "").slice(0, 32),
+                    e.target.value.replace(/[^a-zA-Z0-9/_-]/g, ""),
                   )
                 }
                 placeholder="Enter service id"
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
-                maxLength={32}
               />
               {!editingService && (
                 <Text fontSize="xs" color="gray.500" mt={1}>
-                  Alphanumeric characters only, up to 32 characters.
+                  Letters, numbers, and / _ - only.
                 </Text>
               )}
             </FormControl>
