@@ -47,12 +47,10 @@ class PPUUsageRepository:
             select(
                 PPUQuotaUsage.tenant_id,
                 PPUQuotaUsage.tier_id,
-                PPUTier.name.label("tier_name"),
                 func.max(PPUQuotaUsage.updated_at).label("last_used_at"),
             )
-            .outerjoin(PPUTier, PPUTier.id == PPUQuotaUsage.tier_id)
             .where(PPUQuotaUsage.billing_month == billing_month)
-            .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id, PPUTier.name)
+            .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id)
         )
         if tenant_id:
             tier_activity = tier_activity.where(PPUQuotaUsage.tenant_id == tenant_id)
@@ -62,7 +60,6 @@ class PPUUsageRepository:
             select(
                 activity_sub.c.tenant_id,
                 activity_sub.c.tier_id,
-                activity_sub.c.tier_name,
                 func.row_number()
                 .over(
                     partition_by=activity_sub.c.tenant_id,
@@ -74,7 +71,9 @@ class PPUUsageRepository:
             )
         ).subquery()
 
-        stmt = select(ranked).where(ranked.c.rn == 1)
+        stmt = select(
+            ranked.c.tenant_id, ranked.c.tier_id
+        ).where(ranked.c.rn == 1)
         if tier_id:
             stmt = stmt.where(ranked.c.tier_id == tier_id)
         # Deterministic order: without this, ties can come back in a different
@@ -134,13 +133,11 @@ class PPUUsageRepository:
             select(
                 PPUQuotaUsage.tenant_id,
                 PPUQuotaUsage.tier_id,
-                PPUTier.name.label("tier_name"),
                 PPUQuotaUsage.inference_name,
                 func.sum(PPUQuotaUsage.units_used).label("total_units"),
                 func.sum(PPUQuotaUsage.cost_accum).label("total_cost"),
                 func.max(PPUQuotaUsage.monthly_quota_snap).label("quota_snap"),
             )
-            .outerjoin(PPUTier, PPUTier.id == PPUQuotaUsage.tier_id)
             .where(
                 PPUQuotaUsage.billing_month == billing_month,
                 PPUQuotaUsage.tenant_id.in_(tenant_ids),
@@ -148,12 +145,23 @@ class PPUUsageRepository:
             .group_by(
                 PPUQuotaUsage.tenant_id,
                 PPUQuotaUsage.tier_id,
-                PPUTier.name,
                 PPUQuotaUsage.inference_name,
             )
         )
         result = await self._db.execute(stmt)
         return result.all()
+
+    async def get_tier_names(self) -> dict:
+        """{tier_id: name} for every tier, read straight from ppu_tiers.
+
+        ppu_tiers is small and rarely changes, so callers resolve tier_name
+        display labels from this map in Python rather than joining ppu_tiers
+        into every ppu_quota_usage query — keeps get_tenants_with_usage_tier
+        and get_tenant_tier_usage_breakdown genuinely single-table reads.
+        """
+        stmt = select(PPUTier.id, PPUTier.name)
+        result = await self._db.execute(stmt)
+        return {str(row.id): row.name for row in result.all()}
 
     async def get_total_cost_for_month(self, billing_month: str) -> Decimal:
         """Total cost_accum for billing_month, across every tenant that has

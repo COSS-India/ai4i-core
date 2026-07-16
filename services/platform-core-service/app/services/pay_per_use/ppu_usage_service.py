@@ -43,14 +43,20 @@ class _TenantTierBudget(NamedTuple):
     available_balance: Decimal
 
 
-def _merge_tier_and_budget(tier_rows, budgets_by_tenant: dict) -> list[_TenantTierBudget]:
+def _resolve_tier_name(tier_id, tier_names: dict) -> str:
+    if tier_id is None:
+        return "Unassigned"
+    return tier_names.get(str(tier_id), "Unassigned")
+
+
+def _merge_tier_and_budget(tier_rows, budgets_by_tenant: dict, tier_names: dict) -> list[_TenantTierBudget]:
     merged = []
     for row in tier_rows:
         budget = budgets_by_tenant.get(row.tenant_id)
         merged.append(_TenantTierBudget(
             tenant_id=row.tenant_id,
             tier_id=str(row.tier_id) if row.tier_id is not None else "unassigned",
-            tier_name=row.tier_name or "Unassigned",
+            tier_name=_resolve_tier_name(row.tier_id, tier_names),
             budget_limit=_to_decimal(budget.budget_limit) if budget else Decimal("0"),
             available_balance=_to_decimal(budget.available_balance) if budget else Decimal("0"),
         ))
@@ -74,12 +80,14 @@ def _prev_month(billing_month: str) -> str:
     return f"{year:04d}-{month:02d}"
 
 
-def _group_usage_by_tier(usage_rows) -> dict[str, dict]:
+def _group_usage_by_tier(usage_rows, tier_names: dict) -> dict[str, dict]:
     """Groups flat (tier_id, inference_name) usage rows into {tier_key: {tierName, rows}}."""
     groups: dict[str, dict] = {}
     for row in usage_rows:
         tier_key = str(row.tier_id) if row.tier_id is not None else "unassigned"
-        bucket = groups.setdefault(tier_key, {"tierName": row.tier_name or "Unassigned", "rows": []})
+        bucket = groups.setdefault(
+            tier_key, {"tierName": _resolve_tier_name(row.tier_id, tier_names), "rows": []}
+        )
         bucket["rows"].append(row)
     return groups
 
@@ -90,6 +98,7 @@ def _build_hierarchical_item(
     usage_rows,
     model_task_type: str | None = None,
     tier_order: dict[str, datetime] | None = None,
+    tier_names: dict | None = None,
 ) -> TenantHierarchicalItem:
     """Builds one tenant's hierarchical usage item from their end-of-period tier assignment
     plus their flat per-(tier, inference_name) usage rows for the billing month.
@@ -107,7 +116,7 @@ def _build_hierarchical_item(
     tier1 grants 500 tokens (100 used) then reassignment to tier2 grants 100 more (50 used)
     nets quotaLimit=100 (tier2's own grant), consumed=150 (100+50 summed).
     """
-    tier_groups = _group_usage_by_tier(usage_rows)
+    tier_groups = _group_usage_by_tier(usage_rows, tier_names or {})
     ordered_tier_keys = sorted(
         tier_groups.keys(),
         key=lambda k: (tier_order or {}).get(k) or _FAR_FUTURE,
@@ -412,12 +421,13 @@ class PPUUsageService:
         tier_first_seen = await self._repo.get_tier_first_seen(page_tenant_ids)
         org_map = await _resolve_tenant_names(page_tenant_ids, auth_db)
         budgets = await self._repo.get_tenant_budgets(billing_month, page_tenant_ids)
+        tier_names = await self._repo.get_tier_names()
 
         order_by_tenant: dict[str, dict[str, datetime]] = {}
         for row in tier_first_seen:
             order_by_tenant.setdefault(row.tenant_id, {})[str(row.tier_id)] = row.first_seen
 
-        merged_page = _merge_tier_and_budget(page_assignments, budgets)
+        merged_page = _merge_tier_and_budget(page_assignments, budgets, tier_names)
 
         items = [
             _build_hierarchical_item(
@@ -426,6 +436,7 @@ class PPUUsageService:
                 usage_by_tenant.get(assignment.tenant_id, []),
                 model_task_type,
                 order_by_tenant.get(assignment.tenant_id),
+                tier_names,
             )
             for assignment in merged_page
         ]
@@ -489,8 +500,9 @@ class PPUUsageService:
         tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
         org_map = await _resolve_tenant_names([tenant_id], auth_db)
         budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
-        assignment = _merge_tier_and_budget(assignments, budgets)[0]
+        tier_names = await self._repo.get_tier_names()
+        assignment = _merge_tier_and_budget(assignments, budgets, tier_names)[0]
 
         return _build_hierarchical_item(
-            assignment, org_map.get(tenant_id, tenant_id), usage_rows, None, tier_order
+            assignment, org_map.get(tenant_id, tenant_id), usage_rows, None, tier_order, tier_names
         )

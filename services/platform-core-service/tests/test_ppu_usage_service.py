@@ -22,8 +22,15 @@ class _Seq(list):
 
 
 def _make_repo(**method_returns) -> MagicMock:
-    """Return a mock repository whose async methods return the given values."""
+    """Return a mock repository whose async methods return the given values.
+
+    get_tier_names defaults to the {tier_id: name} map matching _tier_row/_usage_row's
+    own defaults ("1" -> "Pro", "2" -> "Enterprise" for the multi-tier tests), since
+    tier_name resolution now happens via this map rather than a column on the row —
+    override it explicitly for tests that need a different mapping.
+    """
     repo = MagicMock()
+    method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
     for method, value in method_returns.items():
         if isinstance(value, _Seq):
             setattr(repo, method, AsyncMock(side_effect=list(value)))
