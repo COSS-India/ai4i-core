@@ -12,7 +12,6 @@ from app.core.database import get_auth_db_optional, get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.permissions import (
     ROLE_ADMIN as _ROLE_ADMIN,
-    ROLE_MODERATOR as _ROLE_MODERATOR,
     ROLE_TENANT_ADMIN as _ROLE_TENANT_ADMIN,
     permission_ids as _permission_ids,
 )
@@ -28,17 +27,17 @@ router = APIRouter(prefix="/pay-per-use", tags=["Usage"])
 
 
 def _require_admin(request: Request) -> None:
-    if not _permission_ids(request) & {_ROLE_ADMIN, _ROLE_MODERATOR}:
+    if not _permission_ids(request) & {_ROLE_ADMIN}:
         raise InsufficientPermissionsError()
 
 
 def _require_usage_access(request: Request) -> None:
-    if not _permission_ids(request) & {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}:
+    if not _permission_ids(request) & {_ROLE_ADMIN, _ROLE_TENANT_ADMIN}:
         raise InsufficientPermissionsError()
 
 
 def _is_admin(request: Request) -> bool:
-    return bool(_permission_ids(request) & {_ROLE_ADMIN, _ROLE_MODERATOR})
+    return bool(_permission_ids(request) & {_ROLE_ADMIN})
 
 
 def _caller_tenant_id(request: Request) -> Optional[str]:

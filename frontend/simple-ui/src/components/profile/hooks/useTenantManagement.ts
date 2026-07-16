@@ -1052,10 +1052,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       return;
     }
+    const tenantIdNum = Number(t.tenant_id);
+    if (!Number.isFinite(tenantIdNum) || tenantIdNum < 1) {
+      showToast({
+        type: "warning",
+        message: "This tenant has no valid tenant ID to resend the setup link.",
+      });
+      return;
+    }
     setResendVerificationTenantId(t.tenant_id);
     try {
       const res = await authService.resendSetupLink(
-        { email },
+        { email, tenant_id: tenantIdNum },
         { withAuth: true },
       );
       showToast({

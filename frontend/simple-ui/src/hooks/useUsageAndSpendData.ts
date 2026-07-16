@@ -206,6 +206,8 @@ export function useUsageAndSpendData({
 
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 
+  const hasNoTierAssigned = isScoped && scopedQuery.data?.tierId === "unassigned";
+
   return {
     billingPeriod,
     isScoped,
@@ -215,6 +217,7 @@ export function useUsageAndSpendData({
     taskTypeOptions,
     taskColorByType,
     tiers: tiersQuery.data?.data ?? [],
+    hasNoTierAssigned,
     summaryError: isScoped ? errMsg(scopedQuery.error) : errMsg(summaryQuery.error),
     tenantsError: isScoped ? errMsg(scopedQuery.error) : errMsg(tenantsQuery.error),
     isSummaryLoading: isScoped ? scopedQuery.isLoading : summaryQuery.isLoading,

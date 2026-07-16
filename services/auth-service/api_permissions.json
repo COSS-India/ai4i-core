@@ -123,9 +123,9 @@
     { "endpoint": "PATCH:/api/v1/pay-per-use/tenant/tier/reassign",        "permissionRequired": 144, "description": "Reassign PPU tier for tenant (ppu.tenant.assign)" },
     { "endpoint": "PATCH:/api/v1/pay-per-use/tenant/budget",               "permissionRequired": 144, "description": "Revise tenant PPU budget, top-up/top-down (ppu.tenant.assign); admin (Adopter Admin) only" },
 
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin/moderator only (platform-wide)" },
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin/moderator only (platform-wide)" },
-    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 135, "description": "PPU usage single-tenant detail (usage.tenant_read); admin/moderator platform-wide, role 5 own tenant only" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-summary",                             "permissionRequired": 134, "description": "PPU usage platform summary (usage.read); admin only (platform-wide)" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenants",                             "permissionRequired": 134, "description": "PPU usage tenant list (usage.read); admin only (platform-wide)" },
+    { "endpoint": "GET:/api/v1/pay-per-use/usage-tenant",                              "permissionRequired": 135, "description": "PPU usage single-tenant detail (usage.tenant_read); admin platform-wide, role 5 own tenant only" },
 
     { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
     { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },

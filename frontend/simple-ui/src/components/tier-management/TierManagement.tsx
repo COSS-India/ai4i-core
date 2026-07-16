@@ -226,6 +226,7 @@ interface QuotaEditorProps {
   readonly onSchedule?: (quota: TierFormQuota) => void;
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
+  readonly isEditMode?: boolean;
 }
 
 function QuotaEditor({
@@ -236,6 +237,7 @@ function QuotaEditor({
   onSchedule,
   onRemove,
   removingTaskType,
+  isEditMode,
 }: QuotaEditorProps) {
   const handleQuotaChange = (
     idx: number,
@@ -277,15 +279,17 @@ function QuotaEditor({
         <Text fontSize="sm" fontWeight="semibold" color="gray.700">
           Quotas
         </Text>
-        <Button
-          size="xs"
-          leftIcon={<AddIcon />}
-          variant="outline"
-          colorScheme="blue"
-          onClick={addQuota}
-        >
-          Add Quota
-        </Button>
+        {!isEditMode && (
+          <Button
+            size="xs"
+            leftIcon={<AddIcon />}
+            variant="outline"
+            colorScheme="blue"
+            onClick={addQuota}
+          >
+            Add Quota
+          </Button>
+        )}
       </HStack>
 
       <Box maxH="340px" overflowY="auto" pr={1}>
@@ -376,7 +380,7 @@ function QuotaEditor({
                   </Tooltip>
                 )}
 
-                {quota.isExisting && onRemove && (
+                {!isEditMode && quota.isExisting && onRemove && (
                   <Tooltip label="Remove quota" placement="top" hasArrow>
                     <IconButton
                       aria-label="Remove quota"
@@ -395,7 +399,7 @@ function QuotaEditor({
                   </Tooltip>
                 )}
 
-                {!quota.isExisting && quotas.length > 1 && (
+                {!isEditMode && !quota.isExisting && quotas.length > 1 && (
                   <IconButton
                     aria-label="Remove quota"
                     icon={<DeleteIcon />}
@@ -423,6 +427,7 @@ interface TierFormProps {
   readonly onSchedule?: (quota: TierFormQuota) => void;
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
+  readonly isEditMode?: boolean;
 }
 
 function TierForm({
@@ -433,6 +438,7 @@ function TierForm({
   onSchedule,
   onRemove,
   removingTaskType,
+  isEditMode,
 }: TierFormProps) {
   return (
     <VStack align="stretch" spacing={4}>
@@ -466,6 +472,7 @@ function TierForm({
         onSchedule={onSchedule}
         onRemove={onRemove}
         removingTaskType={removingTaskType}
+        isEditMode={isEditMode}
       />
     </VStack>
   );
@@ -683,6 +690,7 @@ const TierManagement: React.FC = () => {
               onSchedule={handleOpenSchedule}
               onRemove={(quota) => handleRemoveQuota(quota.modelTaskType)}
               removingTaskType={removingTaskType}
+              isEditMode
             />
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">

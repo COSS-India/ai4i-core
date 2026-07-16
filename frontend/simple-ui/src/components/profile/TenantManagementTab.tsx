@@ -297,6 +297,7 @@ export default function TenantManagementTab({
         effective_from: new Date(assignEffectiveFrom).toISOString(),
         effective_to: new Date(assignEffectiveTo).toISOString(),
       });
+      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
@@ -391,8 +392,10 @@ export default function TenantManagementTab({
       {
         id: "organisation",
         header: "Tenant",
+        thProps: { w: "420px", maxW: "420px" },
+        tdProps: { maxW: "420px" },
         cell: (t) => (
-          <HStack spacing={3}>
+          <HStack spacing={3} minW={0}>
             <Center
               w={8}
               h={8}
@@ -405,13 +408,37 @@ export default function TenantManagementTab({
             >
               {getTenantInitials(t.organisation)}
             </Center>
-            <Text fontWeight="medium" fontSize="sm">
-              {t.organisation}
-            </Text>
+            <Tooltip
+              label={t.organisation}
+              placement="top"
+              hasArrow
+              openDelay={300}
+            >
+              <Text fontWeight="medium" fontSize="sm" isTruncated maxW="340px">
+                {t.organisation}
+              </Text>
+            </Tooltip>
           </HStack>
         ),
       },
-      { id: "contact", header: "Contact", cell: (t) => dash(t.contact_name) },
+      {
+        id: "contact",
+        header: "Contact",
+        thProps: { w: "280px", maxW: "280px" },
+        tdProps: { maxW: "280px" },
+        cell: (t) => (
+          <Tooltip
+            label={dash(t.contact_name)}
+            placement="top"
+            hasArrow
+            openDelay={300}
+          >
+            <Text fontSize="sm" isTruncated maxW="260px">
+              {dash(t.contact_name)}
+            </Text>
+          </Tooltip>
+        ),
+      },
       { id: "email", header: "Email", cell: (t) => dash(t.email) },
       {
         id: "status",
@@ -655,21 +682,34 @@ export default function TenantManagementTab({
     return (
       <Card mt={4}>
         <CardHeader>
-          <HStack justify="space-between" align="center">
-            <HStack>
+          <HStack justify="space-between" align="center" flexWrap="wrap">
+            <HStack flex="1" minW={0}>
               <IconButton
                 aria-label="Back"
                 icon={<FiArrowLeft />}
                 size="sm"
                 variant="ghost"
                 onClick={tm.closeTenantDetailView}
+                flexShrink={0}
               />
-              <Heading size="md">{t.organisation}</Heading>
-              <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
+              <Tooltip
+                label={t.organisation}
+                placement="top"
+                hasArrow
+                openDelay={300}
+              >
+                <Heading size="md" isTruncated minW={0}>
+                  {t.organisation}
+                </Heading>
+              </Tooltip>
+              <Badge
+                colorScheme={getTenantStatusColorScheme(t.status)}
+                flexShrink={0}
+              >
                 {formatTenantStatusLabel(t.status)}
               </Badge>
             </HStack>
-            <HStack>
+            <HStack flexShrink={0}>
               {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
                 <Button
                   leftIcon={<FiMail />}
@@ -763,7 +803,7 @@ export default function TenantManagementTab({
                   </Box>
                   <Box>
                     <Text fontWeight="semibold">Contact Name</Text>
-                    <Text>{dash(t.contact_name)}</Text>
+                    <Text wordBreak="break-word">{dash(t.contact_name)}</Text>
                   </Box>
                   <Box>
                     <Text fontWeight="semibold">Email</Text>

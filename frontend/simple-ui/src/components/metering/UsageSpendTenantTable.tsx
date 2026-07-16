@@ -20,7 +20,7 @@ import {
 import type { TenantUsageItem } from "../../types/usageSpend";
 import MeteringAsyncState from "./MeteringAsyncState";
 import { BudgetCell, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
-import UsageSpendExpandRow from "./UsageSpendExpandRow";
+import { UsageSpendExpandRows } from "./UsageSpendExpandRows";
 
 interface UsageSpendTenantTableProps {
   tenants: TenantUsageItem[];
@@ -35,6 +35,8 @@ interface UsageSpendTenantTableProps {
   onToggleExpand: (tenantId: string) => void;
   onTenantClick: (row: TenantUsageItem) => void;
 }
+
+const th = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
 
 const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
   tenants,
@@ -59,77 +61,23 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <Th fontSize="11px" letterSpacing="0.04em" color="gray.600" w="22%">
-              TENANT
-            </Th>
-            <Th fontSize="11px" letterSpacing="0.04em" color="gray.600" w="10%">
-              TIER
-            </Th>
-            <Th
-              fontSize="11px"
-              letterSpacing="0.04em"
-              color="gray.600"
-              w="14%"
-              cursor="pointer"
-              userSelect="none"
-              onClick={onToggleSort}
-            >
+            <Th {...th} w="22%">TENANT</Th>
+            <Th {...th} w="10%">TIER</Th>
+            <Th {...th} w="14%" cursor="pointer" userSelect="none" onClick={onToggleSort}>
               SPEND <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
             </Th>
-            <Th fontSize="11px" letterSpacing="0.04em" color="gray.600" w="22%">
-              BUDGET
-            </Th>
-            <Th fontSize="11px" letterSpacing="0.04em" color="gray.600" w="32%">
-              USAGE
-            </Th>
+            <Th {...th} w="22%">BUDGET</Th>
+            <Th {...th} w="32%">USAGE</Th>
           </Tr>
         </Thead>
         <Tbody>
           {tenants.map((row) => {
             const isOpen = expanded.has(row.tenantId);
-            const taskCount =
-              row.usage?.taskTypeCount ?? aggregateTasks(row.tierBreakdown ?? []).length;
-            const canExpand = !filterTaskType && taskCount > 1;
-
-            let usageCell: React.ReactNode;
-            if (taskCount === 0) {
-              usageCell = (
-                <Text fontSize="12px" color="gray.500">
-                  Not used this period
-                </Text>
-              );
-            } else if (filterTaskType || taskCount === 1) {
-              usageCell = (
-                <UsageCell
-                  consumed={row.usage.consumed}
-                  quotaLimit={row.usage.quotaLimit}
-                  remaining={row.usage.remaining}
-                  percentage={row.usage.percentage}
-                  unit={row.usage.unit}
-                />
-              );
-            } else {
-              usageCell = (
-                <HStack
-                  as="button"
-                  spacing={1.5}
-                  color={USAGE_SPEND_ACCENT}
-                  fontSize="13px"
-                  fontWeight="semibold"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleExpand(row.tenantId);
-                  }}
-                >
-                  <Text>{taskCount} task types</Text>
-                  <ChevronDownIcon
-                    boxSize={3.5}
-                    transform={isOpen ? "rotate(180deg)" : undefined}
-                    transition="transform 0.15s ease"
-                  />
-                </HStack>
-              );
-            }
+            const tiers = row.tierBreakdown ?? [];
+            const taskCount = row.usage?.taskTypeCount ?? aggregateTasks(tiers).length;
+            const multiTiers = tiers.length > 1;
+            const canExpand = !filterTaskType && (multiTiers || taskCount > 1);
+            const showBar = taskCount > 0 && (filterTaskType || (!multiTiers && taskCount === 1));
 
             return (
               <React.Fragment key={row.tenantId}>
@@ -137,7 +85,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                   <Td>
                     <HStack spacing="10px">
                       <IconButton
-                        aria-label={`Toggle usage breakdown for ${row.tenantName}`}
+                        aria-label={`Toggle tier breakdown for ${row.tenantName}`}
                         icon={<ChevronRightIcon />}
                         size="xs"
                         variant="ghost"
@@ -159,31 +107,50 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                       </Text>
                     </HStack>
                   </Td>
-                  <Td>
-                    <TierBadge label={row.tier} />
-                  </Td>
+                  <Td><TierBadge label={row.tier} /></Td>
                   <Td>
                     <Text fontWeight="bold" fontSize="14px">
                       {formatSpendMoney(row.spend, row.currency)}
                     </Text>
                   </Td>
                   <Td>
-                    <BudgetCell
-                      limit={row.budget.limit}
-                      spent={row.budget.spent}
-                      remaining={row.budget.remaining}
-                      percentageUsed={row.budget.percentageUsed}
-                      currency={row.currency}
-                    />
+                    <BudgetCell {...row.budget} currency={row.currency} />
                   </Td>
-                  <Td>{usageCell}</Td>
+                  <Td>
+                    {taskCount === 0 ? (
+                      <Text fontSize="12px" color="gray.500">Not used this period</Text>
+                    ) : showBar ? (
+                      <UsageCell {...row.usage} />
+                    ) : (
+                      <HStack
+                        as="button"
+                        spacing={1.5}
+                        color={USAGE_SPEND_ACCENT}
+                        fontSize="13px"
+                        fontWeight="semibold"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleExpand(row.tenantId);
+                        }}
+                      >
+                        <Text>
+                          {multiTiers ? `${tiers.length} tiers` : `${taskCount} task types`}
+                        </Text>
+                        <ChevronDownIcon
+                          boxSize={3.5}
+                          transform={isOpen ? "rotate(180deg)" : undefined}
+                          transition="transform 0.15s ease"
+                        />
+                      </HStack>
+                    )}
+                  </Td>
                 </Tr>
                 {isOpen && canExpand ? (
-                  <Tr>
-                    <Td colSpan={5} bg="gray.50" p={0} borderBottomWidth="1px" borderColor="gray.200">
-                      <UsageSpendExpandRow row={row} taskColorByType={taskColorByType} />
-                    </Td>
-                  </Tr>
+                  <UsageSpendExpandRows
+                    row={row}
+                    multiTiers={multiTiers}
+                    taskColorByType={taskColorByType}
+                  />
                 ) : null}
               </React.Fragment>
             );
