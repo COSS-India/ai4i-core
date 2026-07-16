@@ -220,8 +220,11 @@ async def validate_token(
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
 
-    DB is only acquired for the API-key branch; JWT and anonymous paths never
-    open a connection, keeping the gateway hot path as cheap as possible.
+    JWT and anonymous paths never open a DB connection. The API-key path is
+    Redis-only on a cache hit; on a cache miss it falls back to Postgres (auth
+    DB plus, via PpuTenantTierAssignmentsRepository, the platform-core DB) to
+    reload the key and re-derive budget/quota state before repopulating the
+    cache — see APIKeyService.validate_api_key.
     """
     token = _extract_token(request)
     if not token:
@@ -232,5 +235,5 @@ async def validate_token(
     if is_jwt_strict(token):
         return await _validate_jwt(token, request, response, cache_svc)
 
-    # API key path — validates against Redis cache only, no DB needed
+    # API key path — Redis cache hit needs no DB; a miss falls back to Postgres
     return await _validate_api_key(token, request, response, api_key_svc)

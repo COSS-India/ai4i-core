@@ -18,16 +18,16 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
 
 from ai4i_core.ppu import get_inference_types
-
 from app.core.config import settings
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.platform_core_db_repositories.ppu_tenant_tier_assignments_repository import \
+    PpuTenantTierAssignmentsRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
@@ -130,8 +130,62 @@ class APIKeyService:
             return {}
         return await self._repo.get_permission_names_by_ids(list(all_ids))
 
+    async def _set_api_key_cache(
+        self,
+        cache: CacheService,
+        api_key: str,
+        ttl: int,
+        permission_ids: list[int],
+        user_id: UUID,
+        tenant_id: Optional[str],
+        tier_id: str,
+        **kwargs,
+
+    ) -> None:
+        await cache.set_api_key_cache(
+            api_key,
+            ttl,
+            {
+                "api_key": api_key,
+                "permissions": permission_ids,
+                "user_id": str(user_id),
+                "tenant_id": tenant_id,
+                "tier_id": tier_id,
+                **kwargs
+            },
+        )
+
+    @staticmethod
+    def _raise_for_tenant_id(tenant_id) -> None:
+        """
+        Raise if not tenant_id and do nothing otherwise
+        :param tenant_id:
+        :return: None
+        """
+        if not tenant_id:
+            raise ValidationError(
+                message="A tenant ID is required to create an API key.",
+                code="TENANT_ID_REQUIRED",
+            )
+
+    @staticmethod
+    def _raise_platform_core_db(platform_core_db) -> None:
+        """
+        Raise if not platform_core_db and do nothing otherwise
+        :param platform_core_db:
+        :return:
+        """
+        if platform_core_db is None:
+            raise ValidationError(
+                message="Tier assignment cannot be verified: platform-core DB is not configured.",
+                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+            )
+
     async def _refresh_redis_cache(
-        self, db_key: APIKey, tenant_id: Optional[str]
+        self,
+        db_key: APIKey,
+        tenant_id: Optional[str],
+        tier_id: Optional[str] = None,
     ) -> None:
         expires_at = db_key.expires_at
         if expires_at:
@@ -154,6 +208,7 @@ class APIKeyService:
                 "permissions": db_key.permissions or [],
                 "user_id": str(db_key.user_id),
                 "tenant_id": tenant_id,
+                "tier_id": tier_id if tier_id is not None else (existing or {}).get("tier_id", ""),
                 **preserved,
             },
         )
@@ -263,9 +318,13 @@ class APIKeyService:
 
     async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on all cached API key hashes for the tenant."""
-        await self._patch_all_tenant_key_caches(
-            tenant_id, "budget-exhausted", "1" if exhausted else "0"
-        )
+        try:
+            await self._patch_all_tenant_key_caches(
+                tenant_id, "budget-exhausted", "1" if exhausted else "0"
+            )
+        except Exception as exc:
+            logger.error("Failed to set budget-exhausted value for tenant %s: %s, BUT CONTINUING", tenant_id, exc)
+            pass
 
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants.
@@ -297,9 +356,13 @@ class APIKeyService:
         self, tenant_id: int, inference_name: str
     ) -> None:
         """Mark quota-{inference_name} exhausted on all cached API key hashes for the tenant."""
-        await self._patch_all_tenant_key_caches(
-            tenant_id, f"quota-{inference_name}", "1"
-        )
+        try:
+            await self._patch_all_tenant_key_caches(
+                tenant_id, f"quota-{inference_name}", "1"
+            )
+        except Exception as exc:
+            logger.error("Failed to set quota-exhausted value for tenant %s: %s :: BUT CONTINUING", tenant_id, exc)
+            pass
 
     async def clear_quota_flags_for_tenant(self, tenant_id: int) -> None:
         """HDEL every quota-* field from this tenant's cached API key hashes.
@@ -369,45 +432,11 @@ class APIKeyService:
             tenant = await self._tenants.get_by_id(owner.tenant_id)
         owner_active = self.user_may_use_api_keys(owner, tenant)
 
-        if not tenant_id:
-            raise ValidationError(
-                message="A tenant ID is required to create an API key.",
-                code="TENANT_ID_REQUIRED",
-            )
 
-        if platform_core_db is None:
-            raise ValidationError(
-                message="Tier assignment cannot be verified: platform-core DB is not configured.",
-                code="PLATFORM_CORE_DB_NOT_CONFIGURED",
-            )
+        APIKeyService._raise_for_tenant_id(tenant_id)
+        APIKeyService._raise_platform_core_db(platform_core_db)
 
-        tier_id = ""
-        try:
-            row = (await platform_core_db.execute(
-                text(
-                    "SELECT tier_id FROM ppu_tenant_tier_assignments"
-                    " WHERE tenant_id = :tenant_id"
-                    "   AND effective_from <= now()"
-                    "   AND effective_to   >  now()"
-                    " LIMIT 1"
-                ),
-                {"tenant_id": tenant_id},
-            )).first()
-            if row:
-                tier_id = str(row.tier_id)
-        except Exception as exc:
-            logger.warning("Failed to fetch tier_id for tenant %s: %s", tenant_id, exc)
-            raise ValidationError(
-                message="Failed to verify tier assignment for the tenant.",
-                code="TIER_LOOKUP_FAILED",
-            ) from exc
-
-        if not tier_id:
-            raise ValidationError(
-                message="API key cannot be created: tenant has no active tier assignment.",
-                code="NO_ACTIVE_TIER",
-            )
-
+        tier_id = await PpuTenantTierAssignmentsRepository.get_tier_by_tenant_id(tenant_id)
         api_key = APIKey(
             api_key=raw_key,
             user_id=user_id,
@@ -422,16 +451,8 @@ class APIKeyService:
         await self._repo.commit()
 
         if owner_active:
-            await self._cache.set_api_key_cache(
-                raw_key,
-                ttl,
-                {
-                    "api_key": raw_key,
-                    "permissions": permission_ids,
-                    "user_id": str(user_id),
-                    "tenant_id": tenant_id,
-                    "tier_id": tier_id,
-                },
+            await self._set_api_key_cache(
+                self._cache, raw_key, ttl, permission_ids, user_id, tenant_id, tier_id,
             )
 
         logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
@@ -452,15 +473,32 @@ class APIKeyService:
             return {"valid": False, "message": "Invalid API key format."}
 
         cached = await self._cache.get_api_key_cache(token)
-        if cached is None:
+        if cached is None:  # Less likely condition, but extremely important.
             # Check in DB
             api_key_db = await self._get_api_key_from_db(token)
             if not api_key_db:
                 raise InvalidAPIKeyError()
-            # Set in cache
-            # await self._refresh_redis_cache(api_key_db,)
+            user = api_key_db.user  # This is the tenant admin who created the api key
             tenant = api_key_db.user.tenant
-            await self.refresh_keys_cache_for_tenant(tenant.id)
+            if not self.user_may_use_api_keys(user, tenant):
+                logger.warning(f"user_may_use_api_keys is false in validate_api_key for user={user}, tenant={tenant}")
+                raise InvalidAPIKeyError()
+            # get tier/balance/quota for the tenant — session is scoped to just this lookup
+            tier_id, available_balance, quota_exhausted_map = (
+                await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance_quota_details(
+                    str(tenant.id))
+            )
+            # populate the cache entry first — set_*_exhausted_for_tenant below only patch
+            # existing hashes, so this key's hash must exist before they run.
+            await self._refresh_redis_cache(api_key_db, str(tenant.id), tier_id)
+            # restore budget/quota exhausted flags from a fresh DB read, since a cache miss
+            # would otherwise repopulate without them (silently under-enforcing until the
+            # next billing event happens to re-set them).
+            await self.set_budget_exhausted_for_tenant(tenant.id, available_balance <= 0)
+            for inference_name, exhausted in quota_exhausted_map.items():
+                if exhausted:
+                    await self.set_quota_exhausted_for_tenant(tenant.id, inference_name)
+
             cached = await self._cache.get_api_key_cache(token)
             if cached is None:
                 raise InvalidAPIKeyError()
