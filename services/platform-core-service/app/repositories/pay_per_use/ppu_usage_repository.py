@@ -65,7 +65,13 @@ class PPUUsageRepository:
                     partition_by=activity_sub.c.tenant_id,
                     # tier_id as a tie-break makes the pick deterministic when two
                     # tiers share the same max(updated_at) down to the microsecond.
-                    order_by=(activity_sub.c.last_used_at.desc(), activity_sub.c.tier_id.desc()),
+                    # nullslast() matters here: Postgres sorts NULL first under a plain
+                    # DESC, which would let a deleted tier (tier_id IS NULL) win a tie
+                    # over a real tier instead of only ever being the deliberate fallback.
+                    order_by=(
+                        activity_sub.c.last_used_at.desc(),
+                        activity_sub.c.tier_id.desc().nullslast(),
+                    ),
                 )
                 .label("rn"),
             )
