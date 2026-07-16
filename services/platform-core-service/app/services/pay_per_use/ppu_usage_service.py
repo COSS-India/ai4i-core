@@ -1,6 +1,7 @@
 """PPU usage service — computes spend summary from DB rows."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -448,10 +449,21 @@ class PPUUsageService:
         page_assignments = assignments[offset : offset + limit]
 
         page_tenant_ids = [a.tenant_id for a in page_assignments]
-        tier_first_seen = await self._repo.get_tier_first_seen(page_tenant_ids)
-        org_map = await _resolve_tenant_names(page_tenant_ids, auth_db)
-        budgets = await self._repo.get_tenant_budgets(billing_month, page_tenant_ids)
-        tier_names = await self._repo.get_tier_names()
+
+        async def _fetch_page_data():
+            tier_first_seen = await self._repo.get_tier_first_seen(page_tenant_ids)
+            budgets = await self._repo.get_tenant_budgets(billing_month, page_tenant_ids)
+            tier_names = await self._repo.get_tier_names()
+            return tier_first_seen, budgets, tier_names
+
+        # _resolve_tenant_names runs on auth_db, a separate session from self._db — the
+        # three self._db calls above must stay sequential (an AsyncSession can't run
+        # concurrent queries), but that whole group has no dependency on auth_db, so it
+        # runs concurrently with it instead of after it.
+        (tier_first_seen, budgets, tier_names), org_map = await asyncio.gather(
+            _fetch_page_data(),
+            _resolve_tenant_names(page_tenant_ids, auth_db),
+        )
 
         order_by_tenant: dict[str, dict[str, datetime]] = {}
         for row in tier_first_seen:
@@ -525,12 +537,20 @@ class PPUUsageService:
                 tierBreakdown=[],
             )
 
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
-        tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
+        async def _fetch_tenant_data():
+            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
+            tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
+            budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
+            tier_names = await self._repo.get_tier_names()
+            return usage_rows, tier_first_seen, budgets, tier_names
+
+        # Same reasoning as get_tenant_list: the self._db calls stay sequential among
+        # themselves, but run concurrently with the auth_db-backed name resolution.
+        (usage_rows, tier_first_seen, budgets, tier_names), org_map = await asyncio.gather(
+            _fetch_tenant_data(),
+            _resolve_tenant_names([tenant_id], auth_db),
+        )
         tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
-        org_map = await _resolve_tenant_names([tenant_id], auth_db)
-        budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
-        tier_names = await self._repo.get_tier_names()
         assignment = _merge_tier_and_budget(assignments, budgets, tier_names)[0]
 
         return _build_hierarchical_item(
