@@ -39,7 +39,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isAdopterView = roleViewConfig.defaultView === "adopter";
   const isTenantView = roleViewConfig.defaultView === "tenant";
 
-  const [subTab, setSubTab] = useState<MeteringSubTab>(METERING.DEFAULTS.SUB_TAB);
+  const [subTab, setSubTab] = useState<MeteringSubTab>(() =>
+    getMeteringRoleViewConfig(userRoles).defaultView === "tenant"
+      ? METERING.DEFAULTS.TENANT_SUB_TAB
+      : METERING.DEFAULTS.SUB_TAB,
+  );
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
@@ -150,19 +154,19 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     return overview ?? null;
   }, [isAdopterView, subTab, tenantQuery.data, serviceQuery.data, overview]);
 
-  const dataStateBanner = useMemo(
-    () =>
-      formatMeteringDataStateBanner(
-        primaryMeteringResponse?.data_state,
-        primaryMeteringResponse?.generated_at,
-      ),
-    [primaryMeteringResponse?.data_state, primaryMeteringResponse?.generated_at],
-  );
+  const dataStateBanner = useMemo(() => {
+    if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
+    return formatMeteringDataStateBanner(
+      primaryMeteringResponse?.data_state,
+      primaryMeteringResponse?.generated_at,
+    );
+  }, [subTab, primaryMeteringResponse?.data_state, primaryMeteringResponse?.generated_at]);
 
   const primaryError = useMemo(() => {
+    if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
     const err = overviewQuery.error || serviceQuery.error || tenantQuery.error;
     return err ? parseMeteringError(err) : null;
-  }, [overviewQuery.error, serviceQuery.error, tenantQuery.error]);
+  }, [subTab, overviewQuery.error, serviceQuery.error, tenantQuery.error]);
 
   const isLoading =
     (isAdopterView && overviewQuery.isLoading) ||
