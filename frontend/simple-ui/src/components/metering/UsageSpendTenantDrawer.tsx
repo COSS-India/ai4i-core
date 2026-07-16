@@ -37,7 +37,10 @@ interface UsageSpendTenantDrawerProps {
   onClose: () => void;
   detail: TenantUsageDetail | null;
   isLoading: boolean;
+  /** Value shown in the period selector (may be pending while loading). */
   periodKey: BillingPeriodKey;
+  /** Period that `detail` was fetched for — used for the spend section label. */
+  loadedPeriodKey: BillingPeriodKey;
   onPeriodChange: (periodKey: BillingPeriodKey) => void;
 }
 
@@ -47,6 +50,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   detail,
   isLoading,
   periodKey,
+  loadedPeriodKey,
   onPeriodChange,
 }) => {
   const taskRows = useMemo(() => {
@@ -69,7 +73,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
 
   const spend = detail?.spend ?? 0;
   const hasMultiTier = (detail?.tierBreakdown?.length ?? 0) > 1;
-  const periodLabel = billingPeriodLabel(periodKey);
+  const periodLabel = billingPeriodLabel(loadedPeriodKey);
 
   return (
     <Drawer isOpen={isOpen} placement="right" onClose={onClose} size="md">
