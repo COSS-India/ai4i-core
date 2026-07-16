@@ -1,5 +1,6 @@
 """OpenAI-compatible LLM proxy service."""
 
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -115,6 +116,15 @@ class OpenAIProxyService:
             return 503, {"detail": str(exc)}
 
         logger.info("LLM proxy -> %s (model=%s)", url, model)
+        if isinstance(payload, dict):
+            payload_str = json.dumps(payload, ensure_ascii=False)
+            logger.info(
+                "LLM outgoing payload (model=%s, messages=%d, approx_input_tokens=%d): %s",
+                model,
+                len(payload.get("messages") or []),
+                len(payload_str) // 4,
+                payload_str,
+            )
         try:
             return await self.forward(url, payload)
         except httpx.RequestError as exc:
