@@ -115,8 +115,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               />
               {!editingService && (
                 <Text fontSize="xs" color="gray.500" mt={1}>
-                  Enter service name e.g. asr-conformer-gpu. Service ID will be
-                  auto-generated based on this.
+                  Enter service name e.g. asr-conformer-gpu.
                 </Text>
               )}
             </FormControl>
@@ -133,6 +132,28 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 bg="white"
                 rows={4}
               />
+            </FormControl>
+
+            {/* Service Id */}
+            <FormControl isRequired>
+              <FormLabel fontWeight="semibold">Service Id</FormLabel>
+              <Input
+                value={formData.serviceId || ""}
+                onChange={(e) =>
+                  onInputChange(
+                    "serviceId",
+                    e.target.value.replace(/[^a-zA-Z0-9/_-]/g, ""),
+                  )
+                }
+                placeholder="Enter service id"
+                bg={editingService ? "gray.50" : "white"}
+                isReadOnly={!!editingService}
+              />
+              {!editingService && (
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Letters, numbers, and / _ - only.
+                </Text>
+              )}
             </FormControl>
 
             {/* Endpoint */}

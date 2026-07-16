@@ -47,10 +47,11 @@ export function formatSpendMoney(n: number, currency = "INR"): string {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     }).format(n);
   } catch {
-    return `₹${Math.round(n).toLocaleString("en-IN")}`;
+    return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 }
 
