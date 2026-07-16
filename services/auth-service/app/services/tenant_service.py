@@ -41,6 +41,7 @@ from app.repositories.verification_repository import VerificationRepository
 from app.core.responses import to_response
 from app.schemas.tenant import (
     TenantCreate,
+    TenantResponse,
     TenantStatusUpdate,
     TenantUpdate,
     TenantUserCreate,
@@ -194,6 +195,28 @@ class TenantService:
                     "message": "Moderators cannot perform this action.",
                 },
             )
+
+    async def _assert_can_reveal_pii(self, user: User) -> None:
+        """Gate unmasked-PII reads to the roles that can actually edit a tenant.
+
+        Reading (masked) is available to anyone with tenant.read scope, but
+        cleartext contact details are only needed by the Edit forms, which are
+        limited to ADMIN and TENANT ADMIN. This excludes moderators and plain
+        tenant users even when they hold read scope, so ``?unmask=true`` cannot
+        be used to harvest cleartext PII. Callers must still pass
+        ``enforce_scope`` first (a TENANT ADMIN is thereby limited to their own
+        tenant; an ADMIN passes scope for any tenant).
+        """
+        roles = await self._roles.get_user_roles(user.id)
+        if RoleName.ADMIN.value in roles or RoleName.TENANT_ADMIN.value in roles:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "INSUFFICIENT_PERMISSIONS",
+                "message": "You do not have permission to view unmasked contact details.",
+            },
+        )
 
     async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
         """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
@@ -491,9 +514,33 @@ class TenantService:
             )
         return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
 
-    async def get_tenant(self, current_user: User, tenant_id: int) -> Tenant:
+    async def get_tenant(
+        self, current_user: User, tenant_id: int, *, unmask: bool = False
+    ) -> Tenant:
         await self.enforce_scope(current_user, tenant_id)
+        # Revealing cleartext PII is limited to the roles that can edit the
+        # tenant; masked reads stay open to anyone with tenant.read scope.
+        if unmask:
+            await self._assert_can_reveal_pii(current_user)
         return await self._load_tenant_or_404(tenant_id)
+
+    @staticmethod
+    def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
+        """Shape a tenant into its API dict, applying the PII-masking policy.
+
+        Default (list/view): email and phone are masked. With ``unmask`` (Edit
+        Tenant form): the phone is always revealed and the contact email is
+        revealed only while the tenant is PENDING — i.e. before verification,
+        the only window in which the email may still be corrected.
+        """
+        data = to_response(tenant, TenantResponse)
+        if unmask:
+            return mask_pii_in_dict(
+                data,
+                mask_emails=tenant.status != TenantStatus.PENDING,
+                mask_phones=False,
+            )
+        return mask_pii_in_dict(data)
 
     async def update_tenant(
         self,
@@ -715,10 +762,20 @@ class TenantService:
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
 
     async def list_tenant_users(
-        self, current_user: User, tenant_id: int, offset: int, limit: int
+        self,
+        current_user: User,
+        tenant_id: int,
+        offset: int,
+        limit: int,
+        *,
+        unmask: bool = False,
     ) -> list[User]:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
+        # Cleartext phone numbers are only for the Edit Tenant User form, which
+        # is limited to ADMIN / TENANT ADMIN (masked listing stays open).
+        if unmask:
+            await self._assert_can_reveal_pii(current_user)
         await self._load_tenant_or_404(tenant_id)
         return await self._users.list_by_tenant(tenant_id, offset=offset, limit=limit)
 

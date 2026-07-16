@@ -66,20 +66,8 @@ async def get_tenant(
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    tenant = await svc.get_tenant(current_user, tenant_id)
-    data = to_response(tenant, TenantResponse)
-    if unmask:
-        # Phone is always correctable; the contact email may only be corrected
-        # (and therefore only needs to be revealed) before the tenant is
-        # verified — i.e. while it is still PENDING.
-        data = mask_pii_in_dict(
-            data,
-            mask_emails=tenant.status != TenantStatus.PENDING,
-            mask_phones=False,
-        )
-    else:
-        data = mask_pii_in_dict(data)
-    return success_response(data=data)
+    tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask)
+    return success_response(data=svc.build_tenant_response(tenant, unmask=unmask))
 
 
 @router.patch("/{tenant_id}")
@@ -135,7 +123,9 @@ async def list_tenant_users(
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    users = await svc.list_tenant_users(current_user, tenant_id, offset, limit)
+    users = await svc.list_tenant_users(
+        current_user, tenant_id, offset, limit, unmask=unmask
+    )
     data = await svc.build_tenant_user_responses(users, unmask_phone=unmask)
     return success_response(data=data)
 
