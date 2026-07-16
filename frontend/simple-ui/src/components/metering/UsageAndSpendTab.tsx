@@ -15,7 +15,7 @@ import { formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useUsageAndSpendData } from "../../hooks/useUsageAndSpendData";
 import {
-  billingPeriodLabel,
+  billingPeriodValue,
   type BillingPeriodKey,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail, TenantUsageItem } from "../../types/usageSpend";
@@ -79,10 +79,23 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     });
   }, []);
 
+  const loadTenantDetail = useCallback(async (tenantId: string, nextPeriodKey: BillingPeriodKey) => {
+    setIsDetailLoading(true);
+    try {
+      setSelectedTenant(
+        await fetchTenantUsageById(tenantId, billingPeriodValue(nextPeriodKey)),
+      );
+    } catch {
+      // Keep prior detail on refetch failure; caller may seed from the table row.
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }, []);
+
   const handleTenantClick = useCallback(
     async (row: TenantUsageItem) => {
-      setIsDetailLoading(true);
       onDetailOpen();
+      setIsDetailLoading(true);
       try {
         setSelectedTenant(await fetchTenantUsageById(row.tenantId, data.billingPeriod));
       } catch {
@@ -93,6 +106,22 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
     },
     [onDetailOpen, data.billingPeriod],
   );
+
+  const handleDrawerPeriodChange = useCallback(
+    (nextPeriodKey: BillingPeriodKey) => {
+      if (nextPeriodKey === periodKey) return;
+      setPeriodKey(nextPeriodKey);
+      if (selectedTenant?.tenantId) {
+        void loadTenantDetail(selectedTenant.tenantId, nextPeriodKey);
+      }
+    },
+    [periodKey, selectedTenant?.tenantId, loadTenantDetail],
+  );
+
+  const handleDetailClose = useCallback(() => {
+    onDetailClose();
+    setSelectedTenant(null);
+  }, [onDetailClose]);
 
   return (
     <VStack align="stretch" spacing={5}>
@@ -119,7 +148,11 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
           <Select
             size="sm"
             value={periodKey}
-            onChange={(e) => setPeriodKey(e.target.value as BillingPeriodKey)}
+            onChange={(e) => {
+              const next = e.target.value as BillingPeriodKey;
+              if (isDetailOpen) handleDrawerPeriodChange(next);
+              else setPeriodKey(next);
+            }}
             borderRadius="8px"
             minW="180px"
             bg="white"
@@ -208,10 +241,11 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
 
           <UsageSpendTenantDrawer
             isOpen={isDetailOpen}
-            onClose={onDetailClose}
+            onClose={handleDetailClose}
             detail={selectedTenant}
             isLoading={isDetailLoading}
-            periodLabel={billingPeriodLabel(periodKey)}
+            periodKey={periodKey}
+            onPeriodChange={handleDrawerPeriodChange}
           />
         </>
       ) : null}

@@ -7,7 +7,9 @@ import {
   DrawerContent,
   DrawerHeader,
   DrawerOverlay,
+  FormControl,
   HStack,
+  Select,
   Spinner,
   Table,
   Tbody,
@@ -19,10 +21,13 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React, { useMemo } from "react";
+import { METERING } from "../../config/meteringConstants";
 import {
   aggregateTasks,
+  billingPeriodLabel,
   formatSpendMoney,
   taskTypeColor,
+  type BillingPeriodKey,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail } from "../../types/usageSpend";
 import { BudgetCell, TaskTypeLabel, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
@@ -32,7 +37,8 @@ interface UsageSpendTenantDrawerProps {
   onClose: () => void;
   detail: TenantUsageDetail | null;
   isLoading: boolean;
-  periodLabel: string;
+  periodKey: BillingPeriodKey;
+  onPeriodChange: (periodKey: BillingPeriodKey) => void;
 }
 
 const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
@@ -40,7 +46,8 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   onClose,
   detail,
   isLoading,
-  periodLabel,
+  periodKey,
+  onPeriodChange,
 }) => {
   const taskRows = useMemo(() => {
     if (!detail) return [];
@@ -62,6 +69,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
 
   const spend = detail?.spend ?? 0;
   const hasMultiTier = (detail?.tierBreakdown?.length ?? 0) > 1;
+  const periodLabel = billingPeriodLabel(periodKey);
 
   return (
     <Drawer isOpen={isOpen} placement="right" onClose={onClose} size="md">
@@ -72,7 +80,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           Tenant Spend Details
         </DrawerHeader>
         <DrawerBody pb={10}>
-          {isLoading ? (
+          {isLoading && !detail ? (
             <Center py={12}>
               <Spinner color="blue.500" />
             </Center>
@@ -86,11 +94,35 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
                 <TierBadge label={detail.tier} />
               </HStack>
 
+              <FormControl>
+                <Text
+                  fontSize="11px"
+                  letterSpacing="0.04em"
+                  color="gray.600"
+                  fontWeight="semibold"
+                  mb={2}
+                >
+                  {METERING.USAGE_SPEND.BILLING_PERIOD}
+                </Text>
+                <Select
+                  size="sm"
+                  value={periodKey}
+                  onChange={(e) => onPeriodChange(e.target.value as BillingPeriodKey)}
+                  borderRadius="8px"
+                  bg="white"
+                  maxW="220px"
+                  isDisabled={isLoading}
+                >
+                  <option value="current">{METERING.USAGE_SPEND.CURRENT_MONTH}</option>
+                  <option value="last">{METERING.USAGE_SPEND.LAST_MONTH}</option>
+                </Select>
+              </FormControl>
+
               <Box>
                 <Text fontSize="11px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb="10px">
                   BUDGET
                 </Text>
-                <Box bg="gray.50" borderRadius="10px" p="16px 18px">
+                <Box bg="gray.50" borderRadius="10px" p="16px 18px" opacity={isLoading ? 0.55 : 1}>
                   <BudgetCell
                     limit={detail.budget.limit}
                     spent={detail.budget.spent}
@@ -101,7 +133,12 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
                 </Box>
               </Box>
 
-              <Box>
+              <Box position="relative" opacity={isLoading ? 0.55 : 1}>
+                {isLoading ? (
+                  <Center position="absolute" inset={0} zIndex={1}>
+                    <Spinner color="blue.500" size="sm" />
+                  </Center>
+                ) : null}
                 <Text fontSize="11px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb="10px">
                   SPEND BY MODEL TASK TYPE — {periodLabel}
                 </Text>
