@@ -74,18 +74,27 @@ def mask_pii_in_dict(
     *,
     email_keys: Iterable[str] = _DEFAULT_EMAIL_KEYS,
     phone_keys: Iterable[str] = _DEFAULT_PHONE_KEYS,
+    mask_emails: bool = True,
+    mask_phones: bool = True,
 ) -> dict[str, Any]:
     """Return ``data`` with known email/phone keys masked in place.
 
     Mutates and returns the same dict (callers pass a freshly built response
     dict, so in-place mutation is safe and avoids a copy).
+
+    ``mask_emails`` / ``mask_phones`` let an authorised edit path selectively
+    return a PII field in cleartext (e.g. an editable phone number) while still
+    masking the rest. Both default to ``True`` so existing callers are
+    unchanged and nothing leaks unless a caller opts in.
     """
-    for key in email_keys:
-        if data.get(key) is not None:
-            data[key] = mask_email(data[key])
-    for key in phone_keys:
-        if data.get(key) is not None:
-            data[key] = mask_phone(data[key])
+    if mask_emails:
+        for key in email_keys:
+            if data.get(key) is not None:
+                data[key] = mask_email(data[key])
+    if mask_phones:
+        for key in phone_keys:
+            if data.get(key) is not None:
+                data[key] = mask_phone(data[key])
     return data
 
 
