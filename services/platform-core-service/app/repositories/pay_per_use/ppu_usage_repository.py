@@ -43,39 +43,36 @@ class PPUUsageRepository:
         reassigned mid-month shows their newer tier here (tierBreakdown
         still lists every tier they actually used that month).
         """
-        tier_activity = (
+        # row_number() evaluates after GROUP BY within the same SELECT, so the rank can
+        # be computed directly alongside the max(updated_at) aggregate — no need for a
+        # second subquery just to add it (matches the single-subquery shape
+        # get_tenant_budgets already uses for the same "rank per tenant, keep rn==1"
+        # pattern below).
+        ranked_activity = (
             select(
                 PPUQuotaUsage.tenant_id,
                 PPUQuotaUsage.tier_id,
-                func.max(PPUQuotaUsage.updated_at).label("last_used_at"),
-            )
-            .where(PPUQuotaUsage.billing_month == billing_month)
-            .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id)
-        )
-        if tenant_id:
-            tier_activity = tier_activity.where(PPUQuotaUsage.tenant_id == tenant_id)
-        activity_sub = tier_activity.subquery()
-
-        ranked = (
-            select(
-                activity_sub.c.tenant_id,
-                activity_sub.c.tier_id,
                 func.row_number()
                 .over(
-                    partition_by=activity_sub.c.tenant_id,
+                    partition_by=PPUQuotaUsage.tenant_id,
                     # tier_id as a tie-break makes the pick deterministic when two
                     # tiers share the same max(updated_at) down to the microsecond.
                     # nullslast() matters here: Postgres sorts NULL first under a plain
                     # DESC, which would let a deleted tier (tier_id IS NULL) win a tie
                     # over a real tier instead of only ever being the deliberate fallback.
                     order_by=(
-                        activity_sub.c.last_used_at.desc(),
-                        activity_sub.c.tier_id.desc().nullslast(),
+                        func.max(PPUQuotaUsage.updated_at).desc(),
+                        PPUQuotaUsage.tier_id.desc().nullslast(),
                     ),
                 )
                 .label("rn"),
             )
-        ).subquery()
+            .where(PPUQuotaUsage.billing_month == billing_month)
+            .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id)
+        )
+        if tenant_id:
+            ranked_activity = ranked_activity.where(PPUQuotaUsage.tenant_id == tenant_id)
+        ranked = ranked_activity.subquery()
 
         stmt = select(
             ranked.c.tenant_id, ranked.c.tier_id
