@@ -87,16 +87,19 @@ class PPUUsageRepository:
         return result.all()
 
     async def get_tenant_budgets(self, billing_month: str, tenant_ids: list[str]) -> dict:
-        """budget_limit/available_balance per tenant_id, read from whichever
+        """budget_limit/available_balance/tier_id per tenant_id, read from whichever
         ppu_tenant_tier_assignments row was in effect at the END of
         billing_month.
 
         This is the one place ppu_tenant_tier_assignments is still read for
-        the usage-tenant(s) endpoints — purely for these two budget columns,
-        never to decide which tenants/tiers are shown (that comes from
-        get_tenants_with_usage_tier). A tenant with no assignment covering
-        that instant is simply absent from the returned dict; callers treat
-        that as budget_limit=0/available_balance=0.
+        the usage-tenant(s) endpoints — mainly for these budget columns,
+        never to decide which tenants/tiers are shown when there's usage
+        (that comes from get_tenants_with_usage_tier). tier_id is only
+        consumed by get_tenant_detail's zero-usage fallback, to show a
+        tenant's actual assigned tier instead of "Unassigned" when they
+        simply have no usage yet this billing_month. A tenant with no
+        assignment covering that instant is simply absent from the returned
+        dict; callers treat that as budget_limit=0/available_balance=0.
         """
         if not tenant_ids:
             return {}
@@ -104,6 +107,7 @@ class PPUUsageRepository:
         ranked = (
             select(
                 PPUTenantTierAssignment.tenant_id,
+                PPUTenantTierAssignment.tier_id,
                 PPUTenantTierAssignment.budget_limit,
                 PPUTenantTierAssignment.available_balance,
                 func.row_number()

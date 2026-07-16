@@ -500,9 +500,13 @@ class PPUUsageService:
         month, oldest first.
 
         Unlike get_tenant_list, a tenant with zero ppu_quota_usage rows this
-        billing_month is NOT omitted here — it falls into the same "Unassigned"
-        zero-value branch below, so single-tenant lookups keep returning something
-        for a valid tenant with no usage yet this period.
+        billing_month is NOT omitted here — it falls into the zero-value branch
+        below, so single-tenant lookups keep returning something for a valid
+        tenant with no usage yet this period. `tier`/`tierId` in that branch
+        still reflect the tenant's actual current assignment (read from
+        ppu_tenant_tier_assignments, as of the END of billing_month, same
+        instant get_tenant_budgets uses elsewhere) — falling back to
+        "Unassigned" only when even that assignment doesn't exist.
         """
         assignments = await self._repo.get_tenants_with_usage_tier(
             billing_month, tenant_id=tenant_id
@@ -520,11 +524,25 @@ class PPUUsageService:
             org_map = await _resolve_tenant_names([tenant_id], auth_db)
             if auth_db is not None and tenant_id not in org_map:
                 raise EntityNotFoundError(f"Tenant {tenant_id}")
+
+            # No usage to derive a tier from, but the tenant may still have a live
+            # tier assignment (e.g. just onboarded, hasn't made any calls yet) — show
+            # that instead of "Unassigned" so the tier isn't blank for no reason.
+            budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
+            budget_row = budgets.get(tenant_id)
+            if budget_row is not None:
+                tier_names = await self._repo.get_tier_names()
+                tier_id = _tier_key(budget_row.tier_id)
+                tier_name = _resolve_tier_name(budget_row.tier_id, tier_names)
+            else:
+                tier_id = "unassigned"
+                tier_name = "Unassigned"
+
             return TenantHierarchicalItem(
                 tenantId=tenant_id,
                 tenantName=org_map.get(tenant_id, tenant_id),
-                tier="Unassigned",
-                tierId="unassigned",
+                tier=tier_name,
+                tierId=tier_id,
                 currency=_CURRENCY,
                 spend=Decimal("0"),
                 budget=TenantBudget(

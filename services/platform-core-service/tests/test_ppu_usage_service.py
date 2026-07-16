@@ -28,9 +28,15 @@ def _make_repo(**method_returns) -> MagicMock:
     own defaults ("1" -> "Pro", "2" -> "Enterprise" for the multi-tier tests), since
     tier_name resolution now happens via this map rather than a column on the row —
     override it explicitly for tests that need a different mapping.
+
+    get_tenant_budgets defaults to {} (no budget row for anyone) — get_tenant_detail's
+    zero-usage branch calls this unconditionally now to resolve a fallback tier, so
+    tests that don't care about budgets would otherwise need to mock it just to avoid
+    an unconfigured-MagicMock-isn't-awaitable error.
     """
     repo = MagicMock()
     method_returns.setdefault("get_tier_names", {"1": "Pro", "2": "Enterprise"})
+    method_returns.setdefault("get_tenant_budgets", {})
     for method, value in method_returns.items():
         if isinstance(value, _Seq):
             setattr(repo, method, AsyncMock(side_effect=list(value)))
@@ -52,9 +58,14 @@ def _tier_row(**kwargs):
 
 
 def _budget_row(**kwargs):
-    """Stand-in for a get_tenant_budgets value — budget_limit/available_balance only,
-    read from ppu_tenant_tier_assignments purely for these two columns."""
-    defaults = dict(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700"))
+    """Stand-in for a get_tenant_budgets value — budget_limit/available_balance/tier_id,
+    read from ppu_tenant_tier_assignments. tier_id is only consumed by
+    get_tenant_detail's zero-usage fallback (to show the tenant's actual assigned
+    tier instead of "Unassigned"); every other caller ignores it."""
+    defaults = dict(
+        tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700"),
+        tier_id="1",
+    )
     return _row(**{**defaults, **kwargs})
 
 
@@ -521,6 +532,26 @@ class TestGetTenantDetail:
         assert result.spend == 0.0
         assert result.budget.limit == 0.0
         assert result.budget.remaining == 0.0
+        assert result.usage.taskTypeCount == 0
+        assert result.tierBreakdown == []
+
+    @pytest.mark.asyncio
+    async def test_zero_usage_shows_current_tier_assignment_when_one_exists(self):
+        """A tenant with no usage yet this billing_month (e.g. just onboarded) but a
+        live ppu_tenant_tier_assignments row must show that tier, not "Unassigned" —
+        there's no usage to derive a tier from, but the tenant does have one."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[],
+            get_tenant_budgets=_budgets(_budget_row(tenant_id="t1", tier_id="2")),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.tier == "Enterprise"
+        assert result.tierId == "2"
+        # still a zero-usage item otherwise — only tier/tierId change
+        assert result.spend == 0.0
+        assert result.budget.limit == 0.0
         assert result.usage.taskTypeCount == 0
         assert result.tierBreakdown == []
 
