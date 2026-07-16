@@ -40,6 +40,7 @@ const SERVICE_QUERY_KEYS = [
 
 const emptyServiceForm = (): Partial<Service> => ({
   name: "",
+  serviceId: "",
   serviceDescription: "",
   publishedOn: Math.floor(Date.now() / 1000),
   modelId: "",
@@ -474,11 +475,10 @@ export function useServicesManagement() {
           message: "Service has been updated successfully.",
         });
       } else {
-        // Auto-generate serviceId from name and timestamp
-        const timestamp = Date.now();
-        const serviceId = `${formData.name?.toLowerCase().replaceAll(/\s+/g, "-") || "service"}-${timestamp}`;
+        // Use the user-provided serviceId.
+        const serviceId = formData.serviceId?.trim() || "";
 
-        // Prepare service data with auto-generated serviceId.
+        // Prepare service data with the user-provided serviceId.
         // Do not send modelSubmissionDate because backend owns this field.
         const serviceFormData: Partial<Service> = { ...formData };
         delete serviceFormData.modelSubmissionDate;
@@ -556,6 +556,7 @@ export function useServicesManagement() {
 
   const canCreateService =
     !!formData.name?.trim() &&
+    !!formData.serviceId?.trim() &&
     !!formData.serviceDescription?.trim() &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
@@ -616,6 +617,7 @@ export function useServicesManagement() {
       const modelId = service.modelId || service.model_id || "";
       setFormData({
         name: service.name || "",
+        serviceId: service.serviceId || service.service_id || "",
         serviceDescription:
           service.serviceDescription || service.description || "",
         publishedOn: service.publishedOn,

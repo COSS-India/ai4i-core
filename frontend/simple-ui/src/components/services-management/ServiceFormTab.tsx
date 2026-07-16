@@ -135,6 +135,29 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               />
             </FormControl>
 
+            {/* Service Id */}
+            <FormControl isRequired>
+              <FormLabel fontWeight="semibold">Service Id</FormLabel>
+              <Input
+                value={formData.serviceId || ""}
+                onChange={(e) =>
+                  onInputChange(
+                    "serviceId",
+                    e.target.value.replace(/[^a-zA-Z0-9]/g, "").slice(0, 32),
+                  )
+                }
+                placeholder="Enter service id"
+                bg={editingService ? "gray.50" : "white"}
+                isReadOnly={!!editingService}
+                maxLength={32}
+              />
+              {!editingService && (
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Alphanumeric characters only, up to 32 characters.
+                </Text>
+              )}
+            </FormControl>
+
             {/* Endpoint */}
             <FormControl isRequired>
               <FormLabel fontWeight="semibold">Endpoint</FormLabel>
