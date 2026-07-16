@@ -216,7 +216,7 @@ async def validate_token(
     request: Request,
     response: Response,
     redis=Depends(get_redis),
-    api_key_svc=Depends(get_api_key_service),
+    api_key_svc: APIKeyService =Depends(get_api_key_service),
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
 

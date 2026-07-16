@@ -324,7 +324,6 @@ class APIKeyService:
             )
         except Exception as exc:
             logger.error("Failed to set budget-exhausted value for tenant %s: %s, BUT CONTINUING", tenant_id, exc)
-            pass
 
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants.
@@ -362,7 +361,6 @@ class APIKeyService:
             )
         except Exception as exc:
             logger.error("Failed to set quota-exhausted value for tenant %s: %s :: BUT CONTINUING", tenant_id, exc)
-            pass
 
     async def clear_quota_flags_for_tenant(self, tenant_id: int) -> None:
         """HDEL every quota-* field from this tenant's cached API key hashes.
