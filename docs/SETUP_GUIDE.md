@@ -342,18 +342,7 @@ cd ../..
 
 Step 5's seed migration creates a service row for **every** model (NMT, ASR, OCR, NER, TTS, LLM, etc.). If you already set the relevant `TRITON_ENDPOINT_*` variables in the root `.env` back in [Step 2](#step-2-create-the-root-environment-file), those services were seeded with their endpoint already filled in — you can skip this step for them.
 
-**If you skipped that (or need to add a service you didn't have a URL for yet), follow this step** — a seeded service with a blank `endpoint` will fail on inference calls until it's filled in. Once you have a model server (e.g. a Triton container) running and reachable, point the seeded service at it — either from the frontend or via the API.
-
-#### Option A — Frontend (Services Management UI)
-
-1. Log in to the Simple UI (Step 9) with an admin account (see [Default Credentials](#default-credentials)).
-2. Click **Services Management** in the left sidebar.
-3. On the **Service Registry** tab, find the row for the service you want (e.g. `asr-gpu`, `indictrans-gpu-t4`) and click its **Edit** (pencil) icon — this opens the **Edit Service** tab.
-4. Set the **Endpoint** field (e.g. `http://localhost:8000`) and save.
-
-> Editing is only available to platform **ADMIN** accounts (or unrestricted roles) — a tenant admin without platform ADMIN can view the registry but won't see the Edit button.
-
-#### Option B — Backend API
+**If you skipped that (or need to add a service you didn't have a URL for yet), follow this step** — a seeded service with a blank `endpoint` will fail on inference calls until it's filled in. Once you have a model server (e.g. a Triton container) running and reachable, point the seeded service at it via the API.
 
 The update call is keyed by `serviceId`, so look it up first, then patch the endpoint.
 
@@ -478,7 +467,7 @@ If login still fails:
 
 **Cause:** The seeded service's `endpoint` field is blank — seed migrations don't set `TRITON_ENDPOINT_*` variables in this guide, so every service starts with no endpoint configured.
 
-**Fix:** See [Step 10: Configure Inference Service Endpoints](#step-10-configure-inference-service-endpoints-required-if-not-set-before-migrations) — set the endpoint via the **Services Management** UI or `PATCH /api/v1/services` once the corresponding model server is running, or set the matching `TRITON_ENDPOINT_*` variable in the root `.env` (see [Step 2](#step-2-create-the-root-environment-file)) before your next fresh migration.
+**Fix:** See [Step 10: Configure Inference Service Endpoints](#step-10-configure-inference-service-endpoints-required-if-not-set-before-migrations) — set the endpoint via `PATCH /api/v1/services` once the corresponding model server is running, or set the matching `TRITON_ENDPOINT_*` variable in the root `.env` (see [Step 2](#step-2-create-the-root-environment-file)) before your next fresh migration.
 
 ### Port conflicts
 
