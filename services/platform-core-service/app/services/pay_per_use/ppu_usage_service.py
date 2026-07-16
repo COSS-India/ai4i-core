@@ -57,16 +57,34 @@ def _resolve_tier_name(tier_id, tier_names: dict) -> str:
     return tier_names.get(str(tier_id), "Unassigned")
 
 
+def _resolve_budget(tenant_id: str, budgets_by_tenant: dict) -> tuple[Decimal, Decimal, bool]:
+    """(budget_limit, available_balance, has_budget) for a tenant.
+
+    has_budget is False when no ppu_tenant_tier_assignments row covers this billing
+    month's end (see get_tenant_budgets) — the exact gap case this redesign exists to
+    handle correctly. budget_limit/available_balance default to 0 in that case so
+    display code has a concrete number to show, but has_budget is what callers must
+    check before treating "no budget on file" as "exceeded a budget of 0" — those are
+    different things (unknown vs. genuinely zero). The single place this default is
+    applied, so tenant-list/detail and the summary card can't drift into disagreeing
+    about what a missing budget row means (see get_summary's budget_exceeded count).
+    """
+    budget = budgets_by_tenant.get(tenant_id)
+    if budget is None:
+        return Decimal("0"), Decimal("0"), False
+    return _to_decimal(budget.budget_limit), _to_decimal(budget.available_balance), True
+
+
 def _merge_tier_and_budget(tier_rows, budgets_by_tenant: dict, tier_names: dict) -> list[_TenantTierBudget]:
     merged = []
     for row in tier_rows:
-        budget = budgets_by_tenant.get(row.tenant_id)
+        budget_limit, available_balance, _ = _resolve_budget(row.tenant_id, budgets_by_tenant)
         merged.append(_TenantTierBudget(
             tenant_id=row.tenant_id,
             tier_id=_tier_key(row.tier_id),
             tier_name=_resolve_tier_name(row.tier_id, tier_names),
-            budget_limit=_to_decimal(budget.budget_limit) if budget else Decimal("0"),
-            available_balance=_to_decimal(budget.available_balance) if budget else Decimal("0"),
+            budget_limit=budget_limit,
+            available_balance=available_balance,
         ))
     return merged
 
@@ -333,11 +351,15 @@ class PPUUsageService:
         active_tenants = len(assignments)
         tenant_ids = [a.tenant_id for a in assignments]
         budgets = await self._repo.get_tenant_budgets(billing_month, tenant_ids)
-        budget_exceeded = sum(
-            1 for a in assignments
-            if cost_by_tenant.get(a.tenant_id, Decimal("0"))
-            > (_to_decimal(budgets[a.tenant_id].budget_limit) if a.tenant_id in budgets else Decimal("0"))
-        )
+        # A tenant with no budget row on file has an unknown limit, not a limit of 0 —
+        # they must not count as "exceeded" just for having any spend at all. This keeps
+        # the summary card consistent with the tenant list/detail view, which shows the
+        # same tenant at 0% used (see _resolve_budget) rather than "over budget."
+        budget_exceeded = 0
+        for a in assignments:
+            budget_limit, _, has_budget = _resolve_budget(a.tenant_id, budgets)
+            if has_budget and cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
+                budget_exceeded += 1
 
         prev_month = _prev_month(billing_month)
         if tier_id:

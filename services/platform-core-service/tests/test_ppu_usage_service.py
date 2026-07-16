@@ -123,7 +123,10 @@ class TestGetSummary:
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
 
-        assert result.budgetExceededTenants == 1  # 50 > 0 (no budget on file) still counts
+        # unknown budget != a budget of 0 -- excluded from the count, not flagged as
+        # exceeded, matching the 0%-used (not "over budget") treatment in the tenant
+        # list/detail view for the same missing-budget-row case (see _resolve_budget).
+        assert result.budgetExceededTenants == 0
 
     @pytest.mark.asyncio
     async def test_spend_change_percent_none_when_no_prior_spend(self):
