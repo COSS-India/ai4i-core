@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { listTenants } from "../services/tenantService";
@@ -124,6 +124,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     queryFn: () =>
       fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices, queryTenantId),
     enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
+    placeholderData: keepPreviousData,
     ...meteringQueryDefaults,
   });
 
