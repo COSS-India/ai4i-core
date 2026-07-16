@@ -2,6 +2,7 @@
 Pydantic request/response schemas for the Service domain.
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
@@ -36,9 +37,13 @@ class ServicePolicy(BaseSchema):
 # ── Create / Update ──
 
 
+_SERVICE_ID_RE = re.compile(r"^[a-zA-Z0-9/_-]+$")
+
+
 class ServiceCreateRequest(BaseSchema):
     """Request body for POST /services."""
 
+    serviceId: str
     name: str
     serviceDescription: str
     hardwareDescription: str
@@ -55,6 +60,17 @@ class ServiceCreateRequest(BaseSchema):
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     tierIds: List[str] = Field(..., min_length=1)
+
+    @field_validator("serviceId")
+    @classmethod
+    def _validate_service_id(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("serviceId must not be empty")
+        if not _SERVICE_ID_RE.match(v):
+            raise ValueError(
+                "serviceId must contain only alphanumeric characters, /, -, or _"
+            )
+        return v
 
     @field_validator("name")
     @classmethod
@@ -93,8 +109,7 @@ class ServiceCreateRequest(BaseSchema):
 class ServiceUpdateRequest(BaseSchema):
     """Request body for PATCH /services. serviceId identifies the target.
 
-    Note: name, modelId, modelVersion are NOT updatable; service_id is derived
-    from service name only and is immutable.
+    Note: name, modelId, modelVersion are NOT updatable. serviceId is not editable.
     """
 
     serviceId: str

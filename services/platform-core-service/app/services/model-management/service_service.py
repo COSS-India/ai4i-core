@@ -2,7 +2,7 @@
 Business-logic service for the Service domain.
 
 Owns the rules:
-- Service IDs are deterministic SHA256 hashes of the service name only.
+- Service IDs are user-supplied, alphanumeric (/ - _ allowed), and must be globally unique.
 - Service names must be globally unique.
 - A service must reference an existing (model_id, model_version).
 - The endpoint URL is validated (URL format + SSRF + live probe) on
@@ -39,7 +39,6 @@ from .serializers import (
     service_to_dict,
 )
 from app.utils.endpoint_validator import ValidationStatus, validate_endpoint
-from app.utils.hashing import generate_service_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,13 @@ class DuplicateServiceNameError(AppError):
     def __init__(self, message: str) -> None:
         super().__init__(
             message=message, code="DUPLICATE_SERVICE_NAME", status_code=409
+        )
+
+
+class DuplicateServiceIdError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message=message, code="DUPLICATE_SERVICE_ID", status_code=409
         )
 
 
@@ -176,18 +182,7 @@ class ServiceService:
                 code="MODEL_NOT_FOUND",
             )
 
-        # 2. For LLM task type, service name must match the model name
-        task_type = (model.task or {}).get("type", "")
-        if task_type == "llm" and payload.name != model.name:
-            raise ValidationError(
-                message=(
-                    f"For LLM services, service name must match the model name. "
-                    f"Expected '{model.name}', got '{payload.name}'."
-                ),
-                code="LLM_SERVICE_NAME_MISMATCH",
-            )
-
-        # 3. Validate the endpoint (live probe + SSRF guard)
+        # 2. Validate the endpoint (live probe + SSRF guard)
         await self._validate_endpoint_for_model(
             endpoint=payload.endpoint,
             api_key=payload.api_key,
@@ -195,14 +190,20 @@ class ServiceService:
             task_type=(model.task or {}).get("type"),
         )
 
-        # 4. Duplicate name check
+        # 3. Duplicate name check
         if await self._services.get_by_name(payload.name):
             raise DuplicateServiceNameError(
                 f"Service with name '{payload.name}' already exists."
             )
 
+        # 4. Duplicate service ID check
+        if await self._services.get_by_service_id(payload.serviceId):
+            raise DuplicateServiceIdError(
+                f"Service with ID '{payload.serviceId}' already exists."
+            )
+
         # 5. Persist
-        service_id = generate_service_id(payload.name)
+        service_id = payload.serviceId
         is_published = bool(payload.isPublished)
         now = datetime.now(timezone.utc) if is_published else None
         unit_rate = (
