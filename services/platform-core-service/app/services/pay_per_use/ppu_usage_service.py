@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import NamedTuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,32 @@ from app.schemas.pay_per_use.usage import (
 _UNIT_LABELS: dict[str, str] = get_inference_unit_map()
 _CURRENCY = "INR"
 _FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
+
+
+class _TenantTierBudget(NamedTuple):
+    """Merges a tenant's most-recently-used tier this billing_month (from
+    ppu_quota_usage) with their budget figures (from ppu_tenant_tier_assignments,
+    read purely for budget_limit/available_balance — see get_tenant_budgets).
+    """
+    tenant_id: str
+    tier_id: str
+    tier_name: str
+    budget_limit: Decimal
+    available_balance: Decimal
+
+
+def _merge_tier_and_budget(tier_rows, budgets_by_tenant: dict) -> list[_TenantTierBudget]:
+    merged = []
+    for row in tier_rows:
+        budget = budgets_by_tenant.get(row.tenant_id)
+        merged.append(_TenantTierBudget(
+            tenant_id=row.tenant_id,
+            tier_id=str(row.tier_id) if row.tier_id is not None else "unassigned",
+            tier_name=row.tier_name or "Unassigned",
+            budget_limit=_to_decimal(budget.budget_limit) if budget else Decimal("0"),
+            available_balance=_to_decimal(budget.available_balance) if budget else Decimal("0"),
+        ))
+    return merged
 
 
 def _to_decimal(value) -> Decimal:
@@ -236,16 +262,18 @@ class PPUUsageService:
         self._repo = repo
 
     async def _tenant_assignments_and_usage(self, billing_month: str, tier_id: str | None):
-        """Tenants belonging to tier_id as of the END of billing_month (not "as of now"),
-        plus their usage rows for that month — the same tenant-selection rule used by
+        """Tenants with at least one ppu_quota_usage row this billing_month, scoped to
+        tier_id if given (their most-recently-active tier that month), plus their usage
+        rows for that month — the same tenant-selection rule used by
         get_tenant_list/get_tenant_detail, so a tier + billing_period filter combination
-        gives consistent results across all three endpoints, including past periods where
-        a tenant has since moved to a different tier.
+        gives consistent results across all three endpoints. Note: these rows carry
+        tier info only, NOT budget — callers that need budget_limit/available_balance
+        must separately call get_tenant_budgets.
         """
-        assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
-        tenant_ids = [a.tenant_id for a in assignments]
+        tier_rows = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id)
+        tenant_ids = [row.tenant_id for row in tier_rows]
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
-        return assignments, usage_rows
+        return tier_rows, usage_rows
 
     async def get_summary(
         self,
@@ -286,15 +314,18 @@ class PPUUsageService:
         spend_items.sort(key=lambda i: i.spend, reverse=True)
 
         active_tenants = len(assignments)
+        tenant_ids = [a.tenant_id for a in assignments]
+        budgets = await self._repo.get_tenant_budgets(billing_month, tenant_ids)
         budget_exceeded = sum(
             1 for a in assignments
-            if cost_by_tenant.get(a.tenant_id, Decimal("0")) > _to_decimal(a.budget_limit)
+            if cost_by_tenant.get(a.tenant_id, Decimal("0"))
+            > (_to_decimal(budgets[a.tenant_id].budget_limit) if a.tenant_id in budgets else Decimal("0"))
         )
 
         prev_month = _prev_month(billing_month)
         if tier_id:
-            # tier_id scopes by tenant ("who was on this tier at period end"), not by
-            # usage row, so it needs the full tenant-resolution pipeline to stay
+            # tier_id scopes by tenant ("who was most recently on this tier that month"),
+            # not by usage row, so it needs the full tenant-resolution pipeline to stay
             # consistent with the current month's figure above.
             _, prev_usage_rows = await self._tenant_assignments_and_usage(prev_month, tier_id)
             prev_total_spend = sum(
@@ -332,10 +363,15 @@ class PPUUsageService:
     ) -> TenantHierarchicalListResponse:
         """Hierarchical tenant usage: tenant -> tier(s) held during billing_month -> task types.
 
-        The tenant-level tier/budget reflect whichever tier assignment was in effect at the
-        END of billing_month (which may differ from the tenant's tier "as of now" if they've
-        since been reassigned). tierBreakdown covers every tier the tenant actually had usage
-        under that month, oldest first — a mid-month tier change surfaces as two entries.
+        Only tenants with at least one ppu_quota_usage row this billing_month appear —
+        a tenant with a budget/tier assignment but zero usage that month is omitted
+        entirely, not shown as a zero-usage row. The tenant-level `tier` reflects
+        whichever tier they were most recently active under that month (derived from
+        usage, not from ppu_tenant_tier_assignments — see get_tenants_with_usage_tier).
+        `budget` is a separate lookup into ppu_tenant_tier_assignments, read purely for
+        budget_limit/available_balance as of the END of billing_month. tierBreakdown
+        covers every tier the tenant actually had usage under that month, oldest first —
+        a mid-month tier change surfaces as two entries.
 
         model_task_type does NOT filter which tenants appear, nor narrow their spend/budget/
         tierBreakdown — those always reflect the full period. It only populates the flat
@@ -345,12 +381,12 @@ class PPUUsageService:
         tenant count (before slicing), not the page size, so callers can compute page count.
 
         Sorting/pagination happen BEFORE the per-tenant hierarchical build (tier grouping,
-        quota/percentage calcs, tier_first_seen, tenant-name resolution) — that build only
-        runs for the tenants on the requested page, not the full matching tenant list, via
-        a cheap spend pre-aggregate (_tenant_spend_from_rows) computed straight from the
-        already-fetched usage rows.
+        quota/percentage calcs, tier_first_seen, tenant-name resolution, budget lookup) —
+        that build only runs for the tenants on the requested page, not the full matching
+        tenant list, via a cheap spend pre-aggregate (_tenant_spend_from_rows) computed
+        straight from the already-fetched usage rows.
         """
-        assignments = await self._repo.get_tenant_tier_as_of_period_end(billing_month, tier_id)
+        assignments = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id)
         total = len(assignments)
         if not assignments:
             return TenantHierarchicalListResponse(data=[], total=0)
@@ -375,10 +411,13 @@ class PPUUsageService:
         page_tenant_ids = [a.tenant_id for a in page_assignments]
         tier_first_seen = await self._repo.get_tier_first_seen(page_tenant_ids)
         org_map = await _resolve_tenant_names(page_tenant_ids, auth_db)
+        budgets = await self._repo.get_tenant_budgets(billing_month, page_tenant_ids)
 
         order_by_tenant: dict[str, dict[str, datetime]] = {}
         for row in tier_first_seen:
             order_by_tenant.setdefault(row.tenant_id, {})[str(row.tier_id)] = row.first_seen
+
+        merged_page = _merge_tier_and_budget(page_assignments, budgets)
 
         items = [
             _build_hierarchical_item(
@@ -388,7 +427,7 @@ class PPUUsageService:
                 model_task_type,
                 order_by_tenant.get(assignment.tenant_id),
             )
-            for assignment in page_assignments
+            for assignment in merged_page
         ]
 
         return TenantHierarchicalListResponse(data=items, total=total)
@@ -400,23 +439,31 @@ class PPUUsageService:
         auth_db: Optional[AsyncSession],
     ) -> TenantHierarchicalItem:
         """Same hierarchical shape as get_tenant_list, scoped to a single tenant — the
-        tenant's tier/budget reflect whichever assignment was in effect at the END of
+        tenant's `tier` reflects whichever tier they were most recently active under
+        this billing_month (derived from ppu_quota_usage, not ppu_tenant_tier_assignments
+        — see get_tenants_with_usage_tier), `budget` is a separate lookup into
+        ppu_tenant_tier_assignments for budget_limit/available_balance as of the END of
         billing_month, and tierBreakdown covers every tier they had usage under that
         month, oldest first.
+
+        Unlike get_tenant_list, a tenant with zero ppu_quota_usage rows this
+        billing_month is NOT omitted here — it falls into the same "Unassigned"
+        zero-value branch below, so single-tenant lookups keep returning something
+        for a valid tenant with no usage yet this period.
         """
-        assignments = await self._repo.get_tenant_tier_as_of_period_end(
+        assignments = await self._repo.get_tenants_with_usage_tier(
             billing_month, tenant_id=tenant_id
         )
         if not assignments:
-            # No tier/budget assignment covering this period is a valid tenant
-            # configuration (not an error) — surface a zero-value item so the UI can
-            # render an empty state instead of a 404. But an empty `assignments` also
-            # comes back for a tenant_id that doesn't exist at all (no existence check
-            # upstream), so confirm the tenant is real before treating this as the
-            # unassigned case — otherwise a typo'd/deleted tenant_id would silently look
-            # like a legitimate empty state instead of a 404. When auth_db isn't
-            # available we can't verify either way, so fall back to trusting tenant_id
-            # (matches _resolve_tenant_names' own no-auth_db behavior elsewhere).
+            # No usage this period is a valid tenant configuration (not an error) —
+            # surface a zero-value item so the UI can render an empty state instead of
+            # a 404. But an empty `assignments` also comes back for a tenant_id that
+            # doesn't exist at all (no existence check upstream), so confirm the tenant
+            # is real before treating this as the unassigned case — otherwise a
+            # typo'd/deleted tenant_id would silently look like a legitimate empty state
+            # instead of a 404. When auth_db isn't available we can't verify either way,
+            # so fall back to trusting tenant_id (matches _resolve_tenant_names' own
+            # no-auth_db behavior elsewhere).
             org_map = await _resolve_tenant_names([tenant_id], auth_db)
             if auth_db is not None and tenant_id not in org_map:
                 raise EntityNotFoundError(f"Tenant {tenant_id}")
@@ -436,12 +483,13 @@ class PPUUsageService:
                 usage=TenantUsageCount(taskTypeCount=0),
                 tierBreakdown=[],
             )
-        assignment = assignments[0]
 
         usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
         tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
         tier_order = {str(row.tier_id): row.first_seen for row in tier_first_seen}
         org_map = await _resolve_tenant_names([tenant_id], auth_db)
+        budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
+        assignment = _merge_tier_and_budget(assignments, budgets)[0]
 
         return _build_hierarchical_item(
             assignment, org_map.get(tenant_id, tenant_id), usage_rows, None, tier_order

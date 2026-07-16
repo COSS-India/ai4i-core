@@ -37,12 +37,22 @@ def _row(**kwargs):
     return SimpleNamespace(**kwargs)
 
 
-def _assignment(**kwargs):
-    defaults = dict(
-        tenant_id="t1", tier_id="1", tier_name="Pro",
-        budget_limit=Decimal("1000"), available_balance=Decimal("700"),
-    )
+def _tier_row(**kwargs):
+    """Stand-in for a get_tenants_with_usage_tier row — tier info only, derived from
+    ppu_quota_usage. No budget fields; budget is a separate get_tenant_budgets lookup."""
+    defaults = dict(tenant_id="t1", tier_id="1", tier_name="Pro")
     return _row(**{**defaults, **kwargs})
+
+
+def _budget_row(**kwargs):
+    """Stand-in for a get_tenant_budgets value — budget_limit/available_balance only,
+    read from ppu_tenant_tier_assignments purely for these two columns."""
+    defaults = dict(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700"))
+    return _row(**{**defaults, **kwargs})
+
+
+def _budgets(*rows) -> dict:
+    return {r.tenant_id: r for r in rows}
 
 
 def _usage_row(**kwargs):
@@ -66,8 +76,9 @@ class TestGetSummary:
     @pytest.mark.asyncio
     async def test_total_spend_and_active_tenants(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
@@ -81,8 +92,9 @@ class TestGetSummary:
     @pytest.mark.asyncio
     async def test_budget_exceeded_tenant_is_counted(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment(budget_limit=Decimal("10"))],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("50"))],
+            get_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("10"))),
             get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
@@ -91,10 +103,27 @@ class TestGetSummary:
         assert result.budgetExceededTenants == 1
 
     @pytest.mark.asyncio
+    async def test_tenant_with_no_budget_row_is_not_falsely_exceeded(self):
+        """A tenant with usage but no ppu_tenant_tier_assignments row covering this
+        period's end has no budget figure at all — must not be treated as budget=0
+        and therefore always 'exceeded' the moment they have any spend."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("50"))],
+            get_tenant_budgets=_budgets(),  # no row for t1
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.budgetExceededTenants == 1  # 50 > 0 (no budget on file) still counts
+
+    @pytest.mark.asyncio
     async def test_spend_change_percent_none_when_no_prior_spend(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
@@ -105,8 +134,9 @@ class TestGetSummary:
     @pytest.mark.asyncio
     async def test_spend_change_percent_computed_against_prior_month(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("150"))],
+            get_tenant_budgets=_budgets(),
             get_total_cost_for_month=100.0,
         )
         svc = PPUUsageService(repo)
@@ -120,11 +150,12 @@ class TestGetSummary:
     @pytest.mark.asyncio
     async def test_percentage_sums_to_100_across_task_types(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(inference_name="llm", total_cost=Decimal("75")),
                 _usage_row(inference_name="asr", total_cost=Decimal("25")),
             ],
+            get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
@@ -141,11 +172,12 @@ class TestGetSummaryFiltered:
     @pytest.mark.asyncio
     async def test_spend_change_percent_uses_tenant_resolution_when_tier_id_set(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=_Seq([
                 [_usage_row(total_cost=Decimal("150"))],
                 [_usage_row(total_cost=Decimal("100"))],
             ]),
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06", tier_id="1")
@@ -161,9 +193,10 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_single_tenant_single_tier_single_task_type(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(_budget_row()),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -183,15 +216,33 @@ class TestGetTenantList:
         assert item.tierBreakdown[0].taskTypes[0].percentage == 100.0
 
     @pytest.mark.asyncio
+    async def test_tenant_with_no_budget_row_shows_zero_budget(self):
+        """A tenant with usage this month but no ppu_tenant_tier_assignments row
+        covering this period's end must show budget=0, not error/crash."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
+
+        item = result.data[0]
+        assert item.budget.limit == 0.0
+        assert item.budget.remaining == 0.0
+
+    @pytest.mark.asyncio
     async def test_remaining_quota_clamped_at_zero_when_overused(self):
         """remaining must never go negative, even when consumed exceeds the quota —
         both on the flat `usage` block and on each tierBreakdown taskType entry."""
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(total_units=150.0, quota_snap=100.0),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -206,11 +257,12 @@ class TestGetTenantList:
         Any usage against it must show percentage=100, not 0 (which `if quota` would
         give since 0.0 is falsy)."""
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(total_units=5.0, quota_snap=0.0),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -223,11 +275,12 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_zero_quota_with_no_usage_shows_zero_percent(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(total_units=0.0, quota_snap=0.0),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -239,7 +292,7 @@ class TestGetTenantList:
         """A tenant reassigned mid-period shows both tiers, oldest tier first, and spend
         is the sum across every tier they held that month."""
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment(tier_id="2", tier_name="Enterprise")],
+            get_tenants_with_usage_tier=[_tier_row(tier_id="2", tier_name="Enterprise")],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(tier_id="1", tier_name="Pro", total_cost=Decimal("30")),
                 _usage_row(tier_id="2", tier_name="Enterprise", total_cost=Decimal("20")),
@@ -248,6 +301,7 @@ class TestGetTenantList:
                 _row(tenant_id="t1", tier_id="2", first_seen=datetime(2026, 6, 15, tzinfo=timezone.utc)),
                 _row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 6, 1, tzinfo=timezone.utc)),
             ],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
@@ -261,12 +315,13 @@ class TestGetTenantList:
         """model_task_type only affects the flat `usage` quota-bar fields — spend and
         tierBreakdown always reflect the tenant's full period totals."""
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(inference_name="llm", total_units=100.0, total_cost=Decimal("30"), quota_snap=200.0),
                 _usage_row(inference_name="asr", total_units=50.0, total_cost=Decimal("20"), quota_snap=None),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, "asr", auth_db=None)
@@ -280,13 +335,13 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_hierarchical_build_only_runs_for_paginated_page(self):
         """Sorting/pagination must happen before the expensive per-tenant build — so
-        tier_first_seen and tenant-name resolution should only be called for the
-        tenants on the requested page, not every matching tenant."""
+        tier_first_seen, tenant-name resolution, and budget lookup should only be
+        called for the tenants on the requested page, not every matching tenant."""
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[
-                _assignment(tenant_id="t1"),
-                _assignment(tenant_id="t2"),
-                _assignment(tenant_id="t3"),
+            get_tenants_with_usage_tier=[
+                _tier_row(tenant_id="t1"),
+                _tier_row(tenant_id="t2"),
+                _tier_row(tenant_id="t3"),
             ],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(tenant_id="t1", total_cost=Decimal("10")),
@@ -294,6 +349,7 @@ class TestGetTenantList:
                 _usage_row(tenant_id="t3", total_cost=Decimal("50")),
             ],
             get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list(
@@ -304,6 +360,7 @@ class TestGetTenantList:
         assert result.total == 3
         # only the top-1 tenant (t2) should have been resolved/built, not t1/t3
         repo.get_tier_first_seen.assert_called_once_with(["t2"])
+        repo.get_tenant_budgets.assert_called_once_with("2026-06", ["t2"])
 
     @pytest.mark.asyncio
     async def test_tied_spend_breaks_deterministically_by_tenant_id(self):
@@ -311,13 +368,14 @@ class TestGetTenantList:
         so identical input always produces identical page contents — otherwise two
         sequential paginated calls could duplicate or drop a tied tenant across pages."""
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[
-                _assignment(tenant_id="t3"),
-                _assignment(tenant_id="t1"),
-                _assignment(tenant_id="t2"),
+            get_tenants_with_usage_tier=[
+                _tier_row(tenant_id="t3"),
+                _tier_row(tenant_id="t1"),
+                _tier_row(tenant_id="t2"),
             ],
             get_tenant_tier_usage_breakdown=[],  # every tenant ties at spend=0
             get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
 
@@ -329,15 +387,16 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_sort_order_desc_by_spend(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[
-                _assignment(tenant_id="t1"),
-                _assignment(tenant_id="t2"),
+            get_tenants_with_usage_tier=[
+                _tier_row(tenant_id="t1"),
+                _tier_row(tenant_id="t2"),
             ],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(tenant_id="t1", total_cost=Decimal("10")),
                 _usage_row(tenant_id="t2", total_cost=Decimal("90")),
             ],
             get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, sort_order="desc")
@@ -347,15 +406,16 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_sort_order_asc_by_spend(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[
-                _assignment(tenant_id="t1"),
-                _assignment(tenant_id="t2"),
+            get_tenants_with_usage_tier=[
+                _tier_row(tenant_id="t1"),
+                _tier_row(tenant_id="t2"),
             ],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(tenant_id="t1", total_cost=Decimal("10")),
                 _usage_row(tenant_id="t2", total_cost=Decimal("90")),
             ],
             get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, sort_order="asc")
@@ -364,7 +424,7 @@ class TestGetTenantList:
 
     @pytest.mark.asyncio
     async def test_no_assignments_returns_empty_response(self):
-        repo = _make_repo(get_tenant_tier_as_of_period_end=[])
+        repo = _make_repo(get_tenants_with_usage_tier=[])
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
 
@@ -374,10 +434,10 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_pagination_slices_page_but_total_is_full_count(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[
-                _assignment(tenant_id="t1"),
-                _assignment(tenant_id="t2"),
-                _assignment(tenant_id="t3"),
+            get_tenants_with_usage_tier=[
+                _tier_row(tenant_id="t1"),
+                _tier_row(tenant_id="t2"),
+                _tier_row(tenant_id="t3"),
             ],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(tenant_id="t1", total_cost=Decimal("10")),
@@ -385,6 +445,7 @@ class TestGetTenantList:
                 _usage_row(tenant_id="t3", total_cost=Decimal("50")),
             ],
             get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list(
@@ -398,9 +459,10 @@ class TestGetTenantList:
     @pytest.mark.asyncio
     async def test_offset_past_end_returns_empty_page_with_full_total(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
             get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_list("2026-06", None, None, auth_db=None, offset=10, limit=10)
@@ -414,9 +476,9 @@ class TestGetTenantList:
 class TestGetTenantDetail:
     @pytest.mark.asyncio
     async def test_returns_zero_value_item_when_no_assignment(self):
-        # No tier/budget assignment covering this period is a valid tenant state
-        # (not an error) — the API should return a zero-value item, not a 404.
-        repo = _make_repo(get_tenant_tier_as_of_period_end=[])
+        # No usage this period is a valid tenant state (not an error) — the API
+        # should return a zero-value item, not a 404.
+        repo = _make_repo(get_tenants_with_usage_tier=[])
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
 
@@ -431,9 +493,9 @@ class TestGetTenantDetail:
 
     @pytest.mark.asyncio
     async def test_returns_zero_value_item_when_tenant_exists_but_unassigned(self):
-        # auth_db confirms the tenant is real (just has no tier/budget row) — still
+        # auth_db confirms the tenant is real (just has no usage this period) — still
         # the zero-value empty state, not a 404.
-        repo = _make_repo(get_tenant_tier_as_of_period_end=[])
+        repo = _make_repo(get_tenants_with_usage_tier=[])
         svc = PPUUsageService(repo)
         auth_db = MagicMock()
         auth_db.execute = AsyncMock(
@@ -453,7 +515,7 @@ class TestGetTenantDetail:
         # tell that apart from the legitimate unassigned case, and it must still 404.
         from app.core.exceptions import EntityNotFoundError
 
-        repo = _make_repo(get_tenant_tier_as_of_period_end=[])
+        repo = _make_repo(get_tenants_with_usage_tier=[])
         svc = PPUUsageService(repo)
         auth_db = MagicMock()
         auth_db.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
@@ -464,9 +526,10 @@ class TestGetTenantDetail:
     @pytest.mark.asyncio
     async def test_single_tenant_hierarchical_shape(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(_budget_row()),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
@@ -480,14 +543,34 @@ class TestGetTenantDetail:
         assert len(result.tierBreakdown) == 1
 
     @pytest.mark.asyncio
+    async def test_tenant_with_no_budget_row_shows_zero_budget(self):
+        """A tenant with usage this month but no ppu_tenant_tier_assignments row
+        covering this period's end (e.g. the exact off-by-a-day case that motivated
+        this redesign) must still show usage/tier data, just with budget=0."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.tier == "Pro"
+        assert result.spend == 50.0
+        assert result.budget.limit == 0.0
+        assert result.budget.remaining == 0.0
+
+    @pytest.mark.asyncio
     async def test_multi_task_type_percentages_sum_to_100(self):
         repo = _make_repo(
-            get_tenant_tier_as_of_period_end=[_assignment()],
+            get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
                 _usage_row(inference_name="llm", total_cost=Decimal("75")),
                 _usage_row(inference_name="asr", total_cost=Decimal("25")),
             ],
             get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(),
         )
         svc = PPUUsageService(repo)
         result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
