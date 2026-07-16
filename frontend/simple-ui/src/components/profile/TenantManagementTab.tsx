@@ -1329,36 +1329,53 @@ export default function TenantManagementTab({
                 </FormErrorMessage>
               </FormControl>
               <FormControl
-                isRequired
-                isInvalid={Boolean(tm.editTenantFormErrors.email)}
+                isRequired={tm.isEditTenantEmailEditable}
+                isInvalid={
+                  tm.isEditTenantEmailEditable &&
+                  Boolean(tm.editTenantFormErrors.email)
+                }
               >
                 <FormLabel>Email</FormLabel>
-                <Input
-                  type="email"
-                  value={tm.editTenantForm.email ?? ""}
-                  onChange={(e) =>
-                    tm.handleEditTenantEmailChange(e.target.value)
-                  }
-                />
-                <FormErrorMessage>
-                  {tm.editTenantFormErrors.email}
-                </FormErrorMessage>
-                {tm.editTenantEmailStatus === "checking" &&
-                  !tm.editTenantFormErrors.email && (
-                    <FormHelperText color="gray.500">
-                      Checking if email exists…
+                {tm.isEditTenantEmailEditable ? (
+                  <>
+                    <Input
+                      type="email"
+                      value={tm.editTenantForm.email ?? ""}
+                      onChange={(e) =>
+                        tm.handleEditTenantEmailChange(e.target.value)
+                      }
+                    />
+                    <FormErrorMessage>
+                      {tm.editTenantFormErrors.email}
+                    </FormErrorMessage>
+                    {tm.editTenantEmailStatus === "checking" &&
+                      !tm.editTenantFormErrors.email && (
+                        <FormHelperText color="gray.500">
+                          Checking if email exists…
+                        </FormHelperText>
+                      )}
+                    {tm.editTenantEmailStatus === "available" &&
+                      !tm.editTenantFormErrors.email && (
+                        <FormHelperText color="green.600">
+                          {EMAIL_AVAILABLE_MSG}
+                        </FormHelperText>
+                      )}
+                    <FormHelperText>
+                      If you change the contact email, the update takes effect
+                      only after the new address is verified.
                     </FormHelperText>
-                  )}
-                {tm.editTenantEmailStatus === "available" &&
-                  !tm.editTenantFormErrors.email && (
-                    <FormHelperText color="green.600">
-                      {EMAIL_AVAILABLE_MSG}
+                  </>
+                ) : (
+                  <>
+                    <Text fontSize="md" color="gray.700" py={1}>
+                      {dash(tm.editTenantForm.email)}
+                    </Text>
+                    <FormHelperText>
+                      The contact email can only be corrected while the tenant
+                      is pending verification.
                     </FormHelperText>
-                  )}
-                <FormHelperText>
-                  If you change the contact email, the update takes effect only
-                  after the new address is verified.
-                </FormHelperText>
+                  </>
+                )}
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editTenantFormErrors.phone_number)}

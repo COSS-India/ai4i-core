@@ -104,6 +104,28 @@ REDIS_PASSWORD=changeme
 
 > **LLM task type only:** If you plan to use LLM inference, also set `LLM_UPSTREAM_BASE_URL` to the base URL of your upstream LLM server (e.g. vLLM, llama.cpp, Ollama).
 
+### Inference service endpoints (optional, do this now to save a manual step later)
+
+The Step 5 seed migration creates a service row for **every** model (NMT, ASR, OCR, NER, TTS, LLM, etc.) and reads each one's `endpoint` from a `TRITON_ENDPOINT_*` environment variable at migration time — if the variable is unset, the seeded `endpoint` is left **blank**, and inference calls to that service will fail until it's filled in.
+
+If you already know the URL for one or more model servers (e.g. Triton containers), add the matching variables to this same root `.env` now, so migrations seed the correct endpoint directly. This isn't in `env.template`, so add the lines yourself — only for the servers you actually have running (or plan to have running before you need that service):
+
+```bash
+TRITON_ENDPOINT_NMT=http://localhost:8000
+TRITON_ENDPOINT_ASR=http://localhost:5000
+TRITON_ENDPOINT_TTS=http://localhost:9000
+TRITON_ENDPOINT_OCR=http://localhost:8400
+TRITON_ENDPOINT_NER=http://localhost:8300
+TRITON_ENDPOINT_LANGDETECT=http://localhost:8000
+TRITON_ENDPOINT_AUDIO_LANGDETECT=http://localhost:8100
+TRITON_ENDPOINT_LANG_DIARIZATION=http://localhost:8600
+TRITON_ENDPOINT_SPEAKER_DIARIZATION=http://localhost:8700
+TRITON_ENDPOINT_TRANSLITERATION=http://localhost:8200
+TRITON_ENDPOINT_LLM=http://localhost:8080
+```
+
+If you skip this (or don't know a URL yet for some services), those services will seed with a blank endpoint — set it afterward via [Step 10](#step-10-configure-inference-service-endpoints-required-if-not-set-before-migrations).
+
 ## Step 3: Generate All Service Environment Files
 
 Run the setup script to generate a `.env` for every service from its template, substituting values from the root `.env`:
@@ -198,7 +220,7 @@ This command will:
 - Seed default data (admin user, roles, permissions, alert rules) — seed steps are Alembic migrations so they run automatically. This includes:
   - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (override by setting `ADMIN_DEFAULT_PASSWORD` in the environment before running the migration)
   - Default roles: `ADMIN`, `USER`, `GUEST`, `MODERATOR`, `TENANT ADMIN`, with permissions wired up per role
-  - Service configurations and default alert rules
+  - Service configurations and default alert rules — including any `TRITON_ENDPOINT_*` values set in [Step 2](#step-2-create-the-root-environment-file)
 
 **Note:** Re-running `./scripts/migrate.sh all upgrade` is the way to re-apply seed data. There is no separate seed step.
 
@@ -316,7 +338,36 @@ The UI is available at **http://localhost:3000**.
 cd ../..
 ```
 
-## Step 10: Access the Platform
+## Step 10: Configure Inference Service Endpoints (Required if not set before migrations)
+
+Step 5's seed migration creates a service row for **every** model (NMT, ASR, OCR, NER, TTS, LLM, etc.). If you already set the relevant `TRITON_ENDPOINT_*` variables in the root `.env` back in [Step 2](#step-2-create-the-root-environment-file), those services were seeded with their endpoint already filled in — you can skip this step for them.
+
+**If you skipped that (or need to add a service you didn't have a URL for yet), follow this step** — a seeded service with a blank `endpoint` will fail on inference calls until it's filled in. Once you have a model server (e.g. a Triton container) running and reachable, point the seeded service at it via the API.
+
+The update call is keyed by `serviceId`, so look it up first, then patch the endpoint.
+
+**Step 1 — `GET` the service's `serviceId`:**
+
+```bash
+curl -s "http://localhost:8095/api/v1/services?task_type=nmt" | python3 -m json.tool
+```
+
+Note the `serviceId` field for the service you want.
+
+**Step 2 — `PATCH` the endpoint using that `serviceId`:**
+
+```bash
+curl -s -X PATCH http://localhost:8095/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "serviceId": "<serviceId-from-step-1>",
+    "endpoint": "http://localhost:8000"
+  }'
+```
+
+**Expected:** `{"success": true, ... "message": "Service '\''<serviceId>'\'' updated successfully."}`. This route makes a live probe request to the endpoint you pass and rejects the update if the model server doesn't respond correctly — a `400`/validation error here usually means the model server isn't reachable yet at that URL; start it and retry. No `Authorization` header is required for this call in this native setup; `X-User-Id` is optional and only recorded as the audit `updated_by` value.
+
+## Step 11: Access the Platform
 
 Once all services are running, use the table below to find URLs and ports.
 
@@ -411,6 +462,12 @@ If login still fails:
    ```
 
 3. Check auth service logs in the terminal where it is running.
+
+### Inference calls fail with a connection/endpoint error
+
+**Cause:** The seeded service's `endpoint` field is blank — seed migrations don't set `TRITON_ENDPOINT_*` variables in this guide, so every service starts with no endpoint configured.
+
+**Fix:** See [Step 10: Configure Inference Service Endpoints](#step-10-configure-inference-service-endpoints-required-if-not-set-before-migrations) — set the endpoint via `PATCH /api/v1/services` once the corresponding model server is running, or set the matching `TRITON_ENDPOINT_*` variable in the root `.env` (see [Step 2](#step-2-create-the-root-environment-file)) before your next fresh migration.
 
 ### Port conflicts
 
