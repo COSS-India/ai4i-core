@@ -148,7 +148,8 @@ async def update_quota_usage(
     tenant's active tier changes mid-month (see tenant_assignment_service.
     reassign_tier), this starts a fresh row for the new tier rather than
     folding into the previous tier's accumulated numbers.
-    Returns True if quota is now exhausted, False if unlimited or under cap.
+    Returns True if quota is now exhausted or the tasktype isn't part of the
+    tier at all, False if under cap.
     """
     snap_result = await db.execute(
         text(
@@ -159,12 +160,16 @@ async def update_quota_usage(
     )
     snap = snap_result.scalar()
     if snap is None:
+        # No ppu_tier_quotas row means this tasktype isn't part of the tier's
+        # mapping at all — not entitled, not "unlimited". Treat as exhausted so
+        # _post_billing marks quota-{inference_name} and future requests to this
+        # tasktype are blocked by quota_guard.
         logger.warning(
-            "update_quota_usage: no quota cap in ppu_tier_quotas for"
-            " tier_id=%s inference_name=%s — usage not recorded in ppu_quota_usage",
+            "update_quota_usage: tasktype not included in tier — tier_id=%s"
+            " inference_name=%s — marking quota exhausted",
             tier_id, inference_name,
         )
-        return False
+        return True
 
     result = await db.execute(
         text(

@@ -169,7 +169,10 @@ async def handle_ppu_usage(msg: Message) -> None:
         wallet = await deduct_balance(db, tenant_id, cost)
         if wallet.tier_id is None:
             # deduct_balance already logged the warning; no active assignment means
-            # nothing was written — skip commit and Redis mark.
+            # nothing was written — skip commit and Redis mark. Still mark this
+            # tasktype's quota exhausted for the tenant so further requests to it
+            # are blocked by quota_guard, since the tenant has no tier to serve it.
+            await _post_billing(False, True, tenant_id, pricing.task_type)
             return
 
         logger.info(
