@@ -43,6 +43,14 @@ class _TenantTierBudget(NamedTuple):
     available_balance: Decimal
 
 
+def _tier_key(tier_id) -> str:
+    """Canonical string key for a tier_id, including the null ("unassigned"/deleted
+    tier) case — the single source of truth for matching a usage row's tier_id
+    against an assignment's, so the two can never drift into comparing "None" against
+    "unassigned" again (see _build_hierarchical_item's current_tier_row lookup)."""
+    return str(tier_id) if tier_id is not None else "unassigned"
+
+
 def _resolve_tier_name(tier_id, tier_names: dict) -> str:
     if tier_id is None:
         return "Unassigned"
@@ -55,7 +63,7 @@ def _merge_tier_and_budget(tier_rows, budgets_by_tenant: dict, tier_names: dict)
         budget = budgets_by_tenant.get(row.tenant_id)
         merged.append(_TenantTierBudget(
             tenant_id=row.tenant_id,
-            tier_id=str(row.tier_id) if row.tier_id is not None else "unassigned",
+            tier_id=_tier_key(row.tier_id),
             tier_name=_resolve_tier_name(row.tier_id, tier_names),
             budget_limit=_to_decimal(budget.budget_limit) if budget else Decimal("0"),
             available_balance=_to_decimal(budget.available_balance) if budget else Decimal("0"),
@@ -84,7 +92,7 @@ def _group_usage_by_tier(usage_rows, tier_names: dict) -> dict[str, dict]:
     """Groups flat (tier_id, inference_name) usage rows into {tier_key: {tierName, rows}}."""
     groups: dict[str, dict] = {}
     for row in usage_rows:
-        tier_key = str(row.tier_id) if row.tier_id is not None else "unassigned"
+        tier_key = _tier_key(row.tier_id)
         bucket = groups.setdefault(
             tier_key, {"tierName": _resolve_tier_name(row.tier_id, tier_names), "rows": []}
         )
@@ -192,7 +200,7 @@ def _build_hierarchical_item(
         matching_rows = [r for r in usage_rows if r.inference_name == effective_task_type]
         total_consumed = sum((_to_decimal(r.total_units) for r in matching_rows), Decimal("0"))
         current_tier_row = next(
-            (r for r in matching_rows if str(r.tier_id) == str(assignment.tier_id)), None
+            (r for r in matching_rows if _tier_key(r.tier_id) == assignment.tier_id), None
         )
         quota = (
             _to_decimal(current_tier_row.quota_snap)

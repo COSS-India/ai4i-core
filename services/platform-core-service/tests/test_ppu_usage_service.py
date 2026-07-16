@@ -259,6 +259,29 @@ class TestGetTenantList:
         assert item.tierBreakdown[0].taskTypes[0].remaining == 0.0
 
     @pytest.mark.asyncio
+    async def test_quota_populated_when_current_tier_is_deleted(self):
+        """A tenant whose current tier was deleted (ON DELETE SET NULL on the FK) has
+        tier_id=None on both the assignment and the matching usage row. The lookup that
+        matches them must treat None consistently on both sides — previously it compared
+        str(None) == "unassigned" and never matched, silently dropping quota/remaining/
+        percentage even though quota_snap data existed on the row."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tier_id=None, tier_name=None)],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tier_id=None, tier_name=None, total_units=50.0, quota_snap=200.0),
+            ],
+            get_tier_first_seen=[],
+            get_tenant_budgets=_budgets(),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
+
+        usage = result.data[0].usage
+        assert usage.quotaLimit == 200.0
+        assert usage.consumed == 50.0
+        assert usage.remaining == 150.0
+
+    @pytest.mark.asyncio
     async def test_zero_quota_with_usage_shows_fully_exhausted(self):
         """A 0 quota is a deliberate 'blocked for this cycle' setting, not missing data.
         Any usage against it must show percentage=100, not 0 (which `if quota` would
