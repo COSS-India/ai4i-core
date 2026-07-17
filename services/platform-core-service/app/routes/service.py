@@ -75,11 +75,11 @@ async def list_services(
         ge=0,
         description="Number of items to skip (for pagination).",
     ),
-    limit: int = Query(
-        100,
+    limit: Optional[int] = Query(
+        None,
         ge=1,
         le=1000,
-        description="Maximum number of items to return. Defaults to 100.",
+        description="Maximum number of items to return. Omit to return all services.",
     ),
     svc: ServiceService = Depends(get_service_service),
 ):

@@ -22,7 +22,7 @@ router = APIRouter(tags=["inference"])
 
 
 _CHAT_EXAMPLE = {
-    "model": "google/gemma-4-E4B-it",
+    "serviceId": "llm-service-1",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": False,
 }
@@ -392,16 +392,31 @@ async def run_ocr_inference(
 
 async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
     """
-    Shared handler for LLM chat routes. Owns only the request span — model and
-    ai_inference spans are managed inside OpenAIProxyService.proxy_traced(),
-    mirroring the Orchestrator + BaseTaskService pattern for Triton services.
+    Shared handler for LLM chat routes. Owns only the request span — MMS
+    resolution, tier gate, model + ai_inference spans are managed inside
+    OpenAIProxyService.proxy_traced(), mirroring the Orchestrator +
+    BaseTaskService pattern for Triton services.
     """
+    # Set service_id on request state so the observability middleware picks it
+    # up for Prometheus metrics without reading the body a second time.
+    # Precedence matches proxy_traced/orchestrator.py: config.serviceId first,
+    # then top-level, so metrics tagging can never diverge from what's
+    # actually resolved/billed downstream.
+    service_id = (
+        (payload.get("config") or {}).get("serviceId")
+        or payload.get("serviceId")
+        or ""
+    )
+    request.state.service_id = service_id
+
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         req_attrs["url"] = request.url.path
         req_attrs["method"] = request.method
         req_attrs.update(get_context_attributes())
 
-        status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
+        status_code, body = await OpenAIProxyService().proxy_traced(
+            path=path, payload=payload, request=request,
+        )
 
         if status_code >= 400:
             req_attrs["status"] = "failure"
@@ -488,6 +503,7 @@ _AUDIO_RESPONSES: Dict[int | str, Dict[str, Any]] = {
 
 
 async def _proxy_audio_upload(
+    request: Request,
     file: UploadFile,
     data: Dict[str, Any],
     upstream_path: str,
@@ -520,7 +536,7 @@ async def _proxy_audio_upload(
     }
 
     status_code, body = await OpenAIProxyService().proxy_multipart(
-        path=upstream_path, files=files, data=data,
+        path=upstream_path, files=files, data=data, request=request,
     )
 
     # Body shape decides response type: dict → JSON, str → text/plain.
@@ -558,13 +574,14 @@ def _build_form_data(**fields: Any) -> Dict[str, Any]:
     responses=_AUDIO_RESPONSES,
 )
 async def audio_transcriptions(
+    request: Request,
     file: UploadFile = File(
         ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
     ),
-    model: str = Form(
+    serviceId: str = Form(
         ...,
-        examples=["google/gemma-4-E4B-it"],
-        description="Model identifier, e.g. `google/gemma-4-E4B-it`.",
+        examples=["llm-service-1"],
+        description="Service identifier as registered in the platform.",
     ),
     language: Optional[str] = Form(
         None, description="ISO-639-1 source language code (optional).",
@@ -581,13 +598,13 @@ async def audio_transcriptions(
     ),
 ) -> Response:
     data = _build_form_data(
-        model=model,
+        serviceId=serviceId,
         language=language,
         prompt=prompt,
         response_format=response_format,
         temperature=temperature,
     )
-    return await _proxy_audio_upload(file, data, "/audio/transcriptions")
+    return await _proxy_audio_upload(request, file, data, "/audio/transcriptions")
 
 
 @router.post(
@@ -601,13 +618,14 @@ async def audio_transcriptions(
     responses=_AUDIO_RESPONSES,
 )
 async def audio_translations(
+    request: Request,
     file: UploadFile = File(
         ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
     ),
-    model: str = Form(
+    serviceId: str = Form(
         ...,
-        examples=["google/gemma-4-E4B-it"],
-        description="Model identifier, e.g. `google/gemma-4-E4B-it`.",
+        examples=["llm-service-1"],
+        description="Service identifier as registered in the platform.",
     ),
     prompt: Optional[str] = Form(
         None,
@@ -625,12 +643,12 @@ async def audio_translations(
     ),
 ) -> Response:
     data = _build_form_data(
-        model=model,
+        serviceId=serviceId,
         prompt=prompt,
         response_format=response_format,
         temperature=temperature,
     )
-    return await _proxy_audio_upload(file, data, "/audio/translations")
+    return await _proxy_audio_upload(request, file, data, "/audio/translations")
 
 
 @router.get(

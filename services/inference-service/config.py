@@ -3,7 +3,7 @@ Configuration for inference service.
 Loads settings from environment variables and defaults.
 """
 
-from typing import Dict, Optional
+from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
@@ -55,14 +55,8 @@ class Settings(BaseSettings):
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
 
     # OpenAI-compatible LLM proxy configuration
-    # Base URL for the upstream LLM server (e.g. "http://13.206.126.62:8000").
-    # Routes append /v1/chat/completions or /v1/chat to this base.
-    LLM_DEFAULT_ENDPOINT: str = Field("", description="Default upstream LLM base URL")
-    # Optional per-model overrides as a JSON object, e.g.
-    #   LLM_MODEL_ENDPOINTS='{"google/gemma-4-E4B-it":"http://10.0.0.5:8000"}'
-    LLM_MODEL_ENDPOINTS: Dict[str, str] = Field(
-        default_factory=dict, description="Per-model upstream base URL overrides"
-    )
+    # Endpoint resolution is handled via MMS (model management service) using
+    # the serviceId from the request payload — no static endpoint config needed.
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
     # Telemetry/Observability
