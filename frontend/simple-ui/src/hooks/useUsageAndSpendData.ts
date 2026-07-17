@@ -12,7 +12,6 @@ import {
   billingPeriodValue,
   resolveSpendChangePercent,
   summaryFromDetail,
-  taskTypeColor,
   type BillingPeriodKey,
 } from "../utils/usageSpendHelpers";
 import type {
@@ -198,12 +197,6 @@ export function useUsageAndSpendData({
     return out;
   }, [taskTypeNames, summaryQuery.data?.spendByModelTaskType, scopedQuery.data?.tierBreakdown]);
 
-  const taskColorByType = useMemo(() => {
-    const map = new Map<string, string>();
-    taskTypeOptions.forEach((t, i) => map.set(t, taskTypeColor(t, i)));
-    return map;
-  }, [taskTypeOptions]);
-
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 
   const hasNoTierAssigned = isScoped && scopedQuery.data?.tierId === "unassigned";
@@ -215,7 +208,6 @@ export function useUsageAndSpendData({
     summaryData,
     spendChangePercent,
     taskTypeOptions,
-    taskColorByType,
     tiers: tiersQuery.data?.data ?? [],
     hasNoTierAssigned,
     summaryError: isScoped ? errMsg(scopedQuery.error) : errMsg(summaryQuery.error),

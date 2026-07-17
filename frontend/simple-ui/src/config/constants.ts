@@ -1016,6 +1016,8 @@ export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
 export type TenantUserStatusSource = {
   is_active: boolean;
   is_tenant_active?: boolean | null;
+  /** True once the user completed setup (set a password). */
+  is_activated?: boolean | null;
 };
 
 /** True when tenant lifecycle status blocks all users at the tenant level. */
@@ -1044,10 +1046,16 @@ export function resolveTenantUserDisplayStatus(
   if (user.is_active && (user.is_tenant_active ?? true)) {
     return TENANT.USER_STATUS.ACTIVE;
   }
-  if (!user.is_active && user.is_tenant_active === false) {
-    return TENANT.USER_STATUS.SUSPENDED;
-  }
   if (!user.is_active) {
+    // Completed setup but now inactive → admin-suspended (per-user Suspend).
+    if (user.is_activated) {
+      return TENANT.USER_STATUS.SUSPENDED;
+    }
+    // Locked by the tenant lifecycle cascade (tenant SUSPENDED/DEACTIVATED).
+    if (user.is_tenant_active === false) {
+      return TENANT.USER_STATUS.SUSPENDED;
+    }
+    // Never completed setup (no credentials) → still Pending Activation.
     return TENANT.USER_STATUS.PENDING_ACTIVATION;
   }
   return TENANT.USER_STATUS.SUSPENDED;
