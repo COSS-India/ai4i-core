@@ -3,8 +3,8 @@ SQLAlchemy ORM models for platform-core-service.
 
 All tables live in the `ai4iplatform_core` database and share the single
 `Base` declared here. The sub-packages (`model_management/`, `alert_management/`,
-`pii_management/`, `pay_per_use/`) exist for organisation only — Alembic
-autogenerate picks up everything that imports `Base`.
+`pii_management/`, `pay_per_use/`, `feedback/`) exist for organisation only —
+Alembic autogenerate picks up everything that imports `Base`.
 
 Import order:
   - Model first (FK dependency for Service).
@@ -12,6 +12,7 @@ Import order:
     NotificationReceiver before RoutingRule (FK), then AlertHistory (no FKs).
   - PII tables last (no FKs into other domains).
   - Pay-per-use tables last (PPUTier before PPUTierQuota/PPUTenantTierAssignment FK).
+  - Feedback tables last (no FKs — model_id is a soft link, not enforced).
 """
 
 from sqlalchemy.orm import declarative_base
@@ -44,6 +45,9 @@ from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota  # noqa: E402
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment  # noqa: E402
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage  # noqa: E402
 
+# Feedback tables (ef_ prefix, no cross-domain FKs)
+from app.models.feedback.feedback import Feedback  # noqa: E402
+
 __all__ = [
     "Base",
     # model-management
@@ -66,4 +70,6 @@ __all__ = [
     "PPUTierQuota",
     "PPUTenantTierAssignment",
     "PPUQuotaUsage",
+    # feedback
+    "Feedback",
 ]

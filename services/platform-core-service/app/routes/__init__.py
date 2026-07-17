@@ -11,6 +11,7 @@ from ai4i_core.bootstrap.versioning import APIVersioning, VersionInfo
 
 from app.core.config import settings
 from app.routes.alert import router as alert_router
+from app.routes.feedback import router as feedback_router
 from app.routes.health import router as health_router
 from app.routes.internal import router as internal_router
 from app.routes.metering import router as metering_router
@@ -43,6 +44,7 @@ v1_router.include_router(metering_router)
 v1_router.include_router(usage_router)
 v1_router.include_router(inference_types_router)
 v1_router.include_router(pay_per_use_router)
+v1_router.include_router(feedback_router)
 
 # ── Top-level router ──
 api_router = APIRouter()
