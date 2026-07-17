@@ -141,7 +141,14 @@ async def assign_tenant_tier(
     Returns 409 if the tenant already has an active tier assignment.
     """
     user_id = request.headers.get("X-User-Id")
-    return await tenant_assignment_service.assign_tier(body, db, auth_db, user_id)
+    return await tenant_assignment_service.assign_tier(
+        body,
+        db,
+        auth_db,
+        user_id,
+        auth_service_url=settings.auth_service_url,
+        http_client=request.app.state.http_client,
+    )
 
 
 @router.patch("/tenant/tier/reassign", response_model=TierAssignResponse)

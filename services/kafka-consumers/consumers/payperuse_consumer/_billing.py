@@ -30,6 +30,12 @@ class WalletResult:
     exhausted: bool  # balance <= 0 or no active assignment
 
 
+@dataclass
+class QuotaUsageResult:
+    exhausted: bool
+    recorded: bool  # True iff a ppu_quota_usage row was actually written this call
+
+
 async def get_service_pricing(
     db: AsyncSession,
     service_id: str,
@@ -141,15 +147,18 @@ async def update_quota_usage(
     tier_id: str,
     units: Decimal,
     cost: Decimal,
-) -> bool:
+) -> QuotaUsageResult:
     """
     UPSERT quota usage for this tenant/inference_name/month/tier.
     Accumulates units_used and cost_accum within the active tier's row. If the
     tenant's active tier changes mid-month (see tenant_assignment_service.
     reassign_tier), this starts a fresh row for the new tier rather than
     folding into the previous tier's accumulated numbers.
-    Returns True if quota is now exhausted or the tasktype isn't part of the
-    tier at all, False if under cap.
+
+    ``recorded=False`` means no ppu_tier_quotas row exists for this
+    tier/tasktype, so nothing was written to ppu_quota_usage — exhausted is
+    still True in that case (not entitled), but callers must not log it as
+    an upsert.
     """
     snap_result = await db.execute(
         text(
@@ -169,7 +178,7 @@ async def update_quota_usage(
             " inference_name=%s — marking quota exhausted",
             tier_id, inference_name,
         )
-        return True
+        return QuotaUsageResult(exhausted=True, recorded=False)
 
     result = await db.execute(
         text(
@@ -195,7 +204,8 @@ async def update_quota_usage(
         },
     )
     row = result.first()
-    return row is not None and row.units_used >= row.monthly_quota_snap
+    exhausted = row is not None and row.units_used >= row.monthly_quota_snap
+    return QuotaUsageResult(exhausted=exhausted, recorded=True)
 
 
 def _get_billing_data(message: Message) -> Optional[dict]:

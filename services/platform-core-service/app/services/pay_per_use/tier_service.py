@@ -112,6 +112,33 @@ async def _fetch_tenant_ids_for_tier(tier_id, session: AsyncSession) -> list:
     return [row.tenant_id for row in result.all()]
 
 
+async def _reset_quota_flags_for_tenants(
+    auth_service_url: str,
+    http_client: httpx.AsyncClient,
+    tenant_ids: List[str],
+    tier_id,
+) -> None:
+    """Clear stale quota-exhausted flags for every given tenant.
+
+    Called when a tasktype that previously had no ppu_tier_quotas row for a
+    tier (and was therefore billed as exhausted — see payperuse_consumer's
+    fail-closed check) now has one, so affected tenants aren't left 429'd
+    until the monthly cron runs.
+    """
+    for tenant_id in tenant_ids:
+        try:
+            resp = await http_client.post(
+                f"{auth_service_url}/internal/ppu/tenant/{tenant_id}/quota-reset",
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "quota-reset notification failed for tenant %s (tier %s): %s",
+                tenant_id, tier_id, exc,
+            )
+
+
 async def update_tier(
     body: TierUpdate,
     session: AsyncSession,
@@ -135,6 +162,7 @@ async def update_tier(
         tier.description = body.description
     tier.updated_by = updated_by
 
+    added_new_quota_type = False
     if body.quotas is not None:
         for q in body.quotas:
             q_result = await session.execute(
@@ -151,6 +179,7 @@ async def update_tier(
                 # New quota type: no active value to preserve, so apply immediately.
                 # Setting monthly_quota=0 with the real value only in pending would
                 # make units_used >= 0 always true and block all tenants until cycle reset.
+                added_new_quota_type = True
                 session.add(PPUTierQuota(
                     tier_id=tier.id,
                     inference_name=q.modelTaskType,
@@ -203,6 +232,9 @@ async def update_tier(
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
+
+        if added_new_quota_type:
+            await _reset_quota_flags_for_tenants(auth_service_url, http_client, tenant_ids, tier.id)
 
     q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())

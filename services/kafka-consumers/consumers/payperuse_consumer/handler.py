@@ -167,57 +167,71 @@ async def handle_ppu_usage(msg: Message) -> None:
         logger.info("Cost calculated | tenant=%s cost=%s billed_units=%s", tenant_id, cost, billed_units)
 
         wallet = await deduct_balance(db, tenant_id, cost)
-        if wallet.tier_id is None:
-            # deduct_balance already logged the warning; no active assignment means
-            # nothing was written — skip commit and Redis mark. Still mark this
-            # tasktype's quota exhausted for the tenant so further requests to it
-            # are blocked by quota_guard, since the tenant has no tier to serve it.
-            await _post_billing(False, True, tenant_id, pricing.task_type)
-            return
-
-        logger.info(
-            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
-        )
 
         quota_exhausted = False
-        if wallet.tier_id and pricing.task_type:
-            quota_exhausted = await update_quota_usage(
-                db,
-                tenant_id=tenant_id,
-                inference_name=pricing.task_type,
-                billing_month=billing_month,
-                tier_id=wallet.tier_id,
-                units=billed_units,
-                cost=cost,
-            )
-            logger.info(
-                "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
-                " units=%s quota_exhausted=%s",
-                tenant_id, pricing.task_type, billing_month, billed_units, quota_exhausted,
-            )
+        wallet_exhausted = False
+        if wallet.tier_id is None:
+            # deduct_balance already logged the warning; no active assignment means
+            # nothing was written to the wallet, and there's no tier to bill quota
+            # usage against. The tenant can't be served this tasktype right now —
+            # mark it exhausted so quota_guard blocks further requests, the same
+            # signal used for any other quota-exhausted case.
+            quota_exhausted = True
         else:
             logger.info(
-                "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
-                tenant_id, wallet.tier_id, pricing.task_type,
+                "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
+                tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
             )
+            wallet_exhausted = wallet.exhausted
+
+            if pricing.task_type:
+                usage = await update_quota_usage(
+                    db,
+                    tenant_id=tenant_id,
+                    inference_name=pricing.task_type,
+                    billing_month=billing_month,
+                    tier_id=wallet.tier_id,
+                    units=billed_units,
+                    cost=cost,
+                )
+                quota_exhausted = usage.exhausted
+                if usage.recorded:
+                    logger.info(
+                        "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
+                        " units=%s quota_exhausted=%s",
+                        tenant_id, pricing.task_type, billing_month, billed_units, quota_exhausted,
+                    )
+                else:
+                    logger.info(
+                        "Quota check: tasktype not mapped to tier | tenant=%s tier_id=%s"
+                        " inference=%s quota_exhausted=%s",
+                        tenant_id, wallet.tier_id, pricing.task_type, quota_exhausted,
+                    )
+            else:
+                logger.info(
+                    "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
+                    tenant_id, wallet.tier_id, pricing.task_type,
+                )
 
         # Commit DB changes before any HTTP calls to avoid holding row locks
-        # across slow or failing auth-service requests.
+        # across slow or failing auth-service requests. A no-op (no rows touched)
+        # when wallet.tier_id was None above.
         await db.commit()
         logger.info("DB commit successful | tenant=%s offset=%d", tenant_id, msg.offset())
 
     # Mark span as billed in Redis after DB commit so a crash before this point
-    # causes a retry (over-billing risk) rather than silent data loss.
+    # causes a retry (over-billing risk) rather than silent data loss. Marked
+    # unconditionally (including the no-tier case above) so a Kafka redelivery
+    # of the same span doesn't re-fire the auth-service notification below.
 
     # using is_already_billed to carryout setting of billing details to redis,
     await _update_billing_on_cache(is_already_billed, billed_key, correlation_id)
 
     logger.info(
         "Billing applied | tenant=%s service=%s billed_units=%s cost=%s exhausted=%s",
-        tenant_id, service_id, billed_units, cost, wallet.exhausted,
+        tenant_id, service_id, billed_units, cost, wallet_exhausted,
     )
-    await _post_billing(wallet.exhausted, quota_exhausted, tenant_id, pricing.task_type)
+    await _post_billing(wallet_exhausted, quota_exhausted, tenant_id, pricing.task_type)
 
 
 async def _notify_auth(path: str, body: dict) -> None:
