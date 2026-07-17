@@ -11,11 +11,13 @@ import {
   DrawerBody,
   DrawerFooter,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   IconButton,
   Input,
   Select,
+  Spinner,
   Tab,
   TabList,
   TabPanel,
@@ -227,6 +229,16 @@ interface QuotaEditorProps {
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
   readonly isEditMode?: boolean;
+  readonly showErrors?: boolean;
+}
+
+function isUnitInvalid(quota: TierFormQuota): boolean {
+  return !quota.unit.trim();
+}
+
+function isLimitInvalid(quota: TierFormQuota): boolean {
+  const limitNum = Number(quota.limit);
+  return quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0;
 }
 
 function QuotaEditor({
@@ -238,6 +250,7 @@ function QuotaEditor({
   onRemove,
   removingTaskType,
   isEditMode,
+  showErrors,
 }: QuotaEditorProps) {
   const handleQuotaChange = (
     idx: number,
@@ -337,7 +350,11 @@ function QuotaEditor({
                     </Select>
                   </FormControl>
 
-                  <FormControl w={{ base: "full", sm: "120px" }}>
+                  <FormControl
+                    w={{ base: "full", sm: "120px" }}
+                    isRequired
+                    isInvalid={showErrors && isUnitInvalid(quota)}
+                  >
                     <FormLabel fontSize="xs" mb={1}>
                       Unit
                     </FormLabel>
@@ -349,9 +366,16 @@ function QuotaEditor({
                       bg="gray.50"
                       cursor="default"
                     />
+                    <FormErrorMessage fontSize="xs">
+                      Unit is required.
+                    </FormErrorMessage>
                   </FormControl>
 
-                  <FormControl w={{ base: "full", sm: "120px" }} isRequired>
+                  <FormControl
+                    w={{ base: "full", sm: "120px" }}
+                    isRequired
+                    isInvalid={showErrors && isLimitInvalid(quota)}
+                  >
                     <FormLabel fontSize="xs" mb={1}>
                       Limit
                     </FormLabel>
@@ -363,6 +387,9 @@ function QuotaEditor({
                     >
                       <NumberInputField placeholder="e.g. 10000" />
                     </NumberInput>
+                    <FormErrorMessage fontSize="xs">
+                      Limit must be greater than 0.
+                    </FormErrorMessage>
                   </FormControl>
                 </HStack>
 
@@ -428,6 +455,7 @@ interface TierFormProps {
   readonly onRemove?: (quota: TierFormQuota) => void;
   readonly removingTaskType?: string | null;
   readonly isEditMode?: boolean;
+  readonly showErrors?: boolean;
 }
 
 function TierForm({
@@ -439,6 +467,7 @@ function TierForm({
   onRemove,
   removingTaskType,
   isEditMode,
+  showErrors,
 }: TierFormProps) {
   return (
     <VStack align="stretch" spacing={4}>
@@ -473,8 +502,150 @@ function TierForm({
         onRemove={onRemove}
         removingTaskType={removingTaskType}
         isEditMode={isEditMode}
+        showErrors={showErrors}
       />
     </VStack>
+  );
+}
+
+interface AssignedTenant {
+  readonly tenantId: string;
+  readonly organisation: string;
+}
+
+interface AssignedTenantsSectionProps {
+  readonly tenants: AssignedTenant[];
+  readonly isLoading: boolean;
+  readonly pt?: number;
+}
+
+function AssignedTenantsSection({
+  tenants,
+  isLoading,
+  pt,
+}: AssignedTenantsSectionProps) {
+  return (
+    <Box pt={pt}>
+      <Text
+        fontSize="xs"
+        fontWeight="semibold"
+        color="gray.500"
+        textTransform="uppercase"
+        mb={1}
+      >
+        Tenants Assigned · {isLoading ? "…" : tenants.length}
+      </Text>
+      {(() => {
+        if (isLoading) {
+          return (
+            <HStack spacing={2} color="gray.400">
+              <Spinner size="xs" />
+              <Text fontSize="sm">Loading tenants…</Text>
+            </HStack>
+          );
+        }
+        if (!tenants.length) {
+          return (
+            <Text fontSize="sm" color="gray.400">
+              No tenants assigned
+            </Text>
+          );
+        }
+        return (
+          <VStack align="stretch" spacing={1}>
+            {tenants.map((t) => (
+              <HStack key={t.tenantId} justify="space-between">
+                <Text fontSize="sm" color="gray.700" isTruncated>
+                  {t.organisation}
+                </Text>
+                <Text fontSize="xs" color="gray.500" flexShrink={0}>
+                  ID: {t.tenantId}
+                </Text>
+              </HStack>
+            ))}
+          </VStack>
+        );
+      })()}
+    </Box>
+  );
+}
+
+interface MappedService {
+  readonly serviceId: string;
+  readonly name: string;
+  readonly taskType: string;
+  readonly isPublished: boolean;
+}
+
+interface ServicesMappedSectionProps {
+  readonly services: MappedService[];
+  readonly isLoading: boolean;
+}
+
+function ServicesMappedSection({
+  services,
+  isLoading,
+}: ServicesMappedSectionProps) {
+  return (
+    <Box>
+      <Text
+        fontSize="xs"
+        fontWeight="semibold"
+        color="gray.500"
+        textTransform="uppercase"
+        mb={1}
+      >
+        Services Mapped · {isLoading ? "…" : services.length}
+      </Text>
+      {(() => {
+        if (isLoading) {
+          return (
+            <HStack spacing={2} color="gray.400">
+              <Spinner size="xs" />
+              <Text fontSize="sm">Loading services…</Text>
+            </HStack>
+          );
+        }
+        if (!services.length) {
+          return (
+            <Text fontSize="sm" color="gray.400">
+              No services mapped
+            </Text>
+          );
+        }
+        return (
+          <VStack align="stretch" spacing={1}>
+            {services.map((s) => (
+              <HStack key={s.serviceId || s.name} justify="space-between">
+                <Text fontSize="sm" color="gray.700" isTruncated>
+                  {s.name}
+                </Text>
+                <HStack spacing={1} flexShrink={0}>
+                  {s.taskType && (
+                    <Badge
+                      colorScheme={getTaskTypeBadgeColor(s.taskType)}
+                      fontSize="xs"
+                      px={2}
+                      py={0.5}
+                    >
+                      {s.taskType}
+                    </Badge>
+                  )}
+                  <Badge
+                    colorScheme={s.isPublished ? "green" : "gray"}
+                    fontSize="xs"
+                    px={2}
+                    py={0.5}
+                  >
+                    {s.isPublished ? "PUBLISHED" : "DRAFT"}
+                  </Badge>
+                </HStack>
+              </HStack>
+            ))}
+          </VStack>
+        );
+      })()}
+    </Box>
   );
 }
 
@@ -524,9 +695,14 @@ const TierManagement: React.FC = () => {
     handleViewClick,
     cancelingTaskType,
     handleCancelPendingQuota,
+    assignedTenantsForViewTier,
+    isAssignedTenantsLoading,
+    servicesForViewTier,
+    isServicesForViewTierLoading,
     formData,
     setFormData,
     isSubmitting,
+    showQuotaErrors,
     cancelRef,
   } = useTierManagement();
 
@@ -659,6 +835,7 @@ const TierManagement: React.FC = () => {
               onChange={setFormData}
               taskTypeNames={taskTypeNames}
               unitByTaskType={unitByTaskType}
+              showErrors={showQuotaErrors}
             />
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
@@ -691,6 +868,7 @@ const TierManagement: React.FC = () => {
               onRemove={(quota) => handleRemoveQuota(quota.modelTaskType)}
               removingTaskType={removingTaskType}
               isEditMode
+              showErrors={showQuotaErrors}
             />
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
@@ -869,20 +1047,15 @@ const TierManagement: React.FC = () => {
                           </VStack>
                         </Box>
 
-                        <Box>
-                          <Text
-                            fontSize="xs"
-                            fontWeight="semibold"
-                            color="gray.500"
-                            textTransform="uppercase"
-                            mb={1}
-                          >
-                            Tenants Assigned · 0
-                          </Text>
-                          <Text fontSize="sm" color="gray.400">
-                            No tenants assigned
-                          </Text>
-                        </Box>
+                        <ServicesMappedSection
+                          services={servicesForViewTier}
+                          isLoading={isServicesForViewTierLoading}
+                        />
+
+                        <AssignedTenantsSection
+                          tenants={assignedTenantsForViewTier}
+                          isLoading={isAssignedTenantsLoading}
+                        />
                       </VStack>
                     </TabPanel>
 
@@ -942,20 +1115,11 @@ const TierManagement: React.FC = () => {
                           ));
                         })()}
 
-                        <Box pt={2}>
-                          <Text
-                            fontSize="xs"
-                            fontWeight="semibold"
-                            color="gray.500"
-                            textTransform="uppercase"
-                            mb={1}
-                          >
-                            Tenants Assigned · 0
-                          </Text>
-                          <Text fontSize="sm" color="gray.400">
-                            No tenants assigned
-                          </Text>
-                        </Box>
+                        <AssignedTenantsSection
+                          tenants={assignedTenantsForViewTier}
+                          isLoading={isAssignedTenantsLoading}
+                          pt={2}
+                        />
                       </VStack>
                     </TabPanel>
                   </TabPanels>
