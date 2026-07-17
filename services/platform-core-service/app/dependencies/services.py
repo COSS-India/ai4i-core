@@ -28,9 +28,11 @@ from app.repositories.alert_management.notification_receiver_repository import (
     NotificationReceiverRepository,
 )
 from app.repositories.alert_management.routing_rule_repository import RoutingRuleRepository
+from app.repositories.feedback.feedback_repository import FeedbackRepository
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.services.cache_service import CacheService
+from app.services.feedback.feedback_service import FeedbackService
 
 # services/{model,alert}-management/ are hyphenated by project convention, so plain
 # `from` imports can't parse the path. Use importlib to pull the classes off the
@@ -108,6 +110,12 @@ def get_service_service(
         model_repo=ModelRepository(db),
         cache=cache,
     )
+
+
+def get_feedback_service(
+    db: AsyncSession = Depends(get_db),
+) -> FeedbackService:
+    return FeedbackService(feedback_repo=FeedbackRepository(db))
 
 
 # ── Alert-management service factories ──
