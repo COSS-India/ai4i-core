@@ -176,7 +176,8 @@ async def update_quota_usage(
             "   :units, :tier_id, :cost)"
             " ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
             " DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
-            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum"
+            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
+            "               updated_at = now()"
             " RETURNING units_used, monthly_quota_snap"
         ),
         {
