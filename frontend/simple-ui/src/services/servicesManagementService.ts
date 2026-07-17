@@ -4,7 +4,6 @@ import { z } from "zod";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
-  serviceRecordSchema,
   serviceSingleSchema,
   servicesListSchema,
 } from "./dto/schemas/platform";
@@ -12,9 +11,7 @@ import type {
   DeleteServiceResponse,
   PaginatedServices,
   Service,
-  ServiceCreateRequest,
   ServiceListParams,
-  ServiceUpdateRequest,
 } from "../types/platform";
 
 export type {
@@ -44,6 +41,17 @@ export const listServices = async (): Promise<Service[]> => {
     console.error("List services error:", error);
     throw error;
   }
+};
+
+/**
+ * Fetch every existing serviceId (no `limit` → backend returns all).
+ * Used by the create form to flag duplicate service ids.
+ */
+export const fetchExistingServiceIds = async (): Promise<string[]> => {
+  const services = await listServices();
+  return services
+    .map((s) => s.serviceId || s.service_id || "")
+    .filter((id): id is string => Boolean(id));
 };
 
 /**

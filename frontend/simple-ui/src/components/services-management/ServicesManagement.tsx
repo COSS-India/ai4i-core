@@ -103,6 +103,7 @@ const ServicesManagement: React.FC = () => {
     availableTiers,
     isCreateFormModelSelected,
     canCreateService,
+    serviceIdError,
     isSubmitting,
     handleSubmit,
     handleCancelForm,
@@ -422,6 +423,7 @@ const ServicesManagement: React.FC = () => {
                       availableTiers={availableTiers}
                       isCreateFormModelSelected={isCreateFormModelSelected}
                       canCreateService={canCreateService}
+                      serviceIdError={serviceIdError}
                       isSubmitting={isSubmitting}
                       onSubmit={handleSubmit}
                       onCancel={handleCancelForm}

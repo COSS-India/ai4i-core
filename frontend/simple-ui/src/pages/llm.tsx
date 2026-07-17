@@ -39,6 +39,7 @@ const LLMPage: React.FC = () => {
     [services, serviceId]
   );
   const modelName = selectedService?.name ?? "";
+  const selectedServiceId = selectedService?.service_id ?? "";
 
   const {
     inputLanguage,
@@ -57,7 +58,7 @@ const LLMPage: React.FC = () => {
     setOutputLanguage,
     clearResults,
     swapLanguages,
-  } = useLLM(modelName);
+  } = useLLM(selectedServiceId, modelName);
 
   const llmServiceOptions = useMemo(
     () => mapToServiceOptions(services),

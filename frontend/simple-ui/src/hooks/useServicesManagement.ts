@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchAllServicesMatchingFilters,
+  fetchExistingServiceIds,
   createService,
   getServiceById,
   updateService,
@@ -79,6 +80,8 @@ export function useServicesManagement() {
   /** Service being edited in the Create Service tab; null = create mode */
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [formData, setFormData] = useState<Partial<Service>>(emptyServiceForm);
+  /** All existing serviceIds (unfiltered) — used to flag duplicates in the create form */
+  const [existingServiceIds, setExistingServiceIds] = useState<string[]>([]);
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
   const [unitSize, setUnitSize] = useState<string>("");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
@@ -202,6 +205,20 @@ export function useServicesManagement() {
   useEffect(() => {
     fetchServices();
   }, [fetchServices]);
+
+  // Fetch all existing serviceIds (unfiltered) for duplicate detection in the create form
+  const loadExistingServiceIds = useCallback(async () => {
+    try {
+      const ids = await fetchExistingServiceIds();
+      setExistingServiceIds(ids);
+    } catch (error) {
+      console.error("Failed to fetch existing service ids:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadExistingServiceIds();
+  }, [loadExistingServiceIds]);
 
   // Fetch models on component mount (for dropdown)
   useEffect(() => {
@@ -511,6 +528,7 @@ export function useServicesManagement() {
       resetCreateForm();
 
       await fetchServices();
+      await loadExistingServiceIds();
       setRegistryEpoch((e) => e + 1);
 
       // Switch to list tab and clear tab/edit query params
@@ -554,9 +572,17 @@ export function useServicesManagement() {
 
   const isUnitSizeValid = /^\d+$/.test(unitSize.trim()) && Number(unitSize) > 0;
 
+  // Duplicate serviceId check — only in create mode (serviceId is read-only when editing)
+  const serviceIdExists =
+    !editingService &&
+    !!formData.serviceId?.trim() &&
+    existingServiceIds.includes(formData.serviceId.trim());
+  const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
+
   const canCreateService =
     !!formData.name?.trim() &&
     !!formData.serviceId?.trim() &&
+    !serviceIdExists &&
     !!formData.serviceDescription?.trim() &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
@@ -937,6 +963,7 @@ export function useServicesManagement() {
     availableTiers,
     isCreateFormModelSelected,
     canCreateService,
+    serviceIdError,
     isSubmitting,
     handleSubmit,
     handleCancelForm,

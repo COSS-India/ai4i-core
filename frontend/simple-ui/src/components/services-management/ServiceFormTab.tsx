@@ -7,6 +7,7 @@ import {
   CardHeader,
   Checkbox,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Grid,
   Heading,
@@ -51,6 +52,7 @@ interface ServiceFormTabProps {
   availableTiers: Tier[];
   isCreateFormModelSelected: boolean;
   canCreateService: boolean;
+  serviceIdError?: string | null;
   isSubmitting: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
@@ -77,6 +79,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   availableTiers,
   isCreateFormModelSelected,
   canCreateService,
+  serviceIdError,
   isSubmitting,
   onSubmit,
   onCancel,
@@ -135,7 +138,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </FormControl>
 
             {/* Service Id */}
-            <FormControl isRequired>
+            <FormControl isRequired isInvalid={!!serviceIdError}>
               <FormLabel fontWeight="semibold">Service Id</FormLabel>
               <Input
                 value={formData.serviceId || ""}
@@ -149,10 +152,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
               />
-              {!editingService && (
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Letters, numbers, and / _ - only.
-                </Text>
+              {serviceIdError && (
+                <FormErrorMessage>{serviceIdError}</FormErrorMessage>
               )}
             </FormControl>
 
