@@ -86,7 +86,7 @@ class CacheService(_BaseCacheService):
                 await self._redis.delete(key)
 
     async def delete_api_key_cache_fields_bulk(
-        self, api_keys: list[str], fields: list[str], *, chunk_size: int = 500
+        self, api_keys: list[str], fields: list[str], *, chunk_size: int = 5
     ) -> None:
         """Same as delete_api_key_cache_fields but across many keys, pipelined
         in chunks instead of one HDEL round-trip per key. Used when an
