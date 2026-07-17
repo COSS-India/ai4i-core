@@ -466,6 +466,8 @@ class APIKeyService:
         """
         Validate a hex API key. Redis-only — zero DB calls.
         Raises InvalidAPIKeyError when the key is absent from Redis (revoked or never existed).
+
+        A balance exhausted or quota exhausted (for any or all services) api key is still valid.
         """
         if not self._is_api_key(token):
             return {"valid": False, "message": "Invalid API key format."}
@@ -482,20 +484,22 @@ class APIKeyService:
                 logger.warning(f"user_may_use_api_keys is false in validate_api_key for user={user}, tenant={tenant}")
                 raise InvalidAPIKeyError()
             # get tier/balance/quota for the tenant — session is scoped to just this lookup
-            tier_id, available_balance, quota_exhausted_map = (
-                await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance_quota_details(
+            try:
+                tier_id, available_balance = await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance(
                     str(tenant.id))
-            )
+                quota_exhausted_map = await PpuTenantTierAssignmentsRepository.get_quota_exhausted_map(
+                    str(tenant.id), tier_id)
+            except ValidationError:
+                tier_id, available_balance, quota_exhausted_map = "", 0, {}
             # populate the cache entry first — set_*_exhausted_for_tenant below only patch
             # existing hashes, so this key's hash must exist before they run.
             await self._refresh_redis_cache(api_key_db, str(tenant.id), tier_id)
-            # restore budget/quota exhausted flags from a fresh DB read, since a cache miss
+            # restore budget and quota exhausted flags from a fresh DB read, since a cache miss
             # would otherwise repopulate without them (silently under-enforcing until the
             # next billing event happens to re-set them).
-            await self.set_budget_exhausted_for_tenant(tenant.id, available_balance <= 0)
-            for inference_name, exhausted in quota_exhausted_map.items():
-                if exhausted:
-                    await self.set_quota_exhausted_for_tenant(tenant.id, inference_name)
+
+            await self._cache.patch_api_key_budget_exhausted_status(token, available_balance <= 0)
+            await self._cache.patch_api_key_cache_quota_fields_status(token, quota_exhausted_map)
 
             cached = await self._cache.get_api_key_cache(token)
             if cached is None:

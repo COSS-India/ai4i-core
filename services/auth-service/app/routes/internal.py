@@ -1,5 +1,7 @@
 """Internal endpoints — service-to-service calls, not exposed to end users."""
+from decimal import Decimal
 
+from ai4i_core.exceptions import ValidationError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
@@ -47,8 +49,11 @@ async def set_budget_exhausted(
         tid = int(tenant_id)
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
-    _, available_balance, _ = await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance_quota_details(
-        tenant_id)
+    try:
+        _, available_balance = await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance(
+            tenant_id)
+    except ValidationError:  # Tenant has no active tier assignment.
+        available_balance = Decimal("0")
     await svc.set_budget_exhausted_for_tenant(tid, available_balance <= 0)
 
 
@@ -60,15 +65,27 @@ async def set_quota_exhausted(
 ):
     """kafka-consumers tells us which inference_name it thinks just tipped over; the
     actual exhausted determination is re-derived here from the DB rather than trusted
-    from the body."""
+    from the body.
+    This is to preserve consistency since we have left the atomicity after checking in kafka consumer.
+    If there is a discrepancy found in Kafka's call and the db (source of truth) and quota exhausted for the service
+    is false, then it will do nothing.
+    else it will call set_quota_exhasted_for_tenant for the tenant and the service
+    """
     try:
         tid = int(tenant_id)
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenant_id")
-    _, _, quota_exhausted_map = await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance_quota_details(
-        tenant_id)
-    if quota_exhausted_map.get(body.inference_name):
-        await svc.set_quota_exhausted_for_tenant(tid, body.inference_name)
+
+    try:
+        tier_id, _ = await PpuTenantTierAssignmentsRepository.get_active_tier_and_balance(tenant_id)
+        quota_exhausted_map = await PpuTenantTierAssignmentsRepository.get_quota_exhausted_map(
+            tenant_id, tier_id)
+    except ValidationError:
+        quota_exhausted_map = {}
+
+    if quota_exhausted_map.get(body.inference_name) is False:
+        return
+    await svc.set_quota_exhausted_for_tenant(tid, body.inference_name)
 
 
 @router.post("/ppu/quota-reset", status_code=status.HTTP_204_NO_CONTENT,include_in_schema=False)

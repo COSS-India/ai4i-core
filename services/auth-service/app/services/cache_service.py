@@ -66,6 +66,29 @@ class CacheService(_BaseCacheService):
             return True
         return False
 
+    async def patch_api_key_cache_quota_fields_status(
+        self, api_key: str, quota_exhausted_map: dict[str, bool]
+    ) -> None:
+        """Patch quota-{inference_name} fields on one API key's cache hash.
+
+        Sets quota-{inference_name} to "1" for each inference_name marked exhausted;
+        entries that are not exhausted are left untouched (absence already means
+        not-exhausted — see delete_api_key_cache_field for resets).
+        """
+        for inference_name, exhausted in quota_exhausted_map.items():
+            if exhausted:
+                await self.patch_api_key_cache_field(api_key, f"quota-{inference_name}", "1")
+
+    async def patch_api_key_budget_exhausted_status(self, api_key: str, exhausted: bool) -> None:
+        """Patch the budget-exhausted field on one API key's cache hash.
+
+        Sets budget-exhausted to "1" when exhausted; leaves the hash untouched
+        otherwise — absence already means not-exhausted (see delete_api_key_cache_field
+        for resets).
+        """
+        if exhausted:
+            await self.patch_api_key_cache_field(api_key, "budget-exhausted", "1")
+
     async def delete_api_key_cache_field(self, api_key: str, field: str) -> None:
         """Remove a single field from an existing API key hash (e.g. quota-* on month rollover)."""
         key = f"{REDIS_API_KEY_PREFIX}{api_key}"

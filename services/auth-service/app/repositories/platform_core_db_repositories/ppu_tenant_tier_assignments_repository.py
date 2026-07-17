@@ -51,18 +51,13 @@ class PpuTenantTierAssignmentsRepository:
             return tier_id
 
     @staticmethod
-    async def get_active_tier_and_balance_quota_details(
+    async def get_active_tier_and_balance(
         tenant_id: str,
-    ) -> tuple[str, Decimal, dict[str, bool]]:
-        """Return (tier_id, available_balance, quota_exhausted_map) for the tenant's active tier.
+    ) -> tuple[str, Decimal]:
+        """Return (tier_id, available_balance) for the tenant's active tier assignment.
 
-        quota_exhausted_map maps inference_name -> exhausted (bool), one entry for every
-        inference type that has a monthly_quota configured in ppu_tier_quotas for this tier.
-        exhausted is True when units_used (from ppu_quota_usage for the current billing
-        month, defaulting to 0 if no usage row exists yet) has reached or exceeded
-        monthly_quota. Inference types with no quota row for this tier are omitted from the
-        map (treated as unlimited), matching the convention kafka-consumers'
-        update_quota_usage already uses.
+        Raises ValidationError (code="NO_ACTIVE_TIER") if the tenant has no row in
+        ppu_tenant_tier_assignments. Callers must handle this case.
         """
 
         async with asynccontextmanager(get_platform_core_db)() as platform_core_db:
@@ -94,10 +89,33 @@ class PpuTenantTierAssignmentsRepository:
                     code="NO_ACTIVE_TIER",
                 )
             tier_id, available_balance = row[0], row[1]
+            return tier_id, available_balance
 
+    @staticmethod
+    async def get_quota_exhausted_map(
+        tenant_id: str,
+        tier_id: str,
+    ) -> dict[str, bool]:
+        """Return quota_exhausted_map for the given tier.
+
+        quota_exhausted_map maps inference_name -> exhausted (bool), one entry per inference
+        type with a monthly_quota row in ppu_tier_quotas for this tier; exhausted is True when
+        units_used (ppu_quota_usage for the current billing month, 0 if no usage row yet) has
+        reached or exceeded monthly_quota.
+
+        Raises ValidationError (code="NO_ACTIVE_QUOTA_FOR_TIER") if the tier has no row in
+        ppu_tier_quotas. Callers must handle this case.
+        """
+
+        async with asynccontextmanager(get_platform_core_db)() as platform_core_db:
+            if platform_core_db is None:
+                raise ValidationError(
+                    message="Tier assignment cannot be verified: platform-core DB is not configured.",
+                    code="PLATFORM_CORE_DB_NOT_CONFIGURED",
+                )
             billing_month = datetime.now(timezone.utc).strftime("%Y-%m")
             try:
-                # Now get the ppu_tier_quotas with usage for each using left join on tier_quotas
+                # Get the ppu_tier_quotas with usage for each using left join on tier_quotas
                 quota_rows = (await platform_core_db.execute(
                     text(
                         "SELECT tq.inference_name, tq.monthly_quota,"
@@ -115,12 +133,10 @@ class PpuTenantTierAssignmentsRepository:
             except Exception as exc:
                 logger.error("Failed to fetch quotas for tier for tenant %s: %s", tenant_id, exc)
                 raise exc
-            if not row:
+            if not quota_rows:
                 raise ValidationError(
                     message="We could not find monthly quota for this tier.",
                     code="NO_ACTIVE_QUOTA_FOR_TIER")
-            quota_exhausted_map = {
+            return {
                 r.inference_name: r.units_used >= r.monthly_quota for r in quota_rows
             }
-
-            return tier_id, available_balance, quota_exhausted_map
