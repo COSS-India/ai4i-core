@@ -1,8 +1,8 @@
 """
 ORM model for public.services table.
 
-A Service is a deployed instance of a Model — identified by a deterministic
-`service_id` hash derived from the service name. Service names are globally
+A Service is a deployed instance of a Model — identified by a user-supplied
+`service_id` that must be globally unique. Service names are also globally
 unique. A service can be in published or unpublished state; once published,
 its model version becomes immutable until unpublished.
 

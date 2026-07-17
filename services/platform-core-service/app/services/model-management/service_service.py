@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -240,6 +241,19 @@ class ServiceService:
         try:
             await self._services.add(instance)
             await self._services.commit()
+        except IntegrityError as exc:
+            await self._services.rollback()
+            constraint = str(exc.orig)
+            if "uq_mm_services_service_id" in constraint:
+                raise DuplicateServiceIdError(
+                    f"Service with ID '{payload.serviceId}' already exists."
+                )
+            if "uq_mm_services_name" in constraint:
+                raise DuplicateServiceNameError(
+                    f"Service with name '{payload.name}' already exists."
+                )
+            logger.exception("DB integrity error creating service")
+            raise
         except Exception:
             await self._services.rollback()
             logger.exception("DB error creating service")

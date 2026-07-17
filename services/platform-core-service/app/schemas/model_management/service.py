@@ -37,7 +37,8 @@ class ServicePolicy(BaseSchema):
 # ── Create / Update ──
 
 
-_SERVICE_ID_RE = re.compile(r"^[a-zA-Z0-9/_-]+$")
+_SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
+_SERVICE_ID_MAX_LEN = 255
 
 
 class ServiceCreateRequest(BaseSchema):
@@ -66,9 +67,14 @@ class ServiceCreateRequest(BaseSchema):
     def _validate_service_id(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("serviceId must not be empty")
+        if len(v) > _SERVICE_ID_MAX_LEN:
+            raise ValueError(
+                f"serviceId must not exceed {_SERVICE_ID_MAX_LEN} characters"
+            )
         if not _SERVICE_ID_RE.match(v):
             raise ValueError(
-                "serviceId must contain only alphanumeric characters, /, -, or _"
+                "serviceId must contain only alphanumeric characters, /, -, or _ "
+                "and include at least one alphanumeric character"
             )
         return v
 
