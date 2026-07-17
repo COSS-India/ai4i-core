@@ -4,10 +4,11 @@ APIKey table queries.
 No business logic, no Redis calls — Postgres only.
 """
 
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import APIKey
@@ -61,6 +62,23 @@ class APIKeyRepository(BaseRepository):
             select(APIKey)
             .where(APIKey.user_id == user_id)
             .order_by(APIKey.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_active_keys(self, offset: int = 0, limit: int = 100) -> list[APIKey]:
+        """Page directly over api_keys — active, non-expired, no join through
+        users. Used for operations that need every active key across every
+        tenant (e.g. the monthly quota-reset cron) so the caller doesn't have
+        to issue one query per user to reach the same keys."""
+        result = await self._db.execute(
+            select(APIKey)
+            .where(
+                APIKey.is_active.is_(True),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+            )
+            .order_by(APIKey.id)
+            .offset(offset)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
