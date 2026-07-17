@@ -176,9 +176,12 @@ class PPUUsageRepository:
         into every ppu_quota_usage query — keeps get_tenants_with_usage_tier
         and get_tenant_tier_usage_breakdown genuinely single-table reads.
 
-        Cached in-process for settings.ppu_tier_cache_ttl_seconds: tier_name
-        here is purely a display label (tier enforcement reads elsewhere),
-        so cross-request staleness of a few seconds is inconsequential.
+        Cached in-process for settings.ppu_tier_cache_ttl_seconds (default
+        3600s / 1 hour, see PPU_TIER_CACHE_TTL_SECONDS): tier_name here is
+        purely a display label (tier enforcement reads elsewhere), so
+        cross-request staleness of up to that TTL is acceptable. There is
+        no invalidation hook from tier_service.update_tier, so a tier
+        rename can take up to the full TTL to show up on the dashboard.
         """
         global _tier_cache, _tier_cache_loaded_at
         now = time.monotonic()
