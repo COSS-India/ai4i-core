@@ -231,6 +231,8 @@ async def assign_tier(
     db: AsyncSession,
     auth_db: AsyncSession,
     user_id: Optional[str] = None,
+    auth_service_url: Optional[str] = None,
+    http_client: Optional[httpx.AsyncClient] = None,
 ) -> TierAssignResponse:
     # 1. Confirm tenant exists and is ACTIVE via auth DB.
     await require_active_tenant(body.tenant_id, auth_db)
@@ -274,6 +276,16 @@ async def assign_tier(
     db.add(assignment)
     await db.commit()
     await db.refresh(assignment)
+
+    if auth_service_url and http_client:
+        # Best-effort: a tenant billed with no active tier (see payperuse_consumer's
+        # fail-closed check) may have quota-{tasktype} flags stuck from before this
+        # assignment existed. Clear them now instead of leaving the tenant 429'd
+        # until the monthly cron runs.
+        await _notify_auth_best_effort(
+            http_client,
+            f"{auth_service_url}/internal/ppu/tenant/{body.tenant_id}/quota-reset",
+        )
 
     return _to_assign_response(body.tenant_id, tier, assignment)
 

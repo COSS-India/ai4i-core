@@ -736,7 +736,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     category = "middleware";
     isImportant = false;
     icon = FiSettings;
-    displayName = span.operationName.replace("middleware.", "").replaceAll(/_/g, " ");
+    displayName = span.operationName.replace("middleware.", "").replaceAll("_", " ");
     description = "Request processing middleware";
   }
   // Triton inference - check this BEFORE batch processing
@@ -846,7 +846,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       displayName = span.operationName;
       description = `Handles ${span.operationName}`;
     } else {
-      displayName = span.operationName.replaceAll(/\./g, " ").replaceAll(/_/g, " ");
+      displayName = span.operationName.replaceAll(".", " ").replaceAll("_", " ");
       description = `Processes ${displayName}`;
     }
   }

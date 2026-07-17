@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   Box,
   Flex,
@@ -14,8 +14,9 @@ import { fetchTenantUsageById } from "../../services/usageSpendService";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useUsageAndSpendData } from "../../hooks/useUsageAndSpendData";
+import { showToast } from "../../utils/toast";
 import {
-  billingPeriodLabel,
+  billingPeriodValue,
   type BillingPeriodKey,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail, TenantUsageItem } from "../../types/usageSpend";
@@ -39,12 +40,17 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   refreshNonce = 0,
 }) => {
   const [periodKey, setPeriodKey] = useState<BillingPeriodKey>("current");
+  /** Period currently shown in the drawer selector (may be pending while loading). */
+  const [drawerPeriodKey, setDrawerPeriodKey] = useState<BillingPeriodKey>("current");
+  /** Period that `selectedTenant` was actually fetched for — drives the spend label. */
+  const [loadedPeriodKey, setLoadedPeriodKey] = useState<BillingPeriodKey>("current");
   const [filterTierId, setFilterTierId] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedTenant, setSelectedTenant] = useState<TenantUsageDetail | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const detailRequestIdRef = useRef(0);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { taskTypeNames } = useInferenceTypes();
 
@@ -81,18 +87,69 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
 
   const handleTenantClick = useCallback(
     async (row: TenantUsageItem) => {
-      setIsDetailLoading(true);
+      const requestId = ++detailRequestIdRef.current;
       onDetailOpen();
+      setDrawerPeriodKey(periodKey);
+      setLoadedPeriodKey(periodKey);
+      setIsDetailLoading(true);
       try {
-        setSelectedTenant(await fetchTenantUsageById(row.tenantId, data.billingPeriod));
+        const detail = await fetchTenantUsageById(row.tenantId, data.billingPeriod);
+        if (requestId !== detailRequestIdRef.current) return;
+        setSelectedTenant(detail);
       } catch {
+        if (requestId !== detailRequestIdRef.current) return;
         setSelectedTenant(row);
       } finally {
-        setIsDetailLoading(false);
+        if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
       }
     },
-    [onDetailOpen, data.billingPeriod],
+    [onDetailOpen, data.billingPeriod, periodKey],
   );
+
+  /**
+   * Drawer period changes only update the dashboard `periodKey` after a successful
+   * refetch, so the table/summary stay in sync with what the user just viewed.
+   * On failure the selector reverts to `loadedPeriodKey` so the label always matches data.
+   */
+  const handleDrawerPeriodChange = useCallback(
+    async (nextPeriodKey: BillingPeriodKey) => {
+      if (nextPeriodKey === drawerPeriodKey || !selectedTenant?.tenantId) return;
+
+      const requestId = ++detailRequestIdRef.current;
+      const tenantId = selectedTenant.tenantId;
+      const previousLoaded = loadedPeriodKey;
+
+      setDrawerPeriodKey(nextPeriodKey);
+      setIsDetailLoading(true);
+      try {
+        const detail = await fetchTenantUsageById(
+          tenantId,
+          billingPeriodValue(nextPeriodKey),
+        );
+        if (requestId !== detailRequestIdRef.current) return;
+        setSelectedTenant(detail);
+        setLoadedPeriodKey(nextPeriodKey);
+        setPeriodKey(nextPeriodKey);
+      } catch {
+        if (requestId !== detailRequestIdRef.current) return;
+        setDrawerPeriodKey(previousLoaded);
+        showToast({
+          type: "error",
+          message: "Could not load spend for the selected billing period. Showing the previous period.",
+        });
+      } finally {
+        if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
+      }
+    },
+    [drawerPeriodKey, loadedPeriodKey, selectedTenant?.tenantId],
+  );
+
+  const handleDetailClose = useCallback(() => {
+    detailRequestIdRef.current += 1;
+    onDetailClose();
+    setSelectedTenant(null);
+    setIsDetailLoading(false);
+  }, [onDetailClose]);
 
   return (
     <VStack align="stretch" spacing={5}>
@@ -123,6 +180,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
             borderRadius="8px"
             minW="180px"
             bg="white"
+            isDisabled={isDetailOpen}
           >
             <option value="current">{METERING.USAGE_SPEND.CURRENT_MONTH}</option>
             <option value="last">{METERING.USAGE_SPEND.LAST_MONTH}</option>
@@ -208,10 +266,12 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
 
           <UsageSpendTenantDrawer
             isOpen={isDetailOpen}
-            onClose={onDetailClose}
+            onClose={handleDetailClose}
             detail={selectedTenant}
             isLoading={isDetailLoading}
-            periodLabel={billingPeriodLabel(periodKey)}
+            periodKey={drawerPeriodKey}
+            loadedPeriodKey={loadedPeriodKey}
+            onPeriodChange={handleDrawerPeriodChange}
           />
         </>
       ) : null}

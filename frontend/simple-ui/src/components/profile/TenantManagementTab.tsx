@@ -287,13 +287,20 @@ export default function TenantManagementTab({
       !assignEffectiveTo
     )
       return;
+
+    const budgetValue = Number(assignBudget);
+    if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
+      setAssignTierError("Budget must be a positive value.");
+      return;
+    }
+
     setIsAssigning(true);
     setAssignTierError(null);
     try {
       await assignTenantTier({
         tenant_id: String(assignTierTenant.tenant_id),
         tier_id: assignTierId,
-        budget: Number(assignBudget),
+        budget: budgetValue,
         effective_from: new Date(assignEffectiveFrom).toISOString(),
         effective_to: new Date(assignEffectiveTo).toISOString(),
       });
@@ -309,12 +316,20 @@ export default function TenantManagementTab({
       setAssignTierTenant(null);
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
-      const message =
-        (typeof detail === "object" && detail !== null
-          ? detail.message
-          : detail) ??
-        err?.message ??
-        "An error occurred.";
+      let message: unknown;
+      if (Array.isArray(detail)) {
+        const budgetError = detail.find((d) =>
+          Array.isArray(d?.loc) ? d.loc.includes("budget") : false,
+        );
+        message = budgetError
+          ? "Budget must be a positive value."
+          : detail[0]?.msg;
+      } else if (typeof detail === "object" && detail !== null) {
+        message = detail.message;
+      } else {
+        message = detail;
+      }
+      message = message ?? err?.message ?? "An error occurred.";
       setAssignTierError(String(message));
     } finally {
       setIsAssigning(false);
@@ -1761,9 +1776,14 @@ export default function TenantManagementTab({
 
   function renderAssignTierModal() {
     const tenant = assignTierTenant;
+    const budgetNum = Number(assignBudget);
+    const isBudgetInvalid =
+      assignBudget.trim() !== "" &&
+      (!Number.isFinite(budgetNum) || budgetNum <= 0);
     const canAssign =
       !!assignTierId &&
       !!assignBudget.trim() &&
+      !isBudgetInvalid &&
       !!assignEffectiveFrom &&
       !!assignEffectiveTo;
     return (
@@ -1808,7 +1828,7 @@ export default function TenantManagementTab({
                 </Select>
               </FormControl>
 
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={isBudgetInvalid}>
                 <FormLabel fontWeight="semibold" fontSize="sm">
                   Budget
                 </FormLabel>
@@ -1820,9 +1840,13 @@ export default function TenantManagementTab({
                     placeholder="e.g. 500000"
                     type="number"
                     min={0}
+                    step="any"
                     isDisabled={isAssigning}
                   />
                 </InputGroup>
+                <FormErrorMessage>
+                  Budget must be a positive value.
+                </FormErrorMessage>
               </FormControl>
 
               <HStack spacing={4} align="flex-start">
