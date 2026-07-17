@@ -139,13 +139,7 @@ async def _reset_quota_flags_for_tenants(
             )
 
 
-async def update_tier(
-    body: TierUpdate,
-    session: AsyncSession,
-    updated_by: Optional[str] = None,
-    auth_service_url: str = "",
-    http_client: Optional[httpx.AsyncClient] = None,
-) -> TierOut:
+async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> PPUTier:
     try:
         uid = UUID(body.tier_id)
     except ValueError:
@@ -155,6 +149,107 @@ async def update_tier(
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{body.tier_id}' not found")
+    return tier
+
+
+async def _upsert_quotas(
+    session: AsyncSession, tier: PPUTier, quotas: List, updated_by: Optional[str]
+) -> bool:
+    """Apply body.quotas. Returns True if any brand-new quota type was added."""
+    added_new_quota_type = False
+    for q in quotas:
+        q_result = await session.execute(
+            select(PPUTierQuota).where(
+                PPUTierQuota.tier_id == tier.id,
+                PPUTierQuota.inference_name == q.modelTaskType,
+            )
+        )
+        existing = q_result.scalar_one_or_none()
+        if existing:
+            existing.pending_monthly_quota = q.limit
+            existing.updated_by = updated_by
+            continue
+        # New quota type: no active value to preserve, so apply immediately.
+        # Setting monthly_quota=0 with the real value only in pending would
+        # make units_used >= 0 always true and block all tenants until cycle reset.
+        added_new_quota_type = True
+        session.add(PPUTierQuota(
+            tier_id=tier.id,
+            inference_name=q.modelTaskType,
+            monthly_quota=q.limit,
+            created_by=updated_by,
+            updated_by=updated_by,
+        ))
+    return added_new_quota_type
+
+
+async def _cancel_pending_quotas(
+    session: AsyncSession, tier: PPUTier, inference_names: List[str], updated_by: Optional[str]
+) -> None:
+    for inference_name in inference_names:
+        q_result = await session.execute(
+            select(PPUTierQuota).where(
+                PPUTierQuota.tier_id == tier.id,
+                PPUTierQuota.inference_name == inference_name,
+            )
+        )
+        row = q_result.scalar_one_or_none()
+        if row:
+            row.pending_monthly_quota = None
+            row.updated_by = updated_by
+
+
+async def _remove_quotas(session: AsyncSession, tier: PPUTier, inference_names: List[str]) -> None:
+    await session.execute(
+        delete(PPUTierQuota).where(
+            PPUTierQuota.tier_id == tier.id,
+            PPUTierQuota.inference_name.in_(inference_names),
+        )
+    )
+    await session.flush()
+    remaining_result = await session.execute(
+        select(func.count()).select_from(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id)
+    )
+    if remaining_result.scalar() == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove all quotas: at least one model task type must remain in the tier",
+        )
+
+
+async def _notify_tier_updated(
+    session: AsyncSession,
+    tier: PPUTier,
+    auth_service_url: str,
+    http_client: Optional[httpx.AsyncClient],
+    added_new_quota_type: bool,
+) -> None:
+    if not (auth_service_url and http_client):
+        return
+
+    tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, session)
+    try:
+        resp = await http_client.post(
+            f"{auth_service_url}/internal/ppu/tier/quota-limit-updated",
+            json={"tier_name": tier.name, "tenant_ids": tenant_ids},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
+
+    if added_new_quota_type:
+        await _reset_quota_flags_for_tenants(auth_service_url, http_client, tenant_ids, tier.id)
+
+
+async def update_tier(
+    body: TierUpdate,
+    session: AsyncSession,
+    updated_by: Optional[str] = None,
+    auth_service_url: str = "",
+    http_client: Optional[httpx.AsyncClient] = None,
+) -> TierOut:
+    tier = await _resolve_tier_for_update(body, session)
 
     if body.name is not None:
         tier.name = body.name
@@ -164,77 +259,19 @@ async def update_tier(
 
     added_new_quota_type = False
     if body.quotas is not None:
-        for q in body.quotas:
-            q_result = await session.execute(
-                select(PPUTierQuota).where(
-                    PPUTierQuota.tier_id == tier.id,
-                    PPUTierQuota.inference_name == q.modelTaskType,
-                )
-            )
-            existing = q_result.scalar_one_or_none()
-            if existing:
-                existing.pending_monthly_quota = q.limit
-                existing.updated_by = updated_by
-            else:
-                # New quota type: no active value to preserve, so apply immediately.
-                # Setting monthly_quota=0 with the real value only in pending would
-                # make units_used >= 0 always true and block all tenants until cycle reset.
-                added_new_quota_type = True
-                session.add(PPUTierQuota(
-                    tier_id=tier.id,
-                    inference_name=q.modelTaskType,
-                    monthly_quota=q.limit,
-                    created_by=updated_by,
-                    updated_by=updated_by,
-                ))
+        added_new_quota_type = await _upsert_quotas(session, tier, body.quotas, updated_by)
 
     if body.cancel_pending_quota:
-        for inference_name in body.cancel_pending_quota:
-            q_result = await session.execute(
-                select(PPUTierQuota).where(
-                    PPUTierQuota.tier_id == tier.id,
-                    PPUTierQuota.inference_name == inference_name,
-                )
-            )
-            row = q_result.scalar_one_or_none()
-            if row:
-                row.pending_monthly_quota = None
-                row.updated_by = updated_by
+        await _cancel_pending_quotas(session, tier, body.cancel_pending_quota, updated_by)
 
     if body.remove_quota:
-        await session.execute(
-            delete(PPUTierQuota).where(
-                PPUTierQuota.tier_id == tier.id,
-                PPUTierQuota.inference_name.in_(body.remove_quota),
-            )
-        )
-        await session.flush()
-        remaining_result = await session.execute(
-            select(func.count()).select_from(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id)
-        )
-        if remaining_result.scalar() == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot remove all quotas: at least one model task type must remain in the tier",
-            )
+        await _remove_quotas(session, tier, body.remove_quota)
 
     await session.commit()
     await session.refresh(tier)
 
-    if (body.quotas is not None or body.cancel_pending_quota or body.remove_quota) and auth_service_url and http_client:
-        tenant_ids = await _fetch_tenant_ids_for_tier(tier.id, session)
-        try:
-            resp = await http_client.post(
-                f"{auth_service_url}/internal/ppu/tier/quota-limit-updated",
-                json={"tier_name": tier.name, "tenant_ids": tenant_ids},
-                timeout=5.0,
-            )
-            resp.raise_for_status()
-        except Exception as exc:
-            logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
-
-        if added_new_quota_type:
-            await _reset_quota_flags_for_tenants(auth_service_url, http_client, tenant_ids, tier.id)
+    if body.quotas is not None or body.cancel_pending_quota or body.remove_quota:
+        await _notify_tier_updated(session, tier, auth_service_url, http_client, added_new_quota_type)
 
     q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())
