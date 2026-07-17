@@ -270,15 +270,28 @@ class APIKeyService:
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants.
         Called by the monthly cron on the 1st of each month.
+
+        Reads api_keys directly, paginated by key id — no join through users
+        (list_active_keys), and clears each page via one pipelined Redis call
+        (delete_api_key_cache_fields_bulk) instead of one HDEL per key. This
+        was previously one DB query per user plus one serial HDEL per key,
+        which doesn't scale to a large (lakhs-of-keys) tenant population.
         """
-        if self._repo is None or self._users is None or self._tenants is None:
+        if self._repo is None:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
             return
         inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
-        await self._for_each_active_tenant_key(
-            None,
-            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
-        )
+        offset = 0
+        while True:
+            keys = await self._repo.list_active_keys(offset=offset, limit=_USERS_PAGE_SIZE)
+            if not keys:
+                break
+            await self._cache.delete_api_key_cache_fields_bulk(
+                [key.api_key for key in keys], inference_fields
+            )
+            if len(keys) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
 
     async def set_quota_exhausted_for_tenant(
         self, tenant_id: int, inference_name: str
