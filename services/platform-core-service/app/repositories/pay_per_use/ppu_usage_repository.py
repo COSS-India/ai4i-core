@@ -1,10 +1,12 @@
 """PPU usage repository — reads usage and accrued cost data."""
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.models.pay_per_use.ppu_tier import PPUTier
@@ -16,6 +18,14 @@ def _end_of_month(billing_month: str) -> datetime:
     year, month = shift_billing_month(billing_month, 1)
     next_month_start = datetime(year, month, 1, tzinfo=timezone.utc)
     return next_month_start - timedelta(microseconds=1)
+
+
+# get_tier_names() cache: PPUUsageRepository is instantiated fresh per
+# request, so this state has to live at module scope to survive across
+# requests within the same process. TTL is configurable via
+# PPU_TIER_CACHE_TTL_SECONDS (settings.ppu_tier_cache_ttl_seconds).
+_tier_cache: dict[str, str] = {}
+_tier_cache_loaded_at: float | None = None
 
 
 class PPUUsageRepository:
@@ -165,10 +175,24 @@ class PPUUsageRepository:
         display labels from this map in Python rather than joining ppu_tiers
         into every ppu_quota_usage query — keeps get_tenants_with_usage_tier
         and get_tenant_tier_usage_breakdown genuinely single-table reads.
+
+        Cached in-process for settings.ppu_tier_cache_ttl_seconds: tier_name
+        here is purely a display label (tier enforcement reads elsewhere),
+        so cross-request staleness of a few seconds is inconsequential.
         """
+        global _tier_cache, _tier_cache_loaded_at
+        now = time.monotonic()
+        if (
+            _tier_cache_loaded_at is not None
+            and now - _tier_cache_loaded_at < settings.ppu_tier_cache_ttl_seconds
+        ):
+            return dict(_tier_cache)
+
         stmt = select(PPUTier.id, PPUTier.name)
         result = await self._db.execute(stmt)
-        return {str(row.id): row.name for row in result.all()}
+        _tier_cache = {str(row.id): row.name for row in result.all()}
+        _tier_cache_loaded_at = now
+        return dict(_tier_cache)
 
     async def get_total_cost_for_month(self, billing_month: str) -> Decimal:
         """Total cost_accum for billing_month, across every tenant that has
