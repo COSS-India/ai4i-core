@@ -400,8 +400,8 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     # Set service_id on request state so the observability middleware picks it
     # up for Prometheus metrics without reading the body a second time.
     service_id = (
-        payload.get("serviceId")
-        or (payload.get("config") or {}).get("serviceId")
+        (payload.get("config") or {}).get("serviceId")
+        or payload.get("serviceId")
         or ""
     )
     request.state.service_id = service_id
