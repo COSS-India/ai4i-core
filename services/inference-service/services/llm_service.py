@@ -119,14 +119,13 @@ class OpenAIProxyService:
 
         # Inject model name from MMS adapter_config so upstream vLLM receives
         # the model field it expects — clients send serviceId, not model.
-        if isinstance(payload, dict):
-            model_name = (service_info.get("adapter_config") or {}).get("model_name", "")
-            if model_name:
-                payload = {**payload, "model": model_name}
+        model_name = (service_info.get("adapter_config") or {}).get("model_name", "") if isinstance(payload, dict) else ""
+        if model_name and isinstance(payload, dict):
+            payload = {**payload, "model": model_name}
 
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
-            model_attrs["model_name"] = "unknown"
+            model_attrs["model_name"] = model_name or "unknown"
             model_attrs["model_version"] = "unknown"
             model_attrs.update(get_context_attributes())
             model_attrs["service_id"] = service_id

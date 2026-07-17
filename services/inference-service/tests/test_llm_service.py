@@ -171,7 +171,7 @@ async def test_proxy_traced_returns_502_on_connect_error(llm_service):
             "/v1/chat/completions", {"serviceId": "svc-1", "messages": []}
         )
     assert status == 502
-    assert body["error"]["type"] == "upstream_error"
+    assert body["detail"] == "Upstream LLM request failed"
 
 
 # ── proxy_multipart — error mapping ──────────────────────────────────────────

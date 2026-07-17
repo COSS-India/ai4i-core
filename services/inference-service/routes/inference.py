@@ -399,6 +399,9 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     """
     # Set service_id on request state so the observability middleware picks it
     # up for Prometheus metrics without reading the body a second time.
+    # Precedence matches proxy_traced/orchestrator.py: config.serviceId first,
+    # then top-level, so metrics tagging can never diverge from what's
+    # actually resolved/billed downstream.
     service_id = (
         (payload.get("config") or {}).get("serviceId")
         or payload.get("serviceId")
