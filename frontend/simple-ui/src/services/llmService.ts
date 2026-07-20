@@ -105,15 +105,15 @@ export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> =>
 
 /**
  * Translate via POST /api/v1/chat/completions (OpenAI-compatible).
- * Sends model name only — does not include serviceId.
+ * Sends the registry `serviceId` (not the model name).
  */
 export const performLLMChat = async (
   text: string,
   config: LLMInferenceRequest['config']
 ): Promise<{ data: LLMInferenceResponse; responseTime: number }> => {
   try {
-    const model = config.serviceId?.trim();
-    if (!model) {
+    const serviceId = config.serviceId?.trim();
+    if (!serviceId) {
       throw new Error('Please select an LLM service.');
     }
 
@@ -121,16 +121,16 @@ export const performLLMChat = async (
     const outputLanguage = config.outputLanguage ?? '';
     const content = buildTranslationPrompt(text, inputLanguage, outputLanguage);
 
-    const isAgrinet = model === AGRINET_MODEL;
+    const isAgrinet = config.modelName === AGRINET_MODEL;
     const payload = isAgrinet
       ? {
-          model,
+          serviceId,
           messages: [{ role: 'user', content }],
           max_tokens: 200,
           chat_template_kwargs: { enable_thinking: false },
         }
       : {
-          model,
+          serviceId,
           messages: [{ role: 'user', content }],
           stream: false,
         };

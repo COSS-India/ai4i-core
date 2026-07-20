@@ -2015,7 +2015,7 @@ export default function TenantManagementTab({
                           variant={
                             budgetAction === "topdown" ? "solid" : "outline"
                           }
-                          colorScheme="gray"
+                          colorScheme="red"
                           borderLeftRadius={0}
                           onClick={() => setBudgetAction("topdown")}
                         >

@@ -14,8 +14,11 @@ import { parseError, showError } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
 
-/** @param modelName - Chat completions `model` field (service `name` from registry). */
-export const useLLM = (modelName?: string): UseLLMReturn => {
+/**
+ * @param serviceId - Registry `serviceId` sent as the completions `serviceId` field.
+ * @param modelName - Service `name`, used only for model-specific payload handling.
+ */
+export const useLLM = (serviceId?: string, modelName?: string): UseLLMReturn => {
   const [selectedModelId, setSelectedModelId] = useState<string>('');
   const [inputLanguage, setInputLanguage] = useState<string>(
     LLM_CHAT_DEFAULT_SOURCE_LANGUAGE
@@ -43,7 +46,8 @@ export const useLLM = (modelName?: string): UseLLMReturn => {
   const llmMutation = useMutation({
     mutationFn: async (text: string) => {
       const config: LLMInferenceRequest['config'] = {
-        serviceId: modelName || selectedModelId,
+        serviceId: serviceId || selectedModelId,
+        modelName,
         inputLanguage,
         outputLanguage,
       };
@@ -88,7 +92,7 @@ export const useLLM = (modelName?: string): UseLLMReturn => {
         return;
       }
 
-      const effectiveModel = modelName || selectedModelId;
+      const effectiveModel = serviceId || selectedModelId;
       if (!effectiveModel) {
         showToast({ type: 'warning', message: 'Please select an LLM service.' });
         return;
@@ -113,7 +117,7 @@ export const useLLM = (modelName?: string): UseLLMReturn => {
     },
     [
       llmMutation,
-      modelName,
+      serviceId,
       selectedModelId,
       inputLanguage,
       outputLanguage,

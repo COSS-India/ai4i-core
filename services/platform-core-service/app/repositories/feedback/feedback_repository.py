@@ -2,6 +2,7 @@
 Async repository for the Feedback entity (ef_feedback).
 """
 
+import uuid
 from typing import Optional
 from uuid import UUID
 
@@ -27,7 +28,15 @@ class FeedbackRepository:
     async def create_or_update(self, entity: Feedback) -> Feedback:
         """Insert a new feedback row, or update the existing one for the
         same request_id — one feedback per request, per the spec ("a second
-        submission for the same requestId updates the first")."""
+        submission for the same requestId updates the first").
+
+        Generates `id` explicitly rather than relying on the ORM column's
+        `default=uuid.uuid4` — that default only applies when SQLAlchemy
+        issues the INSERT itself (session.add() + flush); this repository
+        builds a raw Core insert()/ON CONFLICT statement instead, reading
+        `entity.id` as a plain attribute, so the column default never fires.
+        """
+        entity.id = entity.id or uuid.uuid4()
         values = {
             "id": entity.id,
             "request_id": entity.request_id,
