@@ -12,6 +12,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from config import settings
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
@@ -396,6 +397,12 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     load-test stub short-circuit, MMS resolution, tier gate, model + ai_inference
     spans are managed inside OpenAIProxyService.proxy(), mirroring the
     Orchestrator + BaseTaskService pattern for Triton services.
+
+    /chat and /chat/completions never reach a real model (stub-only), so the
+    request span (and the phase timer, which rides that same root span) is
+    off by default here — LLM_CHAT_TRACING_ENABLED gives a clean orchestrator-
+    overhead baseline for load tests, flipped on only for the tracing-only
+    comparison run.
     """
     # Set service_id on request state so the observability middleware picks it
     # up for Prometheus metrics without reading the body a second time.
@@ -408,6 +415,12 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         or ""
     )
     request.state.service_id = service_id
+
+    if not settings.LLM_CHAT_TRACING_ENABLED:
+        status_code, body = await OpenAIProxyService().proxy(
+            path=path, payload=payload, request=request,
+        )
+        return JSONResponse(status_code=status_code, content=body)
 
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         req_attrs["url"] = request.url.path
