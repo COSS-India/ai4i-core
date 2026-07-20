@@ -1,5 +1,5 @@
 """Models package initialization."""
 
-from models.common import GenericInferenceResponse
+from models.common import GenericInferenceResponse, ModelMetadata
 
-__all__ = ["GenericInferenceResponse"]
+__all__ = ["GenericInferenceResponse", "ModelMetadata"]
