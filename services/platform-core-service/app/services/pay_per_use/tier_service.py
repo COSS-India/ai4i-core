@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
+from app.repositories.pay_per_use.ppu_usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
 
     await session.commit()
     await session.refresh(tier)
+    update_tier_cache(tier.id, tier.name)
     return _build_out(tier, quotas)
 
 
@@ -205,6 +207,7 @@ async def update_tier(
 
     await session.commit()
     await session.refresh(tier)
+    update_tier_cache(tier.id, tier.name)
 
     if body.quotas is not None or body.cancel_pending_quota:
         await _notify_tier_updated(session, tier, auth_service_url, http_client)
@@ -257,3 +260,4 @@ async def delete_tier(tier_id: str, session: AsyncSession) -> None:
 
     tier.is_active = False
     await session.commit()
+    update_tier_cache(tier.id, tier.name)
