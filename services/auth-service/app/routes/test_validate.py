@@ -22,7 +22,7 @@ from app.core.redis import get_redis
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
 
-router = APIRouter(tags=["Test"])
+router = APIRouter(prefix="/auth", tags=["Test"])
 
 
 def _extract_token(request: Request, api_key: Optional[str]) -> str:
