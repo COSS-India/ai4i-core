@@ -67,6 +67,7 @@ def _make_svc(service_id: str = "svc-abc") -> ServiceService:
     service_repo.apply_updates = AsyncMock()
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
+    service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
 
     model_repo = MagicMock()
     model_repo.get_by_id_version = AsyncMock(return_value=None)
@@ -93,6 +94,10 @@ class TestUpdateServicePolicy:
                 accuracy=PolicyAccuracyEnum.SENSITIVE,
                 cost=PolicyCostEnum.TIER_1,
             ),
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
         )
 
         await svc.update_service(payload, updated_by="user-1")
@@ -110,6 +115,10 @@ class TestUpdateServicePolicy:
                 latency=PolicyLatencyEnum.LOW,
                 cost=PolicyCostEnum.TIER_1,
             ),
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
         )
 
         await svc.update_service(payload, updated_by="user-1")
@@ -124,6 +133,10 @@ class TestUpdateServicePolicy:
         payload = ServiceUpdateRequest(
             serviceId="svc-abc",
             serviceDescription="Updated description",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
         )
 
         await svc.update_service(payload, updated_by="user-1")

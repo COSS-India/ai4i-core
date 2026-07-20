@@ -5,7 +5,7 @@ Pydantic request/response schemas for the Service domain.
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import BenchmarkEntry, validate_entity_name
@@ -124,6 +124,13 @@ class ServiceUpdateRequest(BaseSchema):
     Note: name, modelId, modelVersion are NOT updatable. serviceId is not editable.
     """
 
+    # A request touching only these is the publish/unpublish toggle and is
+    # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER (see AI4IDS-2524/2525/2526/
+    # 2527 — requiring them unconditionally, including on this toggle, would
+    # break that flow; see _require_billing_fields_on_substantive_edit below).
+    _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished"}
+    _BILLING_FIELDS_REQUIRED_TOGETHER = ("taskType", "costPerUnit", "unitSize", "tierIds")
+
     serviceId: str
     serviceDescription: Optional[str] = None
     hardwareDescription: Optional[str] = None
@@ -176,6 +183,27 @@ class ServiceUpdateRequest(BaseSchema):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+    @model_validator(mode="after")
+    def _require_billing_fields_on_substantive_edit(self) -> "ServiceUpdateRequest":
+        """taskType/costPerUnit/unitSize/tierIds must be supplied together on
+        any edit beyond the publish/unpublish toggle (AI4IDS-2524/2525/2526/2527).
+
+        A request touching only serviceId/isPublished (the publish/unpublish
+        action) is exempt — requiring these fields there too would 422 that
+        flow, which sends only {serviceId, isPublished} by design.
+        """
+        if self.model_fields_set - self._PUBLISH_ONLY_FIELDS:
+            missing = [
+                f for f in self._BILLING_FIELDS_REQUIRED_TOGETHER
+                if getattr(self, f) is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"{', '.join(missing)} must be provided together on any "
+                    "update other than publish/unpublish."
+                )
+        return self
 
 
 # ── Response ──
