@@ -126,11 +126,11 @@ async def test_model_task_type_is_canonicalised():
 
 
 @pytest.mark.asyncio
-async def test_language_info_is_split_into_columns():
+async def test_single_pair_language_info_is_split_into_columns():
     svc, repo = _make_service()
     payload = _submission(
         modelTaskType=ModelTaskTypeEnum.NMT,
-        languageInfo=LanguageInfo(sourceLanguage="or", targetLanguage="en"),
+        languageInfo=[LanguageInfo(sourceLanguage="or", targetLanguage="en")],
     )
 
     await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
@@ -138,7 +138,45 @@ async def test_language_info_is_split_into_columns():
     saved_entity = repo.create_or_update.call_args.args[0]
     assert saved_entity.source_language == "or"
     assert saved_entity.target_language == "en"
-    assert saved_entity.language_info == {"sourceLanguage": "or", "targetLanguage": "en"}
+    assert saved_entity.language_info == [{"sourceLanguage": "or", "targetLanguage": "en"}]
+
+
+@pytest.mark.asyncio
+async def test_multi_pair_language_info_preserves_full_list():
+    """A bidirectional model's full model.language capability (both
+    directions) must be preserved verbatim in language_info, with
+    source_language/target_language best-effort from the first pair."""
+    svc, repo = _make_service()
+    payload = _submission(
+        modelTaskType=ModelTaskTypeEnum.NMT,
+        languageInfo=[
+            LanguageInfo(sourceLanguage="en", targetLanguage="hi"),
+            LanguageInfo(sourceLanguage="hi", targetLanguage="en"),
+        ],
+    )
+
+    await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
+
+    saved_entity = repo.create_or_update.call_args.args[0]
+    assert saved_entity.source_language == "en"
+    assert saved_entity.target_language == "hi"
+    assert saved_entity.language_info == [
+        {"sourceLanguage": "en", "targetLanguage": "hi"},
+        {"sourceLanguage": "hi", "targetLanguage": "en"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_language_info_stores_none():
+    svc, repo = _make_service()
+    payload = _submission(modelTaskType=ModelTaskTypeEnum.SPEAKER_DIARIZATION)
+
+    await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
+
+    saved_entity = repo.create_or_update.call_args.args[0]
+    assert saved_entity.source_language is None
+    assert saved_entity.target_language is None
+    assert saved_entity.language_info is None
 
 
 @pytest.mark.asyncio
