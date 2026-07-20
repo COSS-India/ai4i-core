@@ -52,12 +52,13 @@ v1_router.include_router(permission_router)
 v1_router.include_router(inference_permission_router)
 v1_router.include_router(api_key_router)
 v1_router.include_router(tenants_router)
+# No in-app auth — load-test target for isolating gateway key-validation
+# overhead from backend processing. Lives at /api/v1/auth/test like every
+# other auth endpoint.
+v1_router.include_router(test_validate_router)
 
 # ── Top-level router ──
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="/api/v1/auth", tags=["Health"])
 api_router.include_router(v1_router)
 api_router.include_router(internal_router, prefix="/internal")
-# Root path (no /api/v1 prefix), no in-app auth — load-test target for
-# isolating gateway key-validation overhead from backend processing.
-api_router.include_router(test_validate_router)

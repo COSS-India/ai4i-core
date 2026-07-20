@@ -150,7 +150,7 @@ def create_app() -> FastAPI:
 
     # OpenAPI security: Bearer JWT lock on all endpoints except public auth routes.
     # Routes tagged "Authentication" (auth.py: login, register, etc.) stay unlocked.
-    _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json", "/test"}
+    _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/test"}
     _PUBLIC_TAG = "Authentication"
 
     def _custom_openapi():

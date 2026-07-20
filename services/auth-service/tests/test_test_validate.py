@@ -25,7 +25,7 @@ def client(monkeypatch):
 
 
 def test_missing_authorization_header_is_invalid(client):
-    resp = client.get("/test")
+    resp = client.get("/auth/test")
     assert resp.status_code == 200
     body = resp.json()
     assert body["valid"] is False
@@ -33,7 +33,7 @@ def test_missing_authorization_header_is_invalid(client):
 
 
 def test_non_hex_token_is_invalid_format(client):
-    resp = client.get("/test", headers={"Authorization": "Bearer not-a-valid-key"})
+    resp = client.get("/auth/test", headers={"Authorization": "Bearer not-a-valid-key"})
     assert resp.status_code == 200
     assert resp.json()["valid"] is False
 
@@ -43,7 +43,7 @@ def test_valid_hex_key_found_in_cache_is_valid(client, monkeypatch):
     monkeypatch.setattr(
         CacheService, "get_api_key_cache", AsyncMock(return_value={"user_id": "1", "tenant_id": "1"})
     )
-    resp = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    resp = client.get("/auth/test", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["valid"] is True
@@ -53,14 +53,14 @@ def test_valid_hex_key_found_in_cache_is_valid(client, monkeypatch):
 def test_valid_hex_key_not_in_cache_is_invalid(client, monkeypatch):
     token = secrets.token_hex(16)
     monkeypatch.setattr(CacheService, "get_api_key_cache", AsyncMock(return_value=None))
-    resp = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+    resp = client.get("/auth/test", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     assert resp.json()["valid"] is False
 
 
 def test_no_auth_dependency_required_to_reach_endpoint(client):
     """No permission/tier/quota headers, no 401/403 — just the raw validation result."""
-    resp = client.get("/test")
+    resp = client.get("/auth/test")
     assert resp.status_code == 200
     assert set(resp.json().keys()) == {"valid", "validation_time_ms"}
 
@@ -70,13 +70,13 @@ def test_valid_key_via_query_param_is_valid(client, monkeypatch):
     monkeypatch.setattr(
         CacheService, "get_api_key_cache", AsyncMock(return_value={"user_id": "1", "tenant_id": "1"})
     )
-    resp = client.get("/test", params={"api_key": token})
+    resp = client.get("/auth/test", params={"api_key": token})
     assert resp.status_code == 200
     assert resp.json()["valid"] is True
 
 
 def test_missing_query_param_and_header_is_invalid(client):
-    resp = client.get("/test", params={"api_key": ""})
+    resp = client.get("/auth/test", params={"api_key": ""})
     assert resp.status_code == 200
     assert resp.json()["valid"] is False
 
@@ -90,7 +90,7 @@ def test_authorization_header_takes_precedence_over_query_param(client, monkeypa
 
     monkeypatch.setattr(CacheService, "get_api_key_cache", _fake_cache)
     resp = client.get(
-        "/test",
+        "/auth/test",
         headers={"Authorization": f"Bearer {header_token}"},
         params={"api_key": "deadbeefdeadbeefdeadbeefdeadbeef"},
     )
