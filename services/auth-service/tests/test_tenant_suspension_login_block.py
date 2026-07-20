@@ -35,12 +35,16 @@ def _make_auth_service() -> AuthService:
 
 
 def _active_tenant() -> Tenant:
+    return _tenant_with_status(TenantStatus.ACTIVE)
+
+
+def _tenant_with_status(status: TenantStatus) -> Tenant:
     return Tenant(
         id=1,
         name="Acme",
         organisation="Acme",
         email="test-contact@example.invalid",
-        status=TenantStatus.ACTIVE,
+        status=status,
     )
 
 
@@ -74,13 +78,32 @@ class TestAssertUserTenantActive:
         svc._tenants.get_by_id.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_blocked_when_is_tenant_active_false(self) -> None:
-        """is_tenant_active=False must raise TENANT_SUSPENDED before the tenant row is fetched."""
+    async def test_blocked_when_is_tenant_active_false_and_tenant_active(self) -> None:
+        """A per-user lock (tenant itself still ACTIVE) must raise TENANT_SUSPENDED."""
         svc = _make_auth_service()
+        svc._tenants.get_by_id = AsyncMock(return_value=_active_tenant())
         with pytest.raises(AuthorizationError) as exc_info:
             await svc._assert_user_tenant_active(_tenant_user(is_tenant_active=False))
         assert exc_info.value.code == "TENANT_SUSPENDED"
-        svc._tenants.get_by_id.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_blocked_when_tenant_deactivated_reports_deactivated_message(self) -> None:
+        """A tenant-wide DEACTIVATED lock must not be reported as 'suspended'."""
+        svc = _make_auth_service()
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant_with_status(TenantStatus.DEACTIVATED))
+        with pytest.raises(AuthorizationError) as exc_info:
+            await svc._assert_user_tenant_active(_tenant_user(is_tenant_active=False))
+        assert exc_info.value.code == "TENANT_INACTIVE"
+        assert "deactivated" in exc_info.value.message.lower()
+        assert "suspended" not in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_blocked_when_tenant_suspended_reports_suspended_message(self) -> None:
+        svc = _make_auth_service()
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant_with_status(TenantStatus.SUSPENDED))
+        with pytest.raises(AuthorizationError) as exc_info:
+            await svc._assert_user_tenant_active(_tenant_user(is_tenant_active=False))
+        assert exc_info.value.code == "TENANT_SUSPENDED"
 
     @pytest.mark.asyncio
     async def test_none_passes_through_to_tenant_status_check(self) -> None:
@@ -104,6 +127,7 @@ class TestLoginBlockedByTenantSuspension:
         """A tenant user with is_tenant_active=False must not receive a JWT."""
         svc = _make_auth_service()
         svc._users.get_by_email = AsyncMock(return_value=_tenant_user(is_tenant_active=False))
+        svc._tenants.get_by_id = AsyncMock(return_value=_active_tenant())
 
         with pytest.raises(AuthorizationError) as exc_info:
             await svc.login("test-tenant-user@example.invalid", _TEST_PASS)
@@ -139,6 +163,7 @@ class TestRefreshBlockedByTenantSuspension:
         svc._refresh_tokens.get_by_token = AsyncMock(return_value=MagicMock())
         svc._users.is_active = AsyncMock(return_value=True)
         svc._users.get_by_id = AsyncMock(return_value=_tenant_user(is_tenant_active=False))
+        svc._tenants.get_by_id = AsyncMock(return_value=_active_tenant())
 
         with pytest.raises(AuthorizationError) as exc_info:
             await svc.refresh_token("fake-refresh-token")

@@ -132,7 +132,8 @@ class InferenceServerResolver:
         # Real MMS shape: {"success": true, "data": {...}}
         if "success" in raw and "data" in raw:
             data = raw["data"]
-            inference_endpoint = data.get("model", {}).get("inferenceEndPoint", {})
+            model_block = data.get("model") or {}
+            inference_endpoint = model_block.get("inferenceEndPoint", {})
             schema = inference_endpoint.get("schema", {})
 
             base_endpoint = data.get("endpoint", "").rstrip("/")
@@ -151,17 +152,29 @@ class InferenceServerResolver:
                     "model class must supply a default or this request will fail.",
                     service_id,
                 )
-            class_instance = (data.get("model") or {}).get("classInstance")
+            submitter = model_block.get("submitter") or {}
             return {
                 "name": data.get("serviceName") or data.get("name"),
                 "endpoint": endpoint,
                 "api_key": data.get("apiKey") or data.get("api_key"),
                 "adapter_config": adapter_config,
-                "class_instance": class_instance,
+                "class_instance": model_block.get("classInstance"),
                 "is_published": bool(data.get("isPublished", False)),
+                "tier_ids": data.get("tierIds") or [],
+                # Model identity metadata — surfaced in the inference response
+                # (models/common.py ModelMetadata) so clients can echo
+                # modelProvider/modelVersion into the Feedback API.
+                "model_id": model_block.get("modelId") or data.get("modelId"),
+                "model_version": model_block.get("version") or data.get("modelVersion"),
+                "model_provider": submitter.get("name") if isinstance(submitter, dict) else None,
+                "language": model_block.get("languages") or [],
             }
 
         # Flat shape (legacy/fallback): pass through as-is, but ensure
-        # is_published is always present so the orchestrator gate is never
-        # skipped by a missing key.
-        return {**raw, "is_published": bool(raw.get("is_published", False))}
+        # is_published and tier_ids are always present so the orchestrator
+        # gates are never skipped by a missing key.
+        return {
+            **raw,
+            "is_published": bool(raw.get("is_published", False)),
+            "tier_ids": raw.get("tier_ids", []),
+        }

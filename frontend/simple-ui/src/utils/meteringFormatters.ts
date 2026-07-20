@@ -140,11 +140,16 @@ export function formatNativeConsumption(
   return unit ? `${nativeUnits.toLocaleString()} ${unit}` : nativeUnits.toLocaleString();
 }
 
-export function formatMeteringRefreshTime(iso?: string): string {
+export function formatMeteringRefreshTime(iso?: string, nowMs = Date.now()): string {
   if (!iso) return METERING.REFRESH.JUST_NOW;
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return METERING.REFRESH.JUST_NOW;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}${METERING.REFRESH.MINUTES_AGO_SUFFIX}`;
+  const diff = Math.max(0, nowMs - new Date(iso).getTime());
+  if (diff < 5_000) return METERING.REFRESH.JUST_NOW;
+  if (diff < 60_000) {
+    return `${Math.floor(diff / 1000)}${METERING.REFRESH.SECONDS_AGO_SUFFIX}`;
+  }
+  if (diff < 3_600_000) {
+    return `${Math.floor(diff / 60_000)}${METERING.REFRESH.MINUTES_AGO_SUFFIX}`;
+  }
   return new Date(iso).toLocaleTimeString();
 }
 

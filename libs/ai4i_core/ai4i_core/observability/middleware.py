@@ -106,11 +106,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # this matches X-Tenant-Id / X-Tenant-ID / x-tenant-id.
         # service_id is populated during request handling by model-management.
         tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
+        # service_id is set on request.state by the route handler for LLM
+        # (from payload serviceId before proxy_traced is called) and by the
+        # orchestrator for Triton services. Falls back to empty string.
         service_id = getattr(request.state, "service_id", "") or ""
-        # LLM endpoints don't go through model-management; per spec the
-        # model name echoed in the response acts as the service identifier.
-        if service_type == "llm" and llm_model:
-            service_id = llm_model
 
         # Fire-and-forget: parse the body and emit metrics WITHOUT blocking
         # the response. Holding the task in self._pending_tasks keeps it

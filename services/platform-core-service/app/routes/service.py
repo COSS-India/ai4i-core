@@ -75,11 +75,11 @@ async def list_services(
         ge=0,
         description="Number of items to skip (for pagination).",
     ),
-    limit: int = Query(
-        100,
+    limit: Optional[int] = Query(
+        None,
         ge=1,
         le=1000,
-        description="Maximum number of items to return. Defaults to 100.",
+        description="Maximum number of items to return. Omit to return all services.",
     ),
     svc: ServiceService = Depends(get_service_service),
 ):
@@ -143,7 +143,7 @@ async def delete_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),
 ):
-    """Delete a service by its hash-generated service ID."""
+    """Delete a service by its service ID."""
     await svc.delete_service(service_id)
     return success_response(
         data={"serviceId": service_id},

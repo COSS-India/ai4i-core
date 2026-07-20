@@ -2,6 +2,7 @@
 Pydantic request/response schemas for the Service domain.
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
@@ -36,9 +37,14 @@ class ServicePolicy(BaseSchema):
 # ── Create / Update ──
 
 
+_SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
+_SERVICE_ID_MAX_LEN = 255
+
+
 class ServiceCreateRequest(BaseSchema):
     """Request body for POST /services."""
 
+    serviceId: str
     name: str
     serviceDescription: str
     hardwareDescription: str
@@ -51,15 +57,41 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
-    billingUnitType: Optional[str] = None
+    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
-    tierIds: Optional[List[str]] = None
+    tierIds: List[str] = Field(..., min_length=1)
+
+    @field_validator("serviceId")
+    @classmethod
+    def _validate_service_id(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("serviceId must not be empty")
+        if len(v) > _SERVICE_ID_MAX_LEN:
+            raise ValueError(
+                f"serviceId must not exceed {_SERVICE_ID_MAX_LEN} characters"
+            )
+        if not _SERVICE_ID_RE.match(v):
+            raise ValueError(
+                "serviceId must contain only alphanumeric characters, /, -, or _ "
+                "and include at least one alphanumeric character"
+            )
+        return v
 
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str) -> str:
         return validate_entity_name(v, field="Service name")
+
+    @field_validator("tierIds")
+    @classmethod
+    def _validate_tier_ids(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("tierIds must contain at least one tier ID")
+        for tid in v:
+            if not tid or not tid.strip():
+                raise ValueError("Each tier ID must be a non-empty string")
+        return v
 
     @field_validator("unitSize")
     @classmethod
@@ -83,8 +115,7 @@ class ServiceCreateRequest(BaseSchema):
 class ServiceUpdateRequest(BaseSchema):
     """Request body for PATCH /services. serviceId identifies the target.
 
-    Note: name, modelId, modelVersion are NOT updatable; service_id is derived
-    from service name only and is immutable.
+    Note: name, modelId, modelVersion are NOT updatable. serviceId is not editable.
     """
 
     serviceId: str
@@ -98,7 +129,7 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
-    billingUnitType: Optional[str] = None
+    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
@@ -108,6 +139,18 @@ class ServiceUpdateRequest(BaseSchema):
     def _validate_unit_size(cls, v: Optional[int]) -> Optional[int]:
         if v is not None and v <= 0:
             raise ValueError("unitSize must be greater than 0")
+        return v
+
+    @field_validator("tierIds")
+    @classmethod
+    def _validate_tier_ids(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        if not v:
+            raise ValueError("tierIds must contain at least one tier ID")
+        for tid in v:
+            if not tid or not tid.strip():
+                raise ValueError("Each tier ID must be a non-empty string")
         return v
 
     @field_validator("inferenceServerType", mode="before")
@@ -144,7 +187,7 @@ class ServiceResponse(BaseSchema):
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
-    billingUnitType: Optional[str] = None
+    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     unitRate: Optional[float] = None

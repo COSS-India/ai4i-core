@@ -67,10 +67,10 @@ async def test_phases_merge_onto_root_span(timing_on):
 
     captured = {}
 
-    def _capture(span, span_name, attributes, **kwargs):
+    def _capture(span, attributes, **kwargs):
         captured.update(attributes)
 
-    # finalize_span emits the OTel log line; intercept to read the merged attrs.
+    # finalize_span sets span attributes/status; intercept to read the merged attrs.
     original = request_span.finalize_span
     request_span.finalize_span = _capture
     try:

@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Box,
   Center,
   FormControl,
   FormControlProps,
@@ -24,6 +25,7 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
   VStack,
 } from "@chakra-ui/react";
@@ -46,6 +48,14 @@ export { useAdminDataTable, useAdminDataTableServer } from "../../hooks/useAdmin
 
 type SortDirection = "asc" | "desc";
 
+/** Default max width for truncated admin table cells. */
+export const ADMIN_TABLE_CELL_MAX_W = "280px";
+
+const DEFAULT_TRUNCATE_CELL_PROPS: TableCellProps = {
+  maxW: ADMIN_TABLE_CELL_MAX_W,
+  overflow: "hidden",
+};
+
 export type AdminTableColumn<T> = {
   id: string;
   header: React.ReactNode;
@@ -60,9 +70,83 @@ export type AdminTableColumn<T> = {
     ascTooltipLabel?: string;
     descTooltipLabel?: string;
   };
+  /**
+   * When true (default), cell content is width-capped and ellipsis-truncated so
+   * long unbroken strings cannot expand the column. Full text shows on hover
+   * when overflowed.
+   * Auto-skipped (unless truncate: true) for id: actions, action, delete, detail,
+   * tiers, permissions, roles, taskTypes, recipient. Set false for other wrapping cells.
+   */
+  truncate?: boolean;
+  /** Max width when truncate is enabled. Defaults to ADMIN_TABLE_CELL_MAX_W. */
+  maxW?: TableCellProps["maxW"];
   thProps?: TableCellProps;
   tdProps?: TableCellProps;
 };
+
+function shouldAutoTruncateColumn(col: { id: string; truncate?: boolean }): boolean {
+  if (col.truncate === false) return false;
+  if (col.truncate === true) return true;
+  // Action / control / multi-badge wrap columns must not be clipped by default
+  if (
+    /^(actions?|delete|detail|tiers|permissions|roles|taskTypes|recipient)$/i.test(col.id)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function getTruncateCellProps(truncate: boolean, maxW?: TableCellProps["maxW"]): TableCellProps {
+  if (!truncate) return {};
+  return {
+    ...DEFAULT_TRUNCATE_CELL_PROPS,
+    ...(maxW != null ? { maxW } : {}),
+  };
+}
+
+/**
+ * Root-level truncate wrapper: ellipsis + tooltip only when content overflows.
+ * Applied automatically by AdminDataTable — do not wrap cell text in callers.
+ */
+function TruncatingCellContent({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState("");
+
+  const onMouseEnter = useCallback(() => {
+    const el = ref.current;
+    if (!el) {
+      setTooltip("");
+      return;
+    }
+    const overflowed = el.scrollWidth > el.clientWidth + 1;
+    setTooltip(overflowed ? (el.textContent ?? "").trim() : "");
+  }, []);
+
+  return (
+    <Tooltip label={tooltip} isDisabled={!tooltip} placement="top" hasArrow openDelay={300}>
+      <Box
+        ref={ref}
+        minW={0}
+        maxW="100%"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        whiteSpace="nowrap"
+        onMouseEnter={onMouseEnter}
+        sx={{
+          "& > *": {
+            minW: 0,
+            maxW: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          },
+        }}
+      >
+        {children}
+      </Box>
+    </Tooltip>
+  );
+}
 
 type AdminDataTableFilterContextValue = {
   resetPage: () => void;
@@ -427,24 +511,31 @@ export default function AdminDataTable<T>({
               <Table variant="simple" bg={tableBg} size={size} w="100%">
                 <Thead bg={tableHeaderBg}>
                   <Tr>
-                    {columns.map((col) => (
-                      <Th key={col.id} {...col.thProps}>
-                        {col.sortable ? (
-                          <TableSortHeader
-                            label={col.sortable.label}
-                            direction={col.sortable.direction}
-                            onAsc={col.sortable.onAsc}
-                            onDesc={col.sortable.onDesc}
-                            ascAriaLabel={col.sortable.ascAriaLabel}
-                            descAriaLabel={col.sortable.descAriaLabel}
-                            ascTooltipLabel={col.sortable.ascTooltipLabel}
-                            descTooltipLabel={col.sortable.descTooltipLabel}
-                          />
-                        ) : (
-                          col.header
-                        )}
-                      </Th>
-                    ))}
+                    {columns.map((col) => {
+                      const truncate = shouldAutoTruncateColumn(col);
+                      return (
+                        <Th
+                          key={col.id}
+                          {...getTruncateCellProps(truncate, col.maxW)}
+                          {...col.thProps}
+                        >
+                          {col.sortable ? (
+                            <TableSortHeader
+                              label={col.sortable.label}
+                              direction={col.sortable.direction}
+                              onAsc={col.sortable.onAsc}
+                              onDesc={col.sortable.onDesc}
+                              ascAriaLabel={col.sortable.ascAriaLabel}
+                              descAriaLabel={col.sortable.descAriaLabel}
+                              ascTooltipLabel={col.sortable.ascTooltipLabel}
+                              descTooltipLabel={col.sortable.descTooltipLabel}
+                            />
+                          ) : (
+                            col.header
+                          )}
+                        </Th>
+                      );
+                    })}
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -456,11 +547,23 @@ export default function AdminDataTable<T>({
                       _hover={{ bg: tableRowHoverBg }}
                       transition="background 0.15s"
                     >
-                      {columns.map((col) => (
-                        <Td key={col.id} {...col.tdProps}>
-                          {col.cell(row)}
-                        </Td>
-                      ))}
+                      {columns.map((col) => {
+                        const truncate = shouldAutoTruncateColumn(col);
+                        const content = col.cell(row);
+                        return (
+                          <Td
+                            key={col.id}
+                            {...getTruncateCellProps(truncate, col.maxW)}
+                            {...col.tdProps}
+                          >
+                            {truncate ? (
+                              <TruncatingCellContent>{content}</TruncatingCellContent>
+                            ) : (
+                              content
+                            )}
+                          </Td>
+                        );
+                      })}
                     </Tr>
                   ))}
                 </Tbody>

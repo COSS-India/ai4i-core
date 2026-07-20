@@ -11,13 +11,6 @@ import scipy.signal as sps
 
 from services.base.audio_base import AudioBase
 
-# Cap concurrent decode + resample work across all in-flight requests. Each job
-# holds several MB of numpy arrays; without a bound, a burst of parallel
-# requests stacks that memory at once on a pod with no memory limit. The pod is
-# also single-core, so extra threads past this only add scheduler churn.
-_PREPROCESS_MAX_CONCURRENCY = 4
-_preprocess_semaphore = asyncio.Semaphore(_PREPROCESS_MAX_CONCURRENCY)
-
 
 class ASRTaskService(AudioBase):
     """
@@ -107,23 +100,18 @@ class ASRTaskService(AudioBase):
         payload[self.payload_key] = list(processed)
         return payload
 
-    async def _preprocess_item(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
-        """Run one item's CPU-bound preprocessing in a bounded thread-pool slot."""
-        async with _preprocess_semaphore:
-            return await asyncio.to_thread(self._preprocess_item_sync, item, audio_bytes)
-
     def _preprocess_item_sync(self, item: Dict[str, Any], audio_bytes: bytes) -> Dict[str, Any]:
         """Sync preprocessing pipeline — runs in a thread-pool worker.
 
-        Keeps the numpy array as-is; the mapper's numpy fast-path converts it to
-        a Python list in a single C-level call, avoiding 1.44M individual Python
-        float() invocations.
+        Keeps the numpy array as-is so the config mapper can route it through
+        the KServe binary tensor extension (_as_binary_tensor), bypassing the
+        Python float list and JSON serialization entirely.
         """
         audio_data, sample_rate = self._decode_audio_bytes_sync(audio_bytes)
         audio_data = self._stereo_to_mono(audio_data)
         audio_data = self._resample(audio_data, sample_rate, self.TARGET_SAMPLE_RATE)
         audio_data = self._equalize_amplitude(audio_data)
-        item["samples"]     = audio_data          # numpy array; mapper converts
+        item["samples"]     = audio_data          # numpy array → binary tensor path
         item["num_samples"] = len(audio_data)
         item["sample_rate"] = self.TARGET_SAMPLE_RATE
         return item

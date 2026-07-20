@@ -35,6 +35,8 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
+    /** Tenant Admin lands on Usage and Spend (not legacy My Usage overview). */
+    TENANT_SUB_TAB: "usage-spend" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
   },
@@ -89,9 +91,9 @@ export const METERING = {
     { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   TENANT_SUB_TABS: [
+    { id: "usage-spend", label: "Usage and Spend" },
     { id: "overview", label: "Overview" },
     { id: "service", label: "Service Consumption" },
-    { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -105,6 +107,17 @@ export const METERING = {
   },
   TENANT_VIEW: {
     TITLE: "My Usage",
+  },
+  USAGE_SPEND: {
+    TITLE: "Usage and Spend",
+    ADOPTER_SUBTITLE: "Monitor model task type consumption and spend across all tenants",
+    TENANT_SUBTITLE_SUFFIX: "consumption and spend for the selected billing period",
+    BILLING_PERIOD: "BILLING PERIOD",
+    CURRENT_MONTH: "Current month",
+    LAST_MONTH: "Last month",
+    BUDGET_SUMMARY: "BUDGET SUMMARY",
+    QUOTA_SUMMARY: "QUOTA SUMMARY",
+    SPEND_BY_TASK_TYPE: "SPEND BY MODEL TASK TYPE",
   },
   COLORS: {
     RANK: [
@@ -196,6 +209,7 @@ export const METERING = {
   },
   REFRESH: {
     JUST_NOW: "just now",
+    SECONDS_AGO_SUFFIX: " sec ago",
     MINUTES_AGO_SUFFIX: "m ago",
   },
   SECTIONS: {

@@ -132,7 +132,25 @@ class BaseTaskService:
         async with timed_phase("run_inference_ms"):
             result = await self.run_inference(preprocessed, serviceInfo)
         async with timed_phase("postprocess_ms"):
-            return await self.postprocess_output(result)
+            response = await self.postprocess_output(result)
+        if isinstance(response, dict):
+            response["model"] = self._build_model_metadata()
+        return response
+
+    def _build_model_metadata(self) -> Dict[str, Any]:
+        """
+        Model identity metadata (models/common.py ModelMetadata), resolved
+        from mm_models via service_info. Attached to every task-service
+        response so API/portal clients can echo modelProvider/modelVersion
+        into the Feedback API without a second lookup.
+        """
+        info = self.service_info
+        return {
+            "modelProvider": info.get("model_provider"),
+            "modelVersion": info.get("model_version"),
+            "modelId": info.get("model_id"),
+            "language": info.get("language") or [],
+        }
 
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
@@ -273,10 +291,10 @@ class BaseTaskService:
         from trace.phase_timer import timed_phase
         from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
 
-
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
+        service_id = serviceInfo.get('serviceId', '')
         self._adapter_config = serviceInfo.get('adapter_config')
         if not model_name or not triton_endpoint:
             raise RuntimeError(
@@ -353,7 +371,7 @@ class BaseTaskService:
         Raises:
             RuntimeError: If Triton call fails
         """
-        from triton_response_test.stub_dispatcher import get_stub_response
+        from response_test.stub_dispatcher import get_stub_response
         stub = get_stub_response(self.task_name, triton_inputs)
         if stub is not None:
             return stub

@@ -31,6 +31,11 @@ class CoreSettings(BaseSettings):
     debug: bool = False
     environment: str = "development"
 
+    # ── Server ──
+    host: str = "0.0.0.0"
+    port: int = 8095
+    workers: int = 1
+
     # ── Database (single primary DB) ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None
@@ -101,6 +106,7 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 3600
     metering_cache_ttl_seconds: int = 60
+    ppu_tier_cache_ttl_seconds: int = 3600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
 
@@ -128,10 +134,18 @@ class CoreSettings(BaseSettings):
     telemetry_enabled: bool = True
 
     # ── OpenSearch (traces) ──
-    opensearch_url: Optional[str] = Field(default=None, description="OpenSearch URL (e.g., http://localhost:9204)")
-    opensearch_username: Optional[str] = Field(default=None, description="OpenSearch username")
-    opensearch_password: Optional[str] = Field(default=None, description="OpenSearch password")
-    opensearch_index: str = Field(default="traces-*", description="OpenSearch traces index pattern")
+    opensearch_url: Optional[str] = Field(
+        default=None, description="OpenSearch URL (e.g., http://localhost:9204)"
+    )
+    opensearch_username: Optional[str] = Field(
+        default=None, description="OpenSearch username"
+    )
+    opensearch_password: Optional[str] = Field(
+        default=None, description="OpenSearch password"
+    )
+    opensearch_index: str = Field(
+        default="traces-*", description="OpenSearch traces index pattern"
+    )
 
     # ── Derived helpers ──
 
@@ -158,7 +172,9 @@ class CoreSettings(BaseSettings):
         if not db:
             return None
         user = self.auth_db_user or self.app_db_user or self.postgres_user
-        password = self.auth_db_password or self.app_db_password or self.postgres_password
+        password = (
+            self.auth_db_password or self.app_db_password or self.postgres_password
+        )
         host = self.auth_db_host or self.app_db_host or self.postgres_host
         port = self.auth_db_port or self.app_db_port or self.postgres_port
         return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"

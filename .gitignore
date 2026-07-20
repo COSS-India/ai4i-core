@@ -181,3 +181,9 @@ test_assets/
 # Local analysis / scratch docs — not for review
 docs/ASR_LATENCY_ANALYSIS.md
 docs/asr_latecny_fix_plan.md
+# Sonar scanner cli
+.scannerwork
+
+# Branch-local analysis docs not intended for main
+docs/ASR_LATENCY_ANALYSIS.md
+docs/asr_latecny_fix_plan.md

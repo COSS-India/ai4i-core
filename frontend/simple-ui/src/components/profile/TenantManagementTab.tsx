@@ -12,6 +12,13 @@ import {
   CardBody,
   CardHeader,
   Center,
+  Drawer,
+  DrawerBody,
+  DrawerCloseButton,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerOverlay,
   FormControl,
   FormErrorMessage,
   FormHelperText,
@@ -45,13 +52,15 @@ import {
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@chakra-ui/react";
 import {
   fetchTiers,
   assignTenantTier,
   fetchTenantTiers,
+  reassignTenantTier,
   type TenantTierAssignment,
+  adjustTenantBudget,
 } from "../../services/tierManagementService";
 import {
   FiArrowLeft,
@@ -144,6 +153,7 @@ export default function TenantManagementTab({
     resolveTenantUserDisplayStatus(u, userListTenantStatus);
 
   const toast = useToast();
+  const queryClient = useQueryClient();
 
   // Assign Tier modal state
   const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
@@ -182,11 +192,72 @@ export default function TenantManagementTab({
 
   const [viewTierTenant, setViewTierTenant] =
     useState<TenantTierAssignment | null>(null);
+  const [manageTenant, setManageTenant] = useState<TenantView | null>(null);
+  const [manageTierId, setManageTierId] = useState("");
+  const [originalTierId, setOriginalTierId] = useState("");
+  const [manageBudget, setManageBudget] = useState(0);
+  const [isSavingPlan, setIsSavingPlan] = useState(false);
+  const [budgetAction, setBudgetAction] = useState<"topup" | "topdown">(
+    "topup",
+  );
+  const [isEditingTier, setIsEditingTier] = useState(false);
+  const [budgetAmount, setBudgetAmount] = useState("");
   const {
     isOpen: isViewTierOpen,
     onOpen: onViewTierOpen,
     onClose: onViewTierClose,
   } = useDisclosure();
+
+  const handleCloseManagePlan = () => {
+    if (isSavingPlan) return;
+    onViewTierClose();
+    setViewTierTenant(null);
+    setManageTenant(null);
+
+    setManageTierId("");
+    setOriginalTierId("");
+    setIsEditingTier(false);
+
+    setBudgetAmount("");
+    setBudgetAction("topup");
+  };
+
+  const handleSaveManagePlan = async () => {
+    if (!viewTierTenant || !manageTierId) return;
+    setIsSavingPlan(true);
+    try {
+      await reassignTenantTier({
+        tenant_id: String(viewTierTenant.tenant_id),
+        tier_id: manageTierId,
+      });
+      toast({
+        title: "Plan updated",
+        description: `Tier updated for "${manageTenant?.organisation ?? ""}".`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      handleCloseManagePlan();
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      const message =
+        (typeof detail === "object" && detail !== null
+          ? detail.message
+          : detail) ??
+        err?.message ??
+        "An error occurred.";
+      toast({
+        title: "Failed to update plan",
+        description: String(message),
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsSavingPlan(false);
+    }
+  };
 
   const handleOpenAssignTier = (t: TenantView) => {
     setAssignTierTenant(t);
@@ -216,16 +287,24 @@ export default function TenantManagementTab({
       !assignEffectiveTo
     )
       return;
+
+    const budgetValue = Number(assignBudget);
+    if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
+      setAssignTierError("Budget must be a positive value.");
+      return;
+    }
+
     setIsAssigning(true);
     setAssignTierError(null);
     try {
       await assignTenantTier({
         tenant_id: String(assignTierTenant.tenant_id),
         tier_id: assignTierId,
-        budget: Number(assignBudget),
+        budget: budgetValue,
         effective_from: new Date(assignEffectiveFrom).toISOString(),
         effective_to: new Date(assignEffectiveTo).toISOString(),
       });
+      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
@@ -237,16 +316,72 @@ export default function TenantManagementTab({
       setAssignTierTenant(null);
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
-      const message =
-        (typeof detail === "object" && detail !== null
-          ? detail.message
-          : detail) ??
-        err?.message ??
-        "An error occurred.";
+      let message: unknown;
+      if (Array.isArray(detail)) {
+        const budgetError = detail.find((d) =>
+          Array.isArray(d?.loc) ? d.loc.includes("budget") : false,
+        );
+        message = budgetError
+          ? "Budget must be a positive value."
+          : detail[0]?.msg;
+      } else if (typeof detail === "object" && detail !== null) {
+        message = detail.message;
+      } else {
+        message = detail;
+      }
+      message = message ?? err?.message ?? "An error occurred.";
       setAssignTierError(String(message));
     } finally {
       setIsAssigning(false);
     }
+  };
+
+  const handleApplyBudget = async () => {
+    if (!viewTierTenant) return;
+
+    const amount = Number(budgetAmount);
+
+    if (amount <= 0) return;
+
+    try {
+      const res = await adjustTenantBudget({
+        tenant_id: String(viewTierTenant.tenant_id),
+        action: budgetAction === "topup" ? "top-up" : "top-down",
+        amount,
+      });
+
+      setManageBudget(Number(res.budget_limit));
+      setBudgetAmount("");
+
+      toast({
+        title: "Budget updated",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ["tenant-tiers"],
+      });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+
+      toast({
+        title: "Failed to update budget",
+        description:
+          typeof detail === "object"
+            ? detail.message
+            : (detail ?? "Something went wrong."),
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    }
+  };
+
+  const handleCancelTierEdit = () => {
+    setManageTierId(originalTierId);
+    setIsEditingTier(false);
   };
 
   // Initial fetch when this tab becomes active.
@@ -272,8 +407,10 @@ export default function TenantManagementTab({
       {
         id: "organisation",
         header: "Tenant",
+        thProps: { w: "420px", maxW: "420px" },
+        tdProps: { maxW: "420px" },
         cell: (t) => (
-          <HStack spacing={3}>
+          <HStack spacing={3} minW={0}>
             <Center
               w={8}
               h={8}
@@ -286,13 +423,37 @@ export default function TenantManagementTab({
             >
               {getTenantInitials(t.organisation)}
             </Center>
-            <Text fontWeight="medium" fontSize="sm">
-              {t.organisation}
-            </Text>
+            <Tooltip
+              label={t.organisation}
+              placement="top"
+              hasArrow
+              openDelay={300}
+            >
+              <Text fontWeight="medium" fontSize="sm" isTruncated maxW="340px">
+                {t.organisation}
+              </Text>
+            </Tooltip>
           </HStack>
         ),
       },
-      { id: "contact", header: "Contact", cell: (t) => dash(t.contact_name) },
+      {
+        id: "contact",
+        header: "Contact",
+        thProps: { w: "280px", maxW: "280px" },
+        tdProps: { maxW: "280px" },
+        cell: (t) => (
+          <Tooltip
+            label={dash(t.contact_name)}
+            placement="top"
+            hasArrow
+            openDelay={300}
+          >
+            <Text fontSize="sm" isTruncated maxW="260px">
+              {dash(t.contact_name)}
+            </Text>
+          </Tooltip>
+        ),
+      },
       { id: "email", header: "Email", cell: (t) => dash(t.email) },
       {
         id: "status",
@@ -529,24 +690,41 @@ export default function TenantManagementTab({
   // ── Tenant detail view ──────────────────────────────────────────────────
   function renderTenantDetail() {
     const t = tm.tenantDetailView!;
+    const tierAssignment =
+      tenantTierAssignments.find(
+        (a) => String(a.tenant_id) === String(t.tenant_id),
+      ) ?? null;
     return (
       <Card mt={4}>
         <CardHeader>
-          <HStack justify="space-between" align="center">
-            <HStack>
+          <HStack justify="space-between" align="center" flexWrap="wrap">
+            <HStack flex="1" minW={0}>
               <IconButton
                 aria-label="Back"
                 icon={<FiArrowLeft />}
                 size="sm"
                 variant="ghost"
                 onClick={tm.closeTenantDetailView}
+                flexShrink={0}
               />
-              <Heading size="md">{t.organisation}</Heading>
-              <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
+              <Tooltip
+                label={t.organisation}
+                placement="top"
+                hasArrow
+                openDelay={300}
+              >
+                <Heading size="md" isTruncated minW={0}>
+                  {t.organisation}
+                </Heading>
+              </Tooltip>
+              <Badge
+                colorScheme={getTenantStatusColorScheme(t.status)}
+                flexShrink={0}
+              >
                 {formatTenantStatusLabel(t.status)}
               </Badge>
             </HStack>
-            <HStack>
+            <HStack flexShrink={0}>
               {isTenantStatus(t.status, TENANT.STATUS.PENDING) && (
                 <Button
                   leftIcon={<FiMail />}
@@ -640,7 +818,7 @@ export default function TenantManagementTab({
                   </Box>
                   <Box>
                     <Text fontWeight="semibold">Contact Name</Text>
-                    <Text>{dash(t.contact_name)}</Text>
+                    <Text wordBreak="break-word">{dash(t.contact_name)}</Text>
                   </Box>
                   <Box>
                     <Text fontWeight="semibold">Email</Text>
@@ -653,6 +831,18 @@ export default function TenantManagementTab({
                   <Box>
                     <Text fontWeight="semibold">Created</Text>
                     <Text>{fmtDate(t.created_at)}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold">Tier Assigned</Text>
+                    <Text>{dash(tierAssignment?.tier_name)}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontWeight="semibold">Budget</Text>
+                    <Text>
+                      {tierAssignment
+                        ? `₹${Number(tierAssignment.budget_limit).toLocaleString()}`
+                        : "—"}
+                    </Text>
                   </Box>
                 </SimpleGrid>
               </TabPanel>
@@ -855,6 +1045,20 @@ export default function TenantManagementTab({
                     (a) => String(a.tenant_id) === String(t.tenant_id),
                   ) ?? null;
                 setViewTierTenant(assignment);
+                setManageTenant(t);
+
+                const tierId = assignment?.tier_id ?? "";
+
+                setManageTierId(tierId);
+                setOriginalTierId(tierId);
+                setIsEditingTier(false);
+
+                setManageBudget(
+                  assignment
+                    ? Number.parseFloat(assignment.budget_limit) || 0
+                    : 0,
+                );
+
                 onViewTierOpen();
               }}
             />
@@ -1032,9 +1236,7 @@ export default function TenantManagementTab({
                   onChange={(e) =>
                     tm.handleTenantContactNameChange(e.target.value)
                   }
-                  onBlur={(e) =>
-                    tm.handleTenantContactNameBlur(e.target.value)
-                  }
+                  onBlur={(e) => tm.handleTenantContactNameBlur(e.target.value)}
                 />
                 <FormErrorMessage>
                   {tm.tenantFormErrors.contact_name}
@@ -1142,36 +1344,53 @@ export default function TenantManagementTab({
                 </FormErrorMessage>
               </FormControl>
               <FormControl
-                isRequired
-                isInvalid={Boolean(tm.editTenantFormErrors.email)}
+                isRequired={tm.isEditTenantEmailEditable}
+                isInvalid={
+                  tm.isEditTenantEmailEditable &&
+                  Boolean(tm.editTenantFormErrors.email)
+                }
               >
                 <FormLabel>Email</FormLabel>
-                <Input
-                  type="email"
-                  value={tm.editTenantForm.email ?? ""}
-                  onChange={(e) =>
-                    tm.handleEditTenantEmailChange(e.target.value)
-                  }
-                />
-                <FormErrorMessage>
-                  {tm.editTenantFormErrors.email}
-                </FormErrorMessage>
-                {tm.editTenantEmailStatus === "checking" &&
-                  !tm.editTenantFormErrors.email && (
-                    <FormHelperText color="gray.500">
-                      Checking if email exists…
+                {tm.isEditTenantEmailEditable ? (
+                  <>
+                    <Input
+                      type="email"
+                      value={tm.editTenantForm.email ?? ""}
+                      onChange={(e) =>
+                        tm.handleEditTenantEmailChange(e.target.value)
+                      }
+                    />
+                    <FormErrorMessage>
+                      {tm.editTenantFormErrors.email}
+                    </FormErrorMessage>
+                    {tm.editTenantEmailStatus === "checking" &&
+                      !tm.editTenantFormErrors.email && (
+                        <FormHelperText color="gray.500">
+                          Checking if email exists…
+                        </FormHelperText>
+                      )}
+                    {tm.editTenantEmailStatus === "available" &&
+                      !tm.editTenantFormErrors.email && (
+                        <FormHelperText color="green.600">
+                          {EMAIL_AVAILABLE_MSG}
+                        </FormHelperText>
+                      )}
+                    <FormHelperText>
+                      If you change the contact email, the update takes effect
+                      only after the new address is verified.
                     </FormHelperText>
-                  )}
-                {tm.editTenantEmailStatus === "available" &&
-                  !tm.editTenantFormErrors.email && (
-                    <FormHelperText color="green.600">
-                      {EMAIL_AVAILABLE_MSG}
+                  </>
+                ) : (
+                  <>
+                    <Text fontSize="md" color="gray.700" py={1}>
+                      {dash(tm.editTenantForm.email)}
+                    </Text>
+                    <FormHelperText>
+                      The contact email can only be corrected while the tenant
+                      is pending verification.
                     </FormHelperText>
-                  )}
-                <FormHelperText>
-                  If you change the contact email, the update takes effect only
-                  after the new address is verified.
-                </FormHelperText>
+                  </>
+                )}
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editTenantFormErrors.phone_number)}
@@ -1557,9 +1776,14 @@ export default function TenantManagementTab({
 
   function renderAssignTierModal() {
     const tenant = assignTierTenant;
+    const budgetNum = Number(assignBudget);
+    const isBudgetInvalid =
+      assignBudget.trim() !== "" &&
+      (!Number.isFinite(budgetNum) || budgetNum <= 0);
     const canAssign =
       !!assignTierId &&
       !!assignBudget.trim() &&
+      !isBudgetInvalid &&
       !!assignEffectiveFrom &&
       !!assignEffectiveTo;
     return (
@@ -1604,7 +1828,7 @@ export default function TenantManagementTab({
                 </Select>
               </FormControl>
 
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={isBudgetInvalid}>
                 <FormLabel fontWeight="semibold" fontSize="sm">
                   Budget
                 </FormLabel>
@@ -1616,9 +1840,13 @@ export default function TenantManagementTab({
                     placeholder="e.g. 500000"
                     type="number"
                     min={0}
+                    step="any"
                     isDisabled={isAssigning}
                   />
                 </InputGroup>
+                <FormErrorMessage>
+                  Budget must be a positive value.
+                </FormErrorMessage>
               </FormControl>
 
               <HStack spacing={4} align="flex-start">
@@ -1676,86 +1904,172 @@ export default function TenantManagementTab({
 
   function renderViewTierModal() {
     const a = viewTierTenant;
+    const hasTierChanged = manageTierId !== originalTierId;
+
+    const showSaveButton = isEditingTier && hasTierChanged;
+
+    const selectedTierName =
+      tierOptions.find((t) => t.id === manageTierId)?.name ?? "";
+
     return (
-      <Modal
+      <Drawer
         isOpen={isViewTierOpen}
-        onClose={() => {
-          onViewTierClose();
-          setViewTierTenant(null);
-        }}
-        isCentered
+        onClose={handleCloseManagePlan}
+        placement="right"
         size="md"
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader fontSize="md" fontWeight="semibold">
-            Tier Details
-          </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader
+            fontSize="md"
+            fontWeight="semibold"
+            borderBottomWidth="1px"
+            borderColor="gray.200"
+          >
+            {`Manage Plan${manageTenant ? ` — ${manageTenant.organisation}` : ""}`}
+          </DrawerHeader>
+          <DrawerBody py={6}>
             {a ? (
-              <VStack align="stretch" spacing={3}>
-                <SimpleGrid columns={2} spacing={3}>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Tier Name
-                    </Text>
-                    <Text fontSize="sm">{a.tier_name}</Text>
+              <VStack align="stretch" spacing={5}>
+                <FormControl>
+                  <FormLabel>Tier</FormLabel>
+                  {!isEditingTier ? (
+                    <HStack>
+                      <Input
+                        value={selectedTierName}
+                        isReadOnly
+                        bg="gray.50"
+                        flex={1}
+                      />
+
+                      <Button size="sm" onClick={() => setIsEditingTier(true)}>
+                        Change
+                      </Button>
+                    </HStack>
+                  ) : (
+                    <HStack align="flex-start">
+                      <Select
+                        flex={1}
+                        value={manageTierId}
+                        onChange={(e) => setManageTierId(e.target.value)}
+                      >
+                        {tierOptions.map((tier) => (
+                          <option key={tier.id} value={tier.id}>
+                            {tier.name}
+                          </option>
+                        ))}
+                      </Select>
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleCancelTierEdit}
+                      >
+                        Cancel
+                      </Button>
+                    </HStack>
+                  )}
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">
+                    Budget (₹)
+                  </FormLabel>
+                  <Input
+                    size="sm"
+                    value={manageBudget.toLocaleString()}
+                    isReadOnly
+                    bg="gray.50"
+                    cursor="default"
+                  />
+                </FormControl>
+                <FormControl>
+                  <Box
+                    borderWidth="1px"
+                    borderRadius="md"
+                    borderColor="gray.200"
+                    p={3}
+                    bg="gray.50"
+                  >
+                    <HStack justify="space-between" mb={3}>
+                      <Text fontSize="sm" fontWeight="medium">
+                        Adjust Budget
+                      </Text>
+
+                      <HStack spacing={0}>
+                        <Button
+                          size="xs"
+                          variant={
+                            budgetAction === "topup" ? "solid" : "outline"
+                          }
+                          colorScheme="green"
+                          borderRightRadius={0}
+                          onClick={() => setBudgetAction("topup")}
+                        >
+                          + Top-up
+                        </Button>
+
+                        <Button
+                          size="xs"
+                          variant={
+                            budgetAction === "topdown" ? "solid" : "outline"
+                          }
+                          colorScheme="red"
+                          borderLeftRadius={0}
+                          onClick={() => setBudgetAction("topdown")}
+                        >
+                          - Top-down
+                        </Button>
+                      </HStack>
+                    </HStack>
+
+                    <HStack>
+                      <Input
+                        placeholder="Amount in ₹"
+                        type="number"
+                        value={budgetAmount}
+                        onChange={(e) => setBudgetAmount(e.target.value)}
+                      />
+
+                      <Button
+                        colorScheme="blue"
+                        onClick={handleApplyBudget}
+                        isDisabled={!budgetAmount}
+                      >
+                        Apply
+                      </Button>
+                    </HStack>
                   </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Tenant ID
-                    </Text>
-                    <Text fontSize="sm" fontFamily="mono">
-                      {a.tenant_id}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Budget Limit
-                    </Text>
-                    <Text fontSize="sm">
-                      ₹ {parseFloat(a.budget_limit).toLocaleString()}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Available Balance
-                    </Text>
-                    <Text fontSize="sm">
-                      ₹ {parseFloat(a.available_balance).toLocaleString()}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Effective From
-                    </Text>
-                    <Text fontSize="sm">{fmtDate(a.effective_from)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.500">
-                      Effective To
-                    </Text>
-                    <Text fontSize="sm">{fmtDate(a.effective_to)}</Text>
-                  </Box>
-                </SimpleGrid>
+
+                  <FormHelperText mt={3}>
+                    Tier and Budget changes apply immediately.
+                  </FormHelperText>
+                </FormControl>
               </VStack>
             ) : (
               <Text>No tier data available.</Text>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button
-              onClick={() => {
-                onViewTierClose();
-                setViewTierTenant(null);
-              }}
-            >
-              Close
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </DrawerBody>
+          <DrawerFooter
+            justifyContent="space-between"
+            borderTopWidth="1px"
+            borderColor="gray.200"
+          >
+            {showSaveButton && (
+              <Button
+                colorScheme="blue"
+                onClick={handleSaveManagePlan}
+                isLoading={isSavingPlan}
+                loadingText="Saving..."
+                isDisabled={!manageTierId}
+              >
+                Save Changes
+              </Button>
+            )}
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     );
   }
 }

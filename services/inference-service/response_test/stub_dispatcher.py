@@ -13,7 +13,7 @@ Size thresholds (character length of the primary input data):
 
 import copy
 
-from .base_triton_response_test import SMALL_THRESHOLD, MEDIUM_THRESHOLD
+from .base_response_test import SMALL_THRESHOLD, MEDIUM_THRESHOLD
 from .responses.nmt_triton_responses import (
     SMALL_NMT_TRITON_RESPONSE,
     MEDIUM_NMT_TRITON_RESPONSE,

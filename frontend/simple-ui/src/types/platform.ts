@@ -295,6 +295,10 @@ export interface ServiceUpdateRequest {
   benchmarks?: Record<string, unknown>;
   isPublished?: boolean;
   policy?: ServicePolicy;
+  taskType?: string;
+  costPerUnit?: number;
+  unitSize?: number;
+  tierIds?: string[];
 }
 
 export interface DeleteServiceResponse {

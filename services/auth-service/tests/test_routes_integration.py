@@ -68,9 +68,13 @@ class TestAuthSchemas:
 
     def test_api_key_create_request(self):
         from app.schemas.api_key import CreateAPIKeyRequest
-        req = CreateAPIKeyRequest(key_name="test", permissions=[12, 15], expires_days=7)
+        req = CreateAPIKeyRequest(
+            key_name="test",
+            permissions=["nmt.inference", "asr.inference"],
+            expires_days=7,
+        )
         assert req.key_name == "test"
-        assert req.permissions == [12, 15]
+        assert req.permissions == ["nmt.inference", "asr.inference"]
         assert req.expires_days == 7
 
 

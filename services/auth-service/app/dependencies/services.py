@@ -28,6 +28,7 @@ from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
+from app.services.ppu_notification_service import PPUNotificationService
 from app.services.role_service import RoleService
 from app.services.tenant_service import TenantService
 from app.services.token_service import TokenService
@@ -120,6 +121,16 @@ def get_tenant_service(
         email_client=email_client,
         api_key_service=api_key_service,
         refresh_token_repo=RefreshTokenRepository(db),
+    )
+
+
+def get_ppu_notification_service(
+    db: AsyncSession = Depends(get_db),
+    email_client: EmailClient = Depends(get_email_client),
+) -> PPUNotificationService:
+    return PPUNotificationService(
+        role_repo=RoleRepository(db),
+        email_client=email_client,
     )
 
 

@@ -1,460 +1,279 @@
-import React, { useMemo, useState, useCallback } from "react";
-import { useQuery, useQueries } from "@tanstack/react-query";
+import React, { useCallback, useRef, useState } from "react";
 import {
-  Badge,
   Box,
-  Center,
   Flex,
   FormControl,
   HStack,
-  Progress,
   Select,
-  Spinner,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
-import {
-  fetchUsageSummary,
-  fetchTenantUsageList,
-  fetchTenantUsageById,
-} from "../../services/usageSpendService";
-import { fetchTiers } from "../../services/tierManagementService";
-import { parseError } from "../../utils/errorHandler";
+import { METERING } from "../../config/meteringConstants";
+import { fetchTenantUsageById } from "../../services/usageSpendService";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
-import MeteringAsyncState from "./MeteringAsyncState";
-import MeteringDataTable from "./MeteringDataTable";
-import StandardModal from "../common/StandardModal";
-import type {
-  TenantUsageItem,
-  TenantUsageDetail,
-  UsageSummaryResponse,
-} from "../../types/usageSpend";
+import { useUsageAndSpendData } from "../../hooks/useUsageAndSpendData";
+import { showToast } from "../../utils/toast";
+import {
+  billingPeriodValue,
+  type BillingPeriodKey,
+} from "../../utils/usageSpendHelpers";
+import type { TenantUsageDetail, TenantUsageItem } from "../../types/usageSpend";
+import SpendOverviewPanel from "./SpendOverviewPanel";
+import UsageSpendTenantDrawer from "./UsageSpendTenantDrawer";
+import UsageSpendTenantTable from "./UsageSpendTenantTable";
 
 interface UsageAndSpendTabProps {
   readonly scopeTenantId?: string | null;
   readonly isTenantView?: boolean;
   readonly tenantId?: string | null;
+  readonly organisationLabel?: string | null;
   readonly refreshNonce?: number;
-}
-
-const AVATAR_BG = ["green.500", "blue.500", "purple.500", "teal.500", "orange.500"];
-const STALE_MS = 60_000;
-
-const formatINR = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-
-const formatQuota = (value: number | null, unit: string) => {
-  if (value == null) return "—";
-  const parts = unit.trim().split(/\s+/);
-  if (parts.length === 2) return `${value.toLocaleString()}${parts[0]} ${parts[1].toLowerCase()}`;
-  return `${value.toLocaleString()} ${unit}`;
-};
-
-const eqCi = (value: string, filter: string) =>
-  !filter || value.trim().toLowerCase() === filter.trim().toLowerCase();
-
-const tenantInitials = (name: string) => {
-  const words = name.trim().split(/\s+/);
-  return words.length >= 2 ? `${words[0][0]}${words[1][0]}`.toUpperCase() : name.slice(0, 2).toUpperCase();
-};
-
-const tenantAvatarBg = (name: string) => {
-  let sum = 0;
-  for (let i = 0; i < name.length; i++) sum += name.codePointAt(i) ?? 0;
-  return AVATAR_BG[sum % AVATAR_BG.length];
-};
-
-const spendPct = (spend: number, total: number) =>
-  total > 0 ? Number(((spend / total) * 100).toFixed(1)) : 0;
-
-const applyTaskTypeFilter = (detail: TenantUsageDetail, taskType: string): TenantUsageDetail => {
-  if (!taskType) return detail;
-  const breakdown = (detail.breakdown ?? []).filter((i) => eqCi(i.modelTaskType, taskType));
-  const match = breakdown[0];
-  if (!match) return { ...detail, consumptionToDate: 0, remainingQuota: detail.quotaLimit, breakdown: [] };
-  return {
-    ...detail,
-    consumptionToDate: match.consumptionToDate,
-    remainingQuota: match.remainingQuota ?? detail.remainingQuota,
-    quotaLimit: match.quotaLimit ?? detail.quotaLimit,
-    quotaUnit: match.unit,
-    breakdown,
-  };
-};
-
-const summaryFromDetail = (detail: TenantUsageDetail): UsageSummaryResponse => {
-  const items = (detail.breakdown ?? []).map((i) => ({
-    modelTaskType: i.modelTaskType,
-    unit: i.unit,
-    consumption: i.consumptionToDate,
-    spend: i.spend,
-    percentage: 0,
-  }));
-  const total = items.reduce((s, i) => s + i.spend, 0) || detail.spendToDate;
-  return {
-    billingPeriod: new Date().toISOString().slice(0, 7),
-    totalSpend: total,
-    currency: detail.currency,
-    spendByModelTaskType: items.map((i) => ({ ...i, percentage: spendPct(i.spend, total) })),
-  };
-};
-
-const filterSummary = (summary: UsageSummaryResponse | undefined, taskType: string) => {
-  if (!summary || !taskType) return summary;
-  const spendByModelTaskType = summary.spendByModelTaskType.filter((i) => eqCi(i.modelTaskType, taskType));
-  const totalSpend = spendByModelTaskType.reduce((s, i) => s + i.spend, 0);
-  return {
-    ...summary,
-    totalSpend,
-    spendByModelTaskType: spendByModelTaskType.map((i) => ({ ...i, percentage: spendPct(i.spend, totalSpend) })),
-  };
-};
-
-const buildTaskTypeOptions = (
-  taskTypeNames: string[],
-  summary?: UsageSummaryResponse["spendByModelTaskType"],
-  breakdown?: TenantUsageDetail["breakdown"],
-) => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const add = (t: string) => {
-    const n = t.trim();
-    if (n && !seen.has(n)) { seen.add(n); out.push(n); }
-  };
-  taskTypeNames.forEach(add);
-  (summary ?? []).forEach((i) => add(i.modelTaskType));
-  (breakdown ?? []).forEach((i) => add(i.modelTaskType));
-  return out;
-};
-
-function useUsageAndSpendData(
-  scopeTenantId: string | null,
-  isTenantView: boolean,
-  tenantId: string | null,
-  refreshNonce: number,
-  filterTier: string,
-  filterTaskType: string,
-  taskTypeNames: string[],
-) {
-  const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
-  const isScoped = Boolean(scopedId);
-
-  const summaryQuery = useQuery({
-    queryKey: ["usage-summary", refreshNonce],
-    queryFn: () => fetchUsageSummary(),
-    enabled: !isScoped,
-    staleTime: STALE_MS,
-    retry: 1,
-  });
-
-  const scopedQuery = useQuery({
-    queryKey: ["usage-tenant", scopedId, refreshNonce],
-    queryFn: () => {
-      if (!scopedId) throw new Error("Tenant id is required");
-      return fetchTenantUsageById(scopedId);
-    },
-    enabled: isScoped,
-    staleTime: STALE_MS,
-    retry: 1,
-  });
-
-  const tenantsQuery = useQuery({
-    queryKey: ["usage-tenants", refreshNonce],
-    queryFn: () => fetchTenantUsageList(),
-    enabled: !isScoped,
-    staleTime: STALE_MS,
-    retry: 1,
-  });
-
-  const tiersQuery = useQuery({
-    queryKey: ["tiers", refreshNonce],
-    queryFn: () => fetchTiers(),
-    staleTime: 5 * STALE_MS,
-    retry: 1,
-  });
-
-  const breakdownIds = useMemo(() => {
-    if (isScoped || !filterTaskType) return [];
-    return (tenantsQuery.data?.data ?? [])
-      .filter((r) => eqCi(r.tier, filterTier))
-      .map((r) => r.tenantId);
-  }, [isScoped, filterTaskType, filterTier, tenantsQuery.data?.data]);
-
-  const breakdownQueries = useQueries({
-    queries: breakdownIds.map((id) => ({
-      queryKey: ["usage-tenant-breakdown", id, refreshNonce],
-      queryFn: () => fetchTenantUsageById(id),
-      enabled: !isScoped && Boolean(filterTaskType),
-      staleTime: STALE_MS,
-      retry: 1,
-    })),
-  });
-
-  const scopedDetail = useMemo(() => {
-    if (!scopedQuery.data || !eqCi(scopedQuery.data.tier, filterTier)) return null;
-    return applyTaskTypeFilter(scopedQuery.data, filterTaskType);
-  }, [scopedQuery.data, filterTier, filterTaskType]);
-
-  const tenants = useMemo((): TenantUsageItem[] => {
-    if (isScoped) {
-      if (!scopedDetail || (filterTaskType && !(scopedDetail.breakdown?.length))) return [];
-      const { breakdown: _, ...item } = scopedDetail;
-      return [item];
-    }
-    if (filterTaskType) {
-      return breakdownQueries
-        .map((q) => q.data)
-        .filter((d): d is TenantUsageDetail => d != null)
-        .map((d) => applyTaskTypeFilter(d, filterTaskType))
-        .filter((d) => (d.breakdown?.length ?? 0) > 0)
-        .map(({ breakdown: _, ...item }) => item);
-    }
-    return (tenantsQuery.data?.data ?? []).filter((r) => eqCi(r.tier, filterTier));
-  }, [isScoped, scopedDetail, filterTaskType, breakdownQueries, tenantsQuery.data?.data, filterTier]);
-
-  let summaryData: UsageSummaryResponse | undefined;
-  if (isScoped) summaryData = scopedDetail ? summaryFromDetail(scopedDetail) : undefined;
-  else summaryData = filterSummary(summaryQuery.data, filterTaskType);
-
-  const errMsg = (e: unknown) => (e ? parseError(e).message : null);
-  const scopedErr = scopedQuery.error;
-  const platformSummaryErr = summaryQuery.error;
-  const platformTenantsErr = tenantsQuery.error;
-
-  let summaryError: string | null;
-  let tenantsError: string | null;
-  let isSummaryLoading: boolean;
-  let isTenantsLoading: boolean;
-
-  if (isScoped) {
-    summaryError = errMsg(scopedErr);
-    tenantsError = errMsg(scopedErr);
-    isSummaryLoading = scopedQuery.isLoading;
-    isTenantsLoading = scopedQuery.isLoading;
-  } else {
-    summaryError = errMsg(platformSummaryErr);
-    tenantsError = errMsg(platformTenantsErr);
-    isSummaryLoading = summaryQuery.isLoading;
-    isTenantsLoading = filterTaskType
-      ? tenantsQuery.isLoading || breakdownQueries.some((q) => q.isLoading)
-      : tenantsQuery.isLoading;
-  }
-
-  return {
-    summaryData,
-    taskTypeOptions: buildTaskTypeOptions(taskTypeNames, summaryQuery.data?.spendByModelTaskType, scopedQuery.data?.breakdown),
-    tierNames: tiersQuery.data?.data?.map((t) => t.name) ?? [],
-    tenants,
-    summaryError,
-    tenantsError,
-    isSummaryLoading,
-    isTenantsLoading,
-    emptyMessage: isScoped ? "No usage data available for this tenant." : "No tenant usage data available.",
-  };
 }
 
 const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   scopeTenantId = null,
   isTenantView = false,
   tenantId = null,
+  organisationLabel = null,
   refreshNonce = 0,
 }) => {
-  const [filterTier, setFilterTier] = useState("");
+  const [periodKey, setPeriodKey] = useState<BillingPeriodKey>("current");
+  /** Period currently shown in the drawer selector (may be pending while loading). */
+  const [drawerPeriodKey, setDrawerPeriodKey] = useState<BillingPeriodKey>("current");
+  /** Period that `selectedTenant` was actually fetched for — drives the spend label. */
+  const [loadedPeriodKey, setLoadedPeriodKey] = useState<BillingPeriodKey>("current");
+  const [filterTierId, setFilterTierId] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedTenant, setSelectedTenant] = useState<TenantUsageDetail | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const detailRequestIdRef = useRef(0);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { taskTypeNames } = useInferenceTypes();
 
-  const data = useUsageAndSpendData(
+  const data = useUsageAndSpendData({
     scopeTenantId,
     isTenantView,
     tenantId,
     refreshNonce,
-    filterTier,
+    periodKey,
+    filterTierId,
     filterTaskType,
+    sortOrder,
     taskTypeNames,
+  });
+
+  const tenantDetail = isTenantView || data.isScoped ? (data.tenants[0] ?? null) : null;
+  const orgName =
+    organisationLabel?.trim() || tenantDetail?.tenantName?.trim() || null;
+
+  const subtitle = isTenantView
+    ? orgName
+      ? `${orgName} · ${METERING.USAGE_SPEND.TENANT_SUBTITLE_SUFFIX}`
+      : METERING.USAGE_SPEND.TENANT_SUBTITLE_SUFFIX
+    : METERING.USAGE_SPEND.ADOPTER_SUBTITLE;
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleTenantClick = useCallback(
+    async (row: TenantUsageItem) => {
+      const requestId = ++detailRequestIdRef.current;
+      onDetailOpen();
+      setDrawerPeriodKey(periodKey);
+      setLoadedPeriodKey(periodKey);
+      setIsDetailLoading(true);
+      try {
+        const detail = await fetchTenantUsageById(row.tenantId, data.billingPeriod);
+        if (requestId !== detailRequestIdRef.current) return;
+        setSelectedTenant(detail);
+      } catch {
+        if (requestId !== detailRequestIdRef.current) return;
+        setSelectedTenant(row);
+      } finally {
+        if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
+      }
+    },
+    [onDetailOpen, data.billingPeriod, periodKey],
   );
 
-  const handleTenantClick = useCallback(async (row: TenantUsageItem) => {
-    setIsDetailLoading(true);
-    onDetailOpen();
-    try {
-      setSelectedTenant(await fetchTenantUsageById(row.tenantId));
-    } catch {
-      setSelectedTenant(row);
-    } finally {
-      setIsDetailLoading(false);
-    }
-  }, [onDetailOpen]);
+  /**
+   * Drawer period changes only update the dashboard `periodKey` after a successful
+   * refetch, so the table/summary stay in sync with what the user just viewed.
+   * On failure the selector reverts to `loadedPeriodKey` so the label always matches data.
+   */
+  const handleDrawerPeriodChange = useCallback(
+    async (nextPeriodKey: BillingPeriodKey) => {
+      if (nextPeriodKey === drawerPeriodKey || !selectedTenant?.tenantId) return;
 
-  const breakdownTotal = selectedTenant?.breakdown?.reduce((s, i) => s + i.spend, 0) ?? 0;
-  const budgetColor = (r: number, l: number) => (l <= 0 || r / l >= 0.35 ? "gray.700" : "orange.500");
-  const quotaColor = (r: number | null, l: number | null) =>
-    r == null || l == null || l <= 0 || r / l >= 0.35 ? "gray.700" : "red.500";
+      const requestId = ++detailRequestIdRef.current;
+      const tenantId = selectedTenant.tenantId;
+      const previousLoaded = loadedPeriodKey;
+
+      setDrawerPeriodKey(nextPeriodKey);
+      setIsDetailLoading(true);
+      try {
+        const detail = await fetchTenantUsageById(
+          tenantId,
+          billingPeriodValue(nextPeriodKey),
+        );
+        if (requestId !== detailRequestIdRef.current) return;
+        setSelectedTenant(detail);
+        setLoadedPeriodKey(nextPeriodKey);
+        setPeriodKey(nextPeriodKey);
+      } catch {
+        if (requestId !== detailRequestIdRef.current) return;
+        setDrawerPeriodKey(previousLoaded);
+        showToast({
+          type: "error",
+          message: "Could not load spend for the selected billing period. Showing the previous period.",
+        });
+      } finally {
+        if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
+      }
+    },
+    [drawerPeriodKey, loadedPeriodKey, selectedTenant?.tenantId],
+  );
+
+  const handleDetailClose = useCallback(() => {
+    detailRequestIdRef.current += 1;
+    onDetailClose();
+    setSelectedTenant(null);
+    setIsDetailLoading(false);
+  }, [onDetailClose]);
 
   return (
-    <VStack align="stretch" spacing={6}>
-      <Flex gap={4} direction={{ base: "column", md: "row" }} align="stretch">
-        <Box
-          bgGradient="linear(135deg, blue.700, blue.900)"
-          borderRadius="xl" p={8} color="white"
-          flex={{ base: "none", md: "0 0 30%" }} minW={{ base: "full", md: "220px" }}
-          display="flex" flexDirection="column" justifyContent="flex-end" minH="160px"
-        >
-          {data.isSummaryLoading ? (
-            <Center flex={1}><Spinner color="whiteAlpha.700" /></Center>
-          ) : (
-            <>
-              <Text fontSize="xs" fontWeight="semibold" letterSpacing="widest" textTransform="uppercase" opacity={0.7} mb={3}>
-                Total Spend
-              </Text>
-              <Text fontSize="4xl" fontWeight="bold" lineHeight="1">
-                {data.summaryData ? formatINR(data.summaryData.totalSpend) : "—"}
-              </Text>
-            </>
-          )}
-        </Box>
-        <Box flex={1} borderWidth="1px" borderColor="gray.200" borderRadius="xl" p={6} bg="white">
-          <Text fontSize="xs" fontWeight="semibold" letterSpacing="widest" textTransform="uppercase" color="gray.500" mb={4}>
-            Spend by Model Task Type
+    <VStack align="stretch" spacing={5}>
+      <Flex justify="space-between" align="flex-start" gap={6} flexWrap="wrap">
+        <Box>
+          <Text fontSize="26px" fontWeight="semibold" lineHeight="1.2" mb={1}>
+            {METERING.USAGE_SPEND.TITLE}
           </Text>
-          {data.isSummaryLoading ? (
-            <Center h="100px"><Spinner color="blue.500" /></Center>
-          ) : data.summaryError ? (
-            <Text fontSize="sm" color="red.500">{data.summaryError}</Text>
-          ) : (
-            <VStack align="stretch" spacing={4}>
-              {(data.summaryData?.spendByModelTaskType ?? []).map((item) => (
-                <Box key={item.modelTaskType}>
-                  <HStack justify="space-between" mb={1.5}>
-                    <HStack spacing={1} fontSize="sm">
-                      <Text fontWeight="bold">{item.modelTaskType}</Text>
-                      <Text color="gray.400">·</Text>
-                      <Text color="gray.500">{formatQuota(item.consumption, item.unit)}</Text>
-                    </HStack>
-                    <HStack spacing={6} fontSize="sm">
-                      <Text fontWeight="medium">{formatINR(item.spend)}</Text>
-                      <Text color="gray.500" minW="44px" textAlign="right">{item.percentage.toFixed(1)}%</Text>
-                    </HStack>
-                  </HStack>
-                  <Progress value={item.percentage} size="xs" colorScheme="blue" borderRadius="full" bg="blue.50" />
-                </Box>
-              ))}
-            </VStack>
-          )}
+          <Text fontSize="14px" color="gray.600">
+            {subtitle}
+          </Text>
         </Box>
+        <FormControl w="auto">
+          <Text
+            fontSize="12px"
+            color="gray.500"
+            fontWeight="semibold"
+            letterSpacing="0.03em"
+            textAlign="right"
+            mb={1}
+          >
+            {METERING.USAGE_SPEND.BILLING_PERIOD}
+          </Text>
+          <Select
+            size="sm"
+            value={periodKey}
+            onChange={(e) => setPeriodKey(e.target.value as BillingPeriodKey)}
+            borderRadius="8px"
+            minW="180px"
+            bg="white"
+            isDisabled={isDetailOpen}
+          >
+            <option value="current">{METERING.USAGE_SPEND.CURRENT_MONTH}</option>
+            <option value="last">{METERING.USAGE_SPEND.LAST_MONTH}</option>
+          </Select>
+        </FormControl>
       </Flex>
 
-      <HStack spacing={4} flexWrap="wrap">
-        <FormControl w={{ base: "full", sm: "220px" }}>
-          <Select size="sm" value={filterTier} onChange={(e) => setFilterTier(e.target.value)} borderRadius="md">
-            <option value="">Filter by Tier — All Tiers</option>
-            {data.tierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+      <SpendOverviewPanel
+        summary={data.summaryData}
+        isLoading={data.isSummaryLoading}
+        error={data.summaryError}
+        currency={data.currency}
+        spendChangePercent={data.spendChangePercent}
+        tenantDetail={isTenantView ? tenantDetail : null}
+        emptyStateMessage={
+          data.hasNoTierAssigned
+            ? "No tier or budget assigned. Contact your administrator."
+            : undefined
+        }
+      />
+
+      {!data.isScoped ? (
+        <HStack spacing={3} flexWrap="wrap">
+          <Select
+            size="sm"
+            w={{ base: "full", sm: "220px" }}
+            value={filterTierId}
+            onChange={(e) => setFilterTierId(e.target.value)}
+            borderRadius="8px"
+            bg="white"
+          >
+            <option value="">Filter by tier · All tiers</option>
+            {data.tiers.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
           </Select>
-        </FormControl>
-        <FormControl w={{ base: "full", sm: "240px" }}>
-          <Select size="sm" value={filterTaskType} onChange={(e) => setFilterTaskType(e.target.value)} borderRadius="md">
-            <option value="">Filter by Model Task Type — All</option>
+          <Select
+            size="sm"
+            w={{ base: "full", sm: "260px" }}
+            value={filterTaskType}
+            onChange={(e) => setFilterTaskType(e.target.value)}
+            borderRadius="8px"
+            bg="white"
+          >
+            <option value="">Filter by model task type · All</option>
             {data.taskTypeOptions.map((t) => (
-              <option key={t} value={t}>{formatModelTaskTypeLabel(t)}</option>
+              <option key={t} value={t}>
+                {formatModelTaskTypeLabel(t)}
+              </option>
             ))}
           </Select>
-        </FormControl>
-      </HStack>
+        </HStack>
+      ) : null}
 
-      <MeteringAsyncState
-        isLoading={data.isTenantsLoading}
-        isEmpty={!data.isTenantsLoading && data.tenants.length === 0}
-        errorMessage={data.tenantsError}
-        emptyMessage={data.emptyMessage}
-      >
-        <MeteringDataTable>
-          <Thead bg="gray.50">
-            <Tr>
-              {["Tenant", "Tier", "Budget Limit", "Spend to Date ↓", "Remaining Budget ↓", "Quota Limit", "Consumption to Date", "Remaining Quota ↓"].map((h) => (
-                <Th key={h} fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric={h !== "Tenant" && h !== "Tier"}>{h}</Th>
-              ))}
-            </Tr>
-          </Thead>
-          <Tbody>
-            {data.tenants.map((row) => (
-              <Tr key={row.tenantId} cursor="pointer" _hover={{ bg: "blue.50" }} onClick={() => handleTenantClick(row)}>
-                <Td>
-                  <HStack spacing={3}>
-                    <Center w={8} h={8} borderRadius="full" bg={tenantAvatarBg(row.tenantName)} color="white" fontSize="xs" fontWeight="bold" flexShrink={0}>
-                      {tenantInitials(row.tenantName)}
-                    </Center>
-                    <Text fontSize="sm" color="blue.500" fontWeight="medium">{row.tenantName}</Text>
-                  </HStack>
-                </Td>
-                <Td><Text fontSize="xs" fontWeight="semibold" textTransform="uppercase" color="gray.700" letterSpacing="wide">{row.tier}</Text></Td>
-                <Td isNumeric fontSize="sm">{formatINR(row.budgetLimit)}</Td>
-                <Td isNumeric fontSize="sm" fontWeight="medium">{formatINR(row.spendToDate)}</Td>
-                <Td isNumeric fontSize="sm" fontWeight="medium" color={budgetColor(row.remainingBudget, row.budgetLimit)}>{formatINR(row.remainingBudget)}</Td>
-                <Td isNumeric fontSize="sm">{formatQuota(row.quotaLimit, row.quotaUnit)}</Td>
-                <Td isNumeric fontSize="sm" color="gray.600">{formatQuota(row.consumptionToDate, row.quotaUnit)}</Td>
-                <Td isNumeric fontSize="sm" fontWeight="medium" color={quotaColor(row.remainingQuota, row.quotaLimit)}>{formatQuota(row.remainingQuota, row.quotaUnit)}</Td>
-              </Tr>
-            ))}
-          </Tbody>
-        </MeteringDataTable>
-      </MeteringAsyncState>
+      {!isTenantView ? (
+        <>
+          <UsageSpendTenantTable
+            tenants={data.tenants}
+            isLoading={data.isTenantsLoading}
+            errorMessage={data.tenantsError}
+            emptyMessage={
+              data.isScoped
+                ? "No usage data available for this tenant."
+                : "No tenant usage data available."
+            }
+            filterTaskType={filterTaskType}
+            sortOrder={sortOrder}
+            expanded={expanded}
+            onToggleSort={() => setSortOrder((o) => (o === "desc" ? "asc" : "desc"))}
+            onToggleExpand={toggleExpand}
+            onTenantClick={handleTenantClick}
+          />
 
-      <StandardModal isOpen={isDetailOpen} onClose={onDetailClose} title="Tenant Spend Details" size="3xl" contentProps={{ minH: "60vh" }} bodyProps={{ py: 6, px: 8 }}>
-        {isDetailLoading ? (
-          <Center py={8}><Spinner color="blue.500" /></Center>
-        ) : selectedTenant ? (
-          <VStack align="stretch" spacing={5}>
-            <HStack spacing={3}>
-              <Center w={10} h={10} borderRadius="full" bg={tenantAvatarBg(selectedTenant.tenantName)} color="white" fontSize="sm" fontWeight="bold" flexShrink={0}>
-                {tenantInitials(selectedTenant.tenantName)}
-              </Center>
-              <Text fontWeight="semibold" fontSize="md">{selectedTenant.tenantName}</Text>
-              <Badge colorScheme="blue" textTransform="uppercase" fontSize="xs">{selectedTenant.tier}</Badge>
-            </HStack>
-            <Box>
-              <Text fontSize="xs" fontWeight="semibold" letterSpacing="widest" textTransform="uppercase" color="gray.500" mb={3}>
-                Spend by Model Task Type
-              </Text>
-              {selectedTenant.breakdown?.length ? (
-                <Table size="sm" variant="simple">
-                  <Thead>
-                    <Tr>
-                      {["Model Task Type", "Consumption", "Spend (INR)", "Share"].map((h, i) => (
-                        <Th key={h} fontSize="xs" color="gray.500" isNumeric={i > 0}>{h}</Th>
-                      ))}
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {selectedTenant.breakdown.map((item) => (
-                      <Tr key={item.modelTaskType}>
-                        <Td><HStack spacing={2}><Box w={2} h={2} borderRadius="full" bg="blue.500" flexShrink={0} /><Text fontSize="sm">{item.modelTaskType}</Text></HStack></Td>
-                        <Td isNumeric fontSize="sm">{formatQuota(item.consumptionToDate, item.unit)}</Td>
-                        <Td isNumeric fontSize="sm" fontWeight="medium">{formatINR(item.spend)}</Td>
-                        <Td isNumeric fontSize="sm" color="gray.500">{breakdownTotal > 0 ? `${spendPct(item.spend, breakdownTotal)}%` : "—"}</Td>
-                      </Tr>
-                    ))}
-                    <Tr borderTopWidth="2px" borderColor="gray.200">
-                      <Td fontWeight="semibold" fontSize="sm">Total</Td><Td /><Td isNumeric fontSize="sm" fontWeight="semibold">{formatINR(breakdownTotal)}</Td><Td />
-                    </Tr>
-                  </Tbody>
-                </Table>
-              ) : (
-                <Text fontSize="sm" color="gray.400" py={4} textAlign="center">No spend breakdown available for this billing period.</Text>
-              )}
-            </Box>
-          </VStack>
-        ) : null}
-      </StandardModal>
+          <Text fontSize="12px" color="gray.500" lineHeight="1.6">
+            Spend is a sortable column. Budget shows utilization against the allocated limit. Units
+            follow each service&apos;s metering definition. Tier and task type filters apply to the
+            table; when a tenant changed tiers mid-period, expand it to see spend split by tier.
+            Open a tenant for the full task-type breakdown.
+          </Text>
+
+          <UsageSpendTenantDrawer
+            isOpen={isDetailOpen}
+            onClose={handleDetailClose}
+            detail={selectedTenant}
+            isLoading={isDetailLoading}
+            periodKey={drawerPeriodKey}
+            loadedPeriodKey={loadedPeriodKey}
+            onPeriodChange={handleDrawerPeriodChange}
+          />
+        </>
+      ) : null}
     </VStack>
   );
 };
