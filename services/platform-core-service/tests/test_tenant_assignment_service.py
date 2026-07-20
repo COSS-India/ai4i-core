@@ -211,3 +211,49 @@ class TestReassignTier:
             )
 
         assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestListTenantTiers:
+    """AI4IDS-2506: filtering by a nonexistent tier_id must 404, not 200 + []."""
+
+    async def test_nonexistent_tier_id_returns_404(self):
+        db = _make_db([
+            _exec_result(scalar_one_or_none=None),  # tier existence check misses
+        ])
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.list_tenant_tiers(db, tier_id=str(uuid4()))
+
+        assert exc.value.status_code == 404
+
+    async def test_existing_tier_with_no_assignments_returns_empty_list(self):
+        tier_id = uuid4()
+        assignments_result = MagicMock()
+        assignments_result.all = MagicMock(return_value=[])
+        db = _make_db([
+            _exec_result(scalar_one_or_none=tier_id),  # tier exists
+            assignments_result,  # join query — zero current assignments
+        ])
+
+        result = await svc.list_tenant_tiers(db, tier_id=str(tier_id))
+
+        assert result == []
+
+    async def test_invalid_uuid_format_returns_400(self):
+        db = _make_db([])
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.list_tenant_tiers(db, tier_id="not-a-uuid")
+
+        assert exc.value.status_code == 400
+
+    async def test_no_tier_id_filter_skips_existence_check(self):
+        assignments_result = MagicMock()
+        assignments_result.all = MagicMock(return_value=[])
+        db = _make_db([assignments_result])
+
+        result = await svc.list_tenant_tiers(db, tier_id=None)
+
+        assert result == []
+        assert db.execute.await_count == 1
