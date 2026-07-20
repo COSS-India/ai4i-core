@@ -4,7 +4,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -112,33 +112,6 @@ async def _fetch_tenant_ids_for_tier(tier_id, session: AsyncSession) -> list:
     return [row.tenant_id for row in result.all()]
 
 
-async def _reset_quota_flags_for_tenants(
-    auth_service_url: str,
-    http_client: httpx.AsyncClient,
-    tenant_ids: List[str],
-    tier_id,
-) -> None:
-    """Clear stale quota-exhausted flags for every given tenant.
-
-    Called when a tasktype that previously had no ppu_tier_quotas row for a
-    tier (and was therefore billed as exhausted — see payperuse_consumer's
-    fail-closed check) now has one, so affected tenants aren't left 429'd
-    until the monthly cron runs.
-    """
-    for tenant_id in tenant_ids:
-        try:
-            resp = await http_client.post(
-                f"{auth_service_url}/internal/ppu/tenant/{tenant_id}/quota-reset",
-                timeout=5.0,
-            )
-            resp.raise_for_status()
-        except Exception as exc:
-            logger.warning(
-                "quota-reset notification failed for tenant %s (tier %s): %s",
-                tenant_id, tier_id, exc,
-            )
-
-
 async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> PPUTier:
     try:
         uid = UUID(body.tier_id)
@@ -154,33 +127,22 @@ async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> P
 
 async def _upsert_quotas(
     session: AsyncSession, tier: PPUTier, quotas: List, updated_by: Optional[str]
-) -> bool:
-    """Apply body.quotas. Returns True if any brand-new quota type was added."""
-    added_new_quota_type = False
+) -> None:
     for q in quotas:
         q_result = await session.execute(
             select(PPUTierQuota).where(
                 PPUTierQuota.tier_id == tier.id,
-                PPUTierQuota.inference_name == q.modelTaskType,
+                func.lower(PPUTierQuota.inference_name) == q.modelTaskType.lower(),
             )
         )
         existing = q_result.scalar_one_or_none()
-        if existing:
-            existing.pending_monthly_quota = q.limit
-            existing.updated_by = updated_by
-            continue
-        # New quota type: no active value to preserve, so apply immediately.
-        # Setting monthly_quota=0 with the real value only in pending would
-        # make units_used >= 0 always true and block all tenants until cycle reset.
-        added_new_quota_type = True
-        session.add(PPUTierQuota(
-            tier_id=tier.id,
-            inference_name=q.modelTaskType,
-            monthly_quota=q.limit,
-            created_by=updated_by,
-            updated_by=updated_by,
-        ))
-    return added_new_quota_type
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model task type '{q.modelTaskType}' does not exist in this tier. Adding new model task types is not allowed via update.",
+            )
+        existing.pending_monthly_quota = q.limit
+        existing.updated_by = updated_by
 
 
 async def _cancel_pending_quotas(
@@ -190,7 +152,7 @@ async def _cancel_pending_quotas(
         q_result = await session.execute(
             select(PPUTierQuota).where(
                 PPUTierQuota.tier_id == tier.id,
-                PPUTierQuota.inference_name == inference_name,
+                func.lower(PPUTierQuota.inference_name) == inference_name.lower(),
             )
         )
         row = q_result.scalar_one_or_none()
@@ -199,30 +161,11 @@ async def _cancel_pending_quotas(
             row.updated_by = updated_by
 
 
-async def _remove_quotas(session: AsyncSession, tier: PPUTier, inference_names: List[str]) -> None:
-    await session.execute(
-        delete(PPUTierQuota).where(
-            PPUTierQuota.tier_id == tier.id,
-            PPUTierQuota.inference_name.in_(inference_names),
-        )
-    )
-    await session.flush()
-    remaining_result = await session.execute(
-        select(func.count()).select_from(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id)
-    )
-    if remaining_result.scalar() == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot remove all quotas: at least one model task type must remain in the tier",
-        )
-
-
 async def _notify_tier_updated(
     session: AsyncSession,
     tier: PPUTier,
     auth_service_url: str,
     http_client: Optional[httpx.AsyncClient],
-    added_new_quota_type: bool,
 ) -> None:
     if not (auth_service_url and http_client):
         return
@@ -237,9 +180,6 @@ async def _notify_tier_updated(
         resp.raise_for_status()
     except Exception as exc:
         logger.warning("quota-limit-updated notification failed for tier %s: %s", tier.id, exc)
-
-    if added_new_quota_type:
-        await _reset_quota_flags_for_tenants(auth_service_url, http_client, tenant_ids, tier.id)
 
 
 async def update_tier(
@@ -257,21 +197,17 @@ async def update_tier(
         tier.description = body.description
     tier.updated_by = updated_by
 
-    added_new_quota_type = False
     if body.quotas is not None:
-        added_new_quota_type = await _upsert_quotas(session, tier, body.quotas, updated_by)
+        await _upsert_quotas(session, tier, body.quotas, updated_by)
 
     if body.cancel_pending_quota:
         await _cancel_pending_quotas(session, tier, body.cancel_pending_quota, updated_by)
 
-    if body.remove_quota:
-        await _remove_quotas(session, tier, body.remove_quota)
-
     await session.commit()
     await session.refresh(tier)
 
-    if body.quotas is not None or body.cancel_pending_quota or body.remove_quota:
-        await _notify_tier_updated(session, tier, auth_service_url, http_client, added_new_quota_type)
+    if body.quotas is not None or body.cancel_pending_quota:
+        await _notify_tier_updated(session, tier, auth_service_url, http_client)
 
     q_result = await session.execute(select(PPUTierQuota).where(PPUTierQuota.tier_id == tier.id))
     quotas = list(q_result.scalars().all())
