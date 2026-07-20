@@ -3,6 +3,7 @@ import React, { useMemo, useState } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 import { METERING } from "../../config/meteringConstants";
 import {
+  aggregateTasks,
   formatSpendMoney,
   formatSpendUnit,
   taskTypeColor,
@@ -93,6 +94,65 @@ function TenantBudgetCard({
   );
 }
 
+/**
+ * Quota Summary body for a single tenant. The API leaves the flat `usage` aggregate
+ * unpopulated (consumed/quotaLimit null) when a tenant spans multiple task types, since
+ * quotas can't be summed across heterogeneous units (characters vs. images vs. minutes).
+ * So we render a per-task-type quota list from the same tierBreakdown the Spend section
+ * uses, and fall back to a single bar only when there's exactly one task type.
+ */
+function TenantQuotaSummary({ detail }: { detail: TenantUsageItem }) {
+  const tasks = useMemo(
+    () => aggregateTasks(detail.tierBreakdown ?? []).sort((a, b) => b.spend - a.spend),
+    [detail],
+  );
+
+  if (tasks.length === 0) {
+    return (
+      <Text fontSize="sm" color="gray.400">
+        No quota data for this period.
+      </Text>
+    );
+  }
+
+  if (tasks.length === 1) {
+    const t = tasks[0];
+    return (
+      <UsageCell
+        consumed={t.consumed}
+        quotaLimit={t.quotaLimit}
+        remaining={t.remaining}
+        percentage={0}
+        unit={t.unit}
+      />
+    );
+  }
+
+  return (
+    <VStack align="stretch" spacing="14px" maxH="240px" overflowY="auto" pr={1}>
+      {tasks.map((t, i) => (
+        <Box key={t.taskType}>
+          <TaskTypeLabel
+            taskType={t.taskType}
+            color={taskTypeColor(t.taskType, i)}
+            fontSize="12px"
+            fontWeight="semibold"
+          />
+          <Box mt="7px">
+            <UsageCell
+              consumed={t.consumed}
+              quotaLimit={t.quotaLimit}
+              remaining={t.remaining}
+              percentage={0}
+              unit={t.unit}
+            />
+          </Box>
+        </Box>
+      ))}
+    </VStack>
+  );
+}
+
 const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   summary,
   isLoading,
@@ -124,11 +184,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
             <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" color="gray.600" mb={3}>
               {METERING.USAGE_SPEND.QUOTA_SUMMARY}
             </Text>
-            {tenantDetail.usage ? (
-              <UsageCell {...tenantDetail.usage} />
-            ) : (
-              <Text fontSize="sm" color="gray.400">No quota data for this period.</Text>
-            )}
+            <TenantQuotaSummary detail={tenantDetail} />
           </>
         )}
       </Box>
