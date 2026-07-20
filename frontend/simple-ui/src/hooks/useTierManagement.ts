@@ -435,7 +435,6 @@ export function useTierManagement() {
           quotas: currentQuota
             ? [{ modelTaskType, limit: Number(currentQuota.limit) }]
             : undefined,
-          remove_quota: [modelTaskType],
         });
         setFormData((prev) => ({
           ...prev,
