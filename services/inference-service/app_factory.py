@@ -19,7 +19,9 @@ from trace.setup import setup_tracing
 
 logger = logging.getLogger(__name__)
 
-_PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", "/openapi.json"}
+_PUBLIC_PATHS = {
+    "/", "/health", "/api/v1/inference/health", "/docs", "/redoc", "/openapi.json",
+}
 
 # /chat and /chat/completions are load-test stubs (no real model call ever
 # happens), so Prometheus tracking is bypassed on this path by default —
@@ -28,28 +30,21 @@ _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", 
 # bypass local to this service.
 _CHAT_PATHS = {f"{settings.API_PREFIX}/chat", f"{settings.API_PREFIX}/chat/completions"}
 
-
 class _ChatAwareObservabilityMiddleware(ObservabilityMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path in _CHAT_PATHS and not settings.LLM_CHAT_OBSERVABILITY_ENABLED:
             return await call_next(request)
         return await super().dispatch(request, call_next)
-
-
-def _setup_observability(app: FastAPI) -> None:
-    """Same wiring as ai4i_core.observability.setup_observability, but with
-    the chat-aware middleware above in place of the plain one."""
-    config = PluginConfig()
-    if not config.enabled:
-        return
-    collector = MetricsCollector()
-    app.add_middleware(_ChatAwareObservabilityMiddleware, metrics_collector=collector, config=config)
-
-    @app.get(config.metrics_path)
-    async def _metrics_endpoint():
-        from fastapi import Response
-        return Response(content=collector.render(), media_type="text/plain")
-
+    
+# /test is a bare load-test probe (see routes/inference.py) meant to measure
+# raw ASGI + routing overhead with none of the service-level middleware in
+# the loop — no Prometheus, no request-context/logging, no CORS handling.
+# Always bypassed, unconditionally (unlike the chat paths above, there is no
+# flag to flip this back on: the whole point of /test is a middleware-free
+# baseline). Each middleware below is subclassed locally, not edited in
+# ai4i_core, so the bypass stays specific to this one path in this service.
+_TEST_PATH = f"{settings.API_PREFIX}/test"
+_PUBLIC_PATHS.add(_TEST_PATH)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
@@ -64,32 +59,16 @@ async def _lifespan(app: FastAPI):
     await close_triton_client()
     logger.info("✓ Inference service shutting down")
 
-
 def _setup_middleware(app: FastAPI) -> None:
     """Configure observability, request-context, and CORS middleware."""
     # Observability — Prometheus /metrics + per-request middleware.
     # Reads OBSERVE_UTIL_* env vars (enabled, debug, metrics_path).
-    _setup_observability(app)
+    # setup_observability(app)
 
     # Request context middleware — seeds trace_id and tenant_id (from the
     # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so
     # inference spans carry attributes.tenantId (read via get_context_attributes).
     app.add_middleware(RequestMiddleware)
-
-    # CORS middleware — added last so it is outermost and applies headers
-    # even when inner middleware short-circuits the request.
-    # allow_credentials is enabled only for an explicit origin list: a
-    # wildcard with credentials makes Starlette echo any Origin back,
-    # which permits credentialed cross-origin requests from anywhere
-    # (OWASP API8). Bearer-token SPA calls do not need allow_credentials.
-    origins = [o.strip() for o in settings.CORS_ALLOW_ORIGINS.split(",") if o.strip()]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=origins != ["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
 
 def _setup_routes(app: FastAPI) -> None:
