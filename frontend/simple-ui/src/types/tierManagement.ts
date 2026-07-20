@@ -31,7 +31,6 @@ export interface UpdateTierPayload {
   description?: string;
   quotas?: { modelTaskType: string; limit: number }[];
   cancel_pending_quota?: string[];
-  remove_quota?: string[];
 }
 
 export type TierFormQuota = {

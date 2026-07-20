@@ -318,7 +318,11 @@ function QuotaEditor({
             >
               <HStack align="flex-end" spacing={3}>
                 <HStack align="flex-end" spacing={3} flexWrap="wrap" flex={1}>
-                  <FormControl w={{ base: "full", sm: "190px" }} isRequired>
+                  <FormControl
+                    w={{ base: "full", sm: "190px" }}
+                    isRequired
+                    isDisabled={isEditMode}
+                  >
                     <FormLabel fontSize="xs" mb={1}>
                       Model Task Type
                     </FormLabel>
@@ -354,6 +358,7 @@ function QuotaEditor({
                     w={{ base: "full", sm: "120px" }}
                     isRequired
                     isInvalid={showErrors && isUnitInvalid(quota)}
+                    isDisabled={isEditMode}
                   >
                     <FormLabel fontSize="xs" mb={1}>
                       Unit
@@ -375,6 +380,7 @@ function QuotaEditor({
                     w={{ base: "full", sm: "120px" }}
                     isRequired
                     isInvalid={showErrors && isLimitInvalid(quota)}
+                    isDisabled={isEditMode}
                   >
                     <FormLabel fontSize="xs" mb={1}>
                       Limit
