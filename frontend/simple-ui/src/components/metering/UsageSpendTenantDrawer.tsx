@@ -201,8 +201,8 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
                                 percentage={
                                   "percentage" in t && typeof t.percentage === "number"
                                     ? t.percentage
-                                    : t.quotaLimit > 0
-                                      ? (t.consumed / t.quotaLimit) * 100
+                                    : (t.quotaLimit ?? 0) > 0
+                                      ? (t.consumed / (t.quotaLimit ?? 1)) * 100
                                       : 0
                                 }
                                 unit={t.unit}

@@ -24,21 +24,27 @@ export interface TenantBudget {
   percentageUsed: number;
 }
 
+/**
+ * Flat quota-bar fields on the tenant usage response.
+ * Populated only when the tenant used a single model task type this period;
+ * left null for multi-type tenants because consumed/quotaLimit cannot be summed
+ * across heterogeneous units (characters vs images vs minutes).
+ */
 export interface TenantUsageAggregate {
   taskTypeCount: number;
-  unit: string;
-  quotaLimit: number;
-  consumed: number;
-  remaining: number;
-  percentage: number;
+  unit?: string | null;
+  quotaLimit?: number | null;
+  consumed?: number | null;
+  remaining?: number | null;
+  percentage?: number | null;
 }
 
 export interface TierTaskTypeUsage {
   taskType: string;
   unit: string;
-  quotaLimit: number;
+  quotaLimit?: number | null;
   consumed: number;
-  remaining: number;
+  remaining?: number | null;
   percentage: number;
   spend: number;
 }

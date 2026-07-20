@@ -6,6 +6,8 @@ import {
   aggregateTasks,
   formatSpendMoney,
   formatSpendUnit,
+  hasPopulatedQuotaUsage,
+  isMultiTaskQuotaTenant,
   taskTypeColor,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem, UsageSummaryResponse } from "../../types/usageSpend";
@@ -95,16 +97,17 @@ function TenantBudgetCard({
 }
 
 /**
- * Quota Summary body for a single tenant. The API leaves the flat `usage` aggregate
- * unpopulated (consumed/quotaLimit null) when a tenant spans multiple task types, since
- * quotas can't be summed across heterogeneous units (characters vs. images vs. minutes).
- * So we render a per-task-type quota list from the same tierBreakdown the Spend section
- * uses, and fall back to a single bar only when there's exactly one task type.
+ * Quota Summary for a single tenant.
+ *
+ * - One task type: show the API's flat `usage` quota bar (homogeneous unit + limit).
+ * - Multiple task types: list each type from `tierBreakdown` — no cross-unit summary.
+ *   The flat `usage` block is intentionally null in that case (can't sum characters +
+ *   images + minutes into one consumed/quotaLimit).
  */
 function TenantQuotaSummary({ detail }: { detail: TenantUsageItem }) {
   const tasks = useMemo(
     () => aggregateTasks(detail.tierBreakdown ?? []).sort((a, b) => b.spend - a.spend),
-    [detail],
+    [detail.tierBreakdown],
   );
 
   if (tasks.length === 0) {
@@ -115,14 +118,26 @@ function TenantQuotaSummary({ detail }: { detail: TenantUsageItem }) {
     );
   }
 
-  if (tasks.length === 1) {
-    const t = tasks[0];
+  if (!isMultiTaskQuotaTenant(detail.usage) && hasPopulatedQuotaUsage(detail.usage)) {
+    const u = detail.usage;
+    return (
+      <UsageCell
+        consumed={u.consumed!}
+        quotaLimit={u.quotaLimit!}
+        remaining={u.remaining}
+        percentage={u.percentage}
+        unit={u.unit ?? tasks[0]!.unit}
+      />
+    );
+  }
+
+  if (!isMultiTaskQuotaTenant(detail.usage) && tasks.length === 1) {
+    const t = tasks[0]!;
     return (
       <UsageCell
         consumed={t.consumed}
         quotaLimit={t.quotaLimit}
         remaining={t.remaining}
-        percentage={0}
         unit={t.unit}
       />
     );
@@ -143,7 +158,6 @@ function TenantQuotaSummary({ detail }: { detail: TenantUsageItem }) {
               consumed={t.consumed}
               quotaLimit={t.quotaLimit}
               remaining={t.remaining}
-              percentage={0}
               unit={t.unit}
             />
           </Box>

@@ -106,18 +106,21 @@ export function UsageCell({
   unit,
 }: {
   consumed: number;
-  quotaLimit: number;
-  remaining: number;
-  percentage: number;
+  quotaLimit?: number | null;
+  remaining?: number | null;
+  percentage?: number | null;
   unit: string;
 }) {
-  const pct = percentage || (quotaLimit > 0 ? (consumed / quotaLimit) * 100 : 0);
+  const limit = quotaLimit ?? 0;
+  const used = consumed ?? 0;
+  const left = remaining ?? Math.max(0, limit - used);
+  const pct = percentage ?? (limit > 0 ? (used / limit) * 100 : 0);
   return (
     <RatioBar
       pct={pct}
-      main={formatSpendUnit(consumed, unit)}
-      of={`of ${formatSpendUnit(quotaLimit, unit)}`}
-      caption={`${formatSpendUnit(Math.max(remaining, 0), unit)} left · ${pct.toFixed(0)}%`}
+      main={formatSpendUnit(used, unit)}
+      of={`of ${formatSpendUnit(limit, unit)}`}
+      caption={`${formatSpendUnit(Math.max(left, 0), unit)} left · ${pct.toFixed(0)}%`}
     />
   );
 }

@@ -16,6 +16,7 @@ import {
   USAGE_SPEND_ACCENT,
   aggregateTasks,
   formatSpendMoney,
+  hasPopulatedQuotaUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import MeteringAsyncState from "./MeteringAsyncState";
@@ -75,7 +76,10 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
             const taskCount = row.usage?.taskTypeCount ?? aggregateTasks(tiers).length;
             const multiTiers = tiers.length > 1;
             const canExpand = !filterTaskType && multiTiers;
-            const showBar = taskCount > 0 && (filterTaskType || (!multiTiers && taskCount === 1));
+            const showBar =
+              taskCount > 0 &&
+              hasPopulatedQuotaUsage(row.usage) &&
+              (filterTaskType || (!multiTiers && taskCount === 1));
 
             return (
               <React.Fragment key={row.tenantId}>
@@ -118,7 +122,13 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                     {taskCount === 0 ? (
                       <Text fontSize="12px" color="gray.500">Not used this period</Text>
                     ) : showBar ? (
-                      <UsageCell {...row.usage} />
+                      <UsageCell
+                        consumed={row.usage.consumed!}
+                        quotaLimit={row.usage.quotaLimit}
+                        remaining={row.usage.remaining}
+                        percentage={row.usage.percentage}
+                        unit={row.usage.unit ?? ""}
+                      />
                     ) : multiTiers ? (
                       <HStack
                         as="button"

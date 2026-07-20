@@ -1,6 +1,7 @@
 import { meteringColorAt } from "./meteringColors";
 import type {
   TenantTierBreakdown,
+  TenantUsageAggregate,
   TenantUsageDetail,
   UsageSummaryResponse,
 } from "../types/usageSpend";
@@ -26,10 +27,25 @@ export type BillingPeriodKey = "current" | "last";
 export interface AggregatedTaskUsage {
   taskType: string;
   unit: string;
-  quotaLimit: number;
+  quotaLimit?: number | null;
   consumed: number;
-  remaining: number;
+  remaining?: number | null;
   spend: number;
+}
+
+/** True when the API populated the flat quota-bar fields for one homogeneous unit. */
+export function hasPopulatedQuotaUsage(usage: TenantUsageAggregate): boolean {
+  return (
+    usage.consumed != null &&
+    usage.quotaLimit != null &&
+    usage.unit != null &&
+    usage.unit !== "Units"
+  );
+}
+
+/** True when the tenant consumed multiple model task types — per-type quota only. */
+export function isMultiTaskQuotaTenant(usage: TenantUsageAggregate): boolean {
+  return usage.taskTypeCount > 1;
 }
 
 export function billingPeriodValue(key: BillingPeriodKey): string {
