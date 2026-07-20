@@ -5,6 +5,7 @@ No running services required.
 """
 from __future__ import annotations
 
+import math
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,10 +15,9 @@ import pytest
 from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
+    apply_time_range,
     build_base_selectors,
-    sum_over_prev_window,
     sum_over_window,
-    windowed_change_expr,
 )
 
 
@@ -56,33 +56,11 @@ class TestBuildBaseSelectors:
         assert sel.startswith("{") and sel.endswith("}")
 
 
-class TestWindowedChangeExpr:
-    def test_normal_delta_branch(self):
-        expr = windowed_change_expr("m", "m offset 24h")
-        assert "(m - m offset 24h) > 0" in expr
-
-    def test_counter_reset_branch(self):
-        expr = windowed_change_expr("m", "m offset 24h")
-        assert "(m < m offset 24h)" in expr
-
-    def test_new_series_branch(self):
-        expr = windowed_change_expr("m", "m offset 24h")
-        assert "(m unless m offset 24h)" in expr
-
-    def test_three_branches_joined_with_or(self):
-        expr = windowed_change_expr("m", "m offset 1h")
-        assert expr.count(" or ") == 2
-
-    def test_no_increase_function(self):
-        expr = windowed_change_expr("metric{}", "metric{} offset 7d")
-        assert "increase(" not in expr
-
-
 class TestSumOverWindow:
-    def test_with_window_uses_offset_diff(self):
+    def test_with_window_uses_increase(self):
         expr = sum_over_window("metric{}", "24h")
-        assert "(metric{} - metric{} offset 24h) > 0" in expr
-        assert "increase(" not in expr
+        assert "increase(metric{}[24h])" in expr
+        assert "offset 24h" in expr
 
     def test_no_window_plain_sum(self):
         expr = sum_over_window("metric{}", None)
@@ -94,39 +72,18 @@ class TestSumOverWindow:
 
     def test_7d_window(self):
         expr = sum_over_window("metric{}", "7d")
+        assert "[7d]" in expr
         assert "offset 7d" in expr
-        assert "increase(" not in expr
-
-    def test_wraps_windowed_change_in_sum(self):
-        expr = sum_over_window("metric{}", "1h")
-        assert expr.startswith("sum(") and expr.endswith(")")
 
 
-class TestSumOverPrevWindow:
-    def test_1h_uses_1h_and_2h_offsets(self):
-        expr = sum_over_prev_window("metric{}", "1h")
-        assert "offset 1h" in expr
-        assert "offset 2h" in expr
-        assert "increase(" not in expr
+class TestApplyTimeRange:
+    def test_applies_increase(self):
+        expr = apply_time_range("metric{}", "1h")
+        assert expr == "increase(metric{}[1h])"
 
-    def test_24h_uses_24h_and_48h_offsets(self):
-        expr = sum_over_prev_window("metric{}", "24h")
-        assert "offset 24h" in expr
-        assert "offset 48h" in expr
-
-    def test_7d_uses_7d_and_14d_offsets(self):
-        expr = sum_over_prev_window("metric{}", "7d")
-        assert "offset 7d" in expr
-        assert "offset 14d" in expr
-
-    def test_30d_uses_30d_and_60d_offsets(self):
-        expr = sum_over_prev_window("metric{}", "30d")
-        assert "offset 30d" in expr
-        assert "offset 60d" in expr
-
-    def test_wraps_in_sum(self):
-        expr = sum_over_prev_window("metric{}", "24h")
-        assert expr.startswith("sum(") and expr.endswith(")")
+    def test_no_window_returns_raw(self):
+        expr = apply_time_range("metric{}", None)
+        assert expr == "metric{}"
 
 
 class TestServiceBreakdownConfig:
@@ -345,6 +302,18 @@ class TestServiceBreakdown:
         # native_units should be the success count, not a histogram value
         assert ocr_row["native_units"] == 250
 
+    async def test_native_units_zero_not_null_when_no_usage(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client)
+
+        result = await svc.service_breakdown(tenant=None, time_range="24h")
+
+        for row in result["services"]:
+            assert row["native_units"] is not None
+            assert row["native_units"] >= 0
+
     async def test_tenant_unknown_excluded_from_selectors(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
@@ -403,6 +372,42 @@ class TestActiveTenantsExcludesUnknown:
 
         call_args = svc._client.query.call_args[0][0]
         assert 'tenant!="unknown"' in call_args
+
+    async def test_filters_deleted_tenants_when_db_available(self):
+        """Tenants present in Prometheus but absent from the DB are excluded.
+
+        This covers the post-DB-flush scenario where stale Prometheus series
+        for deleted tenants would otherwise inflate 7d/30d active-tenant counts.
+        """
+        prom_rows = [
+            {"metric": {"tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant": "2"}, "value": [0, "3"]},  # deleted tenant
+            {"metric": {"tenant": "3"}, "value": [0, "8"]},
+        ]
+        # DB has only tenants 1 and 3; tenant 2 was deleted
+        auth_db = AsyncMock()
+        db_result = MagicMock()
+        db_result.all.return_value = [(1,), (3,)]
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("7d")
+
+        assert result["count"] == 2
+        returned_ids = {t["tenant"] for t in result["active_tenants"]}
+        assert returned_ids == {"1", "3"}
+        assert "2" not in returned_ids
+
+    async def test_no_filter_when_db_unavailable(self):
+        """Falls back to unfiltered Prometheus results when auth DB is absent."""
+        prom_rows = [
+            {"metric": {"tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant": "99"}, "value": [0, "2"]},
+        ]
+        svc = _make_service(query_return=prom_rows)  # no auth_db
+        result = await svc.active_tenants("7d")
+
+        assert result["count"] == 2
 
 
 class TestFormatCount:

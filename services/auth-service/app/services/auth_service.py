@@ -85,7 +85,7 @@ def assert_tenant_allows_authentication(tenant: Optional[Tenant]) -> None:
             code="TENANT_SUSPENDED",
         )
     raise AuthorizationError(
-        message="Tenant is deactivated.",
+        message="Your account access has been deactivated. Please contact your administrator.",
         code="TENANT_INACTIVE",
     )
 
@@ -104,7 +104,7 @@ def assert_tenant_allows_onboarding(tenant: Optional[Tenant]) -> None:
             code="TENANT_SUSPENDED",
         )
     raise AuthorizationError(
-        message="Tenant is deactivated.",
+        message="Your account access has been deactivated. Please contact your administrator.",
         code="TENANT_INACTIVE",
     )
 
@@ -378,19 +378,22 @@ class AuthService:
     async def _assert_user_tenant_active(self, user: User) -> None:
         if user.tenant_id is None:
             return
-        # Per-user tenant access flag. Cleared (is_tenant_active=False) when the
-        # tenant is suspended/deactivated — either tenant-wide via
-        # sync_tenant_users_for_status, or for a single user via
-        # PATCH /tenants/{tenant_id}/users/{user_id}/status. The latter does not
-        # change tenant.status, so it must be enforced here independently of the
-        # tenant-status check below. None/True (legacy default) means allowed.
+        # Tenant-wide status is checked first so the error reflects the actual
+        # reason (deactivated vs. suspended) rather than the generic per-user
+        # flag below, which sync_tenant_users_for_status clears identically
+        # for both statuses.
+        tenant = await self._tenants.get_by_id(user.tenant_id)
+        assert_tenant_allows_authentication(tenant)
+        # Per-user tenant access flag: cleared (is_tenant_active=False) for a
+        # single user via PATCH /tenants/{tenant_id}/users/{user_id}/status,
+        # which does not change tenant.status, so it must be enforced here
+        # independently once the tenant itself is confirmed active.
+        # None/True (legacy default) means allowed.
         if user.is_tenant_active is False:
             raise AuthorizationError(
                 message="Your account access has been suspended. Please contact support.",
                 code="TENANT_SUSPENDED",
             )
-        tenant = await self._tenants.get_by_id(user.tenant_id)
-        assert_tenant_allows_authentication(tenant)
 
     async def _assert_user_tenant_onboarding(self, user: User) -> None:
         if user.tenant_id is None:

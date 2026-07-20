@@ -71,6 +71,21 @@ class RoleRepository(BaseRepository):
         )
         return result.scalar_one()
 
+    async def get_tenant_admins(self, tenant_id: int) -> list[User]:
+        """Return all active, non-deleted TENANT ADMIN users for a given tenant."""
+        result = await self._db.execute(
+            select(User)
+            .join(UserRole, User.id == UserRole.user_id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                Role.name == RoleName.TENANT_ADMIN.value,
+                User.tenant_id == tenant_id,
+                User.is_delete.isnot(True),
+                User.is_active.is_(True),
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_user_role_records(self, user_id: UUID) -> list[UserRole]:
         result = await self._db.execute(
             select(UserRole)
@@ -141,6 +156,16 @@ class RoleRepository(BaseRepository):
             )
         )
         return {pid: name for pid, name in result.all()}
+
+    async def get_permission_ids_by_names(self, permission_names: list[str]) -> dict[str, int]:
+        if not permission_names:
+            return {}
+        result = await self._db.execute(
+            select(Permission.name, Permission.id).where(
+                Permission.name.in_(permission_names)
+            )
+        )
+        return {name: pid for name, pid in result.all()}
 
     async def delete_role_permissions_for_permission_ids(
         self, role_id: int, permission_ids: list[int]

@@ -3,7 +3,7 @@ Configuration for inference service.
 Loads settings from environment variables and defaults.
 """
 
-from typing import Dict, Optional
+from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
@@ -55,14 +55,8 @@ class Settings(BaseSettings):
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
 
     # OpenAI-compatible LLM proxy configuration
-    # Base URL for the upstream LLM server (e.g. "http://13.206.126.62:8000").
-    # Routes append /v1/chat/completions or /v1/chat to this base.
-    LLM_DEFAULT_ENDPOINT: str = Field("", description="Default upstream LLM base URL")
-    # Optional per-model overrides as a JSON object, e.g.
-    #   LLM_MODEL_ENDPOINTS='{"google/gemma-4-E4B-it":"http://10.0.0.5:8000"}'
-    LLM_MODEL_ENDPOINTS: Dict[str, str] = Field(
-        default_factory=dict, description="Per-model upstream base URL overrides"
-    )
+    # Endpoint resolution is handled via MMS (model management service) using
+    # the serviceId from the request payload — no static endpoint config needed.
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
     # Per-block phase timing — on by default. When true, each request's root
@@ -79,10 +73,10 @@ class Settings(BaseSettings):
         None, description="OpenTelemetry OTLP exporter endpoint"
     )
     # Off by default — only the logging/streaming compose profiles bring Kafka
-    # up. When false, the trace exporter ships spans to stdout only and never
-    # imports kafka-python, avoiding the bootstrap retry storm on services
-    # without a broker. Flip to true in services/inference-service/.env when
-    # running `--profile logging` or `--profile streaming`.
+    # up. When false, traces are not exported (spans never written to stdout).
+    # Never imports kafka-python when false, avoiding the bootstrap retry storm
+    # on services without a broker. Flip to true in services/inference-service/.env
+    # when running `--profile logging` or `--profile streaming`.
     KAFKA_ENABLED: bool = Field(False, description="Ship OTel trace spans to Kafka")
     KAFKA_SERVER: str = Field(
         "localhost:9092", description="Kafka bootstrap servers for trace export"

@@ -27,6 +27,7 @@ import {
 import {
   TENANT,
   TENANT_ADMIN_UPDATABLE_STATUSES,
+  isTenantStatus,
   normalizeTenantStatus,
   resolveTenantUserDisplayStatus,
 } from "../../../config/constants";
@@ -500,12 +501,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     recheckKey: isUserModalOpen ? knownEmailRecheckKey : undefined,
   });
 
+  /** Contact email is editable only while the tenant is PENDING (pending verification). */
+  const isEditTenantEmailEditable = useMemo(
+    () => isTenantStatus(editTenantRow?.status, TENANT.STATUS.PENDING),
+    [editTenantRow?.status],
+  );
+
   const editTenantEmailAvailability = useEmailAvailabilityField({
-    enabled: isEditTenantModalOpen,
+    enabled: isEditTenantModalOpen && isEditTenantEmailEditable,
     email: editTenantForm.email ?? "",
     patchError: patchEditTenantFormError,
     getCheckOptions: getEditTenantEmailCheckOptions,
-    recheckKey: isEditTenantModalOpen ? knownEmailRecheckKey : undefined,
+    recheckKey:
+      isEditTenantModalOpen && isEditTenantEmailEditable
+        ? knownEmailRecheckKey
+        : undefined,
   });
 
   // ----- Create tenant -----
@@ -687,16 +697,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       editTenantForm.contact_name ?? "",
     );
     if (contactError) errors.contact_name = contactError;
-    const emailError = validateTenantContactEmail(
-      editTenantForm.email ?? "",
-      knownTenantEmails,
-      knownUserEmails,
-      {
-        excludeTenantEmail: editTenantRow?.email,
-        excludeUserEmail: editTenantRow?.email,
-      },
-    );
-    if (emailError) errors.email = emailError;
+    if (isEditTenantEmailEditable) {
+      const emailError = validateTenantContactEmail(
+        editTenantForm.email ?? "",
+        knownTenantEmails,
+        knownUserEmails,
+        {
+          excludeTenantEmail: editTenantRow?.email,
+          excludeUserEmail: editTenantRow?.email,
+        },
+      );
+      if (emailError) errors.email = emailError;
+    }
     const phoneError = validateE164Phone(editTenantForm.phone_number ?? "");
     if (phoneError) errors.phone_number = phoneError;
     return errors;
@@ -930,35 +942,47 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   // ----- Edit tenant -----
-  const handleOpenEditTenant = (t: TenantView) => {
-    setEditTenantRow(t);
-    setEditTenantForm({
-      tenant_id: t.tenant_id,
-      organisation: t.organisation,
-      contact_name: t.contact_name,
-      email: t.email,
-      phone_number: t.phone_number ?? "",
-    });
-    setEditTenantFormErrors({});
-    editTenantEmailAvailability.clear();
-    setIsEditTenantModalOpen(true);
-    void refreshKnownAccountEmails();
+  const handleOpenEditTenant = async (t: TenantView) => {
+    try {
+      // Fetch unmasked PII for edit pre-fill only (list/view keep masked GETs).
+      const unmasked = await tenantService.getViewTenant(t.tenant_id, {
+        unmask: true,
+      });
+      setEditTenantRow(unmasked);
+      setEditTenantForm({
+        tenant_id: unmasked.tenant_id,
+        organisation: unmasked.organisation,
+        contact_name: unmasked.contact_name,
+        email: unmasked.email,
+        phone_number: unmasked.phone_number ?? "",
+      });
+      setEditTenantFormErrors({});
+      editTenantEmailAvailability.clear();
+      setIsEditTenantModalOpen(true);
+      void refreshKnownAccountEmails();
+    } catch (err) {
+      console.error("Failed to load tenant for edit:", err);
+      showError(err);
+    }
   };
 
   const handleSaveEditTenant = async () => {
     if (!editTenantForm.tenant_id) return;
     const errors = collectEditTenantErrors();
-    delete errors.email;
-    const emailOk = await editTenantEmailAvailability.verifyNow();
-    if (!emailOk) return;
+    if (isEditTenantEmailEditable) {
+      delete errors.email;
+      const emailOk = await editTenantEmailAvailability.verifyNow();
+      if (!emailOk) return;
+    }
     if (Object.keys(errors).length > 0) {
       setEditTenantFormErrors(errors);
       return;
     }
     setEditTenantFormErrors({});
     const emailChanged =
+      isEditTenantEmailEditable &&
       normalizeEmail(editTenantForm.email ?? "") !==
-      normalizeEmail(editTenantRow?.email ?? "");
+        normalizeEmail(editTenantRow?.email ?? "");
 
     setIsSubmittingEditTenant(true);
     try {
@@ -966,8 +990,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         tenant_id: editTenantForm.tenant_id,
         organisation: editTenantForm.organisation,
         contact_name: editTenantForm.contact_name,
-        email: editTenantForm.email,
         phone_number: editTenantForm.phone_number,
+        ...(isEditTenantEmailEditable
+          ? { email: editTenantForm.email }
+          : {}),
       });
       if (emailChanged) {
         showToast({
@@ -997,19 +1023,23 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const canSubmitEditTenantForm = useMemo(() => {
-    if (isSubmittingEditTenant || isLoadingKnownEmails) return false;
-    if (editTenantEmailAvailability.status === "checking") return false;
-    const email = editTenantForm.email ?? "";
-    if (
-      email.trim() &&
-      !emailAvailabilityConfirmed(email, editTenantEmailAvailability.status)
-    ) {
-      return false;
+    if (isSubmittingEditTenant) return false;
+    if (isEditTenantEmailEditable) {
+      if (isLoadingKnownEmails) return false;
+      if (editTenantEmailAvailability.status === "checking") return false;
+      const email = editTenantForm.email ?? "";
+      if (
+        email.trim() &&
+        !emailAvailabilityConfirmed(email, editTenantEmailAvailability.status)
+      ) {
+        return false;
+      }
     }
     return Object.keys(collectEditTenantErrors()).length === 0;
   }, [
     isSubmittingEditTenant,
     isLoadingKnownEmails,
+    isEditTenantEmailEditable,
     editTenantEmailAvailability.status,
     editTenantForm.organisation,
     editTenantForm.contact_name,
@@ -1052,10 +1082,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       return;
     }
+    const tenantIdNum = Number(t.tenant_id);
+    if (!Number.isFinite(tenantIdNum) || tenantIdNum < 1) {
+      showToast({
+        type: "warning",
+        message: "This tenant has no valid tenant ID to resend the setup link.",
+      });
+      return;
+    }
     setResendVerificationTenantId(t.tenant_id);
     try {
       const res = await authService.resendSetupLink(
-        { email },
+        { email, tenant_id: tenantIdNum },
         { withAuth: true },
       );
       showToast({
@@ -1170,23 +1208,52 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   // ----- Edit tenant user -----
-  const handleOpenEditUser = (u: TenantUserView) => {
-    const normalizedRole = (u.role ?? u.roles?.[0] ?? "").trim().toUpperCase();
-    const role =
-      normalizedRole === "TENANT ADMIN"
-        ? "TENANT ADMIN"
-        : DEFAULT_TENANT_USER_ROLE;
-    setEditUserRow(u);
-    setEditUserForm({
-      tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
-      user_id: u.user_id,
-      username: u.username ?? "",
-      full_name: u.full_name ?? "",
-      phone_number: u.phone_number ?? "",
-      role,
-    });
-    setEditUserFormErrors({});
-    setIsEditUserModalOpen(true);
+  const handleOpenEditUser = async (u: TenantUserView) => {
+    const tenantId = tenantDetailView?.tenant_id ?? user?.tenant_id ?? "";
+    if (!tenantId) {
+      showToast({
+        type: "error",
+        message: "Tenant is required to edit user.",
+      });
+      return;
+    }
+    try {
+      // No single-user GET; list with unmask to pre-fill editable phone.
+      const { users } = await tenantService.listUsers(tenantId, {
+        unmask: true,
+      });
+      const unmasked =
+        users.find((row) => row.user_id === u.user_id) ?? null;
+      if (!unmasked) {
+        showToast({ type: "error", message: "User not found." });
+        return;
+      }
+      const normalizedRole = (
+        unmasked.role ??
+        unmasked.roles?.[0] ??
+        ""
+      )
+        .trim()
+        .toUpperCase();
+      const role =
+        normalizedRole === "TENANT ADMIN"
+          ? "TENANT ADMIN"
+          : DEFAULT_TENANT_USER_ROLE;
+      setEditUserRow(unmasked);
+      setEditUserForm({
+        tenant_id: tenantId,
+        user_id: unmasked.user_id,
+        username: unmasked.username ?? "",
+        full_name: unmasked.full_name ?? "",
+        phone_number: unmasked.phone_number ?? "",
+        role,
+      });
+      setEditUserFormErrors({});
+      setIsEditUserModalOpen(true);
+    } catch (err) {
+      console.error("Failed to load user for edit:", err);
+      showError(err);
+    }
   };
 
   const handleEditUserUsernameChange = (username: string) => {
@@ -1365,6 +1432,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleEditTenantContactNameChange,
     handleEditTenantEmailChange,
     handleEditTenantPhoneChange,
+    isEditTenantEmailEditable,
     editTenantEmailStatus: editTenantEmailAvailability.status,
     canSubmitEditTenantForm,
     closeEditTenantModal,

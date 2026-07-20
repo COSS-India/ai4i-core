@@ -2,7 +2,7 @@
 Business-logic service for the Service domain.
 
 Owns the rules:
-- Service IDs are deterministic SHA256 hashes of the service name only.
+- Service IDs are user-supplied, alphanumeric (/ - _ allowed), and must be globally unique.
 - Service names must be globally unique.
 - A service must reference an existing (model_id, model_version).
 - The endpoint URL is validated (URL format + SSRF + live probe) on
@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -39,7 +40,6 @@ from .serializers import (
     service_to_dict,
 )
 from app.utils.endpoint_validator import ValidationStatus, validate_endpoint
-from app.utils.hashing import generate_service_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,13 @@ class DuplicateServiceNameError(AppError):
     def __init__(self, message: str) -> None:
         super().__init__(
             message=message, code="DUPLICATE_SERVICE_NAME", status_code=409
+        )
+
+
+class DuplicateServiceIdError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message=message, code="DUPLICATE_SERVICE_ID", status_code=409
         )
 
 
@@ -190,8 +197,14 @@ class ServiceService:
                 f"Service with name '{payload.name}' already exists."
             )
 
-        # 4. Persist
-        service_id = generate_service_id(payload.name)
+        # 4. Duplicate service ID check
+        if await self._services.get_by_service_id(payload.serviceId):
+            raise DuplicateServiceIdError(
+                f"Service with ID '{payload.serviceId}' already exists."
+            )
+
+        # 5. Persist
+        service_id = payload.serviceId
         is_published = bool(payload.isPublished)
         now = datetime.now(timezone.utc) if is_published else None
         unit_rate = (
@@ -218,7 +231,7 @@ class ServiceService:
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
             is_published=is_published,
             published_at=now,
-            billing_unit_type=payload.billingUnitType,
+            task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
             unit_rate=unit_rate,
@@ -228,12 +241,25 @@ class ServiceService:
         try:
             await self._services.add(instance)
             await self._services.commit()
+        except IntegrityError as exc:
+            await self._services.rollback()
+            constraint = str(exc.orig)
+            if "uq_mm_services_service_id" in constraint:
+                raise DuplicateServiceIdError(
+                    f"Service with ID '{payload.serviceId}' already exists."
+                )
+            if "uq_mm_services_name" in constraint:
+                raise DuplicateServiceNameError(
+                    f"Service with name '{payload.name}' already exists."
+                )
+            logger.exception("DB integrity error creating service")
+            raise
         except Exception:
             await self._services.rollback()
             logger.exception("DB error creating service")
             raise
 
-        # 5. Warm cache
+        # 6. Warm cache
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
         tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)
@@ -315,8 +341,8 @@ class ServiceService:
             else:
                 update_data["unpublished_at"] = now
 
-        if "billingUnitType" in request_dict:
-            update_data["billing_unit_type"] = request_dict["billingUnitType"]
+        if "taskType" in request_dict:
+            update_data["task_type"] = request_dict["taskType"]
         if "costPerUnit" in request_dict:
             update_data["cost_per_unit"] = request_dict["costPerUnit"]
         if "unitSize" in request_dict:
@@ -343,7 +369,7 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, policy, billingUnitType, "
+                    "benchmarks, isPublished, policy, taskType, "
                     "costPerUnit, unitSize, tierIds. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),

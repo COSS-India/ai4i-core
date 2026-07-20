@@ -221,6 +221,8 @@ export const apiEndpoints = {
     create: `${API_V1}/pay-per-use/tier`,
     update: `${API_V1}/pay-per-use/tier`,
     assignTenant: `${API_V1}/pay-per-use/tenant/tier`,
+    reassignTenant: `${API_V1}/pay-per-use/tenant/tier/reassign`,
+    adjustBudget: `${API_V1}/pay-per-use/tenant/budget`,
   },
 
   usage: {

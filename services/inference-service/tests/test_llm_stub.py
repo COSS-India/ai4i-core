@@ -2,7 +2,7 @@
 
 import pytest
 
-from triton_response_test.stub_dispatcher import get_llm_stub_response
+from response_test.stub_dispatcher import get_llm_stub_response
 
 
 def _prompt_of_length(n: int) -> dict:
@@ -49,16 +49,16 @@ def test_handles_missing_or_nonstring_messages():
 
 
 @pytest.mark.asyncio
-async def test_proxy_short_circuits_without_upstream(monkeypatch):
-    """proxy() returns the stub and never calls forward() (no upstream needed)."""
+async def test_proxy_short_circuits_without_mms_or_upstream(monkeypatch):
+    """proxy() returns the stub and never calls proxy_traced() (no MMS/upstream needed)."""
     from services.llm_service import OpenAIProxyService
 
     service = OpenAIProxyService()
 
     async def _fail(*args, **kwargs):
-        raise AssertionError("forward() must not be called in stub mode")
+        raise AssertionError("proxy_traced() must not be called in stub mode")
 
-    monkeypatch.setattr(service, "forward", _fail)
+    monkeypatch.setattr(service, "proxy_traced", _fail)
 
     status, body = await service.proxy(path="/v1/chat/completions", payload=_prompt_of_length(10))
     assert status == 200

@@ -16,37 +16,57 @@ class UsageSummaryResponse(BaseModel):
     billingPeriod: str
     totalSpend: float
     currency: str
+    activeTenants: int
+    budgetExceededTenants: int
+    spendChangePercent: Optional[float] = None
     spendByModelTaskType: list[SpendItem]
 
 
-class TenantUsageBreakdown(BaseModel):
-    modelTaskType: str
-    consumptionToDate: float
+class TaskTypeUsage(BaseModel):
+    taskType: str
     unit: str
-    spend: float
+    quotaLimit: Optional[float] = None
+    consumed: float
+    remaining: Optional[float] = None
     percentage: float
-    quotaLimit: Optional[float]
-    remainingQuota: Optional[float]
+    spend: float
 
 
-class TenantUsageItem(BaseModel):
+class TierUsageBreakdown(BaseModel):
+    tierId: str
+    tierName: str
+    spend: float
+    taskTypes: list[TaskTypeUsage]
+
+
+class TenantBudget(BaseModel):
+    limit: float
+    spent: float
+    remaining: float
+    percentageUsed: float
+
+
+class TenantUsageCount(BaseModel):
+    taskTypeCount: int
+    unit: Optional[str] = None
+    quotaLimit: Optional[float] = None
+    consumed: Optional[float] = None
+    remaining: Optional[float] = None
+    percentage: Optional[float] = None
+
+
+class TenantHierarchicalItem(BaseModel):
     tenantId: str
     tenantName: str
     tier: str
-    budgetLimit: float
-    spendToDate: float
-    remainingBudget: float
-    quotaLimit: Optional[float]
-    quotaUnit: str
-    consumptionToDate: Optional[float]
-    remainingQuota: Optional[float]
+    tierId: str
     currency: str
+    spend: float
+    budget: TenantBudget
+    usage: TenantUsageCount
+    tierBreakdown: list[TierUsageBreakdown]
 
 
-class TenantUsageListResponse(BaseModel):
-    data: list[TenantUsageItem]
+class TenantHierarchicalListResponse(BaseModel):
+    data: list[TenantHierarchicalItem]
     total: int
-
-
-class TenantUsageDetailResponse(TenantUsageItem):
-    breakdown: list[TenantUsageBreakdown]

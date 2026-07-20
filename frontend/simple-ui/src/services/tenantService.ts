@@ -46,8 +46,12 @@ export async function listTenants(params?: {
   return { count: tenants.length, tenants };
 }
 
-export async function getViewTenant(tenant_id: string): Promise<TenantView> {
+export async function getViewTenant(
+  tenant_id: string,
+  opts?: { unmask?: boolean }
+): Promise<TenantView> {
   const response = await apiService.get(`${BASE}/${tenant_id}`, {
+    params: opts?.unmask ? { unmask: true } : undefined,
     suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });
@@ -107,8 +111,12 @@ export async function resendTenantVerificationEmail(
   return { message: data?.message ?? "Verification email sent." };
 }
 
-export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
+export async function listUsers(
+  tenant_id: string,
+  opts?: { unmask?: boolean }
+): Promise<ListUsersResponse> {
   const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
+    params: opts?.unmask ? { unmask: true } : undefined,
     suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
   });

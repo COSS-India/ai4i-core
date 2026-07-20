@@ -8,12 +8,13 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { RepeatIcon } from "@chakra-ui/icons";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   METERING,
   type MeteringSubTab,
 } from "../../config/meteringConstants";
 import type { MeteringTopN, MeteringWindow } from "../../types/metering";
+import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
 import SegmentedTabBar from "./SegmentedTabBar";
 
 interface MeteringControlsProps {
@@ -26,7 +27,8 @@ interface MeteringControlsProps {
   tenantOptions?: { id: string; label: string }[];
   selectedTenantId?: string;
   onTenantChange?: (id: string) => void;
-  lastRefreshed?: string;
+  /** ISO timestamp from the latest metering response; displayed as a live relative age. */
+  lastGeneratedAt?: string;
   onRefresh?: () => void;
   isRefreshing?: boolean;
   subTab?: MeteringSubTab;
@@ -45,7 +47,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   tenantOptions = [],
   selectedTenantId = "",
   onTenantChange,
-  lastRefreshed,
+  lastGeneratedAt,
   onRefresh,
   isRefreshing,
   subTab,
@@ -54,6 +56,17 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   subTabs = METERING.SUB_TABS,
 }) => {
   const isUsageSpend = subTab === METERING.SUB_TAB.USAGE_SPEND;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!lastGeneratedAt) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [lastGeneratedAt]);
+
+  const lastRefreshed = lastGeneratedAt
+    ? formatMeteringRefreshTime(lastGeneratedAt, nowMs)
+    : null;
 
   return (
   <VStack align="stretch" spacing={3}>
@@ -120,8 +133,8 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
 
       <VStack align="flex-end" spacing={1}>
         {lastRefreshed ? (
-          <HStack spacing={1}>
-            <Box w={2} h={2} borderRadius="full" bg="green.400" />
+          <HStack spacing={1.5} align="center">
+            <Box w={2} h={2} borderRadius="full" bg="green.400" flexShrink={0} />
             <Text fontSize="xs" color="gray.500" fontStyle="italic">
               {METERING.CONTROLS.LAST_REFRESHED_PREFIX} {lastRefreshed}
             </Text>

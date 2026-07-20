@@ -8,6 +8,7 @@ import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
+import SegmentedTabBar from "./SegmentedTabBar";
 import TenantServiceHeatmapSection from "./TenantServiceHeatmapSection";
 
 interface TenantConsumptionTabProps {
@@ -52,6 +53,13 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
             title={section.TITLE}
             subtitle={`${section.SUBTITLE_PREFIX} ${windowLabel}`}
             sectionLabel
+            action={
+              <SegmentedTabBar
+                options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
+                activeId={String(topN)}
+                onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
+              />
+            }
           >
             <MeteringDataTable>
               <Thead bg="gray.50">
@@ -130,7 +138,6 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
           <TenantServiceHeatmapSection
             rows={data.usage_by_service}
             topN={topN}
-            onTopNChange={onTopNChange}
             onServicesFilterChange={onHeatmapServicesChange}
             windowLabel={windowLabel}
             tenantOrganisationById={tenantOrganisationById}

@@ -57,8 +57,6 @@ function shouldSkipDuplicateToast(key: string): boolean {
 function showGlobalToast(options: UseToastOptions): void {
   if (typeof window === "undefined") return;
   const merged = { ...DEFAULT_OPTIONS, ...options };
-  const dedupeKey = getToastDedupeKey(merged);
-  if (shouldSkipDuplicateToast(dedupeKey)) return;
 
   if (globalToast) {
     globalToast(merged);

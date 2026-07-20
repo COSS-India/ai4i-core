@@ -3,13 +3,14 @@ import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
-import { cacheCreatedApiKeyHex } from "../../../utils/apiKeyUtils";
 
 export interface UseCreateApiKeyTabOptions {
   onApiKeyCreated?: () => void;
 }
 
-export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOptions) {
+export function useCreateApiKeyTab({
+  onApiKeyCreated,
+}: UseCreateApiKeyTabOptions) {
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
   const [apiKeyForm, setApiKeyForm] = useState<{
@@ -21,7 +22,9 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
   });
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
-  const [createdApiKeyToken, setCreatedApiKeyToken] = useState<string | null>(null);
+  const [createdApiKeyToken, setCreatedApiKeyToken] = useState<string | null>(
+    null,
+  );
 
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
@@ -46,7 +49,10 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
       return;
     }
     if (selectedPermissions.length === 0) {
-      showToast({ type: "error", message: "Please select at least one permission" });
+      showToast({
+        type: "error",
+        message: "Please select at least one permission",
+      });
       return;
     }
     if (
@@ -62,22 +68,14 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
     }
     setIsCreating(true);
     try {
-      const permissionIds = selectedPermissions
-        .map((name) => permissions.find((p) => p.name === name)?.id)
-        .filter((id): id is number => id != null);
       const createdKey = await authService.createApiKey({
         key_name: apiKeyForm.key_name.trim(),
-        permissions: permissionIds,
+        permissions: selectedPermissions,
         expires_days: Number(apiKeyForm.expires_days) || 30,
       });
       onApiKeyCreated?.();
       if (createdKey.api_key) {
         setCreatedApiKeyToken(createdKey.api_key);
-        cacheCreatedApiKeyHex(
-          createdKey.key_name,
-          createdKey.api_key,
-          createdKey.id ?? createdKey.key_id,
-        );
       }
       showToast({
         type: "success",

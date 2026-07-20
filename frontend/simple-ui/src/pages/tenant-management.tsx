@@ -61,7 +61,7 @@ const TenantManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="7xl" mx="auto" py={8} px={4}>
+        <Box maxW="full" mx="auto" py={8} px={4}>
           <ManagementPageHeader
             title="Tenant Management"
             description="Manage tenants and tenant users"

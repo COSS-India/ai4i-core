@@ -1,210 +1,62 @@
-import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Optional
 
 import httpx
-from confluent_kafka.cimpl import Message
-
 from ai4i_core.bootstrap import get_redis_client
 from ai4i_core.logging import get_logger
-from config import settings
-from consumers.registry import kafka_listener
-from db_registry import db_registry
+from confluent_kafka.cimpl import Message
 
+from config import settings
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
     deduct_balance,
     get_service_pricing,
     update_quota_usage,
+    _get_billing_data,
+    _get_billed_key, _update_billing_on_cache,
 )
+from consumers.registry import kafka_listener
+from db_registry import db_registry
 
 logger = get_logger(__name__)
 
-_BILLED_KEY_PREFIX = "ppu:billed:"
-_BILLED_KEY_TTL = 86400  # 24 hours — longer than any realistic Kafka redelivery window
 
-
-@kafka_listener(settings.topics.TOPIC_PAY_PER_USE)
-async def handle_ppu_usage(msg: Message) -> None:
-    payload_bytes = msg.value()
-    logger.info(
-        "Message received | topic=%s partition=%d offset=%d size=%d bytes",
-        msg.topic(),
-        msg.partition(),
-        msg.offset(),
-        len(payload_bytes) if payload_bytes else 0,
-    )
-
-    if not payload_bytes:
-        logger.warning("Empty message payload — skipping offset=%d", msg.offset())
-        return
-
-    try:
-        data = json.loads(payload_bytes)
-    except json.JSONDecodeError as exc:
-        logger.error("Failed to parse Kafka message as JSON: %s", exc)
-        return
-
-    # Only process ai-inference spans — the model and request spans are noise for billing.
-    span_name = data.get("name", "")
-    if span_name != "ai-inference":
-        logger.debug("Skipping non-billing span | span_name=%r offset=%d", span_name, msg.offset())
-        return
-
-    span_id: str = (data.get("context") or {}).get("span_id", "").strip()
-
-    # Deduplicate using correlation_id — the application-level request identifier
-    # injected by RequestMiddleware and stored as a span attribute.  It is unique
-    # per request and stable across Kafka redeliveries, so it makes a reliable
-    # dedup key.  We deliberately avoid span_id: OTel may emit 0x000…0 for spans
-    # with an invalid OTel context, and every span sharing that value would map to
-    # the same Redis key — poisoning the dedup set after the first hit.
-    attrs = data.get("attributes") or {}
-    correlation_id: str = str(attrs.get("correlation_id") or "").strip()
-    billed_key: str = f"{_BILLED_KEY_PREFIX}{correlation_id}" if correlation_id else ""
-
-    if billed_key:
-        try:
-            redis = get_redis_client()
-            already_billed = await redis.exists(billed_key)
-            if already_billed:
-                logger.warning(
-                    "Duplicate span detected — skipping billing offset=%d"
-                    " correlation_id=%s span_id=%s",
-                    msg.offset(), correlation_id, span_id,
-                )
-                return
-        except Exception as exc:
-            # Redis unavailable: log and continue — billing correctness relies on
-            # at-most-one consumer instance when Redis is down.
-            logger.warning("Redis dedup check failed — proceeding without dedup: %s", exc)
-            billed_key = ""  # don't attempt the post-commit SET either
-
-    # Skip billing for JWT / non-API-key requests. authType is set by RequestMiddleware
-    # from the X-Auth-Type header injected by APISIX after token validation.
-    # Only "api_key" requests are subject to PPU billing. If authType is absent
-    # (older spans without this attribute), billing proceeds as before.
-    auth_type: str = str(attrs.get("authType") or "").strip()
-    if auth_type and auth_type != "api_key":
-        logger.info(
-            "Skipping billing for non-API-key request | auth_type=%r offset=%d span_id=%s",
-            auth_type, msg.offset(), span_id,
-        )
-        return
-
-    # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
+def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
-    input_tokens: int = int(attrs.get("input_tokens") or 0)
-    output_tokens: int = int(attrs.get("output_tokens") or 0)
-    total_tokens: int = input_tokens + output_tokens
-    end_time_ns = data.get("end_time")
+    input_tokens: float = float(attrs.get("input_tokens") or 0)
+    output_tokens: float = float(attrs.get("output_tokens") or 0)
+    correlation_id: str = str(attrs.get("correlation_id") or "").strip()
 
-    logger.info(
-        "Billing fields extracted | offset=%d tenant_id=%r service_id=%r"
-        " input_tokens=%d output_tokens=%d total_tokens=%d span_id=%s",
-        msg.offset(), tenant_id, service_id, input_tokens, output_tokens, total_tokens, span_id,
-    )
+    return tenant_id, service_id, input_tokens, output_tokens, correlation_id
 
-    if not (tenant_id and service_id and total_tokens):
-        logger.warning(
-            "Missing required billing fields — skipping offset=%d"
-            " (tenant_id=%r service_id=%r total_tokens=%d)",
-            msg.offset(), tenant_id, service_id, total_tokens,
-        )
-        return
 
-    billing_month = (
-        datetime.fromtimestamp(int(end_time_ns) / 1e9, tz=timezone.utc).strftime("%Y-%m")
-        if end_time_ns
-        else datetime.now(timezone.utc).strftime("%Y-%m")
-    )
-    logger.info("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
-
-    async with db_registry.get_session(settings.db_settings.PLATFORM_CORE_DB) as db:
-        pricing: ServicePricing | None = await get_service_pricing(db, service_id)
-        if pricing is None:
+async def _is_already_billed(billed_key: str, correlation_id: str, span_id: str, msg: Message) -> bool | None:
+    if not billed_key:
+        return None
+    try:
+        redis = get_redis_client()
+        already_billed = await redis.exists(billed_key)
+        if already_billed:
             logger.warning(
-                "No pricing found for service_id=%s — skipping billing for tenant=%s",
-                service_id, tenant_id,
+                "Duplicate span detected — skipping billing offset=%d"
+                " correlation_id=%s span_id=%s",
+                msg.offset(), correlation_id, span_id,
             )
-            return
+            return True
+        return False
+    except Exception as exc:
+        # Redis unavailable: log and continue — billing correctness relies on
+        # at-most-one consumer instance when Redis is down.
+        logger.warning("Redis dedup check failed — proceeding without dedup: %s", exc)
+        return None
 
-        logger.info(
-            "Pricing resolved | service_id=%s billing_unit_type=%r"
-            " unit_rate=%s cost_per_unit=%s unit_size=%s",
-            service_id, pricing.billing_unit_type,
-            pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
-        )
 
-        cost = calculate_cost(total_tokens, pricing)
-        if cost == 0:
-            logger.warning(
-                "Zero cost for service_id=%s — skipping billing for tenant=%s"
-                " (unit_rate=%s cost_per_unit=%s unit_size=%s)",
-                service_id, tenant_id,
-                pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
-            )
-            return
-
-        logger.info("Cost calculated | tenant=%s cost=%s tokens=%d", tenant_id, cost, total_tokens)
-
-        wallet = await deduct_balance(db, tenant_id, cost)
-
-        if wallet.tier_id is None:
-            # deduct_balance already logged the warning; no active assignment means
-            # nothing was written — skip commit and Redis mark.
-            return
-
-        logger.info(
-            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
-        )
-
-        quota_exhausted = False
-        if wallet.tier_id and pricing.billing_unit_type:
-            quota_exhausted = await update_quota_usage(
-                db,
-                tenant_id=tenant_id,
-                inference_name=pricing.billing_unit_type,
-                billing_month=billing_month,
-                tier_id=wallet.tier_id,
-                units=total_tokens,
-            )
-            logger.info(
-                "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
-                " units=%d quota_exhausted=%s",
-                tenant_id, pricing.billing_unit_type, billing_month, total_tokens, quota_exhausted,
-            )
-        else:
-            logger.info(
-                "Quota update skipped | tenant=%s tier_id=%s billing_unit_type=%r",
-                tenant_id, wallet.tier_id, pricing.billing_unit_type,
-            )
-
-        # Commit DB changes before any HTTP calls to avoid holding row locks
-        # across slow or failing auth-service requests.
-        await db.commit()
-        logger.info("DB commit successful | tenant=%s offset=%d", tenant_id, msg.offset())
-
-    # Mark span as billed in Redis after DB commit so a crash before this point
-    # causes a retry (over-billing risk) rather than silent data loss.
-    if billed_key:
-        try:
-            redis = get_redis_client()
-            await redis.set(billed_key, "1", ex=_BILLED_KEY_TTL)
-        except Exception as exc:
-            logger.warning(
-                "Failed to set Redis dedup key for correlation_id=%s: %s",
-                correlation_id, exc,
-            )
-
-    logger.info(
-        "Billing applied | tenant=%s service=%s tokens=%d cost=%s exhausted=%s",
-        tenant_id, service_id, total_tokens, cost, wallet.exhausted,
-    )
-
-    if wallet.exhausted:
+async def _post_billing(wallet_exhausted: bool, quota_exhausted: bool, tenant_id, billing_unit_type: str):
+    if wallet_exhausted:
         await _notify_auth(
             f"/internal/ppu/tenant/{tenant_id}/budget-exhausted",
             {"exhausted": True},
@@ -213,8 +65,236 @@ async def handle_ppu_usage(msg: Message) -> None:
     if quota_exhausted:
         await _notify_auth(
             f"/internal/ppu/tenant/{tenant_id}/quota-exhausted",
-            {"inference_name": pricing.billing_unit_type},
+            {"inference_name": billing_unit_type},
         )
+
+
+@dataclass
+class BillingContext:
+    tenant_id: str
+    service_id: str
+    input_tokens: float
+    total_tokens: float
+    correlation_id: str
+    span_id: str
+    billed_key: str
+    is_already_billed: bool
+    billing_month: str
+    offset: int
+
+
+@dataclass
+class BillingOutcome:
+    pricing: ServicePricing
+    billed_units: Decimal
+    cost: Decimal
+    wallet_exhausted: bool
+    quota_exhausted: bool
+
+
+def _resolve_billing_month(end_time_ns) -> str:
+    if end_time_ns:
+        return datetime.fromtimestamp(int(end_time_ns) / 1e9, tz=timezone.utc).strftime("%Y-%m")
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
+    data: dict | None = _get_billing_data(msg)
+    if not data:
+        return None
+
+    span_id: str = (data.get("context", {})).get("span_id", "").strip()
+
+    # Deduplicate on correlation_id + span_id, not correlation_id alone.
+    # correlation_id is the application-level request identifier injected by
+    # RequestMiddleware — stable across Kafka redeliveries of the *same* span,
+    # which is what makes it useful for dedup. But a single request can emit
+    # multiple ai-inference spans sharing one correlation_id (e.g. TTS chunks
+    # text >400 chars into several per_item Triton calls, each its own span —
+    # see tts_service.py). Keying on correlation_id alone would make every
+    # chunk after the first look like a duplicate of it and get skipped,
+    # silently under-billing the request. span_id disambiguates chunks while
+    # correlation_id still catches true redeliveries of the same span. The
+    # exporter (trace/setup.py) already drops spans with span_id==0, so every
+    # span_id reaching this consumer is valid and unique.
+    attrs = data.get("attributes", {})
+    # tenantId is camelCase in OTel attributes (set by ai4i_core.context middleware).
+    tenant_id, service_id, input_tokens, output_tokens, correlation_id = _get_otel_attributes(attrs)
+    billed_key: str = _get_billed_key(correlation_id, span_id)
+
+    is_already_billed = await _is_already_billed(billed_key, correlation_id, span_id, msg)
+    if is_already_billed or is_already_billed is None:
+        return None
+
+    # Skip billing for JWT / non-API-key requests. authType is set by RequestMiddleware
+    # from the X-Auth-Type header injected by APISIX after token validation.
+    # Only "api_key" requests are subject to PPU billing. If authType is absent
+    # (older spans without this attribute), billing proceeds as before.
+    auth_type: str = str(attrs.get("authType", "")).strip()
+    if auth_type and auth_type != "api_key":
+        logger.info(
+            "Skipping billing for non-API-key request | auth_type=%r offset=%d span_id=%s",
+            auth_type, msg.offset(), span_id,
+        )
+        return None
+
+    total_tokens: float = input_tokens + output_tokens
+
+    logger.info(
+        "Billing fields extracted | offset=%d tenant_id=%r service_id=%r"
+        " input_tokens=%s output_tokens=%s total_tokens=%s span_id=%s",
+        msg.offset(), tenant_id, service_id, input_tokens, output_tokens, total_tokens, span_id,
+    )
+
+    if not (tenant_id and service_id and total_tokens):
+        logger.warning(
+            "Missing required billing fields — skipping offset=%d"
+            " (tenant_id=%r service_id=%r total_tokens=%s)",
+            msg.offset(), tenant_id, service_id, total_tokens,
+        )
+        return None
+
+    billing_month = _resolve_billing_month(data.get("end_time"))
+    logger.info("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
+
+    return BillingContext(
+        tenant_id=tenant_id,
+        service_id=service_id,
+        input_tokens=input_tokens,
+        total_tokens=total_tokens,
+        correlation_id=correlation_id,
+        span_id=span_id,
+        billed_key=billed_key,
+        is_already_billed=is_already_billed,
+        billing_month=billing_month,
+        offset=msg.offset(),
+    )
+
+
+async def _check_quota(db, ctx: BillingContext, tier_id: str, pricing: ServicePricing, billed_units: Decimal, cost: Decimal) -> bool:
+    if not pricing.task_type:
+        logger.info(
+            "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
+            ctx.tenant_id, tier_id, pricing.task_type,
+        )
+        return False
+
+    usage = await update_quota_usage(
+        db,
+        tenant_id=ctx.tenant_id,
+        inference_name=pricing.task_type,
+        billing_month=ctx.billing_month,
+        tier_id=tier_id,
+        units=billed_units,
+        cost=cost,
+    )
+    if usage.recorded:
+        logger.info(
+            "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
+            " units=%s quota_exhausted=%s",
+            ctx.tenant_id, pricing.task_type, ctx.billing_month, billed_units, usage.exhausted,
+        )
+    else:
+        logger.info(
+            "Quota check: tasktype not mapped to tier | tenant=%s tier_id=%s"
+            " inference=%s quota_exhausted=%s",
+            ctx.tenant_id, tier_id, pricing.task_type, usage.exhausted,
+        )
+    return usage.exhausted
+
+
+async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
+    pricing: ServicePricing | None = await get_service_pricing(db, ctx.service_id)
+    if pricing is None:
+        logger.warning(
+            "No pricing found for service_id=%s — skipping billing for tenant=%s",
+            ctx.service_id, ctx.tenant_id,
+        )
+        return None
+
+    logger.info(
+        "Pricing resolved | service_id=%s task_type=%r"
+        " unit_rate=%s cost_per_unit=%s unit_size=%s",
+        ctx.service_id, pricing.task_type,
+        pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+    )
+
+    # Only llm bills on input+output (real prompt/completion tokens from the
+    # model's own API response). Every other inference type is input-only —
+    # output_tokens is still recorded on the span for trace/observability
+    # purposes, but must not count toward cost or quota here. task_type is
+    # sourced from mm_services (via get_service_pricing), so it must be
+    # configured correctly on the service for billing to be accurate.
+    billed_units = Decimal(str(ctx.total_tokens if pricing.task_type.lower() == "llm" else ctx.input_tokens))
+
+    cost = calculate_cost(billed_units, pricing)
+    if cost == 0:
+        logger.warning(
+            "Zero cost for service_id=%s — skipping billing for tenant=%s"
+            " (unit_rate=%s cost_per_unit=%s unit_size=%s)",
+            ctx.service_id, ctx.tenant_id,
+            pricing.unit_rate, pricing.cost_per_unit, pricing.unit_size,
+        )
+        return None
+
+    logger.info("Cost calculated | tenant=%s cost=%s billed_units=%s", ctx.tenant_id, cost, billed_units)
+
+    wallet = await deduct_balance(db, ctx.tenant_id, cost)
+
+    if wallet.tier_id is None:
+        # deduct_balance already logged the warning; no active assignment means
+        # nothing was written to the wallet, and there's no tier to bill quota
+        # usage against. The tenant can't be served this tasktype right now —
+        # mark it exhausted so quota_guard blocks further requests, the same
+        # signal used for any other quota-exhausted case.
+        quota_exhausted = True
+        wallet_exhausted = False
+    else:
+        logger.info(
+            "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
+            ctx.tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
+        )
+        wallet_exhausted = wallet.exhausted
+        quota_exhausted = await _check_quota(db, ctx, wallet.tier_id, pricing, billed_units, cost)
+
+    # Commit DB changes before any HTTP calls to avoid holding row locks
+    # across slow or failing auth-service requests. A no-op (no rows touched)
+    # when wallet.tier_id was None above.
+    await db.commit()
+    logger.info("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
+
+    return BillingOutcome(
+        pricing=pricing,
+        billed_units=billed_units,
+        cost=cost,
+        wallet_exhausted=wallet_exhausted,
+        quota_exhausted=quota_exhausted,
+    )
+
+
+@kafka_listener(settings.topics.TOPIC_PAY_PER_USE)
+async def handle_ppu_usage(msg: Message) -> None:
+    ctx = await _prepare_billing_context(msg)
+    if ctx is None:
+        return
+
+    async with db_registry.get_session(settings.db_settings.PLATFORM_CORE_DB) as db:
+        outcome = await _bill_usage(db, ctx)
+
+    if outcome is None:
+        return
+
+    # Mark span as billed in Redis after DB commit so a crash before this point
+    # causes a retry (over-billing risk) rather than silent data loss. Marked
+    # unconditionally (including the no-tier case in _bill_usage) so a Kafka
+    # redelivery of the same span doesn't re-fire the auth-service notification.
+    await _update_billing_on_cache(ctx.is_already_billed, ctx.billed_key, ctx.correlation_id)
+
+    logger.info(
+        "Billing applied | tenant=%s service=%s billed_units=%s cost=%s exhausted=%s",
+        ctx.tenant_id, ctx.service_id, outcome.billed_units, outcome.cost, outcome.wallet_exhausted,
+    )
+    await _post_billing(outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, outcome.pricing.task_type)
 
 
 async def _notify_auth(path: str, body: dict) -> None:

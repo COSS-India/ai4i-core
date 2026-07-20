@@ -48,7 +48,13 @@ _conftest_stub("app.schemas.base", BaseSchema=_BaseSchema)
 
 # Stub ai4i_core so services that re-export shared exceptions can be imported
 # without installing the full ai4i-core package.
-class _AppError(Exception): pass
+class _AppError(Exception):
+    def __init__(self, message: str = "", code: str = "APP_ERROR", status_code: int = 400, **_):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.status_code = status_code
+
 class _EntityNotFoundError(_AppError): pass
 class _DuplicateEntityError(_AppError): pass
 class _ValidationError(_AppError): pass

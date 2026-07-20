@@ -61,13 +61,7 @@ async def register_database(
 
 
 async def init_databases(db_cfg: DatabaseSettings) -> None:
-    """Register the two service databases from settings. Called once at startup."""
-    await register_database(
-        name=db_cfg.INFERENCE_DB,
-        db_url=db_cfg.get_database_url(db_cfg.INFERENCE_DB),
-        pool_size=db_cfg.DB_POOL_SIZE,
-        max_overflow=db_cfg.DB_MAX_OVERFLOW,
-    )
+    """Register the service database from settings. Called once at startup."""
     await register_database(
         name=db_cfg.PLATFORM_CORE_DB,
         db_url=db_cfg.get_database_url(db_cfg.PLATFORM_CORE_DB),

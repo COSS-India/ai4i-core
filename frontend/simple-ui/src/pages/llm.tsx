@@ -1,6 +1,7 @@
 // LLM service testing page — reusable service page architecture
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { FaLanguage } from "react-icons/fa";
 import LLMResults from "../components/llm/LLMResults";
 import {
@@ -12,13 +13,34 @@ import {
 import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useLLM } from "../hooks/useLLM";
-import { DEFAULT_LLM_SERVICES, LLM_CHAT_MODEL } from "../services/llmService";
+import { listLLMServices } from "../services/llmService";
 
 const pageDefaults = getServicePageDefaults("llm");
-const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({ code: l.code, label: l.label }));
+const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
+  code: l.code,
+  label: l.label,
+}));
 
 const LLMPage: React.FC = () => {
-  const [serviceId, setServiceId] = useState<string>(LLM_CHAT_MODEL);
+  const [serviceId, setServiceId] = useState<string>("");
+
+  const {
+    data: services = [],
+    isLoading: isLoadingServices,
+    isError: servicesError,
+  } = useQuery({
+    queryKey: ["llm-services"],
+    queryFn: listLLMServices,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const selectedService = useMemo(
+    () => services.find((s) => s.service_id === serviceId),
+    [services, serviceId]
+  );
+  const modelName = selectedService?.name ?? "";
+  const selectedServiceId = selectedService?.service_id ?? "";
+
   const {
     inputLanguage,
     outputLanguage,
@@ -34,23 +56,19 @@ const LLMPage: React.FC = () => {
     setInputText,
     setInputLanguage,
     setOutputLanguage,
-    setSelectedModelId,
     clearResults,
     swapLanguages,
-  } = useLLM(serviceId);
+  } = useLLM(selectedServiceId, modelName);
 
   const llmServiceOptions = useMemo(
-    () => mapToServiceOptions(DEFAULT_LLM_SERVICES),
-    []
+    () => mapToServiceOptions(services),
+    [services]
   );
-
-  useEffect(() => {
-    setSelectedModelId(LLM_CHAT_MODEL);
-  }, [setSelectedModelId]);
 
   const MAX_LLM_INPUT_LENGTH = pageDefaults.maxTextLength ?? 512;
   const canTranslate =
     !!serviceId?.trim() &&
+    !!modelName?.trim() &&
     !!inputLanguage?.trim() &&
     !!outputLanguage?.trim() &&
     inputLanguage !== outputLanguage &&
@@ -67,12 +85,13 @@ const LLMPage: React.FC = () => {
           serviceDropdown={{
             label: "LLM Service",
             value: serviceId,
-            onChange: (id) => {
-              setServiceId(id);
-              setSelectedModelId(id);
-            },
+            onChange: setServiceId,
             options: llmServiceOptions,
+            loading: isLoadingServices,
             disabled: fetching,
+            error: servicesError
+              ? "Failed to load services. Please refresh the page."
+              : null,
           }}
           languageConfig={{
             mode: "source-target",

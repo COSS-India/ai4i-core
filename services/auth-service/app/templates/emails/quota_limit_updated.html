@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% block title %}Tier Quota Limit Updated — AI4I Platform{% endblock %}
+{% block preheader %}The monthly quota limit for your tier has been updated and will take effect on the next billing cycle.{% endblock %}
+{% block heading %}Quota limit update scheduled, {{ display_name }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 20px 0;">
+    The monthly quota limit for your tier <strong>{{ tier_name }}</strong> has been updated.
+    The new limit will take effect at the start of the next billing cycle.
+  </p>
+
+  <p style="margin:0 0 16px 0; font-size:14px; color:#6b7280;">
+    If you did not expect this change or have questions, please contact your platform administrator.
+  </p>
+{% endblock %}
+{% block footer_extra %}
+  This notification was sent because you are a tenant administrator on the AI4I Platform.
+{% endblock %}

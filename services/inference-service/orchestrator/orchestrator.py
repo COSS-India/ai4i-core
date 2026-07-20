@@ -77,6 +77,20 @@ class Orchestrator:
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
 
+            # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
+            if request:
+                tier_id = request.headers.get("X-Tier-ID", "")
+                if tier_id:
+                    allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
+                    if tier_id not in allowed_tiers:
+                        service_id = (
+                            (payload.get("config") or {}).get("serviceId")
+                            or payload.get("serviceId", "")
+                        )
+                        raise PermissionError(
+                            f"Service '{service_id}' is not available for your quota"
+                        )
+
             # Instantiate and run the task service with the raw payload
             task_service = self._get_task_service(service_info)
             task_response = await task_service.process(payload, service_info)
@@ -192,4 +206,9 @@ class Orchestrator:
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
             )
+            # resolve_service()'s returned dict never carries the id it was
+            # resolved from — stash it here so run_inference can copy it onto
+            # the ai-inference span (the PPU Kafka consumer bills on service_id
+            # read from that span only, mirroring the LLM proxy's approach).
+            service_info["serviceId"] = serviceId
             return service_info

@@ -18,7 +18,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { ChevronDownIcon } from "@chakra-ui/icons";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
 import { formatTenantLabel } from "../../utils/meteringFormatters";
@@ -33,61 +33,52 @@ import MeteringDataTable from "./MeteringDataTable";
 import { MeteringEmptyState } from "./MeteringChartPanel";
 import MeteringSectionCard from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
-import SegmentedTabBar from "./SegmentedTabBar";
 
 interface TenantServiceHeatmapSectionProps {
   rows: TenantServiceRow[];
   topN: MeteringTopN;
-  onTopNChange: (n: MeteringTopN) => void;
   onServicesFilterChange?: (services: string[] | null) => void;
   windowLabel: string;
   tenantOrganisationById?: Record<string, string>;
 }
 
-const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = ({
+const TenantServiceHeatmapSection: React.FC<
+  TenantServiceHeatmapSectionProps
+> = ({
   rows,
   topN,
-  onTopNChange,
   onServicesFilterChange,
   windowLabel,
   tenantOrganisationById = {},
 }) => {
-  const availableServiceKeys = useMemo(() => {
-    const fromData = new Set<string>();
-    rows.forEach((row) => {
-      Object.keys(row.services).forEach((k) => fromData.add(k));
-    });
-    return METERING.HEATMAP.SERVICES.filter(
-      (s) => fromData.size === 0 || fromData.has(s.key),
-    );
-  }, [rows]);
-
   const heatmap = METERING.HEATMAP;
+  const catalogServices = heatmap.SERVICES;
   const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
 
-  const [selectedServices, setSelectedServices] = useState<Set<string>>(() =>
-    new Set(availableServiceKeys.map((s) => s.key)),
+  const [selectedServices, setSelectedServices] = useState<Set<string>>(
+    () => new Set(catalogServices.map((s) => s.key)),
   );
 
+  const didMountRef = useRef(false);
   useEffect(() => {
-    if (availableServiceKeys.length === 0) return;
-    setSelectedServices((prev) => {
-      if (prev.size > 0) return prev;
-      return new Set(availableServiceKeys.map((s) => s.key));
-    });
-  }, [availableServiceKeys]);
-
-  const notifyServicesFilter = (next: Set<string>) => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
     if (!onServicesFilterChange) return;
-    const allKeys = availableServiceKeys.map((s) => s.key);
+    const allKeys = catalogServices.map((s) => s.key);
     const isAllSelected =
-      allKeys.length > 0 && allKeys.every((key) => next.has(key));
-    onServicesFilterChange(isAllSelected ? null : Array.from(next).sort((a, b) => a.localeCompare(b)));
-  };
+      allKeys.length > 0 && allKeys.every((key) => selectedServices.has(key));
+    onServicesFilterChange(
+      isAllSelected
+        ? null
+        : Array.from(selectedServices).sort((a, b) => a.localeCompare(b)),
+    );
+  }, [selectedServices, onServicesFilterChange, catalogServices]);
 
   const visibleServices = useMemo(
-    () => availableServiceKeys.filter((s) => selectedServices.has(s.key)),
-    [availableServiceKeys, selectedServices],
+    () => catalogServices.filter((s) => selectedServices.has(s.key)),
+    [catalogServices, selectedServices],
   );
 
   const maxCellValue = useMemo(() => {
@@ -114,18 +105,9 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
       } else {
         next.add(key);
       }
-      notifyServicesFilter(next);
       return next;
     });
   };
-
-  const topNControls = (
-    <SegmentedTabBar
-      options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
-      activeId={String(topN)}
-      onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
-    />
-  );
 
   const serviceFilter = (
     <Menu closeOnSelect={false}>
@@ -140,7 +122,7 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
         Select services ({selectedServices.size})
       </MenuButton>
       <MenuList maxH="320px" overflowY="auto" minW="220px">
-        {availableServiceKeys.map((svc) => (
+        {catalogServices.map((svc) => (
           <MenuItem key={svc.key} onClick={() => toggleService(svc.key)}>
             <Checkbox
               isChecked={selectedServices.has(svc.key)}
@@ -163,7 +145,6 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
         sectionLabel
         action={
           <HStack spacing={3} flexWrap="wrap">
-            {topNControls}
             {serviceFilter}
           </HStack>
         }
@@ -180,7 +161,6 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
       sectionLabel
       action={
         <HStack spacing={3} flexWrap="wrap" justify="flex-end">
-          {topNControls}
           {serviceFilter}
         </HStack>
       }
@@ -222,10 +202,22 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
                 </VStack>
               </Th>
             ))}
-            <Th fontSize="xs" textTransform="uppercase" color="gray.500" bg="gray.50" isNumeric minW="100px">
+            <Th
+              fontSize="xs"
+              textTransform="uppercase"
+              color="gray.500"
+              bg="gray.50"
+              isNumeric
+              minW="100px"
+            >
               <VStack spacing={0} align="flex-end">
                 <Text>{heatmap.TABLE_TOTAL}</Text>
-                <Text fontSize="2xs" fontWeight="normal" textTransform="none" color="gray.400">
+                <Text
+                  fontSize="2xs"
+                  fontWeight="normal"
+                  textTransform="none"
+                  color="gray.400"
+                >
                   % of platform
                 </Text>
               </VStack>
@@ -252,14 +244,19 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
                     flexShrink={0}
                   />
                   <MeteringTableText maxW="200px">
-                    {formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById)}
+                    {formatTenantLabel(
+                      row.tenant,
+                      row.organisation,
+                      tenantOrganisationById,
+                    )}
                   </MeteringTableText>
                 </HStack>
               </Td>
               {visibleServices.map((svc) => {
                 const entry = row.services[svc.key];
                 const requests = entry?.requests ?? 0;
-                const intensity = maxCellValue > 0 ? requests / maxCellValue : 0;
+                const intensity =
+                  maxCellValue > 0 ? requests / maxCellValue : 0;
                 return (
                   <Td
                     key={svc.key}
@@ -272,7 +269,8 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
                   >
                     <VStack spacing={0} align="flex-end">
                       <Text>
-                        {entry?.formatted_requests ?? (requests > 0 ? requests.toLocaleString() : "0")}
+                        {entry?.formatted_requests ??
+                          (requests > 0 ? requests.toLocaleString() : "0")}
                       </Text>
                       <Text fontSize="xs" fontWeight="normal" opacity={0.7}>
                         {(entry?.percentage ?? 0).toFixed(1)}%
@@ -283,7 +281,12 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
               })}
               <Td isNumeric bg="white" px={3}>
                 <VStack align="stretch" spacing={1}>
-                  <Text fontSize="sm" fontWeight="bold" color="gray.800" textAlign="right">
+                  <Text
+                    fontSize="sm"
+                    fontWeight="bold"
+                    color="gray.800"
+                    textAlign="right"
+                  >
                     {row.formatted_total}
                   </Text>
                   <Text fontSize="xs" color="gray.500" textAlign="right">
@@ -326,7 +329,15 @@ const TenantServiceHeatmapSection: React.FC<TenantServiceHeatmapSectionProps> = 
             {heatmap.LEGEND_LOW}
           </Text>
           {heatmapLegendColors.map((color) => (
-            <Box key={color} w={4} h={4} borderRadius="sm" bg={color} borderWidth="1px" borderColor="gray.200" />
+            <Box
+              key={color}
+              w={4}
+              h={4}
+              borderRadius="sm"
+              bg={color}
+              borderWidth="1px"
+              borderColor="gray.200"
+            />
           ))}
           <Text fontSize="xs" color="gray.500">
             {heatmap.LEGEND_HIGH}

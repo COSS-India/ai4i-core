@@ -25,4 +25,4 @@ USER appuser
 
 EXPOSE 8081
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "2"]
+ENTRYPOINT ["python", "main.py"]
