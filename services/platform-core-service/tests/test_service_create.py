@@ -16,6 +16,18 @@ import importlib
 # ── Module-level stubs ────────────────────────────────────────────────────────
 
 
+_STUBBED_MODULE_NAMES = (
+    "app.models",
+    "app.models.model_management",
+    "app.models.model_management.service",
+    "app.models.model_management.model",
+    "app.repositories",
+    "app.repositories.model_management",
+    "app.repositories.model_management.model_repository",
+    "app.repositories.model_management.service_repository",
+)
+
+
 def _stub_svc(name: str, **attrs) -> types.ModuleType:
     mod = types.ModuleType(name)
     for k, v in attrs.items():
@@ -23,6 +35,11 @@ def _stub_svc(name: str, **attrs) -> types.ModuleType:
     sys.modules.setdefault(name, mod)
     return mod
 
+
+# Only stand in for modules genuinely absent — never clobber a real module a
+# previously-collected test file already imported (that would corrupt it for
+# every test after this one in the same pytest process).
+_newly_stubbed = [n for n in _STUBBED_MODULE_NAMES if n not in sys.modules]
 
 _stub_svc("app.models")
 _stub_svc("app.models.model_management")
@@ -37,13 +54,24 @@ _stub_svc("app.repositories.model_management.service_repository", ServiceReposit
 
 from pydantic import ValidationError as PydanticValidationError
 
-from app.schemas.model_management.service import ServiceCreateRequest
+from app.core.exceptions import ValidationError
+from app.schemas.model_management.service import (
+    ServiceCreateRequest,
+    ServiceUpdateRequest,
+)
 
 service_service_mod = importlib.import_module(
     "app.services.model-management.service_service"
 )
 ServiceService = service_service_mod.ServiceService
 DuplicateServiceIdError = service_service_mod.DuplicateServiceIdError
+
+# `from X import Y` above already bound the real names into this module's
+# namespace — safe to drop our stand-ins now so a test file collected after
+# this one gets the real app.models.* / app.repositories.* modules instead of
+# these fakes (sys.modules is process-global and outlives this file).
+for _name in _newly_stubbed:
+    sys.modules.pop(_name, None)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,6 +83,9 @@ _VALID_BASE = dict(
     modelId="model-1",
     modelVersion="1.0",
     endpoint="http://localhost:8080",
+    taskType="asr",
+    costPerUnit=0.01,
+    unitSize=1,
     tierIds=["tier-1"],
 )
 
@@ -68,7 +99,7 @@ def _make_svc(existing_service_id: str | None = None) -> ServiceService:
     service_repo.add = AsyncMock()
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
-    service_repo.get_tier_names_by_ids = AsyncMock(return_value={})
+    service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
 
     model_repo = MagicMock()
     model_mock = MagicMock()
@@ -114,6 +145,105 @@ class TestServiceIdValidator:
     def test_rejects_dot(self) -> None:
         with pytest.raises(PydanticValidationError, match="serviceId must contain only"):
             ServiceCreateRequest(serviceId="service.name", **_VALID_BASE)
+
+
+# ── taskType / costPerUnit / unitSize required + validated on create (AI4IDS-2518/2519/2520/2521) ──
+
+
+class TestCreateRequiredFields:
+    def test_missing_task_type_rejected(self) -> None:
+        base = {k: v for k, v in _VALID_BASE.items() if k != "taskType"}
+        with pytest.raises(PydanticValidationError, match="taskType"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_invalid_task_type_enum_rejected(self) -> None:
+        base = {**_VALID_BASE, "taskType": "not-a-real-task-type"}
+        with pytest.raises(PydanticValidationError, match="Invalid task type"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_task_type_is_case_insensitive(self) -> None:
+        base = {**_VALID_BASE, "taskType": "ASR"}
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.taskType == "asr"
+
+    def test_missing_cost_per_unit_rejected(self) -> None:
+        base = {k: v for k, v in _VALID_BASE.items() if k != "costPerUnit"}
+        with pytest.raises(PydanticValidationError, match="costPerUnit"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_negative_cost_per_unit_rejected(self) -> None:
+        base = {**_VALID_BASE, "costPerUnit": -1.0}
+        with pytest.raises(PydanticValidationError):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_zero_cost_per_unit_allowed(self) -> None:
+        base = {**_VALID_BASE, "costPerUnit": 0}
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.costPerUnit == 0
+
+    def test_missing_unit_size_rejected(self) -> None:
+        base = {k: v for k, v in _VALID_BASE.items() if k != "unitSize"}
+        with pytest.raises(PydanticValidationError, match="unitSize"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+
+# ── Same value validators apply on update, but fields stay optional (AI4IDS-2528/2529) ──
+
+
+class TestUpdateValueValidators:
+    def test_invalid_task_type_enum_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError, match="Invalid task type"):
+            ServiceUpdateRequest(serviceId="svc-1", taskType="bogus")
+
+    def test_negative_cost_per_unit_rejected(self) -> None:
+        with pytest.raises(
+            PydanticValidationError, match="greater than or equal to 0"
+        ):
+            ServiceUpdateRequest(serviceId="svc-1", costPerUnit=-5)
+
+    def test_partial_update_without_these_fields_still_valid(self) -> None:
+        """Publish/unpublish-only PATCH calls must not be forced to resend
+        taskType/costPerUnit/unitSize/tierIds (AI4IDS-2527 conflict — held back
+        pending product decision, not fixed by this change)."""
+        req = ServiceUpdateRequest(serviceId="svc-1", isPublished=True)
+        assert req.model_dump(exclude_unset=True) == {
+            "serviceId": "svc-1",
+            "isPublished": True,
+        }
+
+
+# ── tierIds must reference existing tiers (AI4IDS-2523/2530) ────────────────
+
+
+class TestTierIdsExistenceCheck:
+    @pytest.mark.asyncio
+    async def test_create_rejects_nonexistent_tier_id(self) -> None:
+        svc = _make_svc()
+        svc._services.get_tier_names_by_ids = AsyncMock(return_value={})
+
+        async def _noop_validate(**_kwargs):
+            pass
+
+        svc._validate_endpoint_for_model = _noop_validate  # type: ignore[method-assign]
+
+        base = {**_VALID_BASE, "tierIds": ["ghost-tier"]}
+        payload = ServiceCreateRequest(serviceId="svc-1", **base)
+
+        with pytest.raises(ValidationError, match="nonexistent tier"):
+            await svc.create_service(payload, created_by="user-1")
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_nonexistent_tier_id(self) -> None:
+        svc = _make_svc()
+        svc._services.get_tier_names_by_ids = AsyncMock(return_value={})
+        svc._services.get_by_service_id = AsyncMock(return_value=MagicMock(
+            model_id="model-1", model_version="1.0", api_key=None,
+        ))
+
+        payload = ServiceUpdateRequest(serviceId="svc-1", tierIds=["ghost-tier"])
+
+        with pytest.raises(ValidationError, match="nonexistent tier"):
+            await svc.update_service(payload, updated_by="user-1")
 
 
 # ── DuplicateServiceIdError path ─────────────────────────────────────────────

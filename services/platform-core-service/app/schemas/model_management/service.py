@@ -14,6 +14,7 @@ from app.schemas.enums.model_management import (
     PolicyAccuracyEnum,
     PolicyCostEnum,
     PolicyLatencyEnum,
+    resolve_task_type,
 )
 from app.schemas.model_management.model import ModelResponse
 
@@ -57,10 +58,15 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
-    taskType: Optional[str] = None
-    costPerUnit: Optional[float] = None
-    unitSize: Optional[int] = None
+    taskType: str
+    costPerUnit: float = Field(..., ge=0)
+    unitSize: int
     tierIds: List[str] = Field(..., min_length=1)
+
+    @field_validator("taskType")
+    @classmethod
+    def _validate_task_type(cls, v: str) -> str:
+        return resolve_task_type(v)
 
     @field_validator("serviceId")
     @classmethod
@@ -130,9 +136,16 @@ class ServiceUpdateRequest(BaseSchema):
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
     taskType: Optional[str] = None
-    costPerUnit: Optional[float] = None
+    costPerUnit: Optional[float] = Field(None, ge=0)
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
+
+    @field_validator("taskType")
+    @classmethod
+    def _validate_task_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return resolve_task_type(v)
 
     @field_validator("unitSize")
     @classmethod
