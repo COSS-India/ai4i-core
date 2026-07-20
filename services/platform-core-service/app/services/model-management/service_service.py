@@ -203,7 +203,10 @@ class ServiceService:
                 f"Service with ID '{payload.serviceId}' already exists."
             )
 
-        # 5. Persist
+        # 5. Every tierId must reference an existing PPU tier
+        await self._validate_tier_ids_exist(payload.tierIds)
+
+        # 6. Persist
         service_id = payload.serviceId
         is_published = bool(payload.isPublished)
         now = datetime.now(timezone.utc) if is_published else None
@@ -259,7 +262,7 @@ class ServiceService:
             logger.exception("DB error creating service")
             raise
 
-        # 6. Warm cache
+        # 7. Warm cache
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
         tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)
@@ -348,6 +351,7 @@ class ServiceService:
         if "unitSize" in request_dict:
             update_data["unit_size"] = request_dict["unitSize"]
         if "tierIds" in request_dict:
+            await self._validate_tier_ids_exist(request_dict["tierIds"])
             update_data["tier_ids"] = request_dict["tierIds"]
 
         # Recompute unit_rate whenever either factor changes.
@@ -415,6 +419,20 @@ class ServiceService:
         logger.info("Deleted service %s", instance.service_id)
 
     # ── Internals ──
+
+    async def _validate_tier_ids_exist(self, tier_ids: Optional[List[str]]) -> None:
+        """Raise if any of ``tier_ids`` doesn't reference a real PPU tier."""
+        if not tier_ids:
+            return
+        found = await self._services.get_tier_names_by_ids(tier_ids)
+        missing = [tid for tid in tier_ids if tid not in found]
+        if missing:
+            raise ValidationError(
+                message=(
+                    f"tierIds references nonexistent tier(s): {', '.join(missing)}."
+                ),
+                code="TIER_NOT_FOUND",
+            )
 
     async def _validate_endpoint_for_model(
         self,

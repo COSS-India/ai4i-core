@@ -122,6 +122,7 @@ def _make_svc_svc() -> ServiceService:
     service_repo.delete_by_service_id = AsyncMock()
     service_repo.list_services = AsyncMock(return_value=[])
     service_repo.count_services = AsyncMock(return_value=0)
+    service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
 
     model_repo = MagicMock()
     model_repo.get_by_id_version = AsyncMock(return_value=None)
@@ -450,12 +451,17 @@ class TestServiceServiceCreate:
         from app.schemas.model_management.service import ServiceCreateRequest
 
         payload = ServiceCreateRequest(
+            serviceId="svc-1",
             name="my-service",
             serviceDescription="desc",
             hardwareDescription="hw",
             modelId="no-model",
             modelVersion="1.0",
             endpoint="http://localhost:8000",
+            taskType="asr",
+            costPerUnit=0.01,
+            unitSize=1,
+            tierIds=["tier-1"],
         )
         with pytest.raises(VE):
             await svc.create_service(payload, created_by="user-1")
@@ -473,12 +479,17 @@ class TestServiceServiceCreate:
         DupErr = _svc_svc_mod.DuplicateServiceNameError
 
         payload = ServiceCreateRequest(
+            serviceId="svc-1",
             name="dup-service",
             serviceDescription="desc",
             hardwareDescription="hw",
             modelId="abc123",
             modelVersion="1.0",
             endpoint="http://localhost:8000",
+            taskType="asr",
+            costPerUnit=0.01,
+            unitSize=1,
+            tierIds=["tier-1"],
         )
         # Endpoint validation is also triggered; mock it out.
         with pytest.raises(DupErr):
