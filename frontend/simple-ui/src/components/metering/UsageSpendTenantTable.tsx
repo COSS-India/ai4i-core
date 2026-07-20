@@ -30,7 +30,6 @@ interface UsageSpendTenantTableProps {
   filterTaskType: string;
   sortOrder: "asc" | "desc";
   expanded: Set<string>;
-  taskColorByType: Map<string, string>;
   onToggleSort: () => void;
   onToggleExpand: (tenantId: string) => void;
   onTenantClick: (row: TenantUsageItem) => void;
@@ -46,7 +45,6 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
   filterTaskType,
   sortOrder,
   expanded,
-  taskColorByType,
   onToggleSort,
   onToggleExpand,
   onTenantClick,
@@ -76,7 +74,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
             const tiers = row.tierBreakdown ?? [];
             const taskCount = row.usage?.taskTypeCount ?? aggregateTasks(tiers).length;
             const multiTiers = tiers.length > 1;
-            const canExpand = !filterTaskType && (multiTiers || taskCount > 1);
+            const canExpand = !filterTaskType && multiTiers;
             const showBar = taskCount > 0 && (filterTaskType || (!multiTiers && taskCount === 1));
 
             return (
@@ -121,7 +119,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                       <Text fontSize="12px" color="gray.500">Not used this period</Text>
                     ) : showBar ? (
                       <UsageCell {...row.usage} />
-                    ) : (
+                    ) : multiTiers ? (
                       <HStack
                         as="button"
                         spacing={1.5}
@@ -133,25 +131,32 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                           onToggleExpand(row.tenantId);
                         }}
                       >
-                        <Text>
-                          {multiTiers ? `${tiers.length} tiers` : `${taskCount} task types`}
-                        </Text>
+                        <Text>{tiers.length} tiers</Text>
                         <ChevronDownIcon
                           boxSize={3.5}
                           transform={isOpen ? "rotate(180deg)" : undefined}
                           transition="transform 0.15s ease"
                         />
                       </HStack>
+                    ) : (
+                      <HStack
+                        as="button"
+                        spacing={1.5}
+                        color={USAGE_SPEND_ACCENT}
+                        fontSize="13px"
+                        fontWeight="semibold"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onTenantClick(row);
+                        }}
+                      >
+                        <Text>{taskCount} task types</Text>
+                        <ChevronRightIcon boxSize={3.5} />
+                      </HStack>
                     )}
                   </Td>
                 </Tr>
-                {isOpen && canExpand ? (
-                  <UsageSpendExpandRows
-                    row={row}
-                    multiTiers={multiTiers}
-                    taskColorByType={taskColorByType}
-                  />
-                ) : null}
+                {isOpen && canExpand ? <UsageSpendExpandRows row={row} /> : null}
               </React.Fragment>
             );
           })}

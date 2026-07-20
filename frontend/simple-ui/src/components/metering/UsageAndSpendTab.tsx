@@ -251,7 +251,6 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
             filterTaskType={filterTaskType}
             sortOrder={sortOrder}
             expanded={expanded}
-            taskColorByType={data.taskColorByType}
             onToggleSort={() => setSortOrder((o) => (o === "desc" ? "asc" : "desc"))}
             onToggleExpand={toggleExpand}
             onTenantClick={handleTenantClick}
@@ -260,8 +259,8 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
           <Text fontSize="12px" color="gray.500" lineHeight="1.6">
             Spend is a sortable column. Budget shows utilization against the allocated limit. Units
             follow each service&apos;s metering definition. Tier and task type filters apply to the
-            table; expand a tenant to see task-type breakdown, grouped by tier when the tenant
-            changed tiers mid-period.
+            table; when a tenant changed tiers mid-period, expand it to see spend split by tier.
+            Open a tenant for the full task-type breakdown.
           </Text>
 
           <UsageSpendTenantDrawer

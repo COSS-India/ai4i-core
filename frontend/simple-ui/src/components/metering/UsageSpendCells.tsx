@@ -25,6 +25,8 @@ export function RatioBar({
   captionTone?: "over" | "warn" | "muted";
 }) {
   const fillPct = Math.min(Math.max(pct, 0), 100);
+  // Keep a visible sliver for tiny-but-nonzero usage that would otherwise round to a 0px fill.
+  const visualFillPct = fillPct > 0 && fillPct < 2 ? 2 : fillPct;
   const captionColor =
     captionTone === "over" ? USAGE_SPEND_DANGER : captionTone === "warn" ? USAGE_SPEND_WARNING : "gray.500";
 
@@ -39,12 +41,12 @@ export function RatioBar({
       <Box
         h="6px"
         borderRadius="3px"
-        bg="gray.100"
+        bg="gray.200"
         borderWidth="1px"
-        borderColor="gray.200"
+        borderColor="gray.300"
         overflow="hidden"
       >
-        <Box h="100%" w={`${fillPct}%`} bg={spendBarColor(pct)} borderRadius="3px" />
+        <Box h="100%" w={`${visualFillPct}%`} bg={spendBarColor(pct)} borderRadius="3px" />
       </Box>
       <Text
         fontSize="11.5px"

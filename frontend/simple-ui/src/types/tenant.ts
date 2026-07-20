@@ -32,6 +32,9 @@ export interface TenantUserView {
   full_name?: string | null;
   is_active: boolean;
   is_tenant_active?: boolean | null;
+  /** True once the user completed setup (set a password). Distinguishes a
+   * suspended user (is_active=false, activated) from one pending activation. */
+  is_activated?: boolean;
   creation_type?: CreationType | null;
   /** Primary role from list-users API (upcoming: singular `role`). */
   role?: string | null;
