@@ -182,13 +182,13 @@ class PPUUsageRepository:
         and get_tenant_tier_usage_breakdown genuinely single-table reads.
 
         Cached in-process for settings.ppu_tier_cache_ttl_seconds (default
-        3600s / 1 hour, see PPU_TIER_CACHE_TTL_SECONDS): tier_name here is
+        600s / 10 minutes, see PPU_TIER_CACHE_TTL_SECONDS): tier_name here is
         purely a display label (tier enforcement reads elsewhere), so
         cross-request staleness of up to that TTL is acceptable for a full
         reload. tier_service calls update_tier_cache() on create/rename/
-        delete to write the changed entry through immediately, so in
-        practice a name change is visible right away — the TTL only bounds
-        staleness from an out-of-band DB change (e.g. a manual SQL edit).
+        delete to write the changed entry through immediately in the worker
+        that handled the request; other worker processes (this service runs
+        multiple) still pick up the change within the TTL window.
         """
         global _tier_cache, _tier_cache_loaded_at
         now = time.monotonic()
