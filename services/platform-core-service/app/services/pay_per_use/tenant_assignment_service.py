@@ -389,6 +389,20 @@ async def list_tenant_tiers(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid tier_id format — expected a UUID",
             )
+
+        # Distinguish "tier exists, zero current assignments" (200 + []) from
+        # "tier_id doesn't exist at all" (404) — matches GET /tier/{tier_id}.
+        tier_exists = await db.execute(
+            select(PPUTier.id).where(
+                PPUTier.id == tier_uuid, PPUTier.is_active.is_(True)
+            )
+        )
+        if tier_exists.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tier '{tier_id}' not found",
+            )
+
         query = query.where(PPUTenantTierAssignment.tier_id == tier_uuid)
 
     result = await db.execute(query)
