@@ -201,15 +201,54 @@ class TestUpdateValueValidators:
         ):
             ServiceUpdateRequest(serviceId="svc-1", costPerUnit=-5)
 
-    def test_partial_update_without_these_fields_still_valid(self) -> None:
+    def test_publish_only_update_is_exempt(self) -> None:
         """Publish/unpublish-only PATCH calls must not be forced to resend
-        taskType/costPerUnit/unitSize/tierIds (AI4IDS-2527 conflict — held back
-        pending product decision, not fixed by this change)."""
+        taskType/costPerUnit/unitSize/tierIds — that flow sends only
+        {serviceId, isPublished} by design (AI4IDS-2524/2525/2526/2527)."""
         req = ServiceUpdateRequest(serviceId="svc-1", isPublished=True)
         assert req.model_dump(exclude_unset=True) == {
             "serviceId": "svc-1",
             "isPublished": True,
         }
+
+    def test_serviceid_only_noop_still_parses(self) -> None:
+        """No other field touched -> exempt too (service layer separately
+        rejects a true no-op update with its own 'nothing to update' error)."""
+        req = ServiceUpdateRequest(serviceId="svc-1")
+        assert req.model_dump(exclude_unset=True) == {"serviceId": "svc-1"}
+
+
+class TestUpdateRequiresBillingFieldsTogether:
+    """AI4IDS-2524/2525/2526/2527: any substantive edit (anything beyond the
+    publish/unpublish toggle) must resend taskType/costPerUnit/unitSize/tierIds
+    together — but the publish/unpublish toggle itself stays exempt, since
+    forcing them there would break that flow (see PR #1171's revert of the
+    same over-broad requirement on tierIds alone)."""
+
+    def test_editing_endpoint_alone_is_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError, match="must be provided together"):
+            ServiceUpdateRequest(serviceId="svc-1", endpoint="http://x")
+
+    def test_editing_endpoint_with_all_four_fields_succeeds(self) -> None:
+        req = ServiceUpdateRequest(
+            serviceId="svc-1",
+            endpoint="http://x",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+        assert req.endpoint == "http://x"
+
+    def test_editing_endpoint_with_only_some_of_the_four_is_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError, match="costPerUnit, unitSize, tierIds"):
+            ServiceUpdateRequest(serviceId="svc-1", endpoint="http://x", taskType="asr")
+
+    def test_publish_plus_another_field_is_not_exempt(self) -> None:
+        """isPublished alongside any other real edit is NOT the publish-only
+        case — the four fields are still required."""
+        with pytest.raises(PydanticValidationError, match="must be provided together"):
+            ServiceUpdateRequest(serviceId="svc-1", isPublished=True, endpoint="http://x")
 
 
 # ── tierIds must reference existing tiers (AI4IDS-2523/2530) ────────────────
@@ -240,7 +279,13 @@ class TestTierIdsExistenceCheck:
             model_id="model-1", model_version="1.0", api_key=None,
         ))
 
-        payload = ServiceUpdateRequest(serviceId="svc-1", tierIds=["ghost-tier"])
+        payload = ServiceUpdateRequest(
+            serviceId="svc-1",
+            tierIds=["ghost-tier"],
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+        )
 
         with pytest.raises(ValidationError, match="nonexistent tier"):
             await svc.update_service(payload, updated_by="user-1")
