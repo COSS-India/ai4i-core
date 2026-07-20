@@ -7,6 +7,7 @@ class InferenceTypeItem(BaseModel):
     name: str
     endpoint_pattern: str
     unit: str
+    pricing: str
 
 
 class InferenceTypesResponse(BaseModel):
