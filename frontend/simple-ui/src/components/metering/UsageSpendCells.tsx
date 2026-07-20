@@ -104,13 +104,13 @@ export function UsageCell({
   remaining,
   percentage,
   unit,
-}: {
+}: Readonly<{
   consumed: number;
   quotaLimit?: number | null;
   remaining?: number | null;
   percentage?: number | null;
   unit: string;
-}) {
+}>) {
   const limit = quotaLimit ?? 0;
   const used = consumed ?? 0;
   const left = remaining ?? Math.max(0, limit - used);

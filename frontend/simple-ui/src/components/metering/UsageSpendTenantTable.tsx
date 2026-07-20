@@ -38,6 +38,83 @@ interface UsageSpendTenantTableProps {
 
 const th = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
 
+function TenantUsageColumn({
+  row,
+  taskCount,
+  showBar,
+  multiTiers,
+  tiersCount,
+  isOpen,
+  onToggleExpand,
+  onTenantClick,
+}: Readonly<{
+  row: TenantUsageItem;
+  taskCount: number;
+  showBar: boolean;
+  multiTiers: boolean;
+  tiersCount: number;
+  isOpen: boolean;
+  onToggleExpand: (tenantId: string) => void;
+  onTenantClick: (row: TenantUsageItem) => void;
+}>) {
+  if (taskCount === 0) {
+    return <Text fontSize="12px" color="gray.500">Not used this period</Text>;
+  }
+
+  if (showBar) {
+    const consumed = row.usage.consumed ?? 0;
+    return (
+      <UsageCell
+        consumed={consumed}
+        quotaLimit={row.usage.quotaLimit}
+        remaining={row.usage.remaining}
+        percentage={row.usage.percentage}
+        unit={row.usage.unit ?? ""}
+      />
+    );
+  }
+
+  if (multiTiers) {
+    return (
+      <HStack
+        as="button"
+        spacing={1.5}
+        color={USAGE_SPEND_ACCENT}
+        fontSize="13px"
+        fontWeight="semibold"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleExpand(row.tenantId);
+        }}
+      >
+        <Text>{tiersCount} tiers</Text>
+        <ChevronDownIcon
+          boxSize={3.5}
+          transform={isOpen ? "rotate(180deg)" : undefined}
+          transition="transform 0.15s ease"
+        />
+      </HStack>
+    );
+  }
+
+  return (
+    <HStack
+      as="button"
+      spacing={1.5}
+      color={USAGE_SPEND_ACCENT}
+      fontSize="13px"
+      fontWeight="semibold"
+      onClick={(e) => {
+        e.stopPropagation();
+        onTenantClick(row);
+      }}
+    >
+      <Text>{taskCount} task types</Text>
+      <ChevronRightIcon boxSize={3.5} />
+    </HStack>
+  );
+}
+
 const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
   tenants,
   isLoading,
@@ -79,7 +156,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
             const showBar =
               taskCount > 0 &&
               hasPopulatedQuotaUsage(row.usage) &&
-              (filterTaskType || (!multiTiers && taskCount === 1));
+              (Boolean(filterTaskType) || (!multiTiers && taskCount === 1));
 
             return (
               <React.Fragment key={row.tenantId}>
@@ -119,51 +196,16 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                     <BudgetCell {...row.budget} currency={row.currency} />
                   </Td>
                   <Td>
-                    {taskCount === 0 ? (
-                      <Text fontSize="12px" color="gray.500">Not used this period</Text>
-                    ) : showBar ? (
-                      <UsageCell
-                        consumed={row.usage.consumed!}
-                        quotaLimit={row.usage.quotaLimit}
-                        remaining={row.usage.remaining}
-                        percentage={row.usage.percentage}
-                        unit={row.usage.unit ?? ""}
-                      />
-                    ) : multiTiers ? (
-                      <HStack
-                        as="button"
-                        spacing={1.5}
-                        color={USAGE_SPEND_ACCENT}
-                        fontSize="13px"
-                        fontWeight="semibold"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleExpand(row.tenantId);
-                        }}
-                      >
-                        <Text>{tiers.length} tiers</Text>
-                        <ChevronDownIcon
-                          boxSize={3.5}
-                          transform={isOpen ? "rotate(180deg)" : undefined}
-                          transition="transform 0.15s ease"
-                        />
-                      </HStack>
-                    ) : (
-                      <HStack
-                        as="button"
-                        spacing={1.5}
-                        color={USAGE_SPEND_ACCENT}
-                        fontSize="13px"
-                        fontWeight="semibold"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onTenantClick(row);
-                        }}
-                      >
-                        <Text>{taskCount} task types</Text>
-                        <ChevronRightIcon boxSize={3.5} />
-                      </HStack>
-                    )}
+                    <TenantUsageColumn
+                      row={row}
+                      taskCount={taskCount}
+                      showBar={showBar}
+                      multiTiers={multiTiers}
+                      tiersCount={tiers.length}
+                      isOpen={isOpen}
+                      onToggleExpand={onToggleExpand}
+                      onTenantClick={onTenantClick}
+                    />
                   </Td>
                 </Tr>
                 {isOpen && canExpand ? <UsageSpendExpandRows row={row} /> : null}

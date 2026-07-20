@@ -104,7 +104,7 @@ function TenantBudgetCard({
  *   The flat `usage` block is intentionally null in that case (can't sum characters +
  *   images + minutes into one consumed/quotaLimit).
  */
-function TenantQuotaSummary({ detail }: { detail: TenantUsageItem }) {
+function TenantQuotaSummary({ detail }: Readonly<{ detail: TenantUsageItem }>) {
   const tasks = useMemo(
     () => aggregateTasks(detail.tierBreakdown ?? []).sort((a, b) => b.spend - a.spend),
     [detail.tierBreakdown],
@@ -122,17 +122,18 @@ function TenantQuotaSummary({ detail }: { detail: TenantUsageItem }) {
     const u = detail.usage;
     return (
       <UsageCell
-        consumed={u.consumed!}
-        quotaLimit={u.quotaLimit!}
+        consumed={u.consumed ?? 0}
+        quotaLimit={u.quotaLimit}
         remaining={u.remaining}
         percentage={u.percentage}
-        unit={u.unit ?? tasks[0]!.unit}
+        unit={u.unit ?? tasks[0]?.unit ?? ""}
       />
     );
   }
 
   if (!isMultiTaskQuotaTenant(detail.usage) && tasks.length === 1) {
-    const t = tasks[0]!;
+    const t = tasks[0];
+    if (!t) return null;
     return (
       <UsageCell
         consumed={t.consumed}
