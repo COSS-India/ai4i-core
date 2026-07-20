@@ -137,9 +137,22 @@ field on `GenericInferenceRequest`. `GenericInferenceResponse` is the response m
 {
   "output": [ { /* task-specific */ } ],
   "config": { /* optional metadata */ },
-  "smr_response": { /* optional routing info */ }
+  "smr_response": { /* optional routing info */ },
+  "model": {
+    "modelProvider": "IndicTrans",   // mm_models.submitter.name
+    "modelVersion": "1.0",           // mm_models.version
+    "modelId": "ade00312...",        // mm_models.model_id
+    "language": [ { "sourceLanguage": "en", "targetLanguage": "hi" } ]  // mm_models.languages
+  }
 }
 ```
+
+`model` is resolved from `service_info` (populated by `InferenceServerResolver` from mm_models)
+and attached centrally in `BaseTaskService.process()`, so it appears on every response from the
+10 Triton-backed task services. It lets API/portal clients echo `modelProvider`/`modelVersion`
+into the Feedback API without a second lookup. LLM (`/chat/completions`, `/chat` — a raw
+OpenAI-compatible passthrough) and Pipeline (not yet implemented) don't go through this envelope,
+so they never carry this block.
 
 ## Integration
 
