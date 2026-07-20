@@ -57,7 +57,11 @@ class FeedbackSubmission(BaseSchema):
         None, description="Ignored — tenant is derived from X-Tenant-Id server-side."
     )
 
-    languageInfo: Optional[LanguageInfo] = None
+    # A list rather than a single pair: for a bidirectional model (e.g. NMT
+    # en<->hi), clients may want to submit the model's full declared
+    # language capability (mirroring the inference response's model.language
+    # list) rather than only the single pair actually used for this request.
+    languageInfo: Optional[List[LanguageInfo]] = None
 
 
 class FeedbackResponse(BaseSchema):

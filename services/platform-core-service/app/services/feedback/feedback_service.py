@@ -57,7 +57,12 @@ class FeedbackService:
                 "reasons, comments, and correctedOutput are only accepted when rating is NEGATIVE."
             )
 
-        language_info = payload.languageInfo
+        language_info = payload.languageInfo or []
+        # source_language/target_language are flattened single-value columns
+        # for basic filtering — best-effort from the first pair when the
+        # client submits the model's full multi-pair language capability.
+        # The full list is never lost: it's preserved verbatim in language_info.
+        first_pair = language_info[0] if language_info else None
         feedback_source = (
             FeedbackSourceEnum.PORTAL_TRY_IT_NOW if tenant_id is None else FeedbackSourceEnum.API
         )
@@ -74,9 +79,11 @@ class FeedbackService:
             model_version=payload.modelVersion,
             model_id=payload.modelId,
             tenant_id=tenant_id,
-            source_language=language_info.sourceLanguage if language_info else None,
-            target_language=language_info.targetLanguage if language_info else None,
-            language_info=language_info.model_dump(exclude_none=True) if language_info else None,
+            source_language=first_pair.sourceLanguage if first_pair else None,
+            target_language=first_pair.targetLanguage if first_pair else None,
+            language_info=(
+                [li.model_dump(exclude_none=True) for li in language_info] or None
+            ),
             feedback_source=feedback_source.value,
             created_by=created_by,
         )
