@@ -14,11 +14,46 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
+from models.ulca_schemas import (
+    ASRRequestSchema,
+    AudioLangDetectionResponseSchema,
+    AudioLanguageDetectionRequestSchema,
+    NERRequestSchema,
+    NerResponseSchema,
+    NMTRequestSchema,
+    OCRRequestSchema,
+    TextLangDetectionResponseSchema,
+    TextLanguageDetectionRequestSchema,
+    TransliterationRequestSchema,
+    TransliterationResponseSchema,
+    TTSRequestSchema,
+    TTSResponseSchema,
+)
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
+
+
+def _request_body(model_cls, example: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    openapi_extra requestBody block: full ULCA-shaped JSON Schema (types,
+    optional fields, defaults) for Swagger/ReDoc display, plus a concrete
+    example. Documentation only — the route parameter stays Dict[str, Any]
+    and each TaskService still does its own validate_request(); this does
+    not add FastAPI-level request validation.
+    """
+    return {
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "schema": model_cls.model_json_schema(),
+                    "example": example,
+                }
+            }
+        }
+    }
 
 
 _CHAT_EXAMPLE = {
@@ -170,11 +205,19 @@ async def run_inference(
     response_model_exclude={"config"},
     summary="NMT Inference Endpoint",
     description="Route inference requests to NMT TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    openapi_extra=_request_body(NMTRequestSchema, {
         "serviceId": "your-service-id",
-        "input": [{"source": "hello world"}],
-        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
-    }}}}},
+        "input": [{"source": "hello world", "target": "reference translation (optional)"}],
+        "config": {
+            "modelId": 103,
+            "language": {
+                "sourceLanguage": "en", "targetLanguage": "hi",
+                "sourceScriptCode": "Latn", "targetScriptCode": "Deva",
+            },
+            "inputFormat": "raw-text",
+            "outputFormat": "raw-text",
+        },
+    }),
 )
 async def run_nmt_inference(
     request: Request,
@@ -190,11 +233,17 @@ async def run_nmt_inference(
     response_model=None,
     summary="NER Inference Endpoint",
     description="Route inference requests to NER TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    responses={200: {"model": NerResponseSchema}},
+    openapi_extra=_request_body(NERRequestSchema, {
         "serviceId": "your-service-id",
         "input": [{"source": "John lives in New York"}],
-        "config": {"language": {"sourceLanguage": "en"}},
-    }}}}},
+        "config": {
+            "modelId": 103,
+            "language": {"sourceLanguage": "en"},
+            "inputFormat": "raw-text",
+            "outputFormat": "raw-text",
+        },
+    }),
 )
 async def run_ner_inference(
     request: Request,
@@ -214,11 +263,19 @@ async def run_ner_inference(
     response_model_exclude={"config", "smr_response"},
     summary="TRANSLITERATION Inference Endpoint",
     description="Route inference requests to TRANSLITERATION TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    responses={200: {"model": TransliterationResponseSchema}},
+    openapi_extra=_request_body(TransliterationRequestSchema, {
         "serviceId": "your-service-id",
         "input": [{"source": "namaste"}],
-        "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "en"}},
-    }}}}},
+        "config": {
+            "modelId": 103,
+            "numSuggestions": 3,
+            "isSentence": False,
+            "language": {"sourceLanguage": "hi", "targetLanguage": "en"},
+            "inputFormat": "raw-text",
+            "outputFormat": "raw-text",
+        },
+    }),
 )
 async def run_transliteration_inference(
     request: Request,
@@ -237,11 +294,18 @@ async def run_transliteration_inference(
     response_model_exclude={"smr_response"},
     summary="LANGUAGE_DETECTION Inference Endpoint",
     description="Route inference requests to LANGUAGE_DETECTION TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    responses={200: {"model": TextLangDetectionResponseSchema}},
+    openapi_extra=_request_body(TextLanguageDetectionRequestSchema, {
         "serviceId": "your-service-id",
         "input": [{"source": "hello world"}],
-        "config": {"language": {"sourceLanguage": "hi"}},
-    }}}}},
+        "config": {
+            "modelId": 103,
+            "isSentence": False,
+            "numSuggestions": 3,
+            "inputFormat": "raw-text",
+            "outputFormat": "raw-text",
+        },
+    }),
 )
 async def run_language_detection_inference(
     request: Request,
@@ -259,11 +323,25 @@ async def run_language_detection_inference(
     response_model=GenericInferenceResponse,
     summary="ASR Inference Endpoint",
     description="Route inference requests to ASR TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    openapi_extra=_request_body(ASRRequestSchema, {
         "serviceId": "your-service-id",
-        "audio": [{"audioContent": "<base64-encoded-audio>", "audioFormat": "wav"}],
-        "config": {"language": {"sourceLanguage": "en"}},
-    }}}}},
+        "audio": [{"audioContent": "<base64-encoded-audio>"}],
+        "config": {
+            "modelId": "103",
+            "language": {"sourceLanguage": "en"},
+            "audioFormat": "wav",
+            "channel": 1,
+            "samplingRate": 16000,
+            "bitsPerSample": 16,
+            "transcriptionFormat": {"value": "transcript"},
+            "postProcessors": [],
+            "domain": ["general"],
+            "detailed": False,
+            "punctuation": True,
+            "model": "default",
+            "encoding": "LINEAR16",
+        },
+    }),
 )
 async def run_asr_inference(
     request: Request,
@@ -279,16 +357,20 @@ async def run_asr_inference(
     response_model=None,
     summary="TTS Inference Endpoint",
     description="Route inference requests to TTS TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    responses={200: {"model": TTSResponseSchema}},
+    openapi_extra=_request_body(TTSRequestSchema, {
         "serviceId": "your-service-id",
         "input": [{"source": "यह एक परीक्षण है"}],
         "config": {
+            "modelId": "103",
             "language": {"sourceLanguage": "hi"},
             "gender": "female",
             "samplingRate": 22050,
+            "inputFormat": "raw-text",
+            "outputFormat": "wav",
             "audioFormat": "mp3",
         },
-    }}}}},
+    }),
 )
 async def run_tts_inference(
     request: Request,
@@ -304,11 +386,18 @@ async def run_tts_inference(
     response_model=None,
     summary="Audio Language Detection Inference Endpoint",
     description="Route inference requests to Audio Language Detection TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    responses={200: {"model": AudioLangDetectionResponseSchema}},
+    openapi_extra=_request_body(AudioLanguageDetectionRequestSchema, {
         "serviceId": "your-service-id",
-        "audio": [{"audioContent": "<base64-encoded-audio>", "audioFormat": "wav"}],
-        "config": {},
-    }}}}},
+        "audio": [{"audioContent": "<base64-encoded-audio>"}],
+        "config": {
+            "modelId": 103,
+            "isSentence": False,
+            "numSuggestions": 3,
+            "inputFormat": "wav",
+            "outputFormat": "raw-text",
+        },
+    }),
 )
 async def run_audio_lang_detection_inference(
     request: Request,
@@ -376,11 +465,18 @@ async def run_language_diarization_inference(
     response_model=GenericInferenceResponse,
     summary="OCR Inference Endpoint",
     description="Route inference requests to OCR TaskService",
-    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+    openapi_extra=_request_body(OCRRequestSchema, {
         "serviceId": "your-service-id",
-        "image": [{"imageContent": "<base64-encoded-image>", "imageFormat": "png"}],
-        "config": {"language": {"sourceLanguage": "en"}},
-    }}}}},
+        "image": [{"imageContent": "<base64-encoded-image>"}],
+        "config": {
+            "modelId": "103",
+            "detectionLevel": "word",
+            "modality": "print",
+            "language": {"sourceLanguage": "en"},
+            "inputFormat": "png",
+            "outputFormat": "raw-text",
+        },
+    }),
 )
 async def run_ocr_inference(
     request: Request,
