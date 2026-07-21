@@ -665,6 +665,22 @@ async def audio_translations(
 
 
 @router.get(
+    "/test",
+    summary="Load-Test Probe",
+    description=(
+        "Bare, dependency-free endpoint used to measure raw service latency "
+        "under load. app_factory.py bypasses the observability, request-"
+        "context/logging, and CORS middleware for this exact path, so the "
+        "response reflects routing + handler overhead only."
+    ),
+    include_in_schema=False,
+)
+async def test_endpoint() -> Dict[str, str]:
+    """Load-test probe — no orchestrator call, no middleware in the loop."""
+    return {"status": "ok"}
+
+
+@router.get(
     "/inference/health",
     summary="Health Check",
     description="Check if inference service is healthy",
