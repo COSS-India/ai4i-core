@@ -418,6 +418,17 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
             path=path, payload=payload, request=request,
         )
 
+        # Same values llm_service.py already read from the vLLM `usage`
+        # block onto the ai-inference span — mirrored here so
+        # ObservabilityMiddleware reads one shared count instead of
+        # re-parsing this response body itself.
+        if isinstance(body, dict):
+            usage = body.get("usage") or {}
+            request.state.billed_input = usage.get("prompt_tokens", 0)
+            request.state.billed_output = usage.get("completion_tokens", 0)
+            request.state.billed_unit_type = "tokens"
+            request.state.billed_model = body.get("model", "")
+
         if status_code >= 400:
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code

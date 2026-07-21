@@ -95,6 +95,14 @@ class Orchestrator:
             task_service = self._get_task_service(service_info)
             task_response = await task_service.process(payload, service_info)
 
+            # Mirror the count task_service already computed once (billing's
+            # source of truth) onto request.state, so ObservabilityMiddleware
+            # can read it instead of re-deriving its own from the raw body.
+            if request is not None:
+                request.state.billed_input = getattr(task_service, "billed_input", 0)
+                request.state.billed_output = getattr(task_service, "billed_output", 0)
+                request.state.billed_unit_type = getattr(task_service, "billed_unit_type", "unknown")
+
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
 
     def _validate_task_type(self, task_type: str) -> None:

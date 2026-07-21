@@ -309,6 +309,17 @@ class BaseTaskService:
         # guessing modality off response field names — see get_unit_type.
         unit_type = get_unit_type(self.task_name)
 
+        # Billed totals, summed across groups (per_item call_mode makes more
+        # than one). Exposed as instance attrs — not a run_inference return
+        # value — so Orchestrator.route_inference can read them straight off
+        # the task_service instance after process() returns, without
+        # threading `request` down into this method. This is the single
+        # count ObservabilityMiddleware reads via request.state instead of
+        # re-deriving its own from the raw request/response body.
+        self.billed_input = 0
+        self.billed_output = 0
+        self.billed_unit_type = unit_type
+
         response_data = []
         for group in groups:
             triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
@@ -328,6 +339,7 @@ class BaseTaskService:
                 # Must count only this group's items, not the full input_items list —
                 # otherwise per_item call_mode bills the whole request once per item.
                 span_ctx["input"] = count_input_tokens(group, unit_type)
+                self.billed_input += span_ctx["input"]
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
@@ -341,6 +353,7 @@ class BaseTaskService:
                 # Kafka consumer (payperuse_consumer/handler.py) ignores this
                 # field for every inference_name except llm.
                 span_ctx["output"] = count_output_tokens(group_response_data, unit_type)
+                self.billed_output += span_ctx["output"]
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
