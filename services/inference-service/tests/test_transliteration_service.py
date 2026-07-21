@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+pytestmark = pytest.mark.asyncio
+
 
 def _payload(*, src="hi", tgt="en", num_suggestions=0, is_sentence=False, source="namaste"):
     return {
@@ -76,3 +78,57 @@ async def test_validate_injects_top_k_zero_when_no_suggestions(transliteration_s
     payload = _payload(num_suggestions=0, is_sentence=False)
     await transliteration_service.validate_request(payload)
     assert payload["config"]["top_k"] == 0
+
+
+# ── postprocess_output — ULCA SentencesList grouping ─────────────────────────
+
+async def test_groups_suggestion_rows_into_single_item_with_target_array(transliteration_service):
+    from services.base.task_service import PostProcessFormat
+
+    result = PostProcessFormat(
+        payload={"config": {"top_k": 3}},
+        response_data=[{"target": "a"}, {"target": "b"}, {"target": "c"}],
+        source_texts=["namaste"],
+    )
+    response = await transliteration_service.postprocess_output(result)
+    assert response == {"output": [{"source": "namaste", "target": ["a", "b", "c"]}]}
+
+
+async def test_sentence_mode_still_wraps_single_result_in_a_list(transliteration_service):
+    from services.base.task_service import PostProcessFormat
+
+    result = PostProcessFormat(
+        payload={"config": {"top_k": 0}},
+        response_data=[{"target": "translit sentence"}],
+        source_texts=["some sentence"],
+    )
+    response = await transliteration_service.postprocess_output(result)
+    assert response == {"output": [{"source": "some sentence", "target": ["translit sentence"]}]}
+
+
+async def test_multiple_inputs_each_get_their_own_suggestion_bucket(transliteration_service):
+    from services.base.task_service import PostProcessFormat
+
+    result = PostProcessFormat(
+        payload={"config": {"top_k": 2}},
+        response_data=[{"target": "a1"}, {"target": "a2"}, {"target": "b1"}, {"target": "b2"}],
+        source_texts=["wordA", "wordB"],
+    )
+    response = await transliteration_service.postprocess_output(result)
+    assert response == {"output": [
+        {"source": "wordA", "target": ["a1", "a2"]},
+        {"source": "wordB", "target": ["b1", "b2"]},
+    ]}
+
+
+async def test_handles_short_row_count_without_raising(transliteration_service):
+    """Fewer rows than sources*rows_per_item degrades gracefully (no crash)."""
+    from services.base.task_service import PostProcessFormat
+
+    result = PostProcessFormat(
+        payload={"config": {"top_k": 3}},
+        response_data=[{"target": "a"}],
+        source_texts=["namaste"],
+    )
+    response = await transliteration_service.postprocess_output(result)
+    assert response == {"output": [{"source": "namaste", "target": ["a"]}]}

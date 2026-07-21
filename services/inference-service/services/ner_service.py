@@ -44,6 +44,7 @@ class NERTaskService(TextBase):
                     "tokenIndex":       t_idx,
                     "tokenStartIndex":  t["tokenStartIndex"],
                     "tokenEndIndex":    t["tokenEndIndex"],
+                    **({"score": t["score"]} if "score" in t else {}),
                 }
                 for t_idx, t in enumerate(tokens_raw)
             ]
@@ -61,6 +62,16 @@ class NERTaskService(TextBase):
             v = pred.get(k)
             if v is not None and str(v).strip(): return str(v)
         return "O"
+
+    def _score(self, pred):
+        """Raw per-BPE-token confidence (common HF token-classification key),
+        or None if the model doesn't emit one — score stays optional/omitted
+        end-to-end when absent, per the ULCA contract."""
+        v = pred.get("score")
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _build_word_positions(self, source):
         positions, pos = [], 0
@@ -85,7 +96,13 @@ class NERTaskService(TextBase):
             j = i + 1
             while j < len(preds) and self._entity(preds[j]).startswith("##"): j += 1
             full = self._merge_bpe(preds, i, j)
-            groups.append({"tag": self._tag(preds[i]), "entity": full, "first_char": full[0].lower() if full else ""})
+            scores = [s for s in (self._score(p) for p in preds[i:j]) if s is not None]
+            groups.append({
+                "tag": self._tag(preds[i]),
+                "entity": full,
+                "first_char": full[0].lower() if full else "",
+                "score": (sum(scores) / len(scores)) if scores else None,
+            })
             i = j
         return groups
 
@@ -108,9 +125,20 @@ class NERTaskService(TextBase):
         return word_to_pred
 
     def _build_ner_token_predictions(self, word_positions, aligned):
-        return [{"token": wi["word"], "tag": aligned[idx]["tag"] if idx in aligned else "O",
-                 "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
-                for idx, wi in enumerate(word_positions)]
+        tokens = []
+        for idx, wi in enumerate(word_positions):
+            grp = aligned.get(idx)
+            token = {
+                "token": wi["word"],
+                "tag": grp["tag"] if grp else "O",
+                "tokenIndex": idx,
+                "tokenStartIndex": wi["start"],
+                "tokenEndIndex": wi["end"],
+            }
+            if grp and grp.get("score") is not None:
+                token["score"] = grp["score"]
+            tokens.append(token)
+        return tokens
 
 
 __all__ = ["NERTaskService"]

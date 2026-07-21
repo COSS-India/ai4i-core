@@ -45,6 +45,24 @@ def transliteration_service():
 
 
 @pytest.fixture
+def language_detection_service():
+    from services.language_detection_service import LanguageDetectionTaskService
+    return LanguageDetectionTaskService(service_info={
+        "name": "indiclid", "endpoint": "http://triton:8000",
+        "api_key": None, "adapter_config": {},
+    })
+
+
+@pytest.fixture
+def audio_lang_detection_service():
+    from services.audio_lang_detection_service import AudioLanguageDetectionTaskService
+    return AudioLanguageDetectionTaskService(service_info={
+        "name": "ald", "endpoint": "http://triton:8000",
+        "api_key": None, "adapter_config": {},
+    })
+
+
+@pytest.fixture
 def speaker_diarization_service():
     from services.speaker_diarization_service import SpeakerDiarizationTaskService
     return SpeakerDiarizationTaskService(service_info={

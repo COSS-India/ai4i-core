@@ -63,6 +63,21 @@ def test_group_bpe_tokens_separates_independent_tokens(ner_service):
     assert groups[1]["entity"] == "lives"
 
 
+def test_group_bpe_tokens_averages_score_across_merged_bpe_tokens(ner_service):
+    preds = [
+        {"entity": "New", "tag": "LOC", "score": 0.8},
+        {"entity": "##York", "tag": "LOC", "score": 0.6},
+    ]
+    groups = ner_service._group_bpe_tokens(preds)
+    assert groups[0]["score"] == pytest.approx(0.7)
+
+
+def test_group_bpe_tokens_score_is_none_when_model_omits_it(ner_service):
+    preds = [{"entity": "John", "tag": "PERSON"}]
+    groups = ner_service._group_bpe_tokens(preds)
+    assert groups[0]["score"] is None
+
+
 # ── _align_tags_to_words ──────────────────────────────────────────────────────
 
 def test_align_tags_maps_entity_to_overlapping_word(ner_service):
@@ -97,10 +112,20 @@ def test_build_ner_token_predictions_assigns_O_for_unaligned_words(ner_service):
     assert result[0]["tokenStartIndex"] == 0
     assert result[0]["tokenEndIndex"] == 4
     assert result[1]["tag"] == "O"
+    assert "score" not in result[0]
+    assert "score" not in result[1]
+
+
+def test_build_ner_token_predictions_includes_score_when_present(ner_service):
+    word_positions = [{"word": "John", "start": 0, "end": 4}]
+    aligned = {0: {"tag": "PERSON", "score": 0.91}}
+    result = ner_service._build_ner_token_predictions(word_positions, aligned)
+    assert result[0]["score"] == 0.91
 
 
 # ── postprocess_output ────────────────────────────────────────────────────────
 
+@pytest.mark.asyncio
 async def test_postprocess_output_produces_per_token_predictions(ner_service):
     from services.base.task_service import PostProcessFormat
     result = PostProcessFormat(
@@ -128,6 +153,31 @@ async def test_postprocess_output_produces_per_token_predictions(ner_service):
     assert preds[1]["tag"] == "O"
 
 
+@pytest.mark.asyncio
+async def test_postprocess_output_includes_score_when_model_provides_it(ner_service):
+    from services.base.task_service import PostProcessFormat
+    result = PostProcessFormat(
+        payload={"config": {}, "input": [{"source": "John runs"}]},
+        response_data=[{
+            "target": {
+                "output": [{
+                    "source": "John runs",
+                    "nerPrediction": [
+                        {"entity": "John", "tag": "PERSON", "score": 0.95},
+                        {"entity": "runs", "tag": "O"},
+                    ],
+                }]
+            }
+        }],
+        source_texts=["John runs"],
+    )
+    output = await ner_service.postprocess_output(result)
+    preds = output["output"][0]["nerPrediction"]
+    assert preds[0]["score"] == pytest.approx(0.95)
+    assert "score" not in preds[1]
+
+
+@pytest.mark.asyncio
 async def test_postprocess_raises_for_non_json_string_target(ner_service):
     from services.base.task_service import PostProcessFormat
     result = PostProcessFormat(
