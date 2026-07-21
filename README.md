@@ -9,10 +9,42 @@
 
 ---
 
+## Table of contents
+
+1. [What This Repository Provides](#-what-this-repository-provides)
+2. [Who This Project Is For](#-who-this-project-is-for)
+3. [Architecture Overview](#-architecture-overview)
+4. [What's Included](#-whats-included)
+5. [Core Services](#-core-services)
+6. [Frontend](#-frontend)
+7. [Technology Stack](#-technology-stack)
+8. [Deploy Your Own Instance](#-deploy-your-own-instance) — [Prerequisites](#prerequisites) · [Install](#install) · [Configure](#configure) · [Run](#run) · [Service URLs](#service-urls-local) · [Troubleshoot](#troubleshoot)
+9. [Documentation](#-documentation)
+10. [Monitoring & Observability](#-monitoring--observability)
+11. [Contributing](#-contributing)
+12. [Releases](#-releases)
+13. [License](#-license)
+14. [Community & Support](#-community--support)
+
 ## 🎯 What This Repository Provides
 
 An open-source, **FastAPI**-based reference implementation for deploying multi-tenant
 **language-AI services** (translation, speech, OCR, NER, LLM) in your own infrastructure.
+
+## 👥 Who This Project Is For
+
+This project is intended for **platform engineers, DevOps teams, and AI/ML integrators**
+who want to **deploy and operate multilingual language-AI services on their own
+infrastructure** rather than depend on a hosted API.
+
+You will get the most from it if you are comfortable with Docker, Python, and running
+backend services. It suits teams that need multi-tenant access control, a model/service
+registry, and built-in observability out of the box, and that want full control over where
+data and models run (for data-residency, cost, or customization reasons).
+
+It is **not** a hosted service, a managed SaaS, or a set of pre-trained models. You bring
+your own model servers (Triton or OpenAI-compatible backends) and deploy the platform
+yourself.
 
 ## 🏗️ Architecture Overview
 
@@ -126,6 +158,10 @@ PII inference requests fail loudly instead of falling through.
 
 ## 🚀 Deploy Your Own Instance
 
+Get started by installing the prerequisites, then follow **Install → Configure → Run**. For
+the full walkthrough (per-service `.env` files, seed data, model endpoints), see
+**[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)**.
+
 ### Prerequisites
 Docker runs the **infrastructure only**; the application services run **natively** on the host.
 - **Docker 20.10+ / Docker Compose 2.0+** — for infrastructure (PostgreSQL, Redis, Kafka, OpenSearch, Prometheus, …)
@@ -133,30 +169,38 @@ Docker runs the **infrastructure only**; the application services run **natively
 - **Node 18+** — for the Simple UI frontend
 - ~16 GB RAM recommended for the full stack; Linux / macOS; **Windows requires WSL2** — run Docker, services, and frontend entirely inside WSL (see [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md#windows-wsl))
 
-### Quick Start (local)
+### Install
+Clone the repository. Python and Node dependencies are installed per service in the [Run](#run) step.
 ```bash
-# 1. Clone
 git clone https://github.com/COSS-India/ai4i-core.git
 cd ai4i-core
+```
 
-# 2. Configure environment (see docs/SETUP_GUIDE.md for the full walkthrough)
+### Configure
+Generate the environment files. This creates the root `.env` and per-service `.env` files.
+```bash
 ./scripts/setup-env.sh
+```
+Set your model-server endpoints (`TRITON_ENDPOINT_*`) and any secrets before running. The full
+list of variables and defaults is in [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md).
 
-# 3. Start INFRASTRUCTURE in Docker (not the app services)
+### Run
+```bash
+# 1. Start INFRASTRUCTURE in Docker (not the app services)
 #    (add opensearch fluent-bit prometheus grafana for the full observability stack)
 docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper
 
-# 4. Run database migrations — see docs/SETUP_GUIDE.md, Step 5
+# 2. Run database migrations and seed data (see docs/SETUP_GUIDE.md, Step 5)
+./scripts/migrate.sh all upgrade
 
-# 5. Run each application service NATIVELY (separate terminals)
+# 3. Run each application service NATIVELY (separate terminals)
 cd services/auth-service          && pip install -r requirements.txt && uvicorn app.main:app --port 8081
 cd services/platform-core-service && pip install -r requirements.txt && uvicorn app.main:app --port 8095
 cd services/inference-service     && pip install -r requirements.txt && python main.py          # :8090
 
-# 6. Run the frontend natively
+# 4. Run the frontend natively
 cd frontend/simple-ui && npm install && npm run dev                                              # :3000
 ```
-> Full instructions: **[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)**.
 
 ### Service URLs (local)
 | URL | What |
@@ -169,6 +213,21 @@ cd frontend/simple-ui && npm install && npm run dev                             
 | http://localhost:9090 | Prometheus |
 | http://localhost:5602 | OpenSearch Dashboards |
 
+### Troubleshoot
+Common local-setup issues and fixes. Full details in the setup guides linked below.
+
+| Issue | Solution |
+|-------|----------|
+| Frontend loads at `:3000` but API calls fail (Windows) | Run Docker, the Python services, and `npm run dev` all from the **same WSL2 environment** so they share `localhost`. See [SETUP_GUIDE.md#troubleshooting](./docs/SETUP_GUIDE.md#troubleshooting). |
+| Service errors with connection refused on startup | The service `.env` must use `localhost`, not the Docker-internal hostnames `postgres`/`redis`. Check `grep -E "HOST\|PORT" services/<svc>/.env`. |
+| `migrate.sh` fails with a database connection error | Ensure Postgres is running (`docker compose -f docker-compose-local.yml ps postgres`) and `POSTGRES_HOST=localhost` in the migrations `.env`. |
+| Inference call returns an error for a seeded service | The service was seeded with a blank `endpoint`. `PATCH /api/v1/services` with a reachable model-server URL. See [SETUP_GUIDE.md](./docs/SETUP_GUIDE.md), Step 10. |
+
+Other troubleshooting support:
+- [docs/SETUP_GUIDE.md#troubleshooting](./docs/SETUP_GUIDE.md#troubleshooting) — local native setup
+- [docs/END-TO-END-SETUP-GUIDE.md#troubleshooting](./docs/END-TO-END-SETUP-GUIDE.md#troubleshooting) — end-to-end setup
+- [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
+
 ## 📖 Documentation
 
 ### Architecture (code-anchored)
@@ -177,16 +236,30 @@ cd frontend/simple-ui && npm install && npm run dev                             
 - [docs/architecture/02-platform-core-service.md](./docs/architecture/02-platform-core-service.md) — model/service registry, alerts, telemetry query
 - [docs/architecture/03-inference-service.md](./docs/architecture/03-inference-service.md) — inference orchestration over Triton/LLM
 
-### Setup
-- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) — comprehensive local setup
+### Setup & deployment
+- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) — comprehensive local setup (Windows/WSL covered)
+- [docs/END-TO-END-SETUP-GUIDE.md](./docs/END-TO-END-SETUP-GUIDE.md) — end-to-end setup walkthrough
+- [docs/SINGLE_COMMAND_SETUP.md](./docs/SINGLE_COMMAND_SETUP.md) — single-command setup
+- [docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md](./docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md) — `docker-compose-local.yml` reference
+- [docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md](./docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md) — local tracing & observability
+
+### Codebase & API
+- [docs/CODEBASE_GUIDE.md](./docs/CODEBASE_GUIDE.md) — how the codebase is organized
+- **Live OpenAPI 3.x per service** — Swagger UI at `/docs`, ReDoc at `/redoc`, raw spec at `/openapi.json` (auto-generated at runtime; no static spec files)
+
+### Service READMEs
+- [auth-service](./services/auth-service/README.md) · [platform-core-service](./services/platform-core-service/README.md) · [inference-service](./services/inference-service/README.md) ([design](./services/inference-service/ARCHITECTURE.md))
+- [kafka-consumers](./services/kafka-consumers/README.md) — background span/telemetry consumers ([design](./services/kafka-consumers/ARCHITECTURE.md))
 
 ### Licensing
 - [docs/THIRD_PARTY_LICENSES.md](./docs/THIRD_PARTY_LICENSES.md) — all third-party open source dependencies, versions, and licenses
+
 ### Privacy & compliance
 - [docs/compliance/PII_DATA_INVENTORY.md](./docs/compliance/PII_DATA_INVENTORY.md) — inventory of all PII collected/stored, retention, access, and protection (DPG review)
+- [docs/compliance/DPG_DOCUMENTATION.md](./docs/compliance/DPG_DOCUMENTATION.md) — DPG documentation summary and index of all docs
 
-### Service READMEs
-- [auth-service](./services/auth-service/README.md) · [platform-core-service](./services/platform-core-service/README.md) · [inference-service](./services/inference-service/README.md)
+### Contributing & releases
+- [CONTRIBUTING.md](./CONTRIBUTING.md) · [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) · [RELEASE.md](./RELEASE.md) · [CHANGELOG.md](./CHANGELOG.md)
 
 ## 🤝 Contributing
 
