@@ -102,6 +102,18 @@ import {
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
+const BUDGET_MAX_INTEGER_DIGITS = 7;
+
+function clampBudgetInput(raw: string): string {
+  const dotIndex = raw.indexOf(".");
+  const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
+    0,
+    BUDGET_MAX_INTEGER_DIGITS,
+  );
+  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
+  return intPart + decimalPart;
+}
+
 function dash(v?: string | null): string {
   return v && v.trim() ? v : "—";
 }
@@ -1836,7 +1848,9 @@ export default function TenantManagementTab({
                   <InputLeftAddon>₹</InputLeftAddon>
                   <Input
                     value={assignBudget}
-                    onChange={(e) => setAssignBudget(e.target.value)}
+                    onChange={(e) =>
+                      setAssignBudget(clampBudgetInput(e.target.value))
+                    }
                     placeholder="e.g. 500000"
                     type="number"
                     min={0}
