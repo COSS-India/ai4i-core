@@ -27,8 +27,11 @@ logger = get_logger(__name__)
 def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
-    input_tokens: float = float(attrs.get("input_tokens") or 0)
-    output_tokens: float = float(attrs.get("output_tokens") or 0)
+    # LLM spans use input_tokens/output_tokens; Triton spans use input/output
+    # (see trace/span_attributes.py) — fall back to the latter when the
+    # former is absent.
+    input_tokens: float = float(attrs.get("input_tokens", attrs.get("input")) or 0)
+    output_tokens: float = float(attrs.get("output_tokens", attrs.get("output")) or 0)
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()
 
     return tenant_id, service_id, input_tokens, output_tokens, correlation_id

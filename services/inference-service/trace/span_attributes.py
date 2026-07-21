@@ -36,49 +36,35 @@ def get_input_type(payload: Dict[str, Any]) -> str:
         return "unknown"
 
 
-def get_output_type(response_data: List[Dict[str, Any]]) -> str:
+def get_unit_type(task_type: str) -> str:
     """
-    Detect output modality type from Triton response data.
+    Billing unit for a Triton task type, sourced from inference_types.yaml
+    via ai4i_core.ppu.get_inference_unit_map (e.g. "asr" -> "audio_minutes",
+    "tts" -> "characters", "ocr" -> "images").
 
-    Inspects response structure to determine modality.
-    Returns: "text", "audio", "image", or "unknown"
+    Driving unit_type from the YAML's per-task-type config (rather than
+    guessing modality from response field names, as get_output_type used to)
+    avoids silently returning "unknown" for services whose adapter_config
+    uses a non-standard output field name (e.g. speaker-diarization's
+    "diarization_json").
+
+    Returns "unknown" if task_type isn't in the map, or on any lookup error.
     """
     try:
-        if not response_data or not isinstance(response_data, list):
-            return "unknown"
-
-        first_item = response_data[0] if response_data else {}
-        if not isinstance(first_item, dict):
-            return "unknown"
-
-        # Check for common output field names by modality
-        keys = set(first_item.keys())
-
-        # Text: target, output, transcription, translation, result, text
-        if keys & {"target", "output", "transcription", "translation", "result", "text"}:
-            return "text"
-
-        # Audio: audio_content, audio, samples, waveform
-        if keys & {"audio_content", "audio", "samples", "waveform"}:
-            return "audio"
-
-        # Image: image, image_content, image_base64, encoding
-        if keys & {"image", "image_content", "image_base64", "encoding"}:
-            return "image"
-
-        return "unknown"
+        from ai4i_core.ppu import get_inference_unit_map
+        return get_inference_unit_map().get(task_type.lower(), "unknown")
     except Exception as e:
-        logger.warning(f"Error detecting output type: {e}")
+        logger.warning(f"Error resolving unit type for task_type={task_type}: {e}")
         return "unknown"
 
 
-def count_input_tokens(input_items: List[Any], input_type: str) -> float:
+def count_input_tokens(input_items: List[Any], unit_type: str) -> float:
     """
-    Billed input units, computed per modality (see inference_types.yaml).
+    Billed input units, computed per unit_type (see inference_types.yaml).
 
-    Text: character count (len(text)) — matches the "characters" billing unit
-    Audio: real duration in minutes, fractional (see _count_audio_tokens)
-    Image: count of images in the request (see _count_image_tokens)
+    characters: character count (len(text))
+    audio_minutes: real duration in minutes, fractional (see _count_audio_tokens)
+    images: count of images in the request (see _count_image_tokens)
 
     Returns: billed unit count, or 0 on error
     """
@@ -86,11 +72,11 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> float:
         if not input_items:
             return 0
 
-        if input_type == "text":
+        if unit_type == "characters":
             return _count_text_tokens(input_items)
-        elif input_type == "audio":
+        elif unit_type == "audio_minutes":
             return _count_audio_tokens(input_items)
-        elif input_type == "image":
+        elif unit_type == "images":
             return _count_image_tokens(input_items)
 
         return 0
@@ -99,25 +85,23 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> float:
         return 0
 
 
-def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -> int:
+def count_output_tokens(response_data: List[Dict[str, Any]], unit_type: str) -> int:
     """
-    Estimate token count for output based on modality.
+    Estimate output unit count for observability, computed per unit_type
+    (see inference_types.yaml). Not used for billing — non-LLM PPU billing
+    is input-only by design (see payperuse_consumer/handler.py).
 
-    Text: character count of output text
-    Audio: estimate from output samples
-    Image: heuristic from encoded size
-
-    Returns: estimated token count, or 0 on error
+    Returns: estimated unit count, or 0 on error
     """
     try:
         if not response_data or not isinstance(response_data, list):
             return 0
 
-        if output_type == "text":
+        if unit_type == "characters":
             return _count_output_text_tokens(response_data)
-        elif output_type == "audio":
+        elif unit_type == "audio_minutes":
             return _count_output_audio_tokens(response_data)
-        elif output_type == "image":
+        elif unit_type == "images":
             return _count_output_image_tokens(response_data)
 
         return 0

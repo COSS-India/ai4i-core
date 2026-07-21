@@ -279,7 +279,7 @@ class BaseTaskService:
         """
         # Lazy import — trace setup happens at app init, after this module loads.
         from trace.request_span import traced_inference
-        from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
+        from trace.span_attributes import count_input_tokens, count_output_tokens, get_unit_type
 
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
@@ -305,6 +305,10 @@ class BaseTaskService:
         ) or self.TRITON_CALL_MODE
         groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
+        # unit_type comes from inference_types.yaml (per task_type), not from
+        # guessing modality off response field names — see get_unit_type.
+        unit_type = get_unit_type(self.task_name)
+
         response_data = []
         for group in groups:
             triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
@@ -316,9 +320,14 @@ class BaseTaskService:
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
+                # input_type/output_type (payload-shape guessing) are seeded by
+                # traced_inference for the LLM path only — Triton uses unit_type instead.
+                span_ctx.pop("input_type", None)
+                span_ctx.pop("output_type", None)
+                span_ctx["unit_type"] = unit_type
                 # Must count only this group's items, not the full input_items list —
                 # otherwise per_item call_mode bills the whole request once per item.
-                span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
+                span_ctx["input"] = count_input_tokens(group, unit_type)
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
@@ -327,12 +336,11 @@ class BaseTaskService:
                 )
                 group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
                 response_data.extend(group_response_data)
-                span_ctx["output_type"] = get_output_type(group_response_data)
                 # Recorded on the span for observability/trace inspection, but
                 # PPU billing for non-LLM services is input-only by design — the
                 # Kafka consumer (payperuse_consumer/handler.py) ignores this
                 # field for every inference_name except llm.
-                span_ctx["output_tokens"] = count_output_tokens(group_response_data, span_ctx["output_type"])
+                span_ctx["output"] = count_output_tokens(group_response_data, unit_type)
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
