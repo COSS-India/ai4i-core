@@ -33,9 +33,8 @@ An open-source, **FastAPI**-based reference implementation for deploying multi-t
 
 ## 👥 Who This Project Is For
 
-This project is intended for **platform engineers, DevOps teams, and AI/ML integrators**
-who want to **deploy and operate multilingual language-AI services on their own
-infrastructure** rather than depend on a hosted API.
+This project is intended for anyone who wants to **deploy and operate multilingual
+language-AI services on their own infrastructure** rather than depend on a hosted API.
 
 You will get the most from it if you are comfortable with Docker, Python, and running
 backend services. It suits teams that need multi-tenant access control, a model/service
