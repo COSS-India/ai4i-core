@@ -866,6 +866,55 @@ class TenantService:
             await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target
 
+    async def resend_tenant_user_setup_link(
+        self,
+        current_user: User,
+        tenant_id: int,
+        user_id: UUID,
+        background_tasks: BackgroundTasks,
+    ) -> None:
+        """Re-send the set-password (SETUP) email for a not-yet-activated tenant user.
+
+        Tenant users are provisioned passwordless (``email_kind="setup"``), so
+        the onboarding email is a set-password link — NOT an email-verification
+        link. ``/auth/resend-verification`` therefore no-ops for them (it only
+        serves self-registered users who already hold credentials). Resolving
+        by ``user_id`` (already unmasked in the tenant-user list) avoids the
+        masked-email / PENDING-tenant limits of ``/auth/resend-setup-link``,
+        which only targets the tenant contact admin.
+        """
+        await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
+        await self._load_tenant_or_404(tenant_id)
+        target = await self._load_tenant_user_or_404(tenant_id, user_id)
+
+        setup_token = await reissue_setup_token(
+            target,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
+            background_tasks=background_tasks,
+        )
+        if setup_token is None:
+            # reissue_setup_token returns None when the user already has
+            # credentials (setup complete) — there is nothing to resend.
+            raise ValidationError(
+                message="This user has already set a password; no activation link is needed.",
+                code="USER_ALREADY_ACTIVATED",
+            )
+
+        await self._users.commit()
+        logger.info(
+            "Set-password link resent for tenant user id=%s (tenant %s)",
+            target.id,
+            tenant_id,
+        )
+        enqueue_email(
+            background_tasks,
+            self._email,
+            lambda: render_setup_link(target, setup_token),
+        )
+
     async def delete_tenant_user(
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
