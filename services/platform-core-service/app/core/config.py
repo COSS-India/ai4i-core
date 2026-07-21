@@ -104,7 +104,7 @@ class CoreSettings(BaseSettings):
     redis_timeout: int = 10
     # Cache TTLs
     model_cache_ttl_seconds: int = 3600
-    service_cache_ttl_seconds: int = 3600
+    service_cache_ttl_seconds: int = 300
     metering_cache_ttl_seconds: int = 60
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
