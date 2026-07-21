@@ -239,8 +239,12 @@ Other troubleshooting support:
 - [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) — comprehensive local setup (Windows/WSL covered)
 - [docs/END-TO-END-SETUP-GUIDE.md](./docs/END-TO-END-SETUP-GUIDE.md) — end-to-end setup walkthrough
 - [docs/SINGLE_COMMAND_SETUP.md](./docs/SINGLE_COMMAND_SETUP.md) — single-command setup
+- [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — production deployment guide
 - [docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md](./docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md) — `docker-compose-local.yml` reference
 - [docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md](./docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md) — local tracing & observability
+
+### Usage
+- [docs/USER_GUIDE.md](./docs/USER_GUIDE.md) — end-user guide (auth, inference requests, Simple UI, FAQ)
 
 ### Codebase & API
 - [docs/CODEBASE_GUIDE.md](./docs/CODEBASE_GUIDE.md) — how the codebase is organized

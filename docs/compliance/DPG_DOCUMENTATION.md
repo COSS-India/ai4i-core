@@ -44,19 +44,13 @@ Explains how to install and run the software in different environments (local an
 - [End-to-end setup guide](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/END-TO-END-SETUP-GUIDE.md)
 - [Single-command setup](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/SINGLE_COMMAND_SETUP.md)
 - [Docker Compose local reference](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md)
-
-> **Gap being addressed:** current guides cover local installation thoroughly. A dedicated
-> production deployment guide (APISIX gateway, `infrastructure/` configs, production
-> environment variables) is being added under a separate ticket.
+- [Production deployment guide](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/DEPLOYMENT.md) — gateway/forward-auth, `infrastructure/` configs, production env and secrets, fork-and-patch
 
 ### 5. User Guide
 Teaches end-users how to use the software, and may include an FAQ.
+- [User guide](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/USER_GUIDE.md) — authentication, making inference calls, using the Simple UI, and an FAQ
 - Live API documentation per service: Swagger UI at `/docs`, ReDoc at `/redoc`, raw spec at `/openapi.json`
 - [Simple UI README](https://github.com/COSS-India/ai4i-core/blob/release-2.3/frontend/simple-ui/README.md) — the web interface for exercising the APIs
-
-> **Gap being addressed:** a dedicated end-user User Guide (make an inference call, use the
-> Simple UI, manage API keys) with an FAQ is being added under a separate ticket. Scope and
-> depth to be confirmed with DPGA experts.
 
 ### 6. Release Notes
 Follows semantic versioning and documents changes per version.
@@ -76,8 +70,8 @@ Guidelines on contributing and participating in the project.
 | 1 | Overview | Complete |
 | 2 | Architectural Diagrams | Complete |
 | 3 | Technology Stack | Complete |
-| 4 | Installation Guide | Local complete; production guide in progress |
-| 5 | User Guide | API and UI docs present; dedicated user guide in progress |
+| 4 | Installation Guide | Local complete; production guide added (`docs/DEPLOYMENT.md`) |
+| 5 | User Guide | Complete (`docs/USER_GUIDE.md`) plus live API docs and Simple UI |
 | 6 | Release Notes | Complete |
 | 7 | Contributing Guide | Complete |
 
