@@ -6,6 +6,7 @@ Creates and configures the unified inference service with all components.
 from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI
+from ai4i_core.observability import setup_observability
 from ai4i_core.observability.middleware import ObservabilityMiddleware
 from ai4i_core.logging import RequestMiddleware
 from routes import router
@@ -30,7 +31,7 @@ class _ChatAwareObservabilityMiddleware(ObservabilityMiddleware):
         if request.url.path in _CHAT_PATHS and not settings.LLM_CHAT_OBSERVABILITY_ENABLED:
             return await call_next(request)
         return await super().dispatch(request, call_next)
-    
+
 # /test is a bare load-test probe (see routes/inference.py) meant to measure
 # raw ASGI + routing overhead with none of the service-level middleware in
 # the loop — no Prometheus, no request-context/logging, no CORS handling.
@@ -58,7 +59,7 @@ def _setup_middleware(app: FastAPI) -> None:
     """Configure observability, request-context, and CORS middleware."""
     # Observability — Prometheus /metrics + per-request middleware.
     # Reads OBSERVE_UTIL_* env vars (enabled, debug, metrics_path).
-    # setup_observability(app)
+    setup_observability(app)
 
     # Request context middleware — seeds trace_id and tenant_id (from the
     # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so
