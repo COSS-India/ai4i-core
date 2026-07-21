@@ -7,13 +7,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import AppError, ValidationError
 from app.core.responses import success_response
 from app.dependencies.services import ServiceService, get_service_service
 from app.schemas.enums.model_management import TaskTypeEnum
 from app.schemas.model_management.service import (
     ServiceCreateRequest,
     ServiceUpdateRequest,
+    validate_service_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,10 @@ async def view_service(
     svc: ServiceService = Depends(get_service_service),
 ):
     """Retrieve full service details."""
+    try:
+        validate_service_id(service_id)
+    except ValueError as exc:
+        raise ValidationError(message=str(exc), code="INVALID_SERVICE_ID")
     data = await svc.get_service_detail(service_id)
     return success_response(data=data)
 
