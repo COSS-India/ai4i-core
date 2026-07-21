@@ -3,13 +3,12 @@ APIKey table queries.
 
 No business logic, no Redis calls — Postgres only.
 """
-from datetime import datetime, timezone
+
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.models.api_key import APIKey
 from app.models.role import Permission
@@ -39,19 +38,6 @@ class APIKeyRepository(BaseRepository):
         result = await self._db.execute(
             select(APIKey).where(APIKey.api_key == api_key_value)
         )
-        return result.scalar_one_or_none()
-
-    async def get_by_api_key_if_valid(self, api_key_value: str) -> Optional[APIKey]:
-        result = await self._db.execute(
-            select(APIKey).where(APIKey.api_key == api_key_value)
-            .where(APIKey.is_active == True)  # Check if active is True
-            .where(APIKey.expires_at > datetime.now(timezone.utc))  # Check if expired_at is in the future
-            .options(
-                joinedload(APIKey.user)
-                .joinedload(User.tenant)
-            )
-        )
-
         return result.scalar_one_or_none()
 
     async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
