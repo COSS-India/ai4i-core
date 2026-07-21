@@ -13,6 +13,8 @@ export interface TenantView {
   email: string;
   phone_number?: string | null;
   status: TenantStatus;
+  /** True when contact admin completed setup; gates DEACTIVATED → ACTIVE. */
+  onboarding_completed?: boolean;
   created_at: string;
   created_by?: string | null;
   updated_at?: string | null;

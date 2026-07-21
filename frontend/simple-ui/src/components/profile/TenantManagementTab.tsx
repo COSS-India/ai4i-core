@@ -882,6 +882,7 @@ export default function TenantManagementTab({
     stopRowClick: (e: React.MouseEvent) => void,
     menuAriaLabel: string,
   ) {
+    if (items.length === 0) return null;
     return (
       <Menu>
         <MenuButton
@@ -998,15 +999,28 @@ export default function TenantManagementTab({
         ];
       }
 
-      // DEACTIVATED
+      // DEACTIVATED — Activate only after email verification; otherwise resend setup link
+      if (t.onboarding_completed) {
+        return [
+          {
+            key: "activate",
+            label: "Activate",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
+            color: "green.600",
+            hoverBg: "green.50",
+            icon: <FiPower size={16} />,
+          },
+        ];
+      }
       return [
         {
-          key: "activate",
-          label: "Activate",
-          onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
-          color: "green.600",
-          hoverBg: "green.50",
-          icon: <FiPower size={16} />,
+          key: "resend-verification",
+          label: "Send verification email",
+          onSelect: () => void tm.handleResendTenantVerificationEmail(t),
+          color: "blue.600",
+          hoverBg: "blue.50",
+          icon: <FiMail size={16} />,
+          isDisabled: tm.resendVerificationTenantId === t.tenant_id,
         },
       ];
     })();

@@ -178,8 +178,8 @@ export function useServicesManagement() {
     useState<ModelDetails | null>(null);
 
   // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
-  const fetchServices = useCallback(async () => {
-    setIsLoading(true);
+  const fetchServices = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setIsLoading(true);
     try {
       const isPublishedFilter =
         filterStatus === "published"
@@ -198,9 +198,47 @@ export function useServicesManagement() {
       showError(error);
       setServices([]);
     } finally {
-      setIsLoading(false);
+      if (!options?.silent) setIsLoading(false);
     }
   }, [filterTaskType, filterStatus]);
+
+  /**
+   * Keep registry + detail UI in sync after publish/unpublish.
+   * PATCH /services only returns `{ serviceId }`, so callers must not replace
+   * local state with that response. Prefer an optimistic patch, optionally
+   * replaced by a full `getServiceById` payload when available.
+   */
+  const syncServicePublishStatus = useCallback(
+    (serviceId: string, isPublished: boolean, freshService?: Service) => {
+      const apply = (s: Service): Service => {
+        if (s.serviceId !== serviceId) return s;
+        if (freshService) return freshService;
+        return {
+          ...s,
+          isPublished,
+          ...(isPublished
+            ? { publishedOn: Math.floor(Date.now() / 1000) }
+            : {}),
+        };
+      };
+
+      setServices((prev) => {
+        const next = prev.map(apply);
+        if (filterStatus === "published") {
+          return next.filter((s) => s.isPublished === true);
+        }
+        if (filterStatus === "unpublished") {
+          return next.filter((s) => s.isPublished !== true);
+        }
+        return next;
+      });
+
+      setSelectedService((prev) =>
+        prev?.serviceId === serviceId ? apply(prev) : prev,
+      );
+    },
+    [filterStatus],
+  );
 
   useEffect(() => {
     fetchServices();
@@ -786,11 +824,14 @@ export function useServicesManagement() {
     setPublishingServiceUuid(service.serviceId);
 
     try {
-      // Update service to set isPublished = true using PATCH with only serviceId and isPublished
-      const updatedService = await updateService({
+      // PATCH returns only `{ serviceId }` — do not treat it as a full Service
+      await updateService({
         serviceId: service.serviceId,
         isPublished: true,
       });
+
+      // Immediate UI update (list + detail) before any refetch
+      syncServicePublishStatus(service.serviceId, true);
 
       showToast({
         type: "success",
@@ -799,13 +840,16 @@ export function useServicesManagement() {
 
       invalidateServiceQueries();
 
-      // Refresh services list
-      await fetchServices();
-
-      // Update selected service if it's the one being published
-      if (selectedService?.serviceId === service.serviceId) {
-        setSelectedService(updatedService);
+      // Authoritative refresh for the mutated service, then silent list sync
+      try {
+        const fresh = await getServiceById(service.serviceId);
+        syncServicePublishStatus(service.serviceId, true, fresh);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("Failed to refresh service after publish:", e);
       }
+
+      void fetchServices({ silent: true });
     } catch (error: any) {
       showError(error);
     } finally {
@@ -825,11 +869,14 @@ export function useServicesManagement() {
     setUnpublishingServiceUuid(service.serviceId);
 
     try {
-      // Update service to set isPublished = false using PATCH with only serviceId and isPublished
-      const updatedService = await updateService({
+      // PATCH returns only `{ serviceId }` — do not treat it as a full Service
+      await updateService({
         serviceId: service.serviceId,
         isPublished: false,
       });
+
+      // Immediate UI update (list + detail) before any refetch
+      syncServicePublishStatus(service.serviceId, false);
 
       showToast({
         type: "success",
@@ -838,13 +885,16 @@ export function useServicesManagement() {
 
       invalidateServiceQueries();
 
-      // Refresh services list
-      await fetchServices();
-
-      // Update selected service if it's the one being unpublished
-      if (selectedService?.serviceId === service.serviceId) {
-        setSelectedService(updatedService);
+      // Authoritative refresh for the mutated service, then silent list sync
+      try {
+        const fresh = await getServiceById(service.serviceId);
+        syncServicePublishStatus(service.serviceId, false, fresh);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("Failed to refresh service after unpublish:", e);
       }
+
+      void fetchServices({ silent: true });
     } catch (error: any) {
       showError(error);
     } finally {
