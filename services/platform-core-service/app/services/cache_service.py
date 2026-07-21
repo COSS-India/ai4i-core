@@ -128,13 +128,11 @@ class CacheService:
                 data,
                 time.time() + self._service_ttl,
             )
-            logger.debug("Service cache store: %s", CacheService._service_store)
         except Exception as exc:
             logger.warning("Service cache write failed for %s: %s", service_id, exc)
 
     async def invalidate_service(self, service_id: str) -> None:
         try:
             CacheService._service_store.pop(self._service_key(service_id), None)
-            logger.debug("Service cache after invalidation: %s", CacheService._service_store)
         except Exception as exc:
             logger.warning("Service cache invalidation failed for %s: %s", service_id, exc)
