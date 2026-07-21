@@ -14,8 +14,13 @@ import {
 import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performNERInference, listNERServices } from "../services/nerService";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseNerEntities } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("ner");
@@ -40,6 +45,8 @@ const NERPage: React.FC = () => {
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const {
     data: services = [],
@@ -52,6 +59,11 @@ const NERPage: React.FC = () => {
   });
 
   const serviceOptions = useMemo(() => mapToServiceOptions(services), [services]);
+
+  const selectedService = useMemo(
+    () => services.find((s) => s.service_id === selectedServiceId),
+    [services, selectedServiceId],
+  );
 
   const canDetect =
     !!selectedServiceId?.trim() &&
@@ -89,6 +101,8 @@ const NERPage: React.FC = () => {
     setFetching(true);
     setError(null);
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     try {
       const startTime = Date.now();
       const response = await performNERInference(trimmedText, {
@@ -96,11 +110,15 @@ const NERPage: React.FC = () => {
         language: { sourceLanguage },
       });
       setResult(response.data);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
       const { message: errorMessage } = parseError(err, { service: "ner" });
       setError(errorMessage);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setFetching(false);
     }
@@ -111,9 +129,35 @@ const NERPage: React.FC = () => {
     setResult(null);
     setInputText("");
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   };
 
   const entities = result ? parseNerEntities(result) : [];
+
+  const feedback = useMemo(() => {
+    if (!fetched || !result) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    const ents = parseNerEntities(result);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "NER",
+      model: lastModelMeta,
+      ...fallback,
+      languageInfo: [{ sourceLanguage }],
+      originalOutput:
+        ents.length > 0
+          ? JSON.stringify(ents)
+          : ents.map((e) => e.text).join(", "),
+    });
+  }, [
+    fetched,
+    result,
+    lastRequestId,
+    lastModelMeta,
+    selectedService,
+    sourceLanguage,
+  ]);
 
   return (
     <ServicePageLayout
@@ -193,6 +237,7 @@ const NERPage: React.FC = () => {
             ) : undefined
           }
           onClear={clearResults}
+          feedback={feedback}
         />
       }
     />

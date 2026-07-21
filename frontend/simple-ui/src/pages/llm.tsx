@@ -14,6 +14,10 @@ import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useLLM } from "../hooks/useLLM";
 import { listLLMServices } from "../services/llmService";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 
 const pageDefaults = getServicePageDefaults("llm");
 const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
@@ -52,6 +56,8 @@ const LLMPage: React.FC = () => {
     responseWordCount,
     requestTime,
     error,
+    lastRequestId,
+    lastModelMeta,
     performInference,
     setInputText,
     setInputLanguage,
@@ -64,6 +70,32 @@ const LLMPage: React.FC = () => {
     () => mapToServiceOptions(services),
     [services]
   );
+
+  const feedback = useMemo(() => {
+    if (!fetched || !outputText) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "NMT",
+      model: lastModelMeta,
+      ...fallback,
+      languageInfo: [
+        {
+          sourceLanguage: inputLanguage,
+          targetLanguage: outputLanguage,
+        },
+      ],
+      originalOutput: outputText,
+    });
+  }, [
+    fetched,
+    outputText,
+    lastRequestId,
+    lastModelMeta,
+    selectedService,
+    inputLanguage,
+    outputLanguage,
+  ]);
 
   const MAX_LLM_INPUT_LENGTH = pageDefaults.maxTextLength ?? 512;
   const canTranslate =
@@ -143,6 +175,7 @@ const LLMPage: React.FC = () => {
             ) : undefined
           }
           onClear={clearResults}
+          feedback={feedback}
         />
       }
     />

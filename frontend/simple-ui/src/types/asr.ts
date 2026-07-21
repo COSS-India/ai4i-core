@@ -63,6 +63,8 @@ export interface ASRHookState {
   error: string | null;
   /** Pending audio (base64) from record or upload; inference runs when user clicks Transcribe */
   pendingAudio: string | null;
+  lastRequestId: string | null;
+  lastModelMeta: import('./feedback').InferenceModelMetadata | null;
 }
 
 // ASR Hook Methods

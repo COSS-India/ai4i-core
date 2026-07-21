@@ -15,6 +15,10 @@ import {
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useTTS } from "../hooks/useTTS";
 import { listVoices, listTTSServices } from "../services/ttsService";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 
 const pageDefaults = getServicePageDefaults("tts");
 const indoAryanLanguages = ["hi", "mr", "as", "bn", "gu", "or", "pa"];
@@ -34,6 +38,8 @@ const TTSPage: React.FC = () => {
     requestTime,
     audioDuration,
     error,
+    lastRequestId,
+    lastModelMeta,
     performInference,
     setInputText,
     setLanguage,
@@ -61,6 +67,23 @@ const TTSPage: React.FC = () => {
     () => mapToServiceOptions(ttsServices ?? []),
     [ttsServices]
   );
+
+  const selectedService = useMemo(
+    () => (ttsServices ?? []).find((s) => s.service_id === serviceId),
+    [ttsServices, serviceId],
+  );
+
+  const feedback = useMemo(() => {
+    if (!fetched || !audio) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "TTS",
+      model: lastModelMeta,
+      ...fallback,
+      languageInfo: [{ sourceLanguage: language }],
+    });
+  }, [fetched, audio, lastRequestId, lastModelMeta, selectedService, language]);
 
   const allMandatoryFilled =
     !!serviceId?.trim() &&
@@ -145,6 +168,7 @@ const TTSPage: React.FC = () => {
             ) : undefined
           }
           onClear={clearResults}
+          feedback={feedback}
         />
       }
     />

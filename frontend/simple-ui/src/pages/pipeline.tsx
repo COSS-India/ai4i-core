@@ -41,6 +41,10 @@ import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
 import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("pipeline");
@@ -68,6 +72,8 @@ const PipelinePage: React.FC = () => {
     setProcessRecordedAudioCallback,
     runPipeline,
     clearInput,
+    lastRequestId,
+    lastModelMeta,
   } = usePipeline();
 
   // Fetch available services
@@ -126,6 +132,36 @@ const PipelinePage: React.FC = () => {
 
   const canRunPipeline = hasRequiredConfig() && !isLoading;
   const canSubmit = hasRequiredConfig() && !!pendingAudio && !isLoading;
+
+  const selectedNmtService = useMemo(
+    () => (nmtServices ?? []).find((s) => s.service_id === nmtServiceId),
+    [nmtServices, nmtServiceId],
+  );
+
+  const feedback = useMemo(() => {
+    if (!result?.targetText) return null;
+    const fallback = resolveServiceModelFallback(selectedNmtService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "NMT",
+      model: lastModelMeta,
+      ...fallback,
+      languageInfo: [
+        {
+          sourceLanguage,
+          targetLanguage,
+        },
+      ],
+      originalOutput: result.targetText,
+    });
+  }, [
+    result,
+    lastRequestId,
+    lastModelMeta,
+    selectedNmtService,
+    sourceLanguage,
+    targetLanguage,
+  ]);
 
   const handleRecordClick = async () => {
     if (!ensureConfigOrToast()) {
@@ -634,6 +670,7 @@ const PipelinePage: React.FC = () => {
               </>
             ) : undefined
           }
+          feedback={feedback}
         />
       }
     />

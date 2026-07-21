@@ -7,6 +7,8 @@ import type {
   OCRInferenceResponse,
 } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export type { OCRInferenceRequest, OCRInferenceResponse } from '../types/inference';
 
@@ -88,7 +90,7 @@ export const performOCRInference = async (
   imageContent: string | null,
   imageUri: string | null,
   config: OCRInferenceRequest['config']
-): Promise<{ data: OCRInferenceResponse; responseTime: number }> => {
+): Promise<{ data: OCRInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: OCRInferenceRequest = {
       image: [{
@@ -109,11 +111,13 @@ export const performOCRInference = async (
       errorService: 'ocr',
     });
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('OCR inference error:', error);

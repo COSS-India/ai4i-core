@@ -1,6 +1,7 @@
 // TypeScript type definitions for NMT service
 
 import { LanguagePair } from './common';
+import type { InferenceModelMetadata } from './feedback';
 
 // Re-export LanguagePair for convenience
 export type { LanguagePair };
@@ -58,6 +59,10 @@ export interface NMTHookState {
   responseWordCount: number;
   requestTime: string;
   error: string | null;
+  /** X-Correlation-ID from the last successful inference (Feedback requestId). */
+  lastRequestId: string | null;
+  /** Model metadata from the last successful inference response. */
+  lastModelMeta: InferenceModelMetadata | null;
 }
 
 // NMT Hook Methods

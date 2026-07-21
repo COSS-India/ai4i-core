@@ -11,6 +11,7 @@ import {
 } from '../types/pipeline';
 import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
 import { parseError } from '../utils/errorHandler';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export const usePipeline = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -21,6 +22,8 @@ export const usePipeline = () => {
   const [timer, setTimer] = useState<number>(0);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [pendingAudioFormat, setPendingAudioFormat] = useState<string>('wav');
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
@@ -436,7 +439,7 @@ export const usePipeline = () => {
       const response = await runPipelineInference(request);
 
       // Parse response
-      const pipelineData = response.pipelineResponse;
+      const pipelineData = response.data.pipelineResponse;
 
       if (pipelineData.length >= 3) {
         // Extract ASR output (index 0)
@@ -469,6 +472,8 @@ export const usePipeline = () => {
         };
 
         setResult(pipelineResult);
+        setLastRequestId(response.requestId ?? null);
+        setLastModelMeta(response.model ?? null);
 
         showToast({
           type: 'success',
@@ -479,6 +484,8 @@ export const usePipeline = () => {
       }
     } catch (error: any) {
       console.error('Pipeline error:', error);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setIsLoading(false);
     }
@@ -721,6 +728,8 @@ export const usePipeline = () => {
     setAudioBlob(null);
     setResult(null);
     setTimer(0);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   }, []);
 
   return {
@@ -730,6 +739,8 @@ export const usePipeline = () => {
     audioBlob,
     timer,
     pendingAudio,
+    lastRequestId,
+    lastModelMeta,
     clearInput,
     startRecording,
     stopRecording,

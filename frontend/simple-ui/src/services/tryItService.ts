@@ -10,6 +10,8 @@ import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import type { Service } from '../types/platform';
 import { UI_ERROR_MESSAGES } from '../config/constants';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 const getTryItHeaders = () => ({
   'X-Anonymous-Session-Id': getAnonymousSessionId(),
@@ -48,7 +50,12 @@ export const listTryItNMTServices = async (): Promise<Service[]> => {
 export const performTryItNMTInference = async (
   text: string,
   config: NMTInferenceRequest['config']
-): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
+): Promise<{
+  data: NMTInferenceResponse;
+  responseTime: number;
+  requestId?: string;
+  model?: InferenceModelMetadata;
+}> => {
   try {
     // Strip script codes for try-it: the anonymous try-it model only accepts bare
     // language codes (e.g. "en", "hi").  Sending "en_Latn" or "hi_Deva" causes a
@@ -82,12 +89,13 @@ export const performTryItNMTInference = async (
       { headers: getTryItHeaders(), responseSchema: nmtInferenceResponseSchema }
     );
 
-    // Extract response time from headers
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error: any) {
     console.error('Try-It NMT inference error:', error);

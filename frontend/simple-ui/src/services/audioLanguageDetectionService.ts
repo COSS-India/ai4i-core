@@ -7,6 +7,8 @@ import type {
   AudioLanguageDetectionInferenceResponse,
 } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
   service_id: string;
@@ -80,7 +82,7 @@ export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguag
 export const performAudioLanguageDetectionInference = async (
   audioContent: string,
   serviceId: string
-): Promise<{ data: AudioLanguageDetectionInferenceResponse; responseTime: number }> => {
+): Promise<{ data: AudioLanguageDetectionInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: AudioLanguageDetectionInferenceRequest = {
       audio: [{ audioContent }],
@@ -95,11 +97,13 @@ export const performAudioLanguageDetectionInference = async (
       { responseSchema: audioLanguageDetectionInferenceResponseSchema, errorService: 'audio-language-detection' }
     );
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('Audio language detection inference error:', error);

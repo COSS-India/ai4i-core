@@ -35,6 +35,8 @@ export interface LLMHookState {
   responseWordCount: number;
   requestTime: string;
   error: string | null;
+  lastRequestId: string | null;
+  lastModelMeta: import('./feedback').InferenceModelMetadata | null;
 }
 
 // LLM Hook Methods

@@ -107,11 +107,26 @@ export interface InferenceOutputItem {
   [key: string]: unknown;
 }
 
+/** Model identity for Explicit Feedback (from inference `model` block). */
+export interface InferenceModelBlock {
+  modelProvider?: string | null;
+  modelVersion?: string | null;
+  modelId?: string | null;
+  language?: Array<{
+    sourceLanguage?: string;
+    targetLanguage?: string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+}
+
 /** Standard inference response (ASR, NMT, LLM, OCR, NER, LD, etc.). */
 export interface InferenceResponse {
   output: InferenceOutputItem[];
   config?: InferenceJson;
   smr_response?: InferenceJson;
+  /** Present on Triton-backed tasks for Feedback API attribution. */
+  model?: InferenceModelBlock | null;
 }
 
 export interface InferenceAudioOutputItem {
@@ -125,6 +140,7 @@ export interface TtsInferenceResponse {
   audio: InferenceAudioOutputItem[];
   config?: InferenceJson;
   smr_response?: InferenceJson;
+  model?: InferenceModelBlock | null;
 }
 
 // ── Common output item shapes (optional hints only) ─────────────────────────

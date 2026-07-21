@@ -8,6 +8,8 @@ import type {
   LanguagePrediction,
 } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface LanguageDetectionServiceDetailsResponse {
   service_id: string;
@@ -92,7 +94,7 @@ export const listLanguageDetectionServices = async (): Promise<LanguageDetection
 export const performLanguageDetectionInference = async (
   texts: string[],
   serviceId: string
-): Promise<{ data: LanguageDetectionInferenceResponse; responseTime: number }> => {
+): Promise<{ data: LanguageDetectionInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: LanguageDetectionInferenceRequest = {
       input: texts.map(text => ({ source: text })),
@@ -107,11 +109,13 @@ export const performLanguageDetectionInference = async (
       { responseSchema: languageDetectionInferenceResponseSchema, errorService: 'language-detection' }
     );
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('Language detection inference error:', error);

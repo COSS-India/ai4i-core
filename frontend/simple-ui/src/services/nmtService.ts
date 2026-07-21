@@ -20,6 +20,15 @@ import {
 import { performTryItNMTInference, trackTryItRequest, listTryItNMTServices } from './tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
 import { LANG_CODE_TO_LABEL } from '../config/constants';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
+
+export type NMTInferenceResult = {
+  data: NMTInferenceResponse;
+  responseTime: number;
+  requestId?: string;
+  model?: InferenceModelMetadata;
+};
 
 /**
  * Perform NMT inference on text
@@ -33,7 +42,7 @@ export const performNMTInference = async (
   text: string,
   config: NMTInferenceRequest['config'],
   forceAuth: boolean = false
-): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
+): Promise<NMTInferenceResult> => {
   try {
     // Check if user is anonymous and should use try-it endpoint
     const isAnonymous = isAnonymousUser();
@@ -63,12 +72,13 @@ export const performNMTInference = async (
       errorService: 'nmt',
     });
 
-    // Extract response time from headers
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('NMT inference error:', error);

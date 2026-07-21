@@ -20,8 +20,13 @@ import {
   listLanguageDetectionServices,
   performLanguageDetectionInference,
 } from "../services/languageDetectionService";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseLanguagePredictions } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("language-detection");
@@ -39,6 +44,8 @@ const LanguageDetectionPage: React.FC = () => {
   const [result, setResult] = useState<{ output?: unknown[] } | null>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const {
     data: services = [],
@@ -51,6 +58,11 @@ const LanguageDetectionPage: React.FC = () => {
   });
 
   const serviceOptions = useMemo(() => mapToServiceOptions(services), [services]);
+
+  const selectedService = useMemo(
+    () => services.find((s) => s.service_id === selectedServiceId),
+    [services, selectedServiceId],
+  );
 
   const trimmedText = inputText.trim();
   const canDetect =
@@ -84,14 +96,20 @@ const LanguageDetectionPage: React.FC = () => {
     setFetching(true);
     setError(null);
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     try {
       const response = await performLanguageDetectionInference([text], selectedServiceId);
       setResult(response.data);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setResponseTime(response.responseTime / 1000);
       setFetched(true);
     } catch (err: unknown) {
       const { message: errorMessage } = parseError(err, { service: "language-detection" });
       setError(errorMessage);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setFetching(false);
     }
@@ -102,12 +120,35 @@ const LanguageDetectionPage: React.FC = () => {
     setResult(null);
     setInputText("");
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   };
 
   const firstOutput = result?.output?.[0] as { langPrediction?: unknown } | undefined;
   const predictions = parseLanguagePredictions(firstOutput?.langPrediction);
   const sortedPredictions = [...predictions].sort((a, b) => (b.langScore ?? 0) - (a.langScore ?? 0));
   const hasPredictions = sortedPredictions.length > 0;
+  const topPredictionLanguage =
+    sortedPredictions[0]?.language || sortedPredictions[0]?.langCode || "";
+
+  const feedback = useMemo(() => {
+    if (!fetched || !hasPredictions) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "TEXT_LANG_DETECTION",
+      model: lastModelMeta,
+      ...fallback,
+      originalOutput: topPredictionLanguage,
+    });
+  }, [
+    fetched,
+    hasPredictions,
+    lastRequestId,
+    lastModelMeta,
+    selectedService,
+    topPredictionLanguage,
+  ]);
 
   return (
     <ServicePageLayout
@@ -190,6 +231,7 @@ const LanguageDetectionPage: React.FC = () => {
             ) : undefined
           }
           onClear={clearResults}
+          feedback={feedback}
         />
       }
     />

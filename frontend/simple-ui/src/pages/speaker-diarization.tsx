@@ -14,8 +14,12 @@ import SpeakerDiarizationResult, {
 } from "../components/service-page/results/SpeakerDiarizationResult";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
-import { useAudioRecorder } from "../hooks/useAudioRecorder";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseError } from "../utils/errorHandler";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { SPEAKER_DIARIZATION_ERRORS } from "../config/constants";
 import { showToast } from "../utils/toast";
 
@@ -30,6 +34,8 @@ const SpeakerDiarizationPage: React.FC = () => {
   const [result, setResult] = useState<SpeakerDiarizationResultData | null>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const { data: speakerDiarizationServices, isLoading: servicesLoading } = useQuery({
     queryKey: ["speaker-diarization-services"],
@@ -40,6 +46,11 @@ const SpeakerDiarizationPage: React.FC = () => {
   const serviceOptions = useMemo(
     () => mapToServiceOptions(speakerDiarizationServices ?? []),
     [speakerDiarizationServices]
+  );
+
+  const selectedService = useMemo(
+    () => (speakerDiarizationServices ?? []).find((s) => s.service_id === serviceId),
+    [speakerDiarizationServices, serviceId],
   );
 
   const handleSubmit = async () => {
@@ -56,15 +67,21 @@ const SpeakerDiarizationPage: React.FC = () => {
     setFetching(true);
     setError(null);
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     try {
       const startTime = Date.now();
       const response = await performSpeakerDiarizationInference(audioData, serviceId);
       setResult(response.data as SpeakerDiarizationResultData);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
       const { message: errorMessage } = parseError(err, { service: "speaker-diarization" });
       setError(errorMessage);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setFetching(false);
     }
@@ -75,8 +92,21 @@ const SpeakerDiarizationPage: React.FC = () => {
     setResult(null);
     setAudioData(null);
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     setAudioClearToken((t) => t + 1);
   };
+
+  const feedback = useMemo(() => {
+    if (!fetched || !result) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "SPEAKER_DIARIZATION",
+      model: lastModelMeta,
+      ...fallback,
+    });
+  }, [fetched, result, lastRequestId, lastModelMeta, selectedService]);
 
   return (
     <ServicePageLayout
@@ -121,6 +151,7 @@ const SpeakerDiarizationPage: React.FC = () => {
           metadata={fetched ? buildResponseMetadata({ responseTimeMs: responseTime * 1000 }) : []}
           result={result ? <SpeakerDiarizationResult result={result} /> : undefined}
           onClear={handleClearAudioInput}
+          feedback={feedback}
         />
       }
     />

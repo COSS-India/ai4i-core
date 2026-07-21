@@ -215,6 +215,13 @@ export const apiEndpoints = {
     serviceConsumption: `${API_V1}/metering/service-consumption`,
   },
 
+  /** Explicit Feedback Framework (AI4IDS-1888 / AI4IDS-2446 contract). */
+  feedback: {
+    submit: `${API_V1}/feedback`,
+    reasons: (modelTaskType: string) =>
+      `${API_V1}/feedback/reasons?modelTaskType=${encodeURIComponent(modelTaskType)}`,
+  },
+
   tiers: {
     base: `${API_V1}/pay-per-use`,
     list: `${API_V1}/pay-per-use/tiers`,

@@ -16,8 +16,13 @@ import {
   performAudioLanguageDetectionInference,
   listAudioLanguageDetectionServices,
 } from "../services/audioLanguageDetectionService";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseAudioLanguageDetectionOutput } from "../types/inference";
 import { parseError } from "../utils/errorHandler";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("audio-language-detection");
@@ -31,6 +36,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const { data: services = [], isLoading: isLoadingServices, isError: servicesError } = useQuery({
     queryKey: ["audioLanguageDetectionServices"],
@@ -39,6 +46,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
   });
 
   const serviceOptions = useMemo(() => mapToServiceOptions(services), [services]);
+
+  const selectedService = useMemo(
+    () => services.find((s) => s.service_id === selectedServiceId),
+    [services, selectedServiceId],
+  );
 
   const handleSubmit = async () => {
     if (!audioData) {
@@ -54,15 +66,21 @@ const AudioLanguageDetectionPage: React.FC = () => {
     setFetching(true);
     setError(null);
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     try {
       const startTime = Date.now();
       const response = await performAudioLanguageDetectionInference(audioData, selectedServiceId);
       setResult(response.data);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
       const { message: errorMessage } = parseError(err, { service: "audio-language-detection" });
       setError(errorMessage);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setFetching(false);
     }
@@ -73,6 +91,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
     setResult(null);
     setAudioData(null);
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     setAudioClearToken((t) => t + 1);
   };
 
@@ -83,6 +103,17 @@ const AudioLanguageDetectionPage: React.FC = () => {
   const { language, confidence: conf } = parseAudioLanguageDetectionOutput(
     outputItem as Parameters<typeof parseAudioLanguageDetectionOutput>[0]
   );
+
+  const feedback = useMemo(() => {
+    if (!fetched || !result) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "AUDIO_LANG_DETECTION",
+      model: lastModelMeta,
+      ...fallback,
+    });
+  }, [fetched, result, lastRequestId, lastModelMeta, selectedService]);
 
   return (
     <ServicePageLayout
@@ -163,6 +194,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
             ) : undefined
           }
           onClear={handleClearAudioInput}
+          feedback={feedback}
         />
       }
     />

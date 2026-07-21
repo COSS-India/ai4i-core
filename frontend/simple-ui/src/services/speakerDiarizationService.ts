@@ -7,6 +7,8 @@ import type {
   SpeakerDiarizationInferenceResponse,
 } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface SpeakerDiarizationServiceDetailsResponse {
   service_id: string;
@@ -90,7 +92,7 @@ export const listSpeakerDiarizationServices = async (): Promise<SpeakerDiarizati
 export const performSpeakerDiarizationInference = async (
   audioContent: string,
   serviceId: string
-): Promise<{ data: SpeakerDiarizationInferenceResponse; responseTime: number }> => {
+): Promise<{ data: SpeakerDiarizationInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: SpeakerDiarizationInferenceRequest = {
       audio: [{ audioContent }],
@@ -105,11 +107,13 @@ export const performSpeakerDiarizationInference = async (
       { responseSchema: speakerDiarizationInferenceResponseSchema, errorService: 'speaker-diarization' }
     );
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('Speaker diarization inference error:', error);

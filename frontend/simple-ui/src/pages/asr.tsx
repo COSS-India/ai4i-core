@@ -17,6 +17,10 @@ import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useASR } from "../hooks/useASR";
 import { listASRServices } from "../services/asrService";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 
 const pageDefaults = getServicePageDefaults("asr");
 const languageOptions = ASR_SUPPORTED_LANGUAGES.map((l) => ({ code: l.code, label: l.label }));
@@ -37,6 +41,8 @@ const ASRPage: React.FC = () => {
     timer,
     error,
     pendingAudio,
+    lastRequestId,
+    lastModelMeta,
     setPendingAudio,
     startRecording,
     stopRecording,
@@ -62,6 +68,31 @@ const ASRPage: React.FC = () => {
     () => mapToServiceOptions(asrServices ?? []),
     [asrServices]
   );
+
+  const selectedService = useMemo(
+    () => (asrServices ?? []).find((s) => s.service_id === serviceId),
+    [asrServices, serviceId],
+  );
+
+  const feedback = useMemo(() => {
+    if (!fetched || !audioText) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "ASR",
+      model: lastModelMeta,
+      ...fallback,
+      languageInfo: [{ sourceLanguage: language }],
+      originalOutput: audioText,
+    });
+  }, [
+    fetched,
+    audioText,
+    lastRequestId,
+    lastModelMeta,
+    selectedService,
+    language,
+  ]);
 
   const handleRecordingChange = (isRecording: boolean) => {
     if (isRecording) startRecording();
@@ -173,6 +204,7 @@ const ASRPage: React.FC = () => {
               : []
           }
           onClear={handleClearAudioInput}
+          feedback={feedback}
         />
       }
     />

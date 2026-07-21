@@ -10,6 +10,7 @@ import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
 import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
 import { parseError } from '../utils/errorHandler';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 // Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
 const VALID_NMT_CHAR_REGEX =
@@ -27,6 +28,8 @@ export const useNMT = (): UseNMTReturn => {
   const [responseWordCount, setResponseWordCount] = useState<number>(0);
   const [requestTime, setRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   // Only show "text exceeds limit" toast once per exceed (not every keystroke)
   const hasShownTextLimitToastRef = useRef(false);
@@ -46,7 +49,12 @@ export const useNMT = (): UseNMTReturn => {
 
       return performNMTInference(text, config);
     },
-    onSuccess: (response: { data: NMTInferenceResponse; responseTime: number }) => {
+    onSuccess: (response: {
+      data: NMTInferenceResponse;
+      responseTime: number;
+      requestId?: string;
+      model?: InferenceModelMetadata;
+    }) => {
       try {
         const translation = response.data.output[0]?.target || '';
         setTranslatedText(translation);
@@ -54,6 +62,8 @@ export const useNMT = (): UseNMTReturn => {
 
         // Update request time with actual API response time (in milliseconds)
         setRequestTime(response.responseTime.toString());
+        setLastRequestId(response.requestId ?? null);
+        setLastModelMeta(response.model ?? response.data.model ?? null);
 
         setFetched(true);
         setFetching(false);
@@ -77,6 +87,8 @@ export const useNMT = (): UseNMTReturn => {
       // Clear previous translation so stale output is not shown alongside the error
       setTranslatedText('');
       setFetched(false);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     },
   });
 
@@ -171,6 +183,8 @@ export const useNMT = (): UseNMTReturn => {
     setTranslatedText('');
     setFetched(false);
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   }, []);
 
   // Clear results
@@ -182,6 +196,8 @@ export const useNMT = (): UseNMTReturn => {
     setResponseWordCount(0);
     setRequestTime('0');
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   }, []);
 
   // Swap languages
@@ -213,6 +229,8 @@ export const useNMT = (): UseNMTReturn => {
     responseWordCount,
     requestTime,
     error,
+    lastRequestId,
+    lastModelMeta,
 
     // Methods
     performInference,

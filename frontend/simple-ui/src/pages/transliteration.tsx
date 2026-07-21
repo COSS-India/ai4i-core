@@ -18,7 +18,12 @@ import {
 } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseError } from "../utils/errorHandler";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("transliteration");
@@ -33,6 +38,8 @@ const TransliterationPage: React.FC = () => {
   const [result, setResult] = useState<{ output?: Array<{ source?: string; target?: string }> } | null>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const targetLanguageOptions = useMemo(
     () => INDIC_LANGUAGE_OPTIONS.filter((lang) => lang.code !== sourceLanguage),
@@ -54,6 +61,11 @@ const TransliterationPage: React.FC = () => {
   const serviceOptions = useMemo(
     () => mapToServiceOptions(transliterationServices ?? []),
     [transliterationServices]
+  );
+
+  const selectedService = useMemo(
+    () => (transliterationServices ?? []).find((s) => s.service_id === serviceId),
+    [transliterationServices, serviceId],
   );
 
   const canTransliterate =
@@ -93,6 +105,8 @@ const TransliterationPage: React.FC = () => {
     setFetching(true);
     setError(null);
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     try {
       const startTime = Date.now();
       const response = await performTransliterationInference(trimmedText, {
@@ -102,11 +116,15 @@ const TransliterationPage: React.FC = () => {
         numSuggestions: 0,
       });
       setResult(response.data);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
       const { message: errorMessage } = parseError(err, { service: "transliteration" });
       setError(errorMessage);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setFetching(false);
     }
@@ -117,9 +135,33 @@ const TransliterationPage: React.FC = () => {
     setResult(null);
     setInputText("");
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   };
 
   const hasOutput = !!(result?.output && result.output.length > 0);
+
+  const feedback = useMemo(() => {
+    if (!fetched || !hasOutput) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "TRANSLITERATION",
+      model: lastModelMeta,
+      ...fallback,
+      languageInfo: [{ sourceLanguage, targetLanguage }],
+      originalOutput: result?.output?.[0]?.target ?? "",
+    });
+  }, [
+    fetched,
+    hasOutput,
+    lastRequestId,
+    lastModelMeta,
+    selectedService,
+    sourceLanguage,
+    targetLanguage,
+    result,
+  ]);
 
   return (
     <ServicePageLayout
@@ -195,6 +237,7 @@ const TransliterationPage: React.FC = () => {
             ) : undefined
           }
           onClear={clearResults}
+          feedback={feedback}
         />
       }
     />

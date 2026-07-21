@@ -1,7 +1,7 @@
 // OCR service testing page
 
 import { Box, Text } from "@chakra-ui/react";
-import React from "react";
+import React, { useMemo } from "react";
 import {
   buildResponseMetadata,
   RequestContainer,
@@ -12,12 +12,40 @@ import {
 import OCRImageUploadInput from "../components/service-page/inputs/OCRImageUploadInput";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useOCRPage } from "../hooks/useOCRPage";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 
 const pageDefaults = getServicePageDefaults("ocr");
 
 const OCRPage: React.FC = () => {
   const { copy } = useCopyToClipboard();
   const ocr = useOCRPage();
+
+  const selectedService = useMemo(
+    () =>
+      (ocr.ocrServices ?? []).find((s) => s.service_id === ocr.selectedServiceId),
+    [ocr.ocrServices, ocr.selectedServiceId],
+  );
+
+  const feedback = useMemo(() => {
+    if (!ocr.fetched || !ocr.extractedText) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: ocr.lastRequestId,
+      modelTaskType: "OCR",
+      model: ocr.lastModelMeta,
+      ...fallback,
+      originalOutput: ocr.extractedText,
+    });
+  }, [
+    ocr.fetched,
+    ocr.extractedText,
+    ocr.lastRequestId,
+    ocr.lastModelMeta,
+    selectedService,
+  ]);
 
   return (
     <ServicePageLayout
@@ -113,6 +141,7 @@ const OCRPage: React.FC = () => {
               : []
           }
           onClear={ocr.clearResults}
+          feedback={feedback}
         />
       }
     />

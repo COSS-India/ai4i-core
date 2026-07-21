@@ -1,6 +1,7 @@
 // Shared types for reusable AI service page components
 
 import type { ReactNode } from "react";
+import type { FeedbackContext } from "./feedback";
 
 /** Input modality rendered in the request panel */
 export type ServiceInputType = "text" | "audio" | "image" | "custom";
@@ -183,6 +184,11 @@ export interface ResponseContainerProps {
   onClear?: () => void;
   clearLabel?: string;
   children?: ReactNode;
+  /**
+   * Explicit Feedback widget context. When set (and requestId/provider/version
+   * are present), the embeddable thumbs widget is rendered below actions.
+   */
+  feedback?: FeedbackContext | null;
 }
 
 export interface ServicePageLayoutProps {

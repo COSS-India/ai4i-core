@@ -10,3 +10,4 @@ export * from './observability';
 export * from './alerting';
 export * from './roles';
 export * from './metering';
+export * from './feedback';

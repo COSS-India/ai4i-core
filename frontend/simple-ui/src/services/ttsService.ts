@@ -17,6 +17,8 @@ import {
   VoiceFilterOptions
 } from '../types/tts';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface TTSServiceDetailsResponse {
   service_id: string;
@@ -98,7 +100,7 @@ export const listTTSServices = async (): Promise<TTSServiceDetailsResponse[]> =>
 export const performTTSInference = async (
   text: string,
   config: TTSInferenceRequest['config']
-): Promise<{ data: TTSInferenceResponse; responseTime: number }> => {
+): Promise<{ data: TTSInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: TTSInferenceRequest = {
       input: [{ source: text }],
@@ -113,12 +115,13 @@ export const performTTSInference = async (
       errorService: 'tts',
     });
 
-    // Extract response time from headers
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('TTS inference error:', error);

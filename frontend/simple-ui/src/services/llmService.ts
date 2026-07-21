@@ -5,6 +5,8 @@ import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 /** Model name that needs agrinet-specific chat/completions fields. */
 export const AGRINET_MODEL = 'agrinet-model';
@@ -110,7 +112,12 @@ export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> =>
 export const performLLMChat = async (
   text: string,
   config: LLMInferenceRequest['config']
-): Promise<{ data: LLMInferenceResponse; responseTime: number }> => {
+): Promise<{
+  data: LLMInferenceResponse;
+  responseTime: number;
+  requestId?: string;
+  model?: InferenceModelMetadata;
+}> => {
   try {
     const serviceId = config.serviceId?.trim();
     if (!serviceId) {
@@ -141,7 +148,7 @@ export const performLLMChat = async (
       { responseSchema: chatCompletionResponseSchema, suppressErrorAlert: true }
     );
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
     const translated =
       response.data.choices?.[0]?.message?.content?.trim() ?? '';
 
@@ -149,7 +156,12 @@ export const performLLMChat = async (
       output: [{ source: text, target: translated }],
     };
 
-    return { data, responseTime };
+    return {
+      data,
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
+    };
   } catch (error) {
     console.error('LLM chat error:', error);
     throw error;

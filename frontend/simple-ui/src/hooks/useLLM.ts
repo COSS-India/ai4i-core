@@ -10,6 +10,7 @@ import {
 } from '../services/llmService';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
+import type { InferenceModelMetadata } from '../types/feedback';
 import { parseError, showError } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
@@ -34,6 +35,8 @@ export const useLLM = (serviceId?: string, modelName?: string): UseLLMReturn => 
   const [responseWordCount, setResponseWordCount] = useState<number>(0);
   const [requestTime, setRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const hasShownTextLimitToastRef = useRef(false);
 
@@ -53,12 +56,14 @@ export const useLLM = (serviceId?: string, modelName?: string): UseLLMReturn => 
       };
       return performLLMChat(text, config);
     },
-    onSuccess: (response: { data: { output: { target?: string }[] }; responseTime: number }) => {
+    onSuccess: (response) => {
       try {
         const output = response.data.output[0]?.target || '';
         setOutputText(output);
         setResponseWordCount(getWordCount(output));
         setRequestTime(response.responseTime.toString());
+        setLastRequestId(response.requestId ?? null);
+        setLastModelMeta(response.model ?? response.data.model ?? null);
         setFetched(true);
         setFetching(false);
         setError(null);
@@ -146,6 +151,8 @@ export const useLLM = (serviceId?: string, modelName?: string): UseLLMReturn => 
   const clearResults = useCallback(() => {
     setOutputText('');
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     setFetching(false);
     setRequestWordCount(0);
     setResponseWordCount(0);
@@ -175,6 +182,8 @@ export const useLLM = (serviceId?: string, modelName?: string): UseLLMReturn => 
     responseWordCount,
     requestTime,
     error,
+    lastRequestId,
+    lastModelMeta,
     performInference,
     setInputText: setInputTextWithValidation,
     setInputLanguage,

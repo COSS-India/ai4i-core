@@ -4,6 +4,8 @@ import { apiService, apiEndpoints } from './api';
 import { nerInferenceResponseSchema } from './dto/schemas/inference';
 import type { NERInferenceRequest, NERInferenceResponse } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface NERServiceDetailsResponse {
   service_id: string;
@@ -78,7 +80,7 @@ export const listNERServices = async (): Promise<NERServiceDetailsResponse[]> =>
 export const performNERInference = async (
   text: string,
   config: NERInferenceRequest['config']
-): Promise<{ data: NERInferenceResponse; responseTime: number }> => {
+): Promise<{ data: NERInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: NERInferenceRequest = {
       input: [{ source: text }],
@@ -90,11 +92,13 @@ export const performNERInference = async (
       errorService: 'ner',
     });
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('NER inference error:', error);

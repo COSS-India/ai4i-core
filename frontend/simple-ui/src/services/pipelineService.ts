@@ -7,6 +7,8 @@ import {
   PipelineInferenceRequest,
   PipelineInferenceResponse
 } from '../types/pipeline';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 const PIPELINE_ENDPOINTS = apiEndpoints.pipeline;
 
@@ -15,14 +17,25 @@ const PIPELINE_ENDPOINTS = apiEndpoints.pipeline;
  */
 export const runPipelineInference = async (
   request: PipelineInferenceRequest
-): Promise<PipelineInferenceResponse> => {
+): Promise<{
+  data: PipelineInferenceResponse;
+  responseTime: number;
+  requestId?: string;
+  model?: InferenceModelMetadata;
+}> => {
   try {
     const response = await apiService.post(
       PIPELINE_ENDPOINTS.inference,
       request,
       { responseSchema: pipelineInferenceResponseSchema, errorService: 'pipeline' }
     );
-    return response.data;
+    const meta = extractInferenceFeedbackMeta(response);
+    return {
+      data: response.data,
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
+    };
   } catch (error) {
     console.error('Pipeline inference error:', error);
     throw error; // Re-throw so toast can show backend message via extractErrorInfo

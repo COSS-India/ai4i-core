@@ -3,6 +3,7 @@
 import React from "react";
 import { Box, Button, GridItem, Progress, Text, VStack } from "@chakra-ui/react";
 import type { ResponseContainerProps } from "../../types/servicePage";
+import { FeedbackWidget } from "../feedback";
 import ResponseActions from "./response/ResponseActions";
 import ResponseMetadata from "./response/ResponseMetadata";
 import ResultDisplay from "./response/ResultDisplay";
@@ -21,6 +22,7 @@ const ResponseContainer: React.FC<ResponseContainerProps> = ({
   onClear,
   clearLabel = "Clear Results",
   children,
+  feedback,
 }) => {
   const showResult = hasResult || (fetched && (!!resultContent || !!result));
 
@@ -53,6 +55,18 @@ const ResponseContainer: React.FC<ResponseContainerProps> = ({
             )}
             {metadata.length > 0 && <ResponseMetadata items={metadata} />}
             {actions.length > 0 && <ResponseActions actions={actions} />}
+            {feedback && (
+              <FeedbackWidget
+                requestId={feedback.requestId}
+                modelTaskType={feedback.modelTaskType}
+                modelProvider={feedback.modelProvider}
+                modelVersion={feedback.modelVersion}
+                modelId={feedback.modelId}
+                languageInfo={feedback.languageInfo}
+                originalOutput={feedback.originalOutput}
+                disabled={fetching}
+              />
+            )}
             {children}
             {onClear && (
               <Box textAlign="center">

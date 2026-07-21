@@ -9,6 +9,7 @@ import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
 import { getAsrTranscriptText } from '../types/inference';
 import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, UI_ERROR_MESSAGES } from '../config/constants';
 import { parseError } from '../utils/errorHandler';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 // MediaRecorder is a standard Web API, no need to extend Window
 
@@ -28,6 +29,8 @@ export const useASR = (): UseASRReturn => {
   const [timer, setTimer] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -148,6 +151,8 @@ export const useASR = (): UseASRReturn => {
 
         // Update request time with actual API response time (in milliseconds)
         setRequestTime(response.responseTime.toString());
+        setLastRequestId(response.requestId ?? null);
+        setLastModelMeta(response.model ?? response.data.model ?? null);
 
         setFetched(true);
         setFetching(false);
@@ -716,6 +721,8 @@ export const useASR = (): UseASRReturn => {
     setFetched(false);
     setError(null);
     setPendingAudio(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   }, []);
 
   const runTranscribe = useCallback(() => {
@@ -824,6 +831,8 @@ export const useASR = (): UseASRReturn => {
     timer,
     error,
     pendingAudio,
+    lastRequestId,
+    lastModelMeta,
 
     // Methods
     startRecording,

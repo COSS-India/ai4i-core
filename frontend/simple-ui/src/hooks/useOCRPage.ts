@@ -4,6 +4,7 @@ import { mapToServiceOptions } from "../components/service-page";
 import { OCR_ERRORS } from "../config/constants";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import type { OCRInferenceResponse } from "../types/inference";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseError } from "../utils/errorHandler";
 import { parseOCRResponse } from "../utils/ocrResponseUtils";
 import {
@@ -29,6 +30,8 @@ export function useOCRPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: ocrServices, isLoading: servicesLoading } = useQuery({
@@ -148,6 +151,8 @@ export function useOCRPage() {
 
       setResult(response.data);
       setResponseTime((Date.now() - startTime) / 1000);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setFetched(true);
     } catch (err: unknown) {
       setError(parseError(err, { service: "ocr" }).message);
@@ -163,6 +168,8 @@ export function useOCRPage() {
     setImageUri("");
     setPreviewUrl(null);
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   };
 
   return {
@@ -175,6 +182,9 @@ export function useOCRPage() {
     error: error || ocrParseError,
     extractedText,
     responseTime,
+    lastRequestId,
+    lastModelMeta,
+    ocrServices,
     activeTab,
     setActiveTab,
     isDragging,

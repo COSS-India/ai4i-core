@@ -138,7 +138,7 @@ const PipelineBuilderPage: React.FC = () => {
 
       if (pipelineType === 'translation') {
         // Translation only
-        const translationOutput = response.pipelineResponse?.[0]?.output?.[0];
+        const translationOutput = response.data.pipelineResponse?.[0]?.output?.[0];
         displayResult = {
           sourceText: translationOutput?.source || inputText,
           targetText: translationOutput?.target || '',
@@ -146,8 +146,8 @@ const PipelineBuilderPage: React.FC = () => {
         };
       } else {
         // Translation → TTS
-        const translationOutput = response.pipelineResponse?.[0]?.output?.[0];
-        const ttsOutput = response.pipelineResponse?.[1];
+        const translationOutput = response.data.pipelineResponse?.[0]?.output?.[0];
+        const ttsOutput = response.data.pipelineResponse?.[1];
 
         // Handle audio from TTS response (use blob URL so CSP media-src allows playback)
         let audioContent = '';

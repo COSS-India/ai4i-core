@@ -16,6 +16,8 @@ import {
 } from '../types/asr';
 import { io, Socket } from 'socket.io-client';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 // ASR Service details from model management
 export interface ASRServiceDetails {
@@ -69,7 +71,7 @@ export const performASRInference = async (
 export const transcribeAudio = async (
   audioContent: string,
   config: ASRInferenceRequest['config']
-): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
+): Promise<{ data: ASRInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     // AI4ICore ASR request schema
     const payload: ASRInferenceRequest = {
@@ -104,12 +106,13 @@ export const transcribeAudio = async (
     console.log('Response data:', response.data);
     console.log('Response output:', response.data.output);
 
-    // Extract response time from headers
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error: any) {
     console.error('ASR transcription error:', error);

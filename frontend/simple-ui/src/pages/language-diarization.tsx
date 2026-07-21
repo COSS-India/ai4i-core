@@ -14,7 +14,12 @@ import LanguageDiarizationResult, {
 } from "../components/service-page/results/LanguageDiarizationResult";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
+import type { InferenceModelMetadata } from "../types/feedback";
 import { parseError } from "../utils/errorHandler";
+import {
+  buildFeedbackContext,
+  resolveServiceModelFallback,
+} from "../utils/feedbackContext";
 import { showToast } from "../utils/toast";
 
 const pageDefaults = getServicePageDefaults("language-diarization");
@@ -28,6 +33,8 @@ const LanguageDiarizationPage: React.FC = () => {
   const [result, setResult] = useState<LanguageDiarizationResultData | null>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   const { data: languageDiarizationServices, isLoading: servicesLoading } = useQuery({
     queryKey: ["language-diarization-services"],
@@ -38,6 +45,11 @@ const LanguageDiarizationPage: React.FC = () => {
   const serviceOptions = useMemo(
     () => mapToServiceOptions(languageDiarizationServices ?? []),
     [languageDiarizationServices]
+  );
+
+  const selectedService = useMemo(
+    () => (languageDiarizationServices ?? []).find((s) => s.service_id === serviceId),
+    [languageDiarizationServices, serviceId],
   );
 
   const handleSubmit = async () => {
@@ -53,15 +65,21 @@ const LanguageDiarizationPage: React.FC = () => {
     setFetching(true);
     setError(null);
     setFetched(false);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     try {
       const startTime = Date.now();
       const response = await performLanguageDiarizationInference(audioData, serviceId);
       setResult(response.data as LanguageDiarizationResultData);
+      setLastRequestId(response.requestId ?? null);
+      setLastModelMeta(response.model ?? response.data.model ?? null);
       setResponseTime((Date.now() - startTime) / 1000);
       setFetched(true);
     } catch (err: unknown) {
       const { message: errorMessage } = parseError(err);
       setError(errorMessage);
+      setLastRequestId(null);
+      setLastModelMeta(null);
     } finally {
       setFetching(false);
     }
@@ -72,8 +90,21 @@ const LanguageDiarizationPage: React.FC = () => {
     setResult(null);
     setAudioData(null);
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
     setAudioClearToken((t) => t + 1);
   };
+
+  const feedback = useMemo(() => {
+    if (!fetched || !result) return null;
+    const fallback = resolveServiceModelFallback(selectedService);
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "LANGUAGE_DIARIZATION",
+      model: lastModelMeta,
+      ...fallback,
+    });
+  }, [fetched, result, lastRequestId, lastModelMeta, selectedService]);
 
   return (
     <ServicePageLayout
@@ -118,6 +149,7 @@ const LanguageDiarizationPage: React.FC = () => {
           metadata={fetched ? buildResponseMetadata({ responseTimeMs: responseTime * 1000 }) : []}
           result={result ? <LanguageDiarizationResult result={result} /> : undefined}
           onClear={handleClearAudioInput}
+          feedback={feedback}
         />
       }
     />

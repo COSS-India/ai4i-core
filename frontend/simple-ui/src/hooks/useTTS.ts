@@ -8,6 +8,7 @@ import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_TTS_TEXT_LENGTH, TTS_ERRORS } from '../config/constants';
 import { parseError } from '../utils/errorHandler';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 // Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
 const VALID_TTS_CHAR_REGEX =
@@ -42,6 +43,8 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
   const [requestTime, setRequestTime] = useState<string>('0');
   const [audioDuration, setAudioDuration] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [lastModelMeta, setLastModelMeta] = useState<InferenceModelMetadata | null>(null);
 
   // Audio ref for playback control
   const audioRef = useState<HTMLAudioElement | null>(null)[0];
@@ -92,6 +95,8 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
 
           // Set response time
           setRequestTime(response.responseTime.toString());
+          setLastRequestId(response.requestId ?? null);
+          setLastModelMeta(response.model ?? response.data.model ?? null);
 
           // Get audio duration using blob URL (same as playback)
           const audioElement = new Audio(blobUrl);
@@ -227,6 +232,8 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     setRequestTime('0');
     setAudioDuration(0);
     setError(null);
+    setLastRequestId(null);
+    setLastModelMeta(null);
   }, []);
 
   // Play audio
@@ -283,6 +290,8 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     requestTime,
     audioDuration,
     error,
+    lastRequestId,
+    lastModelMeta,
 
     // Methods
     performInference,

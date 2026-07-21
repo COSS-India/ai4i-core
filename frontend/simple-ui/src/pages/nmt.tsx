@@ -21,6 +21,7 @@ import {
   listNMTServices,
 } from "../services/nmtService";
 import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
+import { buildFeedbackContext } from "../utils/feedbackContext";
 
 const pageDefaults = getServicePageDefaults("nmt");
 
@@ -42,6 +43,8 @@ const NMTPage: React.FC = () => {
     responseWordCount,
     requestTime,
     error,
+    lastRequestId,
+    lastModelMeta,
     performInference,
     setInputText,
     setLanguagePair,
@@ -104,6 +107,39 @@ const NMTPage: React.FC = () => {
       }),
     [requestWordCount, responseWordCount, requestTime]
   );
+
+  const selectedService = useMemo(
+    () => (services || []).find((s) => s.service_id === selectedServiceId),
+    [services, selectedServiceId],
+  );
+
+  const feedback = useMemo(() => {
+    if (!fetched || !translatedText) return null;
+    return buildFeedbackContext({
+      requestId: lastRequestId,
+      modelTaskType: "NMT",
+      model: lastModelMeta,
+      modelProvider: selectedService?.provider,
+      modelVersion:
+        selectedService?.modelVersion || selectedService?.model_version,
+      modelId: selectedService?.model_id,
+      languageInfo: [
+        {
+          sourceLanguage: languagePair.sourceLanguage,
+          targetLanguage: languagePair.targetLanguage,
+        },
+      ],
+      originalOutput: translatedText,
+    });
+  }, [
+    fetched,
+    translatedText,
+    lastRequestId,
+    lastModelMeta,
+    selectedService,
+    languagePair.sourceLanguage,
+    languagePair.targetLanguage,
+  ]);
 
   const rateLimitBanner = !authLoading && !isAuthenticated && (
     <Alert
@@ -238,6 +274,7 @@ const NMTPage: React.FC = () => {
               : []
           }
           onClear={clearResults}
+          feedback={feedback}
         />
       }
     />

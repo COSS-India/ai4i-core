@@ -7,6 +7,8 @@ import type {
   TransliterationInferenceResponse,
 } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface TransliterationServiceDetailsResponse {
   service_id: string;
@@ -90,7 +92,7 @@ export const listTransliterationServices = async (): Promise<TransliterationServ
 export const performTransliterationInference = async (
   text: string,
   config: TransliterationInferenceRequest['config']
-): Promise<{ data: TransliterationInferenceResponse; responseTime: number }> => {
+): Promise<{ data: TransliterationInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: TransliterationInferenceRequest = {
       input: [{ source: text }],
@@ -106,11 +108,13 @@ export const performTransliterationInference = async (
       errorService: 'transliteration',
     });
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('Transliteration inference error:', error);

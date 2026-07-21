@@ -73,6 +73,8 @@ export interface TTSHookState {
   requestTime: string;
   audioDuration: number;
   error: string | null;
+  lastRequestId: string | null;
+  lastModelMeta: import('./feedback').InferenceModelMetadata | null;
 }
 
 // TTS Hook Methods

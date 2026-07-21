@@ -7,6 +7,8 @@ import type {
   LanguageDiarizationInferenceResponse,
 } from '../types/inference';
 import { listServices } from './modelManagementService';
+import { extractInferenceFeedbackMeta } from '../utils/feedbackContext';
+import type { InferenceModelMetadata } from '../types/feedback';
 
 export interface LanguageDiarizationServiceDetailsResponse {
   service_id: string;
@@ -90,7 +92,7 @@ export const listLanguageDiarizationServices = async (): Promise<LanguageDiariza
 export const performLanguageDiarizationInference = async (
   audioContent: string,
   serviceId: string
-): Promise<{ data: LanguageDiarizationInferenceResponse; responseTime: number }> => {
+): Promise<{ data: LanguageDiarizationInferenceResponse; responseTime: number; requestId?: string; model?: InferenceModelMetadata }> => {
   try {
     const payload: LanguageDiarizationInferenceRequest = {
       audio: [{ audioContent }],
@@ -105,11 +107,13 @@ export const performLanguageDiarizationInference = async (
       { responseSchema: languageDiarizationInferenceResponseSchema, suppressErrorAlert: true }
     );
 
-    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    const meta = extractInferenceFeedbackMeta(response);
 
     return {
       data: response.data,
-      responseTime
+      responseTime: meta.responseTime,
+      requestId: meta.requestId,
+      model: meta.model,
     };
   } catch (error) {
     console.error('Language diarization inference error:', error);
