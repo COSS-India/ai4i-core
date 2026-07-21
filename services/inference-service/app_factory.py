@@ -9,9 +9,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai4i_core.observability.config import PluginConfig
-from ai4i_core.observability.metrics import MetricsCollector
-from ai4i_core.observability.middleware import ObservabilityMiddleware
+from ai4i_core.observability import setup_observability
 from ai4i_core.logging import RequestMiddleware
 from routes import router
 from config import settings
@@ -20,35 +18,6 @@ from trace.setup import setup_tracing
 logger = logging.getLogger(__name__)
 
 _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", "/openapi.json"}
-
-# /chat and /chat/completions are load-test stubs (no real model call ever
-# happens), so Prometheus tracking is bypassed on this path by default —
-# LLM_CHAT_OBSERVABILITY_ENABLED flips it back on for the observability-only
-# load-test comparison. Subclassing here (not editing ai4i_core) keeps the
-# bypass local to this service.
-_CHAT_PATHS = {f"{settings.API_PREFIX}/chat", f"{settings.API_PREFIX}/chat/completions"}
-
-
-class _ChatAwareObservabilityMiddleware(ObservabilityMiddleware):
-    async def dispatch(self, request, call_next):
-        if request.url.path in _CHAT_PATHS and not settings.LLM_CHAT_OBSERVABILITY_ENABLED:
-            return await call_next(request)
-        return await super().dispatch(request, call_next)
-
-
-def _setup_observability(app: FastAPI) -> None:
-    """Same wiring as ai4i_core.observability.setup_observability, but with
-    the chat-aware middleware above in place of the plain one."""
-    config = PluginConfig()
-    if not config.enabled:
-        return
-    collector = MetricsCollector()
-    app.add_middleware(_ChatAwareObservabilityMiddleware, metrics_collector=collector, config=config)
-
-    @app.get(config.metrics_path)
-    async def _metrics_endpoint():
-        from fastapi import Response
-        return Response(content=collector.render(), media_type="text/plain")
 
 
 @asynccontextmanager
@@ -69,7 +38,7 @@ def _setup_middleware(app: FastAPI) -> None:
     """Configure observability, request-context, and CORS middleware."""
     # Observability — Prometheus /metrics + per-request middleware.
     # Reads OBSERVE_UTIL_* env vars (enabled, debug, metrics_path).
-    _setup_observability(app)
+    setup_observability(app)
 
     # Request context middleware — seeds trace_id and tenant_id (from the
     # gateway-injected X-Tenant-Id) into contextvars BEFORE handlers run, so

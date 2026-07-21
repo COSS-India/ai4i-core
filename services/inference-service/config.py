@@ -59,19 +59,6 @@ class Settings(BaseSettings):
     # the serviceId from the request payload — no static endpoint config needed.
     LLM_INFERENCE_TIMEOUT: int = Field(60, description="LLM upstream HTTP timeout in seconds")
 
-    # /chat and /chat/completions are load-test stubs — no model call ever
-    # happens on this path. Both off by default so it gives a clean
-    # orchestrator-overhead baseline (no Prometheus tracking, no "request"
-    # root span, no phase timer, since phase timing rides that same root
-    # span). Flip one at a time to run the observability-only / tracing-only
-    # comparison load tests.
-    LLM_CHAT_OBSERVABILITY_ENABLED: bool = Field(
-        False, description="Run the observability (Prometheus) middleware for /chat and /chat/completions"
-    )
-    LLM_CHAT_TRACING_ENABLED: bool = Field(
-        False, description="Emit the OTel 'request' span (+ phase timer) for /chat and /chat/completions"
-    )
-
     # Per-block phase timing — on by default. When true, each request's root
     # span gains per-stage *_ms fields (resolve, validate, preprocess,
     # build_payload, triton, output_convert, output_tokens, postprocess) and a
