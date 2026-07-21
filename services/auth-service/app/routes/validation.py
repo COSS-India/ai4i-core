@@ -240,16 +240,23 @@ async def validate_token(
         api_key_svc = APIKeyService(None, cache_svc)
         return await _validate_api_key(token, request, response, api_key_svc)
     finally:
-        # Emitted on every gateway forward-auth call. Fields are promoted to
-        # top-level JSON by JSONFormatter, so OpenSearch can filter on
-        # event:auth_validate and aggregate duration_ms by auth_type.
+        # Emitted on every gateway forward-auth call, including the 4xx that
+        # RequestMiddleware skips. Nested under "context" to match the shape
+        # RequestMiddleware already uses, so every field in the index reads the
+        # same way. Field names are deliberately distinct from that middleware's
+        # method/path/duration_ms: those describe the /auth/validate request
+        # itself, these describe the upstream request being authorized and the
+        # handler-only cost. Same name, two meanings would silently corrupt any
+        # aggregate over the index.
         logger.info(
             "auth validate completed",
             extra={
-                "event": "auth_validate",
-                "auth_type": auth_type,
-                "duration_ms": round((time.perf_counter() - start) * 1000, 3),
-                "original_method": request.headers.get("X-Original-Method", ""),
-                "original_uri": request.headers.get("X-Original-URI", "").split("?", 1)[0],
+                "context": {
+                    "event": "auth_validate",
+                    "auth_type": auth_type,
+                    "validate_duration_ms": round((time.perf_counter() - start) * 1000, 3),
+                    "upstream_method": request.headers.get("X-Original-Method", ""),
+                    "upstream_path": request.headers.get("X-Original-URI", "").split("?", 1)[0],
+                }
             },
         )
