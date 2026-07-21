@@ -409,7 +409,9 @@ async def get_tenant_consumption(
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Scope to a single tenant (admin only)"),
     services: Optional[str] = Query(
-        None, description="Comma-separated service keys for the heatmap columns (default: all)"
+        None,
+        pattern=r"^[a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*$",
+        description="Comma-separated service keys for the heatmap columns (default: all)",
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
