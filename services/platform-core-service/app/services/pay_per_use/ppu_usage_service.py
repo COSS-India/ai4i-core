@@ -495,18 +495,20 @@ class PPUUsageService:
         tenant's `tier` reflects whichever tier they were most recently active under
         this billing_month (derived from ppu_quota_usage, not ppu_tenant_tier_assignments
         — see get_tenants_with_usage_tier), `budget` is a separate lookup into
-        ppu_tenant_tier_assignments for budget_limit/available_balance as of the END of
-        billing_month, and tierBreakdown covers every tier they had usage under that
-        month, oldest first.
+        ppu_tenant_tier_assignments for budget_limit/available_balance as of the
+        billing_month's lookup instant (now, if it's the current month; end of
+        month otherwise — see get_tenant_budgets/_budget_lookup_instant), and
+        tierBreakdown covers every tier they had usage under that month, oldest
+        first.
 
         Unlike get_tenant_list, a tenant with zero ppu_quota_usage rows this
         billing_month is NOT omitted here — it falls into the zero-value branch
         below, so single-tenant lookups keep returning something for a valid
         tenant with no usage yet this period. `tier`/`tierId` in that branch
         still reflect the tenant's actual current assignment (read from
-        ppu_tenant_tier_assignments, as of the END of billing_month, same
-        instant get_tenant_budgets uses elsewhere) — falling back to
-        "Unassigned" only when even that assignment doesn't exist.
+        ppu_tenant_tier_assignments, at the same lookup instant get_tenant_budgets
+        uses elsewhere) — falling back to "Unassigned" only when even that
+        assignment doesn't exist.
         """
         assignments = await self._repo.get_tenants_with_usage_tier(
             billing_month, tenant_id=tenant_id

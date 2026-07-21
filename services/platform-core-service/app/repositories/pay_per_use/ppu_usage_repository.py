@@ -20,6 +20,27 @@ def _end_of_month(billing_month: str) -> datetime:
     return next_month_start - timedelta(microseconds=1)
 
 
+def _budget_lookup_instant(billing_month: str) -> datetime:
+    """Instant to check assignment coverage against for a given billing_month.
+
+    For the current, still-open month there is no "end of month" yet, so we
+    need the tenant's budget as of right now — matching the instant
+    _lock_active_assignment uses when top-up/top-down writes to this same
+    table. For a past, closed month, _end_of_month gives the correct frozen
+    snapshot. Using _end_of_month for the current month would require an
+    assignment's effective_to to already reach the last microsecond of a
+    month that hasn't happened yet, which real assignment windows (typically
+    written as midnight on their intended last day) never satisfy — that
+    mismatch was showing budgets as 0 for tenants with a perfectly valid,
+    currently-active assignment.
+    """
+    now = datetime.now(timezone.utc)
+    current_billing_month = f"{now.year:04d}-{now.month:02d}"
+    if billing_month == current_billing_month:
+        return now
+    return _end_of_month(billing_month)
+
+
 # get_tier_names() cache: PPUUsageRepository is instantiated fresh per
 # request, so this state has to live at module scope to survive across
 # requests within the same process. TTL is configurable via
@@ -103,8 +124,9 @@ class PPUUsageRepository:
 
     async def get_tenant_budgets(self, billing_month: str, tenant_ids: list[str]) -> dict:
         """budget_limit/available_balance/tier_id per tenant_id, read from whichever
-        ppu_tenant_tier_assignments row was in effect at the END of
-        billing_month.
+        ppu_tenant_tier_assignments row was in effect at the lookup instant for
+        billing_month (now, for the current month; end of month, for a past one —
+        see _budget_lookup_instant).
 
         This is the one place ppu_tenant_tier_assignments is still read for
         the usage-tenant(s) endpoints — mainly for these budget columns,
@@ -118,7 +140,7 @@ class PPUUsageRepository:
         """
         if not tenant_ids:
             return {}
-        end_instant = _end_of_month(billing_month)
+        lookup_instant = _budget_lookup_instant(billing_month)
         ranked = (
             select(
                 PPUTenantTierAssignment.tenant_id,
@@ -133,8 +155,8 @@ class PPUUsageRepository:
                 .label("rn"),
             )
             .where(
-                PPUTenantTierAssignment.effective_from <= end_instant,
-                PPUTenantTierAssignment.effective_to > end_instant,
+                PPUTenantTierAssignment.effective_from <= lookup_instant,
+                PPUTenantTierAssignment.effective_to > lookup_instant,
                 PPUTenantTierAssignment.tenant_id.in_(tenant_ids),
             )
         ).subquery()
