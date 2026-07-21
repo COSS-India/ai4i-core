@@ -273,9 +273,15 @@ class TenantService:
     ) -> dict:
         roles = await self._roles.get_user_roles(user.id)
         role = self.resolve_tenant_user_role(roles)
+        is_activated = await self._credentials.has_credentials(user.id)
         base = to_response(user, UserListResponse)
         return mask_pii_in_dict(
-            TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True),
+            TenantUserResponse(
+                **base,
+                role=role,
+                is_tenant_active=user.is_tenant_active,
+                is_activated=is_activated,
+            ).model_dump(mode="json", by_alias=True),
             mask_phones=not unmask_phone,
         )
 
@@ -290,14 +296,21 @@ class TenantService:
         """
         if not users:
             return []
-        roles_by_user = await self._roles.get_roles_for_users([u.id for u in users])
+        user_ids = [u.id for u in users]
+        roles_by_user = await self._roles.get_roles_for_users(user_ids)
+        activated_ids = await self._credentials.user_ids_with_credentials(user_ids)
         responses: list[dict] = []
         for user in users:
             role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
             base = to_response(user, UserListResponse)
             responses.append(
                 mask_pii_in_dict(
-                    TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True),
+                    TenantUserResponse(
+                        **base,
+                        role=role,
+                        is_tenant_active=user.is_tenant_active,
+                        is_activated=user.id in activated_ids,
+                    ).model_dump(mode="json", by_alias=True),
                     mask_phones=not unmask_phone,
                 )
             )
