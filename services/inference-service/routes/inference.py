@@ -422,18 +422,18 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         )
         return JSONResponse(status_code=status_code, content=body)
 
-    with traced_span("request", root=True, classify_status=True) as req_attrs:
-        req_attrs["url"] = request.url.path
-        req_attrs["method"] = request.method
-        req_attrs.update(get_context_attributes())
+    # with traced_span("request", root=True, classify_status=True) as req_attrs:
+    #     req_attrs["url"] = request.url.path
+    #     req_attrs["method"] = request.method
+    #     req_attrs.update(get_context_attributes())
 
-        status_code, body = await OpenAIProxyService().proxy(
-            path=path, payload=payload, request=request,
-        )
+    status_code, body = await OpenAIProxyService().proxy(
+        path=path, payload=payload, request=request,
+    )
 
-        if status_code >= 400:
-            req_attrs["status"] = "failure"
-            req_attrs["status_code"] = status_code
+    #     if status_code >= 400:
+    #         req_attrs["status"] = "failure"
+    #         req_attrs["status_code"] = status_code
 
     return JSONResponse(status_code=status_code, content=body)
 
@@ -665,7 +665,7 @@ async def audio_translations(
 
 
 @router.get(
-    "/test",
+    "/inference/test",
     summary="Load-Test Probe",
     description=(
         "Bare, dependency-free endpoint used to measure raw service latency "

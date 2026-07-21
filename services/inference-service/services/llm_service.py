@@ -142,44 +142,43 @@ class OpenAIProxyService:
         if model_name and isinstance(payload, dict):
             payload = {**payload, "model": model_name}
 
-        with traced_span("model") as model_attrs:
-            model_attrs["task_type"] = "LLM"
-            model_attrs["model_name"] = model_name or "unknown"
-            model_attrs["model_version"] = "unknown"
-            model_attrs.update(get_context_attributes())
-            model_attrs["service_id"] = service_id
+        # with traced_span("model") as model_attrs:
+        #     model_attrs["task_type"] = "LLM"
+        #     model_attrs["model_name"] = model_name or "unknown"
+        #     model_attrs["model_version"] = "unknown"
+        #     model_attrs.update(get_context_attributes())
+        #     model_attrs["service_id"] = service_id
 
-            async with traced_inference(payload, "LLM", logger) as infer_attrs:
+        #     async with traced_inference(payload, "LLM", logger) as infer_attrs:
                 # service_id and tenantId must be set explicitly: the PPU Kafka
                 # consumer reads only the ai-inference span for billing.
-                infer_attrs["service_id"] = service_id
-                infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+                # infer_attrs["service_id"] = service_id
+                # infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
 
-                logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
-                try:
-                    status_code, body = await self.forward(url, payload)
-                except httpx.RequestError as exc:
-                    logger.warning("LLM upstream request failed (path=%s): %s", path, exc)
-                    return 502, {"detail": "Upstream LLM request failed"}
+                # logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
+        try:
+            status_code, body = await self.forward(url, payload)
+        except httpx.RequestError as exc:
+            logger.warning("LLM upstream request failed (path=%s): %s", path, exc)
+            return 502, {"detail": "Upstream LLM request failed"}
 
-                if status_code >= 400 and isinstance(body, dict):
-                    message = (
-                        body.get("detail")
-                        or (body.get("error") or {}).get("message")
-                        or body.get("message")
-                        or "Upstream LLM error"
-                    )
-                    body = {"detail": message}
+        if status_code >= 400 and isinstance(body, dict):
+            message = (
+                body.get("detail")
+                or (body.get("error") or {}).get("message")
+                or body.get("message")
+                or "Upstream LLM error"
+            )
+            body = {"detail": message}
 
-                if isinstance(body, dict):
-                    usage = body.get("usage") or {}
-                    infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
-                    infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
-                    infer_attrs["output_type"] = "text"
-                    # vLLM echoes the model name in the response — capture it for
-                    # the model span now that clients no longer send it in the request.
-                    model_attrs["model_name"] = body.get("model", "unknown")
-
+            # if isinstance(body, dict):
+                # usage = body.get("usage") or {}
+                # infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
+                # infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
+                # infer_attrs["output_type"] = "text"
+                # # vLLM echoes the model name in the response — capture it for
+                # # the model span now that clients no longer send it in the request.
+                # model_attrs["model_name"] = body.get("model", "unknown")
         return status_code, body
 
     async def proxy_multipart(
@@ -230,14 +229,14 @@ class OpenAIProxyService:
         model_name = (service_info.get("adapter_config") or {}).get("model_name", "")
         if model_name:
             data["model"] = model_name
-        model = data.get("model", "")
+        # model = data.get("model", "")
 
-        with traced_span("model") as model_attrs:
-            model_attrs["task_type"] = "LLM"
-            model_attrs["model_name"] = model or "unknown"
-            model_attrs["model_version"] = "unknown"
-            model_attrs.update(get_context_attributes())
-            model_attrs["service_id"] = service_id
+        # with traced_span("model") as model_attrs:
+        #     model_attrs["task_type"] = "LLM"
+        #     model_attrs["model_name"] = model or "unknown"
+        #     model_attrs["model_version"] = "unknown"
+        #     model_attrs.update(get_context_attributes())
+        #     model_attrs["service_id"] = service_id
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
         try:
