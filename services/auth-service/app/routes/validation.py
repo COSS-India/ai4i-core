@@ -13,6 +13,7 @@ import base64
 import binascii
 import json
 import logging
+import time
 
 from ai4i_core.ppu import get_inference_types
 from fastapi import APIRouter, Depends, Request, Response
@@ -221,15 +222,34 @@ async def validate_token(
     DB is only acquired for the API-key branch; JWT and anonymous paths never
     open a connection, keeping the gateway hot path as cheap as possible.
     """
-    token = _extract_token(request)
-    if not token:
-        return await _validate_anonymous(request)
+    start = time.perf_counter()
+    auth_type = "anonymous"
+    try:
+        token = _extract_token(request)
+        if not token:
+            return await _validate_anonymous(request)
 
-    cache_svc = CacheService(redis)
+        cache_svc = CacheService(redis)
 
-    if is_jwt_strict(token):
-        return await _validate_jwt(token, request, response, cache_svc)
+        if is_jwt_strict(token):
+            auth_type = "jwt"
+            return await _validate_jwt(token, request, response, cache_svc)
 
-    # API key path — validates against Redis cache only, no DB needed
-    api_key_svc = APIKeyService(None, cache_svc)
-    return await _validate_api_key(token, request, response, api_key_svc)
+        # API key path — validates against Redis cache only, no DB needed
+        auth_type = "api_key"
+        api_key_svc = APIKeyService(None, cache_svc)
+        return await _validate_api_key(token, request, response, api_key_svc)
+    finally:
+        # Emitted on every gateway forward-auth call. Fields are promoted to
+        # top-level JSON by JSONFormatter, so OpenSearch can filter on
+        # event:auth_validate and aggregate duration_ms by auth_type.
+        logger.info(
+            "auth validate completed",
+            extra={
+                "event": "auth_validate",
+                "auth_type": auth_type,
+                "duration_ms": round((time.perf_counter() - start) * 1000, 3),
+                "original_method": request.headers.get("X-Original-Method", ""),
+                "original_uri": request.headers.get("X-Original-URI", "").split("?", 1)[0],
+            },
+        )
