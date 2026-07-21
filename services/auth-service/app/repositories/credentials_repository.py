@@ -23,13 +23,6 @@ class CredentialsRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def has_credentials(self, user_id: UUID) -> bool:
-        """True when the user has set a password (a credentials row exists)."""
-        result = await self._db.execute(
-            select(UserCredentials.id).where(UserCredentials.user_id == user_id)
-        )
-        return result.scalar_one_or_none() is not None
-
     async def user_ids_with_credentials(
         self, user_ids: Iterable[UUID]
     ) -> set[UUID]:

@@ -78,6 +78,46 @@ class TestResendTenantUserSetupLink:
         svc._users.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tenant_status", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED, TenantStatus.PENDING]
+    )
+    async def test_rejects_when_tenant_not_active(self, tenant_status) -> None:
+        svc = _service()
+        target = _tenant_user()
+        tenant = _tenant()
+        tenant.status = tenant_status
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc._users.get_by_id = AsyncMock(return_value=target)
+        svc._credentials.get_by_user_id = AsyncMock(return_value=None)
+
+        with pytest.raises(ValidationError) as exc:
+            await svc.resend_tenant_user_setup_link(
+                _admin(), 1, target.id, MagicMock()
+            )
+
+        assert exc.value.code == "TENANT_NOT_ACTIVE"
+        svc._tokens.create_setup_token.assert_not_called()
+        svc._users.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_when_user_tenant_locked(self) -> None:
+        svc = _service()
+        target = _tenant_user()
+        target.is_tenant_active = False
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
+        svc._users.get_by_id = AsyncMock(return_value=target)
+        svc._credentials.get_by_user_id = AsyncMock(return_value=None)
+
+        with pytest.raises(ValidationError) as exc:
+            await svc.resend_tenant_user_setup_link(
+                _admin(), 1, target.id, MagicMock()
+            )
+
+        assert exc.value.code == "USER_SUSPENDED"
+        svc._tokens.create_setup_token.assert_not_called()
+        svc._users.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_rejects_already_activated_user(self) -> None:
         svc = _service()
         target = _tenant_user()

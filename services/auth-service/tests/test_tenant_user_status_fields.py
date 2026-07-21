@@ -47,12 +47,13 @@ class TestBuildTenantUserResponse:
     @pytest.mark.asyncio
     async def test_includes_tenant_lock_and_activated_flags(self) -> None:
         svc = _make_service()
-        svc._roles.get_user_roles = AsyncMock(return_value=["USER"])
-        svc._credentials.has_credentials = AsyncMock(return_value=True)
-
-        out = await svc.build_tenant_user_response(
-            _user(is_active=True, is_tenant_active=False)
+        user = _user(is_active=True, is_tenant_active=False)
+        svc._roles.get_roles_for_users = AsyncMock(return_value={user.id: ["USER"]})
+        svc._credentials.user_ids_with_credentials = AsyncMock(
+            return_value={user.id}
         )
+
+        out = await svc.build_tenant_user_response(user)
 
         assert out["is_active"] is True
         assert out["is_tenant_active"] is False
@@ -61,12 +62,11 @@ class TestBuildTenantUserResponse:
     @pytest.mark.asyncio
     async def test_pending_activation_user_not_activated(self) -> None:
         svc = _make_service()
-        svc._roles.get_user_roles = AsyncMock(return_value=["USER"])
-        svc._credentials.has_credentials = AsyncMock(return_value=False)
+        user = _user(is_active=False, is_tenant_active=True)
+        svc._roles.get_roles_for_users = AsyncMock(return_value={user.id: ["USER"]})
+        svc._credentials.user_ids_with_credentials = AsyncMock(return_value=set())
 
-        out = await svc.build_tenant_user_response(
-            _user(is_active=False, is_tenant_active=True)
-        )
+        out = await svc.build_tenant_user_response(user)
 
         assert out["is_active"] is False
         assert out["is_tenant_active"] is True

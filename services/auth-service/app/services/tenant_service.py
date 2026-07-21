@@ -271,19 +271,13 @@ class TenantService:
     async def build_tenant_user_response(
         self, user: User, *, unmask_phone: bool = False
     ) -> dict:
-        roles = await self._roles.get_user_roles(user.id)
-        role = self.resolve_tenant_user_role(roles)
-        is_activated = await self._credentials.has_credentials(user.id)
-        base = to_response(user, UserListResponse)
-        return mask_pii_in_dict(
-            TenantUserResponse(
-                **base,
-                role=role,
-                is_tenant_active=user.is_tenant_active,
-                is_activated=is_activated,
-            ).model_dump(mode="json", by_alias=True),
-            mask_phones=not unmask_phone,
+        # Delegate to the batched builder so the payload shape is defined in
+        # one place; the credentials/roles lookups handle a one-element list
+        # at no extra cost.
+        responses = await self.build_tenant_user_responses(
+            [user], unmask_phone=unmask_phone
         )
+        return responses[0]
 
     async def build_tenant_user_responses(
         self, users: list[User], *, unmask_phone: bool = False
@@ -885,8 +879,21 @@ class TenantService:
         """
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
-        await self._load_tenant_or_404(tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
+        # A set-password link is useless unless the tenant is ACTIVE: the
+        # onboarding guard (AuthService._assert_user_tenant_onboarding) rejects
+        # set-password when the tenant is SUSPENDED/DEACTIVATED, so the emailed
+        # link would fail on click. Fail fast instead of sending a dead link.
+        self._assert_tenant_active_for_user_creation(tenant)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        # Belt-and-suspenders for the per-user tenant lock (set by the tenant
+        # status cascade). With an ACTIVE tenant this is normally True, but a
+        # stale/locked row must not receive a link that will not work.
+        if target.is_tenant_active is False:
+            raise ValidationError(
+                message="This user's access is suspended; reactivate before resending.",
+                code="USER_SUSPENDED",
+            )
 
         setup_token = await reissue_setup_token(
             target,
