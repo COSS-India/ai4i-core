@@ -125,14 +125,14 @@ class BaseTaskService:
 
         # Phase timing wraps self.<step>() calls (not the methods) so subclass
         # overrides of any step are timed too — dispatch is via self.
-        async with timed_phase("validate_ms"):
-            await self.validate_request(payload)
-        async with timed_phase("preprocess_ms"):
-            preprocessed = await self.preprocess_input(payload)
-        async with timed_phase("run_inference_ms"):
-            result = await self.run_inference(preprocessed, serviceInfo)
-        async with timed_phase("postprocess_ms"):
-            response = await self.postprocess_output(result)
+        # async with timed_phase("validate_ms"):
+        await self.validate_request(payload)
+        # async with timed_phase("preprocess_ms"):
+        preprocessed = await self.preprocess_input(payload)
+        # async with timed_phase("run_inference_ms"):
+        result = await self.run_inference(preprocessed, serviceInfo)
+        # async with timed_phase("postprocess_ms"):
+        response = await self.postprocess_output(result)
         if isinstance(response, dict):
             response["model"] = self._build_model_metadata()
         return response
@@ -319,29 +319,29 @@ class BaseTaskService:
         for group in groups:
             # Sub-phase timings accumulate across groups (per_item / per_chunk
             # loops sum into one *_ms total per stage).
-            async with timed_phase("build_payload_ms"):
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    group, config_data
-                )
+            # async with timed_phase("build_payload_ms"):
+            triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                group, config_data
+            )
             #// call ai_inference span here. So that it will geenrate teace time taken for ai inference only.
-            async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
-                with timed_phase("input_tokens_ms"):
-                    span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
+            # async with traced_inference(payload, self.task_name, self.logger) as span_ctx:
+                # with timed_phase("input_tokens_ms"):
+                    # span_ctx["input_tokens"] = count_input_tokens(input_items, span_ctx["input_type"])
                 # In stubs mode this is the stub-dispatcher cost, not the model.
-                async with timed_phase("triton_ms"):
-                    raw_triton_output = await self._call_triton_inference(
-                        triton_endpoint=triton_endpoint,
-                        triton_inputs=triton_inputs,
-                        triton_outputs=triton_outputs,
-                        api_key=api_key,
-                    )
-                async with timed_phase("output_convert_ms"):
-                    response_data.extend(
-                        await self.convert_triton_output_to_task_format(raw_triton_output)
-                    )
-                with timed_phase("output_tokens_ms"):
-                    span_ctx["output_type"] = get_output_type(response_data)
-                    span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
+                # async with timed_phase("triton_ms"):
+            raw_triton_output = await self._call_triton_inference(
+                triton_endpoint=triton_endpoint,
+                triton_inputs=triton_inputs,
+                triton_outputs=triton_outputs,
+                api_key=api_key,
+            )
+            # async with timed_phase("output_convert_ms"):
+            response_data.extend(
+                await self.convert_triton_output_to_task_format(raw_triton_output)
+            )
+                # with timed_phase("output_tokens_ms"):
+                #     span_ctx["output_type"] = get_output_type(response_data)
+                #     span_ctx["output_tokens"] = count_output_tokens(response_data, span_ctx["output_type"])
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
