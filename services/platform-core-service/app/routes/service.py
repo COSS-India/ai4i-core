@@ -14,8 +14,7 @@ from app.schemas.enums.model_management import TaskTypeEnum
 from app.schemas.model_management.service import (
     ServiceCreateRequest,
     ServiceUpdateRequest,
-    _SERVICE_ID_MAX_LEN,
-    _SERVICE_ID_RE,
+    validate_service_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,23 +105,10 @@ async def view_service(
     svc: ServiceService = Depends(get_service_service),
 ):
     """Retrieve full service details."""
-    if not service_id or not service_id.strip():
-        raise AppError(message="serviceId must not be empty.", code="INVALID_SERVICE_ID", status_code=400)
-    if len(service_id) > _SERVICE_ID_MAX_LEN:
-        raise AppError(
-            message=f"serviceId must not exceed {_SERVICE_ID_MAX_LEN} characters.",
-            code="INVALID_SERVICE_ID",
-            status_code=400,
-        )
-    if not _SERVICE_ID_RE.match(service_id):
-        raise AppError(
-            message=(
-                "serviceId must contain only alphanumeric characters, /, -, or _ "
-                "and include at least one alphanumeric character."
-            ),
-            code="INVALID_SERVICE_ID",
-            status_code=400,
-        )
+    try:
+        validate_service_id(service_id)
+    except ValueError as exc:
+        raise ValidationError(message=str(exc), code="INVALID_SERVICE_ID")
     data = await svc.get_service_detail(service_id)
     return success_response(data=data)
 
