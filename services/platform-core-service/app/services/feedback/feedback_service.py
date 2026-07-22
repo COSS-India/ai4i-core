@@ -14,14 +14,17 @@ Owns the rules:
   tagged feedback_source=PORTAL_TRY_IT_NOW; everything else is API.
 - One feedback per requestId — a duplicate submission updates the existing
   row (FeedbackRepository.create_or_update), rather than erroring.
-- Reason codes are NOT validated against a catalog yet: ef_feedback_reason
-  (the configurable reason catalog) is a separate piece of work. Per the
-  LLD, reasons are accepted as free strings until that table exists and is
-  seeded — validation switches on there, not here.
+- Reason codes are NOT validated against a catalog yet: reasons are accepted
+  as free strings regardless of what GET /feedback/reasons returns.
+- GET /feedback/reasons reads from ef_feedback_reason (the configurable
+  catalog table) first; any task type with no active DB rows falls back to
+  the static CATALOG in feedback_reasons_catalog.py (e.g. task types not yet
+  seeded).
 """
 
 from app.core.exceptions import AppError
 from app.models.feedback.feedback import Feedback
+from app.repositories.feedback.feedback_reason_repository import FeedbackReasonRepository
 from app.repositories.feedback.feedback_repository import FeedbackRepository
 from app.schemas.enums.feedback import (
     FeedbackSourceEnum,
@@ -45,8 +48,13 @@ class FeedbackValidationError(AppError):
 class FeedbackService:
     """Application-level service orchestrating feedback submission."""
 
-    def __init__(self, feedback_repo: FeedbackRepository) -> None:
+    def __init__(
+        self,
+        feedback_repo: FeedbackRepository,
+        reason_repo: FeedbackReasonRepository,
+    ) -> None:
         self._feedback_repo = feedback_repo
+        self._reason_repo = reason_repo
 
     async def submit(
         self,
@@ -102,12 +110,39 @@ class FeedbackService:
         )
 
 
-    def get_reasons(
-        self, task_type: ModelTaskTypeEnum | None
+    async def get_reasons(
+        self,
+        task_types: list[ModelTaskTypeEnum] | None,
+        lang: str | None,
     ) -> dict[str, list[Reason]]:
-        """GET /feedback/reasons. task_type=None returns the full catalog;
-        otherwise a single-key map for that task type (still a map, per the
-        spec's response schema)."""
-        if task_type is not None:
-            return {task_type.value: CATALOG[task_type]}
-        return {t.value: reasons for t, reasons in CATALOG.items()}
+        """GET /feedback/reasons. task_types=None (or empty) returns the full
+        catalog (one entry per ModelTaskTypeEnum); otherwise a map with one
+        entry per requested task type.
+
+        Each task type's reasons are read from ef_feedback_reason (active
+        rows, ordered by sort_order) first; a task type with no active DB
+        rows falls back to the static CATALOG in feedback_reasons_catalog.py
+        (e.g. task types not yet seeded). lang, when given, selects the
+        matching translation from a DB row's label_i18n, falling back to
+        the row's default label if that language isn't present.
+        """
+        task_types = task_types if task_types else list(ModelTaskTypeEnum)
+        internal_task_types = [resolve_feedback_task_type(t) for t in task_types]
+        rows = await self._reason_repo.get_by_task_type_with_language(internal_task_types, lang)
+
+        rows_by_task_type: dict[str, list] = {}
+        for row in rows:
+            rows_by_task_type.setdefault(row.task_type, []).append(row)
+
+        return {
+            t.value: (
+                self._to_reasons(rows_by_task_type[resolve_feedback_task_type(t)])
+                if rows_by_task_type.get(resolve_feedback_task_type(t))
+                else CATALOG[t]
+            )
+            for t in task_types
+        }
+
+    @staticmethod
+    def _to_reasons(rows: list) -> list[Reason]:
+        return [Reason(code=row.code, label=row.label) for row in rows]

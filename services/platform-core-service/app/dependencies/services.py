@@ -28,6 +28,7 @@ from app.repositories.alert_management.notification_receiver_repository import (
     NotificationReceiverRepository,
 )
 from app.repositories.alert_management.routing_rule_repository import RoutingRuleRepository
+from app.repositories.feedback.feedback_reason_repository import FeedbackReasonRepository
 from app.repositories.feedback.feedback_repository import FeedbackRepository
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
@@ -115,7 +116,10 @@ def get_service_service(
 def get_feedback_service(
     db: AsyncSession = Depends(get_db),
 ) -> FeedbackService:
-    return FeedbackService(feedback_repo=FeedbackRepository(db))
+    return FeedbackService(
+        feedback_repo=FeedbackRepository(db),
+        reason_repo=FeedbackReasonRepository(db),
+    )
 
 
 # ── Alert-management service factories ──

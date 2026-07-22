@@ -4,7 +4,7 @@ Explicit Feedback API endpoints (v0.1 — thumbs up/down only).
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.dependencies.services import FeedbackService, get_feedback_service
 from app.schemas.enums.feedback import ModelTaskTypeEnum
@@ -49,15 +49,44 @@ async def submit_feedback(
     summary="Get configurable feedback reasons per task type",
 )
 async def get_feedback_reasons(
-    taskType: ModelTaskTypeEnum | None = None,
+    task_type: list[str] | None = Query(
+        None,
+        description=(
+            "One or more task types: repeat the param (?task_type=ASR&task_type=TTS) "
+            "and/or comma-separate a single value (?task_type=ASR,TTS)."
+        ),
+    ),
     lang: str | None = None,
     svc: FeedbackService = Depends(get_feedback_service),
 ) -> dict[str, list[Reason]]:
     """
-    Returns the reason catalog the UI renders on thumbs down: a map of task
-    type to its active reasons. Omit taskType to get every task type.
+    Return the configurable feedback reasons, keyed by task type.
 
-    lang is reserved for localised labels — v0.1 returns English regardless
-    of value; localisation is deferred.
+    task_type omitted returns every task type; otherwise a map with one
+    entry per requested task type (accepts multiple values: repeated params
+    and/or comma-separated). For each task type, active reasons are read
+    from the ef_feedback_reason DB catalog first (ordered by sort_order); a
+    task type with no active DB rows falls back to the static catalog in
+    feedback_reasons_catalog.py. lang, when given, selects that language's
+    translation from a DB row (falling back to its default label if the
+    language isn't present) — it has no effect on catalog fallback entries,
+    which are English-only.
     """
-    return svc.get_reasons(taskType)
+    task_types = _parse_task_types(task_type)
+    return await svc.get_reasons(task_types, lang=lang)
+
+
+def _parse_task_types(raw: list[str] | None) -> list[ModelTaskTypeEnum] | None:
+    if not raw:
+        return None
+    codes = [code.strip() for part in raw for code in part.split(",") if code.strip()]
+    try:
+        return [ModelTaskTypeEnum(code) for code in codes]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Invalid task_type value(s) in {raw!r}. Expected values from "
+                f"{[t.value for t in ModelTaskTypeEnum]}."
+            ),
+        ) from exc
