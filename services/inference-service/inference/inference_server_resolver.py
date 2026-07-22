@@ -74,7 +74,11 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=settings.MODEL_MANAGEMENT_SERVICE_TIMEOUT)
-            url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
+            # /internal/services/{id} returns the full, unfiltered service+model
+            # detail (incl. adapter_config) — the public /api/v1/services/{id}
+            # strips those fields for non-admin/unauthenticated callers (AI4IDS-1816),
+            # and this resolver has no end-user identity to present as admin.
+            url = f"{model_management_url.rstrip('/')}/internal/services/{service_id}"
             raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
             # Never log the full service_info dict — it contains the resolved

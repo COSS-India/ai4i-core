@@ -234,7 +234,7 @@ async def test_process_missing_endpoint():
 
 
 async def test_resolver_url_construction():
-    """InferenceServerResolver builds /api/v1/services/{id} regardless of trailing slash."""
+    """InferenceServerResolver builds /internal/services/{id} regardless of trailing slash."""
     from unittest.mock import patch as _patch
     from inference.inference_server_resolver import InferenceServerResolver
 
@@ -253,10 +253,10 @@ async def test_resolver_url_construction():
         }
 
     cases = [
-        ("http://localhost:9090",   "http://localhost:9090/api/v1/services/indictrans-v2-all"),
-        ("http://localhost:9090/",  "http://localhost:9090/api/v1/services/indictrans-v2-all"),
-        ("https://mms.internal",    "https://mms.internal/api/v1/services/indictrans-v2-all"),
-        ("https://mms.internal/",   "https://mms.internal/api/v1/services/indictrans-v2-all"),
+        ("http://localhost:9090",   "http://localhost:9090/internal/services/indictrans-v2-all"),
+        ("http://localhost:9090/",  "http://localhost:9090/internal/services/indictrans-v2-all"),
+        ("https://mms.internal",    "https://mms.internal/internal/services/indictrans-v2-all"),
+        ("https://mms.internal/",   "https://mms.internal/internal/services/indictrans-v2-all"),
     ]
 
     # The resolver reads settings (single config source), not raw env vars —
@@ -287,7 +287,7 @@ async def run_all():
         ("postprocess_output — pairing + unwrap", test_postprocess_output),
         ("process — full pipeline (mocked)", test_process_full),
         ("process — missing endpoint", test_process_missing_endpoint),
-        ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),
+        ("resolver URL — /internal/services/{id} path", test_resolver_url_construction),
     ]
 
     logger.info("=" * 70)
