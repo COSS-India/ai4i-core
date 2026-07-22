@@ -23,8 +23,14 @@ Owns the rules:
 from app.core.exceptions import AppError
 from app.models.feedback.feedback import Feedback
 from app.repositories.feedback.feedback_repository import FeedbackRepository
-from app.schemas.enums.feedback import FeedbackSourceEnum, RatingEnum, resolve_feedback_task_type
-from app.schemas.feedback.feedback import FeedbackResponse, FeedbackSubmission
+from app.schemas.enums.feedback import (
+    FeedbackSourceEnum,
+    ModelTaskTypeEnum,
+    RatingEnum,
+    resolve_feedback_task_type,
+)
+from app.schemas.feedback.feedback import FeedbackResponse, FeedbackSubmission, Reason
+from app.services.feedback.feedback_reasons_catalog import CATALOG
 
 
 class FeedbackValidationError(AppError):
@@ -94,3 +100,14 @@ class FeedbackService:
             feedbackId=saved.id,
             message="Feedback recorded successfully.",
         )
+
+
+    def get_reasons(
+        self, task_type: ModelTaskTypeEnum | None
+    ) -> dict[str, list[Reason]]:
+        """GET /feedback/reasons. task_type=None returns the full catalog;
+        otherwise a single-key map for that task type (still a map, per the
+        spec's response schema)."""
+        if task_type is not None:
+            return {task_type.value: CATALOG[task_type]}
+        return {t.value: reasons for t, reasons in CATALOG.items()}

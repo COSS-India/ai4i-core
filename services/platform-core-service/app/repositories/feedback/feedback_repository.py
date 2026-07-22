@@ -67,3 +67,6 @@ class FeedbackRepository:
         await self._db.execute(stmt)
         await self._db.commit()
         return await self.get_by_request_id(entity.request_id)
+
+
+    async def get_
