@@ -1,12 +1,22 @@
-"""PromQL helpers for the metering API — pure functions, no DB, no I/O.
+"""PromQL helpers for the metering API — pure functions, no DB, no network I/O.
 
 Provides:
   - ``TIME_RANGES``: allowed time-window keys mapped to Prometheus duration strings.
   - ``INFERENCE_ENDPOINT_REGEX``: regex that matches all inference endpoints.
   - ``apply_time_range``: wraps a metric expression in ``increase(...[window])``.
+  - ``PROMETHEUS_API_PATH_LABEL``: the one exception — read from settings, since
+    which label carries the HTTP path is environment-dependent (see
+    ``CoreSettings.prometheus_api_path_label`` in app/core/config.py for why).
 """
 
 from __future__ import annotations
+
+from app.core.config import settings
+
+# See CoreSettings.prometheus_api_path_label (app/core/config.py) for why this
+# is env-driven rather than hardcoded. Every selector/groupby here and in
+# metering_service.py must match on this label.
+PROMETHEUS_API_PATH_LABEL = settings.prometheus_api_path_label
 
 # Allowed time range values mapped to Prometheus duration strings.
 # None means no window — returns the cumulative counter value.
@@ -209,12 +219,12 @@ def build_base_selectors(
 ) -> str:
     """Build a PromQL label selector string for telemetry_obsv_requests_total.
 
-    Returns a brace-enclosed string like '{endpoint=~"...",tenant="foo"}'
+    Returns a brace-enclosed string like '{exported_endpoint=~"...",tenant="foo"}'
     or an empty string when no filters apply.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
-        selectors.append(f'endpoint=~"{INFERENCE_ENDPOINT_REGEX}"')
+        selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{INFERENCE_ENDPOINT_REGEX}"')
     if tenant:
         selectors.append(f'tenant="{tenant}"')
     if service_id:

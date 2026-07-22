@@ -12,6 +12,7 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
+    PROMETHEUS_API_PATH_LABEL,
     build_base_selectors,
     sum_over_window,
 )
@@ -308,7 +309,7 @@ class MeteringService:
         """
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
-        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _base = _ep + ',tenant!="unknown"' + (f',tenant="{tenant}"' if tenant else "")
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
@@ -318,9 +319,9 @@ class MeteringService:
         def _by_ep(selector: str) -> str:
             metric = f"{_METRIC}{selector}"
             if not window:
-                return f"sum by(endpoint) ({metric})"
+                return f"sum by({PROMETHEUS_API_PATH_LABEL}) ({metric})"
             return (
-                f"sum by(endpoint) ("
+                f"sum by({PROMETHEUS_API_PATH_LABEL}) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f")"
@@ -461,13 +462,13 @@ class MeteringService:
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
-        Uses a single sum by(tenant, endpoint) query with offset subtraction
+        Uses a single sum by(tenant, exported_endpoint) query with offset subtraction
         (same approach as service_breakdown) to avoid increase() extrapolation errors.
         When ``tenant`` is given, the matrix is scoped to that single tenant.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
-        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant_sel = f',tenant="{tenant}"' if tenant else ''
         base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
         metric = f"{_METRIC}{base_sel}"
@@ -475,20 +476,20 @@ class MeteringService:
 
         if window:
             promql = (
-                f"sum by(tenant, endpoint) ("
+                f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         else:
-            promql = f"sum by(tenant, endpoint) ({metric}) > 0"
+            promql = f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
 
         results = await self._client.query(promql)
 
         # Accumulate (tenant, task) → count
         tenant_task: dict[str, dict[str, int]] = {}
         for r in results:
-            ep = r["metric"].get("endpoint", "")
+            ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
             tenant_label = r["metric"].get("tenant", "unknown")
             task = ENDPOINT_TO_TASK.get(ep)
             if task is None:
@@ -554,7 +555,7 @@ class MeteringService:
 
     @staticmethod
     def _endpoint_dict(results: list) -> dict:
-        """Map task key → rounded value from a `sum by(endpoint)` result vector.
+        """Map task key → rounded value from a `sum by(exported_endpoint)` result vector.
 
         Handles two endpoint patterns:
           - Standard: /api/v1/{task}/inference  → task = path segment at index 2
@@ -562,7 +563,7 @@ class MeteringService:
         """
         out: dict = {}
         for r in results:
-            ep = r["metric"].get("endpoint", "")
+            ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
             task = ENDPOINT_TO_TASK.get(ep)
             if task is None:
                 parts = [p for p in ep.split("/") if p]
