@@ -90,18 +90,6 @@ async def _check_endpoint_permission(request: Request, permission_ids: list[int]
     return required is None or required in permission_ids
 
 
-def _is_successful(result: Response) -> bool:
-    """True when a branch validated the caller rather than rejecting it.
-
-    The rejection branches return a JSONResponse carrying an explicit 401/403.
-    The success branches return either a bare schema (no status_code, FastAPI
-    defaults it to 200) or, for anonymous access to a public endpoint, a
-    JSONResponse that also defaults to 200. Reading status_code covers both
-    without each branch having to report success separately.
-    """
-    return getattr(result, "status_code", 200) < 400
-
-
 def _extract_token(request: Request) -> str:
     """Pull the bearer token from the Authorization header, or empty string."""
     raw = request.headers.get("Authorization", "").strip()
@@ -236,30 +224,30 @@ async def validate_token(
     """
     start = time.perf_counter()
     auth_type = "anonymous"
+    try:
+        token = _extract_token(request)
+        if not token:
+            return await _validate_anonymous(request)
 
-    token = _extract_token(request)
-    if not token:
-        # Rejects by raising, so a failed anonymous call never reaches the log.
-        result = await _validate_anonymous(request)
-    elif is_jwt_strict(token):
-        auth_type = "jwt"
-        result = await _validate_jwt(token, request, response, CacheService(redis))
-    else:
+        cache_svc = CacheService(redis)
+
+        if is_jwt_strict(token):
+            auth_type = "jwt"
+            return await _validate_jwt(token, request, response, cache_svc)
+
         # API key path — validates against Redis cache only, no DB needed
         auth_type = "api_key"
-        result = await _validate_api_key(
-            token, request, response, APIKeyService(None, CacheService(redis)),
-        )
-
-    # Only successful validations are timed. A rejected token exits early on a
-    # different code path, so its duration says nothing about the cost of the
-    # validation the gateway actually paid for.
-    if _is_successful(result):
-        # Nested under "context" to match RequestMiddleware's shape. Field names
-        # are deliberately distinct from that middleware's method/path/duration_ms:
-        # those describe the /auth/validate request itself, these describe the
-        # upstream request being authorized and the handler-only cost. One name
-        # with two meanings would silently corrupt any aggregate over the index.
+        api_key_svc = APIKeyService(None, cache_svc)
+        return await _validate_api_key(token, request, response, api_key_svc)
+    finally:
+        # Emitted on every gateway forward-auth call, including the 4xx that
+        # RequestMiddleware skips. Nested under "context" to match the shape
+        # RequestMiddleware already uses, so every field in the index reads the
+        # same way. Field names are deliberately distinct from that middleware's
+        # method/path/duration_ms: those describe the /auth/validate request
+        # itself, these describe the upstream request being authorized and the
+        # handler-only cost. Same name, two meanings would silently corrupt any
+        # aggregate over the index.
         logger.info(
             "auth validate completed",
             extra={
@@ -272,5 +260,3 @@ async def validate_token(
                 }
             },
         )
-
-    return result
