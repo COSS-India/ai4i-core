@@ -36,11 +36,27 @@ def get_input_type(payload: Dict[str, Any]) -> str:
         return "unknown"
 
 
+# orchestrator.ALLOWED_TASK_TYPES values (as sent in payload["task_type"])
+# spell multi-word task types with underscores; inference_types.yaml's
+# `name:` keys use hyphens — get_unit_type normalizes that away below. This
+# table is only for genuine WORDING differences that no amount of separator
+# normalization fixes (audio_language_detection's yaml name abbreviates
+# "language" to "lang").
+_TASK_TYPE_TO_YAML_NAME_OVERRIDES = {
+    "audio-language-detection": "audio-lang-detection",
+}
+
+
 def get_unit_type(task_type: str) -> str:
     """
     Billing unit for a Triton task type, sourced from inference_types.yaml
     via ai4i_core.ppu.get_inference_unit_map (e.g. "asr" -> "audio_minutes",
     "tts" -> "characters", "ocr" -> "images").
+
+    ``task_type`` must be the orchestrator's task type (e.g. payload
+    ["task_type"], "NMT"/"ASR"/...) — NOT a class name like
+    "NMTTaskService" (self.task_name), which never matches the yaml's
+    `name:` keys and would silently resolve to "unknown" for every service.
 
     Driving unit_type from the YAML's per-task-type config (rather than
     guessing modality from response field names, as get_output_type used to)
@@ -48,11 +64,18 @@ def get_unit_type(task_type: str) -> str:
     uses a non-standard output field name (e.g. speaker-diarization's
     "diarization_json").
 
+    Matching is separator-insensitive (payload's "language_detection" vs.
+    yaml's "language-detection") so new task types line up automatically
+    without needing a table entry — only a genuine wording difference (see
+    _TASK_TYPE_TO_YAML_NAME_OVERRIDES) needs one.
+
     Returns "unknown" if task_type isn't in the map, or on any lookup error.
     """
     try:
         from ai4i_core.ppu import get_inference_unit_map
-        return get_inference_unit_map().get(task_type.lower(), "unknown")
+        normalized = task_type.lower().replace("_", "-")
+        normalized = _TASK_TYPE_TO_YAML_NAME_OVERRIDES.get(normalized, normalized)
+        return get_inference_unit_map().get(normalized, "unknown")
     except Exception as e:
         logger.warning(f"Error resolving unit type for task_type={task_type}: {e}")
         return "unknown"

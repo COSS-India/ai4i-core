@@ -307,7 +307,11 @@ class BaseTaskService:
 
         # unit_type comes from inference_types.yaml (per task_type), not from
         # guessing modality off response field names — see get_unit_type.
-        unit_type = get_unit_type(self.task_name)
+        # payload["task_type"] (e.g. "NMT"), NOT self.task_name (the Python
+        # class name, e.g. "NMTTaskService") — the latter never matches the
+        # yaml's `name:` keys and silently resolves to "unknown" for every
+        # service, which zeroes out both count_input_tokens/count_output_tokens.
+        unit_type = get_unit_type(payload.get("task_type", ""))
 
         # Billed totals, summed across groups (per_item call_mode makes more
         # than one). Exposed as instance attrs — not a run_inference return
