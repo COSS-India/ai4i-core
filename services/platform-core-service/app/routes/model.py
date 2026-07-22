@@ -130,7 +130,21 @@ async def get_model_by_id(
     return success_response(data=data)
 
 
-@router.post("", status_code=201)
+@router.post(
+    "",
+    status_code=201,
+    summary="Register a new model version (ULCA model-schema conformant)",
+    description=(
+        "Registers a new model version in the registry. The request body "
+        "follows ULCA's `model-schema.yml` Model object: `name`, `version`, "
+        "`description`, `task`, `license`, `domain`, `submitter`, "
+        "`inferenceEndPoint`, and `trainingDataset` are required; "
+        "`refUrl`, `languages`, `isLangDetectionEnabled`, `isMultilingual`, "
+        "`licenseUrl`, `benchmarks`, and `classInstance` are optional (see "
+        "each field's description in the schema below for its default, if "
+        "any). Use the 'Example Value' tab for a full worked payload."
+    ),
+)
 async def create_model(
     request: Request,
     payload: ModelCreateRequest,
@@ -149,7 +163,25 @@ async def create_model(
     )
 
 
-@router.patch("")
+@router.patch(
+    "",
+    summary="Partially update a model version (ULCA model-schema conformant)",
+    description=(
+        "Applies a partial update to an existing (modelId, version). Only "
+        "`modelId` and `version` are required — every other ULCA Model "
+        "field (`description`, `task`, `languages`, `license`, `domain`, "
+        "`submitter`, `inferenceEndPoint`, `trainingDataset`, etc.) is "
+        "optional; omit a field to leave it unchanged. `name` cannot be "
+        "changed (modelId is derived from name+version — create a new "
+        "version instead). `inferenceEndPoint` merges: send only the keys "
+        "you want changed (e.g. just `adapterConfig`), no need to resend "
+        "`callbackUrl`/`schema`. Never resend a GET response's "
+        "`inferenceApiKey.value` verbatim — it comes back as '[REDACTED]' "
+        "and that sentinel is stripped before merge, so it won't corrupt "
+        "the stored secret, but it also won't update it. Use the 'Example "
+        "Value' tab for a realistic partial-update payload."
+    ),
+)
 async def update_model(
     request: Request,
     payload: ModelUpdateRequest,
