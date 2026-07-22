@@ -20,7 +20,10 @@ import {
   type BillingPeriodKey,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail, TenantUsageItem } from "../../types/usageSpend";
+import MeteringAsyncState from "./MeteringAsyncState";
 import SpendOverviewPanel from "./SpendOverviewPanel";
+import TenantSpendPanel from "./TenantSpendPanel";
+import { TenantAvatar, TierBadge } from "./UsageSpendCells";
 import UsageSpendTenantDrawer from "./UsageSpendTenantDrawer";
 import UsageSpendTenantTable from "./UsageSpendTenantTable";
 
@@ -154,91 +157,130 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   return (
     <VStack align="stretch" spacing={5}>
       <Flex justify="space-between" align="flex-start" gap={6} flexWrap="wrap">
-        <Box>
-          <Text fontSize="26px" fontWeight="semibold" lineHeight="1.2" mb={1}>
-            {METERING.USAGE_SPEND.TITLE}
-          </Text>
-          <Text fontSize="14px" color="gray.600">
-            {subtitle}
-          </Text>
-        </Box>
-        <FormControl w="auto">
-          <Text
-            fontSize="12px"
-            color="gray.500"
-            fontWeight="semibold"
-            letterSpacing="0.03em"
-            textAlign="right"
-            mb={1}
-          >
-            {METERING.USAGE_SPEND.BILLING_PERIOD}
-          </Text>
-          <Select
-            size="sm"
-            value={periodKey}
-            onChange={(e) => setPeriodKey(e.target.value as BillingPeriodKey)}
-            borderRadius="8px"
-            minW="180px"
-            bg="white"
-            isDisabled={isDetailOpen}
-          >
-            <option value="current">{METERING.USAGE_SPEND.CURRENT_MONTH}</option>
-            <option value="last">{METERING.USAGE_SPEND.LAST_MONTH}</option>
-          </Select>
-        </FormControl>
+        {isTenantView && tenantDetail ? (
+          <HStack spacing="14px" align="center">
+            <TenantAvatar name={orgName || tenantDetail.tenantName} size="md" />
+            <Box>
+              <Text fontSize="18px" fontWeight="bold" lineHeight="1.2">
+                {orgName || tenantDetail.tenantName}
+              </Text>
+              <Text fontSize="13px" color="gray.500">
+                {METERING.ROLE_VIEWS.tenant} view
+              </Text>
+            </Box>
+          </HStack>
+        ) : (
+          <Box>
+            <Text fontSize="26px" fontWeight="semibold" lineHeight="1.2" mb={1}>
+              {METERING.USAGE_SPEND.TITLE}
+            </Text>
+            <Text fontSize="14px" color="gray.600">
+              {subtitle}
+            </Text>
+          </Box>
+        )}
+        <VStack align="flex-end" spacing={2}>
+          {isTenantView && tenantDetail ? <TierBadge label={tenantDetail.tier} /> : null}
+          <FormControl w="auto">
+            <Text
+              fontSize="12px"
+              color="gray.500"
+              fontWeight="semibold"
+              letterSpacing="0.03em"
+              textAlign="right"
+              mb={1}
+            >
+              {METERING.USAGE_SPEND.BILLING_PERIOD}
+            </Text>
+            <Select
+              size="sm"
+              value={periodKey}
+              onChange={(e) => setPeriodKey(e.target.value as BillingPeriodKey)}
+              borderRadius="8px"
+              minW="180px"
+              bg="white"
+              isDisabled={isDetailOpen}
+            >
+              <option value="current">{METERING.USAGE_SPEND.CURRENT_MONTH}</option>
+              <option value="last">{METERING.USAGE_SPEND.LAST_MONTH}</option>
+            </Select>
+          </FormControl>
+        </VStack>
       </Flex>
 
-      <SpendOverviewPanel
-        summary={data.summaryData}
-        isLoading={data.isSummaryLoading}
-        error={data.summaryError}
-        currency={data.currency}
-        spendChangePercent={data.spendChangePercent}
-        tenantDetail={isTenantView ? tenantDetail : null}
-        emptyStateMessage={
-          data.hasNoTierAssigned
-            ? "No tier or budget assigned. Contact your administrator."
-            : undefined
-        }
-      />
-
-      {!data.isScoped ? (
-        <HStack spacing={3} flexWrap="wrap">
-          <Select
-            size="sm"
-            w={{ base: "full", sm: "220px" }}
-            value={filterTierId}
-            onChange={(e) => setFilterTierId(e.target.value)}
-            borderRadius="8px"
-            bg="white"
-          >
-            <option value="">Filter by tier · All tiers</option>
-            {data.tiers.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            size="sm"
-            w={{ base: "full", sm: "260px" }}
-            value={filterTaskType}
-            onChange={(e) => setFilterTaskType(e.target.value)}
-            borderRadius="8px"
-            bg="white"
-          >
-            <option value="">Filter by model task type · All</option>
-            {data.taskTypeOptions.map((t) => (
-              <option key={t} value={t}>
-                {formatModelTaskTypeLabel(t)}
-              </option>
-            ))}
-          </Select>
-        </HStack>
-      ) : null}
-
-      {!isTenantView ? (
+      {isTenantView ? (
+        <MeteringAsyncState
+          isLoading={data.isSummaryLoading}
+          isEmpty={!data.isSummaryLoading && !tenantDetail}
+          errorMessage={data.summaryError}
+          emptyMessage={
+            data.hasNoTierAssigned
+              ? "No tier or budget assigned. Contact your administrator."
+              : "No usage data available for this tenant."
+          }
+        >
+          {tenantDetail ? (
+            <TenantSpendPanel
+              detail={tenantDetail}
+              currency={data.currency}
+              filterTierId={filterTierId}
+              filterTaskType={filterTaskType}
+              onFilterTierChange={setFilterTierId}
+              onFilterTaskTypeChange={setFilterTaskType}
+            />
+          ) : null}
+        </MeteringAsyncState>
+      ) : (
         <>
+          <SpendOverviewPanel
+            summary={data.summaryData}
+            isLoading={data.isSummaryLoading}
+            error={data.summaryError}
+            currency={data.currency}
+            spendChangePercent={data.spendChangePercent}
+            tenantDetail={null}
+            emptyStateMessage={
+              data.hasNoTierAssigned
+                ? "No tier or budget assigned. Contact your administrator."
+                : undefined
+            }
+          />
+
+          {!data.isScoped ? (
+            <HStack spacing={3} flexWrap="wrap">
+              <Select
+                size="sm"
+                w={{ base: "full", sm: "220px" }}
+                value={filterTierId}
+                onChange={(e) => setFilterTierId(e.target.value)}
+                borderRadius="8px"
+                bg="white"
+              >
+                <option value="">Filter by tier · All tiers</option>
+                {data.tiers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                size="sm"
+                w={{ base: "full", sm: "260px" }}
+                value={filterTaskType}
+                onChange={(e) => setFilterTaskType(e.target.value)}
+                borderRadius="8px"
+                bg="white"
+              >
+                <option value="">Filter by model task type · All</option>
+                {data.taskTypeOptions.map((t) => (
+                  <option key={t} value={t}>
+                    {formatModelTaskTypeLabel(t)}
+                  </option>
+                ))}
+              </Select>
+            </HStack>
+          ) : null}
+
           <UsageSpendTenantTable
             tenants={data.tenants}
             isLoading={data.isTenantsLoading}
@@ -273,7 +315,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
             onPeriodChange={handleDrawerPeriodChange}
           />
         </>
-      ) : null}
+      )}
     </VStack>
   );
 };

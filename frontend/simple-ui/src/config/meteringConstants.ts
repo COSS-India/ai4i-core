@@ -91,9 +91,9 @@ export const METERING = {
     { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   TENANT_SUB_TABS: [
-    { id: "usage-spend", label: "Usage and Spend" },
     { id: "overview", label: "Overview" },
     { id: "service", label: "Service Consumption" },
+    { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",

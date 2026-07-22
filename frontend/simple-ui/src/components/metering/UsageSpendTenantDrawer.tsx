@@ -11,27 +11,15 @@ import {
   HStack,
   Select,
   Spinner,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
-import React, { useMemo } from "react";
+import React from "react";
 import { METERING } from "../../config/meteringConstants";
-import {
-  aggregateTasks,
-  billingPeriodLabel,
-  formatSpendMoney,
-  taskTypeColor,
-  type AggregatedTaskUsage,
-  type BillingPeriodKey,
-} from "../../utils/usageSpendHelpers";
-import type { TenantUsageDetail, TierTaskTypeUsage } from "../../types/usageSpend";
-import { BudgetCell, TaskTypeLabel, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
+import { billingPeriodLabel, type BillingPeriodKey } from "../../utils/usageSpendHelpers";
+import type { TenantUsageDetail } from "../../types/usageSpend";
+import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
+import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
 
 interface UsageSpendTenantDrawerProps {
   isOpen: boolean;
@@ -45,13 +33,6 @@ interface UsageSpendTenantDrawerProps {
   onPeriodChange: (periodKey: BillingPeriodKey) => void;
 }
 
-function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
-  if ("percentage" in t && typeof t.percentage === "number") return t.percentage;
-  const limit = t.quotaLimit ?? 0;
-  if (limit <= 0) return 0;
-  return (t.consumed / limit) * 100;
-}
-
 const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   isOpen,
   onClose,
@@ -61,25 +42,6 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
   loadedPeriodKey,
   onPeriodChange,
 }) => {
-  const taskRows = useMemo(() => {
-    if (!detail) return [];
-    const tiers = detail.tierBreakdown ?? [];
-    if (tiers.length > 1) {
-      return tiers.flatMap((tier) => [
-        { kind: "tier" as const, tier },
-        ...(tier.taskTypes ?? []).map((t) => ({
-          kind: "task" as const,
-          task: t,
-          tierName: tier.tierName,
-        })),
-      ]);
-    }
-    return aggregateTasks(tiers)
-      .sort((a, b) => b.spend - a.spend)
-      .map((t) => ({ kind: "task" as const, task: t }));
-  }, [detail]);
-
-  const spend = detail?.spend ?? 0;
   const hasMultiTier = (detail?.tierBreakdown?.length ?? 0) > 1;
   const periodLabel = billingPeriodLabel(loadedPeriodKey);
 
@@ -149,86 +111,11 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           <Text fontSize="11px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb="10px">
             SPEND BY MODEL TASK TYPE — {periodLabel}
           </Text>
-          <Box overflowX="auto" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-            <Table size="sm" variant="simple">
-              <Thead bg="gray.50">
-                <Tr>
-                  <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="26%">
-                    MODEL TASK TYPE
-                  </Th>
-                  <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="38%">
-                    USAGE
-                  </Th>
-                  <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="20%">
-                    SPEND
-                  </Th>
-                  <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="16%">
-                    SHARE
-                  </Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {taskRows.map((row, idx) => {
-                  if (row.kind === "tier") {
-                    return (
-                      <Tr key={`tier-${row.tier.tierId}`}>
-                        <Td colSpan={4} bg="gray.50" py={2}>
-                          <HStack spacing={2}>
-                            <TierBadge label={row.tier.tierName} />
-                            <Text fontSize="10.5px" fontWeight="bold" color="gray.600">
-                              {formatSpendMoney(row.tier.spend, detail.currency)}
-                            </Text>
-                          </HStack>
-                        </Td>
-                      </Tr>
-                    );
-                  }
-                  const t = row.task;
-                  const share = spend > 0 ? ((t.spend / spend) * 100).toFixed(1) : "0.0";
-                  const color = taskTypeColor(t.taskType, idx);
-                  return (
-                    <Tr key={`${"tierName" in row ? row.tierName : ""}-${t.taskType}-${idx}`}>
-                      <Td>
-                        <TaskTypeLabel
-                          taskType={t.taskType}
-                          color={color}
-                          fontSize="sm"
-                          fontWeight="semibold"
-                        />
-                      </Td>
-                      <Td>
-                        <UsageCell
-                          consumed={t.consumed}
-                          quotaLimit={t.quotaLimit}
-                          remaining={t.remaining}
-                          percentage={quotaUsagePercentage(t)}
-                          unit={t.unit}
-                        />
-                      </Td>
-                      <Td fontSize="sm">{formatSpendMoney(t.spend, detail.currency)}</Td>
-                      <Td fontSize="12.5px" color="gray.500">
-                        {share}%
-                      </Td>
-                    </Tr>
-                  );
-                })}
-                <Tr bg="gray.50">
-                  <Td fontWeight="bold" fontSize="sm">
-                    Total
-                  </Td>
-                  <Td color="gray.500" fontWeight="normal" fontSize="12px">
-                    —
-                  </Td>
-                  <Td fontWeight="bold" fontSize="sm">
-                    {formatSpendMoney(spend, detail.currency)}
-                  </Td>
-                  <Td fontWeight="bold" fontSize="sm">
-                    100%
-                  </Td>
-                </Tr>
-              </Tbody>
-            </Table>
-          </Box>
+          <SpendByTaskTypeTable
+            tierBreakdown={detail.tierBreakdown ?? []}
+            totalSpend={detail.spend}
+            currency={detail.currency}
+          />
           {hasMultiTier ? (
             <Text fontSize="11.5px" color="gray.500" lineHeight="1.5" mt="10px">
               Grouped by tier since this tenant changed tier during the period — spend and usage
