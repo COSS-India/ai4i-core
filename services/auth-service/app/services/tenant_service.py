@@ -54,6 +54,7 @@ from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
+    TENANT_ONBOARDING_STATUSES,
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -880,15 +881,21 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
-        # A set-password link is useless unless the tenant is ACTIVE: the
-        # onboarding guard (AuthService._assert_user_tenant_onboarding) rejects
-        # set-password when the tenant is SUSPENDED/DEACTIVATED, so the emailed
-        # link would fail on click. Fail fast instead of sending a dead link.
-        self._assert_tenant_active_for_user_creation(tenant)
+        # Match the window enforced at set-password time
+        # (AuthService.assert_tenant_allows_onboarding). PENDING must stay
+        # allowed: a PENDING tenant's contact admin is exactly the user who
+        # needs a resend, and their set-password is what activates the tenant.
+        # Only SUSPENDED/DEACTIVATED would produce a link that dies on click.
+        if tenant.status not in TENANT_ONBOARDING_STATUSES:
+            raise ValidationError(
+                message="Setup links can only be resent while the tenant is pending or active.",
+                code="TENANT_NOT_ACTIVE",
+            )
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
-        # Belt-and-suspenders for the per-user tenant lock (set by the tenant
-        # status cascade). With an ACTIVE tenant this is normally True, but a
-        # stale/locked row must not receive a link that will not work.
+        # Per-user tenant lock, set either by the tenant status cascade or by
+        # PATCH /tenants/{id}/users/{id}/status. set_password_with_token does
+        # not check this flag, so the user could set a password and still be
+        # refused at login — block the resend instead.
         if target.is_tenant_active is False:
             raise ValidationError(
                 message="This user's access is suspended; reactivate before resending.",

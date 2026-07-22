@@ -78,8 +78,27 @@ class TestResendTenantUserSetupLink:
         svc._users.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_allows_pending_tenant_contact_admin(self) -> None:
+        """PENDING must stay allowed: the contact admin onboards (set-password)
+        before the tenant is ACTIVE, and that is what activates the tenant."""
+        svc = _service()
+        target = _tenant_user()
+        tenant = _tenant()
+        tenant.status = TenantStatus.PENDING
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc._users.get_by_id = AsyncMock(return_value=target)
+        svc._credentials.get_by_user_id = AsyncMock(return_value=None)
+
+        await svc.resend_tenant_user_setup_link(
+            _admin(), 1, target.id, MagicMock()
+        )
+
+        svc._tokens.create_setup_token.assert_called_once()
+        svc._users.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "tenant_status", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED, TenantStatus.PENDING]
+        "tenant_status", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED]
     )
     async def test_rejects_when_tenant_not_active(self, tenant_status) -> None:
         svc = _service()
