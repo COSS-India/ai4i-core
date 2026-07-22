@@ -29,6 +29,23 @@ def _deep_merge(existing: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, 
             merged[key] = value
     return merged
 
+
+def _strip_redacted_api_key_value(ep_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Guard the PATCH deep-merge against the GET-path redaction sentinel.
+
+    model_to_dict/serializers.py masks inferenceApiKey.value to
+    REDACTED_VALUE on read. A client that GETs a model and PATCHes the
+    endpoint object straight back — a common echo-back pattern — would
+    otherwise have _deep_merge write that sentinel over the real stored
+    secret. Drop the "value" key here when it's the sentinel so _deep_merge
+    leaves the existing real value untouched (it only overwrites keys
+    actually present in the update)."""
+    api_key = ep_dict.get("inferenceApiKey")
+    if isinstance(api_key, dict) and api_key.get("value") == REDACTED_VALUE:
+        api_key = {k: v for k, v in api_key.items() if k != "value"}
+        ep_dict = {**ep_dict, "inferenceApiKey": api_key}
+    return ep_dict
+
 from fastapi.encoders import jsonable_encoder
 
 from app.core.config import settings
@@ -43,7 +60,7 @@ from app.repositories.model_management.service_repository import ServiceReposito
 from app.schemas.enums.model_management import VersionStatusEnum
 from app.schemas.model_management.model import ModelCreateRequest, ModelUpdateRequest
 from app.services.cache_service import CacheService
-from .serializers import model_to_dict
+from .serializers import REDACTED_VALUE, model_to_dict
 from app.utils.hashing import generate_model_id
 
 logger = logging.getLogger(__name__)
@@ -313,6 +330,7 @@ class ModelService:
                 ep_dict = payload.inferenceEndPoint.model_dump(
                     by_alias=True, exclude_unset=True, exclude_none=True
                 )
+                ep_dict = _strip_redacted_api_key_value(ep_dict)
                 update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(ep_dict))
             elif key in ("task", "languages", "domain", "benchmarks", "submitter", "trainingDataset"):
                 target_key = "training_dataset" if key == "trainingDataset" else key

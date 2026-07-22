@@ -71,6 +71,7 @@ ServiceService = _svc_svc_mod.ServiceService
 
 ImmutableModelVersionError = _model_svc_mod.ImmutableModelVersionError
 DuplicateModelVersionError = _model_svc_mod.DuplicateModelVersionError
+REDACTED_VALUE = _model_svc_mod.REDACTED_VALUE
 
 from app.core.exceptions import EntityNotFoundError, ValidationError  # noqa: E402
 from app.schemas.enums.model_management import VersionStatusEnum  # noqa: E402
@@ -316,6 +317,61 @@ class TestModelServiceUpdate:
         await svc.update_model(payload, updated_by="user-1")
         svc._models.apply_updates.assert_awaited_once()
         svc._models.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_model_echoed_redacted_api_key_does_not_overwrite_real_secret(self):
+        """A client that GETs a model (inferenceApiKey.value comes back as
+        REDACTED_VALUE) and PATCHes the endpoint object straight back must
+        not have the sentinel clobber the real stored secret."""
+        svc = _make_model_svc()
+        instance = _make_model_orm()
+        instance.inference_endpoint = {
+            "callbackUrl": "http://example.com/infer",
+            "inferenceApiKey": {"name": "Authorization", "value": "real-secret-token"},
+            "isMultilingualEnabled": False,
+        }
+        svc._models.get_by_id_version = AsyncMock(return_value=instance)
+        svc._models.refresh = AsyncMock(return_value=instance)
+        svc._services.list_published_for_model_version = AsyncMock(return_value=[])
+
+        payload = ModelUpdateRequest(
+            modelId="abc123",
+            version="1.0",
+            inferenceEndPoint={
+                "callbackUrl": "http://example.com/infer",
+                "inferenceApiKey": {"name": "Authorization", "value": REDACTED_VALUE},
+                "isMultilingualEnabled": True,
+            },
+        )
+        await svc.update_model(payload, updated_by="user-1")
+
+        update_data = svc._models.apply_updates.call_args.args[1]
+        merged_ep = update_data["inference_endpoint"]
+        assert merged_ep["inferenceApiKey"]["value"] == "real-secret-token"
+        assert merged_ep["isMultilingualEnabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_model_real_api_key_value_still_applies(self):
+        """A genuine (non-sentinel) inferenceApiKey.value update must still
+        go through — the guard only strips the exact REDACTED_VALUE sentinel."""
+        svc = _make_model_svc()
+        instance = _make_model_orm()
+        instance.inference_endpoint = {
+            "inferenceApiKey": {"name": "Authorization", "value": "old-token"},
+        }
+        svc._models.get_by_id_version = AsyncMock(return_value=instance)
+        svc._models.refresh = AsyncMock(return_value=instance)
+        svc._services.list_published_for_model_version = AsyncMock(return_value=[])
+
+        payload = ModelUpdateRequest(
+            modelId="abc123",
+            version="1.0",
+            inferenceEndPoint={"inferenceApiKey": {"name": "Authorization", "value": "new-token"}},
+        )
+        await svc.update_model(payload, updated_by="user-1")
+
+        update_data = svc._models.apply_updates.call_args.args[1]
+        assert update_data["inference_endpoint"]["inferenceApiKey"]["value"] == "new-token"
 
 
 # ===========================================================================

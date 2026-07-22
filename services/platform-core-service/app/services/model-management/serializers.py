@@ -25,7 +25,10 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
-_REDACTED = "[REDACTED]"
+# Public (no leading underscore): model_service.update_model imports this to
+# guard the PATCH deep-merge against a client echoing a GET response back —
+# see _strip_redacted_api_key_value there.
+REDACTED_VALUE = "[REDACTED]"
 
 
 def _redact_inference_endpoint(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -39,7 +42,7 @@ def _redact_inference_endpoint(raw: Optional[Dict[str, Any]]) -> Optional[Dict[s
         return raw
     api_key = raw.get("inferenceApiKey")
     if isinstance(api_key, dict) and api_key.get("value"):
-        raw = {**raw, "inferenceApiKey": {**api_key, "value": _REDACTED}}
+        raw = {**raw, "inferenceApiKey": {**api_key, "value": REDACTED_VALUE}}
     return raw
 
 
