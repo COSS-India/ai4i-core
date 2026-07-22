@@ -8,7 +8,13 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
-from app.schemas.enums.model_management import LicenseEnum, TaskTypeEnum
+from app.schemas.enums.model_management import (
+    LicenseEnum,
+    OAuthProviderEnum,
+    SupportedLanguagesEnum,
+    SupportedScriptsEnum,
+    TaskTypeEnum,
+)
 
 _T = TypeVar("_T")
 
@@ -77,33 +83,49 @@ class TaskSpecLenient(BaseSchema):
 # ── Inference endpoint schema (model definition, not the live endpoint URL) ──
 
 
-class ModelProcessingType(BaseSchema):
-    type: str
+class InferenceApiKey(BaseModel):
+    """Auth header expected by the model's callback URL (ULCA ``inferenceApiKey``)."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
+
+    name: str = "Authorization"
+    value: str
 
 
-class InferenceSchemaSpec(BaseModel):
-    """The (request, response) schema embedded in a model's inference_endpoint."""
+class AsyncApiDetails(BaseModel):
+    """Polling details for async inference (ULCA ``AsyncApiDetails``).
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
+    ``asyncApiSchema``/``asyncApiPollingSchema`` are task-specific request/
+    response contracts validated by the inference service, so they stay a
+    flexible passthrough here rather than a fully modeled discriminated union.
+    """
 
-    modelProcessingType: Optional[ModelProcessingType] = None
-    model_name: Optional[str] = None
-    request: Dict[str, Any] = {}
-    response: Dict[str, Any] = {}
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
+
+    pollingUrl: str
+    pollInterval: int
+    asyncApiSchema: Optional[Dict[str, Any]] = None
+    asyncApiPollingSchema: Optional[Dict[str, Any]] = None
 
 
 class InferenceEndPoint(BaseModel):
-    """Model-level inference endpoint metadata (the model card).
+    """Model-level inference endpoint metadata (ULCA ``InferenceAPIEndPoint``).
 
     The ``schema`` JSON key is aliased to ``endpoint_schema`` in Python to
-    avoid shadowing Pydantic v2's ``BaseModel.schema`` class method.
-    Serialization back to JSON still uses the ``schema`` key via the alias.
+    avoid shadowing Pydantic v2's ``BaseModel.schema`` class method. Its
+    task-specific request/response contract is validated by the inference
+    service, not the model registry, so it stays a flexible passthrough dict
+    here rather than a fully modeled discriminated union.
     """
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
 
-    endpoint_schema: Optional[InferenceSchemaSpec] = Field(None, alias="schema")
-    call_back_url: Optional[str] = None
+    callbackUrl: str
+    inferenceApiKey: Optional[InferenceApiKey] = None
+    isMultilingualEnabled: bool = False
+    endpoint_schema: Dict[str, Any] = Field(..., alias="schema")
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
     adapter_config: Optional[Dict[str, Any]] = Field(None, alias="adapterConfig")
 
 
@@ -111,22 +133,56 @@ class InferenceEndPoint(BaseModel):
 
 
 class OAuthId(BaseSchema):
-    oauthId: str
-    provider: str
+    """OAuth identity of a contributor/submitter (ULCA ``OAuthIdentity``)."""
+
+    identifier: Optional[str] = None
+    oauthId: Optional[str] = None
+    provider: Optional[OAuthProviderEnum] = None
 
 
 class TeamMember(BaseModel):
+    """A contributor on the submitter's team (ULCA ``Contributor``)."""
+
     model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
 
-    name: str
+    name: str = Field(..., min_length=5, max_length=50)
     aboutMe: Optional[str] = None
     oauthId: Optional[OAuthId] = None
 
 
 class Submitter(BaseSchema):
-    name: str
+    """The model provider — who submitted this model (ULCA ``Submitter``)."""
+
+    name: str = Field(..., min_length=3, max_length=50)
+    oauthId: Optional[OAuthId] = None
     aboutMe: Optional[str] = None
     team: List[TeamMember] = Field(default_factory=list)
+
+
+# ── Language ──
+
+
+class LanguagePair(BaseSchema):
+    """A language, or source/target language pair, a model supports (ULCA
+    ``LanguagePair``). Leave ``targetLanguage`` unset to indicate a single
+    language rather than a pair."""
+
+    sourceLanguage: SupportedLanguagesEnum
+    sourceLanguageName: Optional[str] = None
+    sourceScriptCode: Optional[SupportedScriptsEnum] = None
+    targetLanguage: Optional[SupportedLanguagesEnum] = None
+    targetLanguageName: Optional[str] = None
+    targetScriptCode: Optional[SupportedScriptsEnum] = None
+
+
+# ── Training dataset ──
+
+
+class TrainingDataset(BaseSchema):
+    """Training dataset metadata used to train the model (ULCA ``TrainingDataset``)."""
+
+    description: str
+    datasetId: Optional[str] = None
 
 
 # ── Benchmarks ──

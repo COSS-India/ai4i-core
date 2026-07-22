@@ -191,11 +191,15 @@ class ModelService:
             ref_url=encoded["refUrl"],
             task=encoded.get("task") or {},
             languages=encoded.get("languages") or [],
+            is_lang_detection_enabled=encoded.get("isLangDetectionEnabled") or False,
+            is_multilingual=encoded.get("isMultilingual") or False,
             license=encoded.get("license"),
+            license_url=encoded.get("licenseUrl"),
             domain=encoded.get("domain") or [],
             inference_endpoint=encoded.get("inferenceEndPoint") or {},
             benchmarks=encoded.get("benchmarks") or [],
             submitter=encoded.get("submitter") or {},
+            training_dataset=encoded.get("trainingDataset") or {},
             class_instance=encoded.get("classInstance"),
             created_by=created_by,
         )
@@ -310,10 +314,17 @@ class ModelService:
                     by_alias=True, exclude_unset=True, exclude_none=True
                 )
                 update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(ep_dict))
-            elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
-                update_data[key] = jsonable_encoder(value)
+            elif key in ("task", "languages", "domain", "benchmarks", "submitter", "trainingDataset"):
+                target_key = "training_dataset" if key == "trainingDataset" else key
+                update_data[target_key] = jsonable_encoder(value)
             elif key == "classInstance":
                 update_data["class_instance"] = value
+            elif key == "isLangDetectionEnabled":
+                update_data["is_lang_detection_enabled"] = value
+            elif key == "isMultilingual":
+                update_data["is_multilingual"] = value
+            elif key == "licenseUrl":
+                update_data["license_url"] = value
             else:
                 update_data[key] = value
 
