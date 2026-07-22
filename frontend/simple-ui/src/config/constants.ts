@@ -994,7 +994,9 @@ export const TENANT_ADMIN_UPDATABLE_STATUSES: readonly TenantStatusValue[] = [
   TENANT.STATUS.DEACTIVATED,
 ];
 
-/** Allowed PATCH transitions — keep in sync with auth-service tenant_lifecycle.py. */
+/** Allowed PATCH transitions — keep in sync with auth-service tenant_lifecycle.py.
+ * DEACTIVATED → ACTIVE additionally requires onboarding_completed (API enforced).
+ */
 export const ALLOWED_TENANT_STATUS_TRANSITIONS: Readonly<
   Record<TenantStatusValue, readonly TenantStatusValue[]>
 > = {
@@ -1143,10 +1145,19 @@ export function getTenantStatusColorScheme(status?: string | null): string {
 
 /** Target statuses offered as row actions for the given tenant status. */
 export function getTenantStatusActionTargets(
-  currentStatus: string | null | undefined
+  currentStatus: string | null | undefined,
+  options?: { onboardingCompleted?: boolean }
 ): TenantStatusValue[] {
   const current = normalizeTenantStatus(currentStatus ?? "");
-  return [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+  const targets = [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+  // Never-verified deactivated tenants: no Activate — offer resend in the UI instead.
+  if (
+    current === TENANT.STATUS.DEACTIVATED &&
+    options?.onboardingCompleted === false
+  ) {
+    return targets.filter((status) => status !== TENANT.STATUS.ACTIVE);
+  }
+  return targets;
 }
 
 /** Action button label when changing tenant status. */

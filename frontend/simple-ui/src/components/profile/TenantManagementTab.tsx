@@ -102,6 +102,18 @@ import {
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
+const BUDGET_MAX_INTEGER_DIGITS = 7;
+
+function clampBudgetInput(raw: string): string {
+  const dotIndex = raw.indexOf(".");
+  const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
+    0,
+    BUDGET_MAX_INTEGER_DIGITS,
+  );
+  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
+  return intPart + decimalPart;
+}
+
 function dash(v?: string | null): string {
   return v && v.trim() ? v : "—";
 }
@@ -870,6 +882,7 @@ export default function TenantManagementTab({
     stopRowClick: (e: React.MouseEvent) => void,
     menuAriaLabel: string,
   ) {
+    if (items.length === 0) return null;
     return (
       <Menu>
         <MenuButton
@@ -986,15 +999,28 @@ export default function TenantManagementTab({
         ];
       }
 
-      // DEACTIVATED
+      // DEACTIVATED — Activate only after email verification; otherwise resend setup link
+      if (t.onboarding_completed) {
+        return [
+          {
+            key: "activate",
+            label: "Activate",
+            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
+            color: "green.600",
+            hoverBg: "green.50",
+            icon: <FiPower size={16} />,
+          },
+        ];
+      }
       return [
         {
-          key: "activate",
-          label: "Activate",
-          onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
-          color: "green.600",
-          hoverBg: "green.50",
-          icon: <FiPower size={16} />,
+          key: "resend-verification",
+          label: "Send verification email",
+          onSelect: () => void tm.handleResendTenantVerificationEmail(t),
+          color: "blue.600",
+          hoverBg: "blue.50",
+          icon: <FiMail size={16} />,
+          isDisabled: tm.resendVerificationTenantId === t.tenant_id,
         },
       ];
     })();
@@ -1836,7 +1862,9 @@ export default function TenantManagementTab({
                   <InputLeftAddon>₹</InputLeftAddon>
                   <Input
                     value={assignBudget}
-                    onChange={(e) => setAssignBudget(e.target.value)}
+                    onChange={(e) =>
+                      setAssignBudget(clampBudgetInput(e.target.value))
+                    }
                     placeholder="e.g. 500000"
                     type="number"
                     min={0}

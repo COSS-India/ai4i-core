@@ -3,6 +3,7 @@ Model management API endpoints.
 """
 
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -37,6 +38,28 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
     except ValueError:
         valid = [e.value for e in TaskTypeEnum]
         raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
+
+
+_MODEL_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
+_MODEL_ID_MAX_LEN = 255
+
+
+def _validate_model_id(model_id: str) -> str:
+    """Reject a structurally invalid model_id before any DB lookup is attempted
+    (AI4IDS-1932) — mirrors ServiceCreateRequest._validate_service_id's format
+    (schemas/model_management/service.py), since model_id and serviceId are the
+    same class of opaque identifier in this codebase.
+    """
+    if not model_id or not model_id.strip():
+        raise ValidationError("model_id must not be empty")
+    if len(model_id) > _MODEL_ID_MAX_LEN:
+        raise ValidationError(f"model_id must not exceed {_MODEL_ID_MAX_LEN} characters")
+    if not _MODEL_ID_RE.match(model_id):
+        raise ValidationError(
+            "model_id must contain only alphanumeric characters, /, -, or _ "
+            "and include at least one alphanumeric character"
+        )
+    return model_id
 
 
 @router.get("")
@@ -102,6 +125,7 @@ async def get_model_by_id(
     svc: ModelService = Depends(get_model_service),
 ):
     """Retrieve a model by ID."""
+    model_id = _validate_model_id(model_id)
     data = await svc.get_model(model_id, version=version)
     return success_response(data=data)
 

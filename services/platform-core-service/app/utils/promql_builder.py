@@ -1,4 +1,4 @@
-"""PromQL builders for alert definitions — pure functions, no DB, no I/O.
+"""PromQL builders for alert definitions — pure functions, no DB, no network I/O.
 
 Two entry points:
   - ``build_promql_from_threshold``: legacy path; takes (category, alert_type,
@@ -9,9 +9,10 @@ Two entry points:
 After building, ``inject_endpoint_into_promql`` can be applied to scope a rule
 to one or more inference tasks (e.g. only ``nmt``). All inference tasks now run
 inside a single ``inference-service``, so Prometheus has no per-task ``service``
-label — the task is encoded in the ``endpoint`` label as
-``/api/v1/inference/<task>`` by the observability middleware. Scoping therefore
-narrows the endpoint selector rather than adding a ``service=`` matcher.
+label — the task is encoded in the ``PROMETHEUS_API_PATH_LABEL`` label (env-
+driven, see app/core/config.py) as ``/api/v1/inference/<task>`` by the
+observability middleware. Scoping therefore narrows the endpoint selector
+rather than adding a ``service=`` matcher.
 
 Lifted from alert-management-service/alert_management.py:638-1012 with:
   - ``organization`` parameter / org-filter logic removed per migration plan.
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.core.config import settings
 from app.core.exceptions import ValidationError
 
 
@@ -104,10 +106,15 @@ SERVICE_SUFFIX = "-service"
 # ── Inference task → endpoint scoping ────────────────────────────────────────
 # Each inference task is exposed by inference-service at a dedicated route
 # ``/api/v1/<task>/inference`` (see services/inference-service/routes/inference.py).
-# Observability emits ``request.url.path`` verbatim as the Prometheus ``endpoint``
-# label, so alerts scope to a task by narrowing the endpoint selector to that
-# path. No dependency on a ``task_type`` field in the request body — the URL
-# alone identifies the task.
+# Observability emits ``request.url.path`` verbatim as the Prometheus HTTP-path
+# label, so alerts scope to a task by narrowing that selector to the path. No
+# dependency on a ``task_type`` field in the request body — the URL alone
+# identifies the task.
+#
+# See CoreSettings.prometheus_api_path_label (app/core/config.py) for why the
+# label name is env-driven rather than hardcoded (same convention as
+# metering_promql_builder.py).
+PROMETHEUS_API_PATH_LABEL = settings.prometheus_api_path_label
 
 # Lowercased inference-service TaskType values (services/inference-service/
 # models/task_types.py). These are the literal task segments in the URL.
@@ -129,7 +136,7 @@ INFERENCE_TASKS: tuple = (
 # The broad inference-endpoint matcher every builder emits when no task is given.
 # `inject_endpoint_into_promql` rewrites this exact substring to a task-specific
 # selector, so it must stay byte-identical to what the builders below produce.
-_DEFAULT_ENDPOINT_SELECTOR = 'endpoint=~"/.*inference.*"'
+_DEFAULT_ENDPOINT_SELECTOR = f'{PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"'
 
 
 # ── Alert-type helpers ───────────────────────────────────────────────────────
@@ -168,7 +175,7 @@ def build_promql_from_threshold(
     """
     Build PromQL from alert type + threshold (legacy path).
 
-    Latency: ``threshold_value`` is in seconds; the result groups by ``(le, endpoint, tenant)``
+    Latency: ``threshold_value`` is in seconds; the result groups by ``(le, exported_endpoint, tenant)``
     so Alertmanager can route by tenant.
     Error rate: ratio of 4xx/5xx vs total; ``threshold_unit`` "percent" is converted to ratio.
     Infrastructure: percent thresholds against ``node_*`` metrics.
@@ -179,8 +186,8 @@ def build_promql_from_threshold(
     if category == "application":
         if at == "latency":
             return (
-                f'histogram_quantile(0.5, sum by (le, endpoint, tenant) '
-                f'(rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"}}[5m]))) '
+                f'histogram_quantile(0.5, sum by (le, {PROMETHEUS_API_PATH_LABEL}, tenant) '
+                f'(rate(telemetry_obsv_request_duration_seconds_bucket{{{PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"}}[5m]))) '
                 f'> {threshold_value}'
             )
         if at == "error_rate":
@@ -190,10 +197,10 @@ def build_promql_from_threshold(
                 else threshold_value
             )
             return (
-                f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total'
-                f'{{status_code=~"[45]..", endpoint=~"/.*inference.*"}}[5m])) '
-                f'/ sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total'
-                f'{{endpoint=~"/.*inference.*"}}[5m])) > {thresh}'
+                f'sum by ({PROMETHEUS_API_PATH_LABEL}, tenant)(rate(telemetry_obsv_requests_total'
+                f'{{status_code=~"[45]..", {PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"}}[5m])) '
+                f'/ sum by ({PROMETHEUS_API_PATH_LABEL}, tenant)(rate(telemetry_obsv_requests_total'
+                f'{{{PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"}}[5m])) > {thresh}'
             )
         raise ValidationError(
             "Invalid application alert_type. Must be one of: Latency, Error Rate"
@@ -282,9 +289,9 @@ def build_promql_from_signal_config(
         threshold_seconds = threshold_value / 1000.0 if unit == "ms" else threshold_value
         quantile = config["quantile"]
         expr = (
-            f'histogram_quantile({quantile}, sum by (le, endpoint, tenant) '
+            f'histogram_quantile({quantile}, sum by (le, {PROMETHEUS_API_PATH_LABEL}, tenant) '
             f'(rate(telemetry_obsv_request_duration_seconds_bucket'
-            f'{{endpoint=~"/.*inference.*"}}[5m])))'
+            f'{{{PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"}}[5m])))'
         )
         return f"{expr} {op} {threshold_seconds}"
 
@@ -300,12 +307,12 @@ def build_promql_from_signal_config(
         )
         status_regex = config["status_regex"]
         num = (
-            f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total'
-            f'{{status_code=~"{status_regex}", endpoint=~"/.*inference.*"}}[5m]))'
+            f'sum by ({PROMETHEUS_API_PATH_LABEL}, tenant)(rate(telemetry_obsv_requests_total'
+            f'{{status_code=~"{status_regex}", {PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"}}[5m]))'
         )
         den = (
-            f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total'
-            f'{{endpoint=~"/.*inference.*"}}[5m]))'
+            f'sum by ({PROMETHEUS_API_PATH_LABEL}, tenant)(rate(telemetry_obsv_requests_total'
+            f'{{{PROMETHEUS_API_PATH_LABEL}=~"/.*inference.*"}}[5m]))'
         )
         return f"({num} / {den}) {op} {thresh}"
 
@@ -373,12 +380,12 @@ def _normalize_tasks(tasks: Optional[List[str]]) -> List[str]:
 
 
 def inject_endpoint_into_promql(promql_expr: str, tasks: Optional[List[str]]) -> str:
-    """Narrow the inference ``endpoint`` selector to specific task(s).
+    """Narrow the inference ``exported_endpoint`` selector to specific task(s).
 
-    Replaces the broad ``endpoint=~"/.*inference.*"`` matcher emitted by the
-    builders with a task-scoped selector:
-      - 1 task:  ``endpoint="/api/v1/inference/nmt"`` (exact match)
-      - 2+ tasks: ``endpoint=~"/api/v1/inference/(nmt|asr)"`` (RE2 alternation)
+    Replaces the broad ``exported_endpoint=~"/.*inference.*"`` matcher emitted
+    by the builders with a task-scoped selector:
+      - 1 task:  ``exported_endpoint="/api/v1/inference/nmt"`` (exact match)
+      - 2+ tasks: ``exported_endpoint=~"/api/v1/inference/(nmt|asr)"`` (RE2 alternation)
 
     No-op when ``tasks`` is empty (the rule stays scoped to all inference
     endpoints) or when the expression has no inference endpoint selector
@@ -389,9 +396,9 @@ def inject_endpoint_into_promql(promql_expr: str, tasks: Optional[List[str]]) ->
         return promql_expr
 
     if len(task_list) == 1:
-        new_selector = f'endpoint="/api/v1/{task_list[0]}/inference"'
+        new_selector = f'{PROMETHEUS_API_PATH_LABEL}="/api/v1/{task_list[0]}/inference"'
     else:
         pattern = "|".join(task_list)
-        new_selector = f'endpoint=~"/api/v1/({pattern})/inference"'
+        new_selector = f'{PROMETHEUS_API_PATH_LABEL}=~"/api/v1/({pattern})/inference"'
 
     return promql_expr.replace(_DEFAULT_ENDPOINT_SELECTOR, new_selector)
