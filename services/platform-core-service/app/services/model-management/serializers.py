@@ -25,6 +25,24 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
+_REDACTED = "[REDACTED]"
+
+
+def _redact_inference_endpoint(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Mask ``inferenceApiKey.value`` before it leaves the service.
+
+    That value is the auth header/token for the model's callback URL, stored
+    verbatim in ``mm_models.inference_endpoint`` JSONB. Without this, any
+    caller able to read the model card (GET /models, list) gets the secret
+    back — a token leak on a multi-tenant platform."""
+    if not isinstance(raw, dict):
+        return raw
+    api_key = raw.get("inferenceApiKey")
+    if isinstance(api_key, dict) and api_key.get("value"):
+        raw = {**raw, "inferenceApiKey": {**api_key, "value": _REDACTED}}
+    return raw
+
+
 def model_to_dict(model: Model) -> Dict[str, Any]:
     """Serialize a Model ORM row to the API response shape."""
     return {
@@ -42,7 +60,7 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "submitter": model.submitter,
         "license": model.license,
         "licenseUrl": model.license_url,
-        "inferenceEndPoint": model.inference_endpoint,
+        "inferenceEndPoint": _redact_inference_endpoint(model.inference_endpoint),
         "source": model.ref_url or "",
         "task": model.task or {},
         "trainingDataset": model.training_dataset or None,

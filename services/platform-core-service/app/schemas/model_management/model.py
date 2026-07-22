@@ -14,6 +14,7 @@ from app.schemas.base import BaseSchema
 from app.schemas.common import (
     Benchmark,
     InferenceEndPoint,
+    InferenceEndPointPatch,
     LanguagePair,
     Submitter,
     TaskSpec,
@@ -43,7 +44,7 @@ class ModelCreateRequest(BaseSchema):
     isLangDetectionEnabled: bool = False
     isMultilingual: bool = False
     license: str
-    licenseUrl: Optional[str] = None
+    licenseUrl: Optional[str] = Field(None, max_length=500)
     domain: List[DomainEnum]
     inferenceEndPoint: InferenceEndPoint
     benchmarks: List[Benchmark] = Field(default_factory=list)
@@ -97,9 +98,9 @@ class ModelUpdateRequest(BaseSchema):
     isLangDetectionEnabled: Optional[bool] = None
     isMultilingual: Optional[bool] = None
     license: Optional[str] = None
-    licenseUrl: Optional[str] = None
+    licenseUrl: Optional[str] = Field(None, max_length=500)
     domain: Optional[List[DomainEnum]] = None
-    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    inferenceEndPoint: Optional[InferenceEndPointPatch] = None
     benchmarks: Optional[List[Benchmark]] = None
     submitter: Optional[Submitter] = None
     trainingDataset: Optional[TrainingDataset] = None

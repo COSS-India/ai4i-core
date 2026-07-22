@@ -38,7 +38,18 @@ def resolve_task_type(value: str) -> str:
 
 
 class LicenseEnum(str, Enum):
-    """Permitted license identifiers for registered models (ULCA ``License`` schema)."""
+    """Permitted license identifiers for registered models (ULCA ``License`` schema).
+
+    Intentional cutover (AI4IDS-2478): this replaces the prior free-form set
+    (MIT, Apache-2.0, GPL-2.0/3.0, every BSD/LGPL/AGPL/MPL/EPL/OpenRAIL
+    variant, Proprietary, ...) with ULCA's fixed, lowercase list. Existing
+    mm_models rows storing a now-dropped value are not migrated — there's no
+    DB-level CHECK constraint on `license`, and reads return the stored
+    string as-is (model_to_dict/ModelResponse don't re-validate it against
+    this enum), so old rows keep displaying unchanged. Only new writes
+    (create/update) are constrained to this list; validate_license() below
+    accepts them case-insensitively.
+    """
 
     CC_BY_4_0 = "cc-by-4.0"
     CC_BY_SA_4_0 = "cc-by-sa-4.0"
@@ -87,7 +98,15 @@ class DomainEnum(str, Enum):
 
 
 class SupportedLanguagesEnum(str, Enum):
-    """ULCA-supported language codes, iso-639-1/2 (ULCA ``SupportedLanguages`` schema)."""
+    """ULCA-supported language codes, iso-639-1/2 (ULCA ``SupportedLanguages`` schema).
+
+    Confirmed intentional scope (AI4IDS-2478): the model registry is Indic +
+    English only, matching ULCA's own list — English, the Indian scheduled
+    languages, plus `mixed`/`unknown`. A model registered with any other
+    language code (fr, de, zh, ...) is rejected at create/update. If a future
+    ticket needs non-Indic languages, extend this enum rather than loosening
+    LanguagePair to a free-form string.
+    """
 
     EN = "en"
     HI = "hi"

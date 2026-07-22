@@ -129,6 +129,28 @@ class InferenceEndPoint(BaseModel):
     adapter_config: Optional[Dict[str, Any]] = Field(None, alias="adapterConfig")
 
 
+class InferenceEndPointPatch(BaseModel):
+    """Partial-update variant of :class:`InferenceEndPoint` for PATCH /models.
+
+    ``update_model`` deep-merges only the keys the caller actually sent into
+    the existing stored endpoint (see ``ModelService.update_model``), so a
+    PATCH that touches only e.g. ``adapterConfig`` or
+    ``isMultilingualEnabled`` must not be forced to also resend
+    ``callbackUrl``/``schema``. Those two stay required on the create-time
+    :class:`InferenceEndPoint`; here every field is optional.
+    """
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
+
+    callbackUrl: Optional[str] = None
+    inferenceApiKey: Optional[InferenceApiKey] = None
+    isMultilingualEnabled: Optional[bool] = None
+    endpoint_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
+    adapter_config: Optional[Dict[str, Any]] = Field(None, alias="adapterConfig")
+
+
 # ── Submitter / team ──
 
 
