@@ -6,7 +6,7 @@ model-management-service so that consumers (gateway, frontends) do not break
 during migration.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from pydantic import Field, field_validator
 
@@ -14,13 +14,16 @@ from app.schemas.base import BaseSchema
 from app.schemas.common import (
     Benchmark,
     InferenceEndPoint,
+    InferenceEndPointPatch,
+    LanguagePair,
     Submitter,
     TaskSpec,
     TaskSpecLenient,
+    TrainingDataset,
     validate_entity_name,
     validate_license,
 )
-from app.schemas.enums.model_management import VersionStatusEnum
+from app.schemas.enums.model_management import DomainEnum, VersionStatusEnum
 
 
 # ── Create / Update ──
@@ -29,20 +32,24 @@ from app.schemas.enums.model_management import VersionStatusEnum
 class ModelCreateRequest(BaseSchema):
     """Request body for POST /models."""
 
-    version: str
+    version: str = Field(..., min_length=1, max_length=20)
     versionStatus: Optional[VersionStatusEnum] = VersionStatusEnum.ACTIVE
     submittedOn: Optional[int] = None  # Auto-generated server-side
     updatedOn: Optional[int] = None
-    name: str
-    description: str
-    refUrl: str
+    name: str = Field(..., min_length=5, max_length=100)
+    description: str = Field(..., min_length=25, max_length=1000)
+    refUrl: Optional[str] = Field(None, min_length=5, max_length=200)
     task: TaskSpec
-    languages: List[Dict[str, Any]]
+    languages: Optional[List[LanguagePair]] = None
+    isLangDetectionEnabled: bool = False
+    isMultilingual: bool = False
     license: str
-    domain: List[str]
+    licenseUrl: Optional[str] = Field(None, max_length=500)
+    domain: List[DomainEnum]
     inferenceEndPoint: InferenceEndPoint
     benchmarks: List[Benchmark] = Field(default_factory=list)
     submitter: Submitter
+    trainingDataset: TrainingDataset
     classInstance: Optional[str] = None
 
     @field_validator("version", mode="before")
@@ -82,17 +89,21 @@ class ModelUpdateRequest(BaseSchema):
     """Request body for PATCH /models. modelId + version identify the target."""
 
     modelId: str
-    version: Optional[str] = None
+    version: Optional[str] = Field(None, min_length=1, max_length=20)
     versionStatus: Optional[VersionStatusEnum] = None
-    description: Optional[str] = None
-    refUrl: Optional[str] = None
+    description: Optional[str] = Field(None, min_length=25, max_length=1000)
+    refUrl: Optional[str] = Field(None, min_length=5, max_length=200)
     task: Optional[TaskSpec] = None
-    languages: Optional[List[Dict[str, Any]]] = None
+    languages: Optional[List[LanguagePair]] = None
+    isLangDetectionEnabled: Optional[bool] = None
+    isMultilingual: Optional[bool] = None
     license: Optional[str] = None
-    domain: Optional[List[str]] = None
-    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    licenseUrl: Optional[str] = Field(None, max_length=500)
+    domain: Optional[List[DomainEnum]] = None
+    inferenceEndPoint: Optional[InferenceEndPointPatch] = None
     benchmarks: Optional[List[Benchmark]] = None
     submitter: Optional[Submitter] = None
+    trainingDataset: Optional[TrainingDataset] = None
     classInstance: Optional[str] = None
 
     @field_validator("license", mode="before")
@@ -120,13 +131,17 @@ class ModelResponse(BaseSchema):
     versionStatus: Optional[str] = None
     versionStatusUpdatedAt: Optional[str] = None
     description: Optional[str] = None
-    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    languages: List[LanguagePair] = Field(default_factory=list)
+    isLangDetectionEnabled: bool = False
+    isMultilingual: bool = False
     domain: List[str] = Field(default_factory=list)
     submitter: Optional[Submitter] = None
     license: Optional[str] = None
+    licenseUrl: Optional[str] = None
     inferenceEndPoint: Optional[InferenceEndPoint] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
+    trainingDataset: Optional[TrainingDataset] = None
     classInstance: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
