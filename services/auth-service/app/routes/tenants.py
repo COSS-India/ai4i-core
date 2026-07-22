@@ -158,6 +158,27 @@ async def update_tenant_user_status(
     return success_response(data=await svc.build_tenant_user_response(target))
 
 
+@router.post("/{tenant_id}/users/{user_id}/resend-setup-link")
+async def resend_tenant_user_setup_link(
+    tenant_id: int,
+    user_id: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+):
+    """Re-send the set-password (SETUP) onboarding email to a tenant user.
+
+    Use this — not /auth/resend-verification — for users created under a tenant,
+    who are provisioned passwordless and onboard via a set-password link.
+    """
+    await svc.resend_tenant_user_setup_link(
+        current_user, tenant_id, user_id, background_tasks
+    )
+    return success_response(
+        data={"message": "A password setup link has been sent to the user's email."}
+    )
+
+
 @router.patch("/{tenant_id}/users/{user_id}")
 async def update_tenant_user(
     tenant_id: int,
