@@ -13,7 +13,6 @@ from pydantic import Field, field_validator
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
     Benchmark,
-    InferenceEndPoint,
     Submitter,
     TaskSpec,
     TaskSpecLenient,
@@ -40,7 +39,6 @@ class ModelCreateRequest(BaseSchema):
     languages: List[Dict[str, Any]]
     license: str
     domain: List[str]
-    inferenceEndPoint: InferenceEndPoint
     benchmarks: List[Benchmark] = Field(default_factory=list)
     submitter: Submitter
     classInstance: Optional[str] = None
@@ -90,7 +88,6 @@ class ModelUpdateRequest(BaseSchema):
     languages: Optional[List[Dict[str, Any]]] = None
     license: Optional[str] = None
     domain: Optional[List[str]] = None
-    inferenceEndPoint: Optional[InferenceEndPoint] = None
     benchmarks: Optional[List[Benchmark]] = None
     submitter: Optional[Submitter] = None
     classInstance: Optional[str] = None
@@ -124,7 +121,6 @@ class ModelResponse(BaseSchema):
     domain: List[str] = Field(default_factory=list)
     submitter: Optional[Submitter] = None
     license: Optional[str] = None
-    inferenceEndPoint: Optional[InferenceEndPoint] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
     classInstance: Optional[str] = None

@@ -78,7 +78,6 @@ type Model = ModelDetails & {
   languages: Record<string, unknown>[];
   domain: string[];
   license: string;
-  inferenceEndPoint: NonNullable<ModelDetails["inferenceEndPoint"]>;
   source: string;
   task: NonNullable<ModelDetails["task"]>;
 };
@@ -277,32 +276,6 @@ const ModelManagementPage: React.FC = () => {
       domain: [
         "general"
       ],
-      inferenceEndPoint: {
-        schema: {
-          modelProcessingType: {
-            type: "batch"
-          },
-          request: {
-            input: [
-              {
-                audio: "base64_encoded_audio_string"
-              }
-            ],
-            config: {
-              language: {
-                sourceLanguage: "hi"
-              }
-            }
-          },
-          response: {
-            output: [
-              {
-                transcript: "string"
-              }
-            ]
-          }
-        }
-      },
       benchmarks: [
         {
           benchmarkId: "example-benchmark-001",
@@ -380,10 +353,6 @@ const ModelManagementPage: React.FC = () => {
 
     if (!data.domain || !Array.isArray(data.domain) || data.domain.length === 0) {
       errors.push('domain is required and must be a non-empty array');
-    }
-
-    if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== 'object') {
-      errors.push('inferenceEndPoint is required and must be an object');
     }
 
     if (!data.submitter || typeof data.submitter !== 'object' || !data.submitter.name) {
@@ -1010,7 +979,7 @@ const ModelManagementPage: React.FC = () => {
                                 Required Fields:
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                name, version, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: refUrl, benchmarks. modelId is auto-generated from name and version. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                name, version, description, task (with type), languages, license, domain, submitter. Optional: refUrl, benchmarks. modelId is auto-generated from name and version. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
                               </Text>
                             </Box>
                             </FormControl>

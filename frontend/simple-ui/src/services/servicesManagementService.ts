@@ -11,8 +11,28 @@ import type {
   DeleteServiceResponse,
   PaginatedServices,
   Service,
+  InferenceAPIEndPoint,
   ServiceListParams,
 } from "../types/platform";
+
+/**
+ * Build the ULCA-shaped inferenceEndPoint from the legacy flat
+ * endpoint/api_key fields a caller may still pass on `serviceData`.
+ */
+function buildLegacyInferenceEndPoint(
+  serviceData: Partial<Service>,
+): InferenceAPIEndPoint | undefined {
+  const callbackUrl = serviceData.endpoint || serviceData.endpoint_url;
+  if (!callbackUrl) return undefined;
+  const apiKeyValue = serviceData.api_key || serviceData.apiKey;
+  return {
+    callbackUrl,
+    schema: [],
+    ...(apiKeyValue
+      ? { inferenceApiKey: { name: "Authorization", value: apiKeyValue } }
+      : {}),
+  };
+}
 
 export type {
   DeleteServiceResponse,
@@ -167,20 +187,27 @@ export const createService = async (
     const apiPayload: Record<string, unknown> = {
       serviceId: serviceData.serviceId || serviceData.service_id,
       name: serviceData.name,
-      serviceDescription:
-        serviceData.serviceDescription || serviceData.description,
+      version: serviceData.version,
+      description: serviceData.description || serviceData.serviceDescription,
+      refUrl: serviceData.refUrl,
+      task: serviceData.task || (serviceData.task_type ? { type: serviceData.task_type } : undefined),
+      languages: serviceData.languages,
+      license: serviceData.license,
+      domain: serviceData.domain,
+      submitter: serviceData.submitter,
+      trainingDataset: serviceData.trainingDataset,
+      inferenceEndPoint:
+        serviceData.inferenceEndPoint ||
+        buildLegacyInferenceEndPoint(serviceData),
       hardwareDescription:
         serviceData.hardwareDescription || "Default hardware",
       publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
       modelId: serviceData.modelId || serviceData.model_id,
       modelVersion:
         serviceData.modelVersion || serviceData.model_version || "1.0", // Default to '1.0' if not provided
-      endpoint: serviceData.endpoint || serviceData.endpoint_url,
-      api_key: serviceData.api_key || serviceData.apiKey || "",
     };
 
     // Add billing/pricing fields if provided
-    if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
     if (serviceData.costPerUnit !== undefined)
       apiPayload.costPerUnit = serviceData.costPerUnit;
     if (serviceData.unitSize !== undefined)
@@ -240,21 +267,29 @@ export const updateService = async (
       };
     } else {
       // Full update: send all fields
+      const legacyEndpoint = buildLegacyInferenceEndPoint(serviceData);
       apiPayload = {
         serviceId: serviceData.serviceId || serviceData.service_id,
-        name: serviceData.name,
-        serviceDescription:
-          serviceData.serviceDescription || serviceData.description,
+        version: serviceData.version,
+        description: serviceData.description || serviceData.serviceDescription,
+        refUrl: serviceData.refUrl,
+        languages: serviceData.languages,
+        license: serviceData.license,
+        domain: serviceData.domain,
+        submitter: serviceData.submitter,
+        trainingDataset: serviceData.trainingDataset,
+        inferenceEndPoint: serviceData.inferenceEndPoint || legacyEndpoint,
         hardwareDescription: serviceData.hardwareDescription,
         publishedOn: serviceData.publishedOn,
         modelId: serviceData.modelId || serviceData.model_id,
         modelVersion: serviceData.modelVersion || serviceData.model_version,
-        endpoint: serviceData.endpoint || serviceData.endpoint_url,
-        api_key: serviceData.api_key || serviceData.apiKey,
       };
 
       // Add billing/pricing fields if provided (mirrors createService)
-      if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
+      const task =
+        serviceData.task ||
+        (serviceData.task_type ? { type: serviceData.task_type } : undefined);
+      if (task) apiPayload.task = task;
       if (serviceData.costPerUnit !== undefined)
         apiPayload.costPerUnit = serviceData.costPerUnit;
       if (serviceData.unitSize !== undefined)

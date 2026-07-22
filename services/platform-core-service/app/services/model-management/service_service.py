@@ -80,12 +80,20 @@ class EndpointValidationFailedError(AppError):
         )
 
 
-def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict[str, Any]:
-    """Pull task_type / request_schema / triton_schema out of a model card."""
-    schema = (model_inference_endpoint or {}).get("schema") or {}
+def _extract_validation_params(
+    endpoint_schema: List[Dict[str, Any]], task_type: Optional[str]
+) -> Dict[str, Any]:
+    """Pull request_schema / triton_schema out of the service's own declared
+    InferenceSchemaArray entry for *task_type* (falls back to the first entry
+    if none matches)."""
+    entries = endpoint_schema or []
+    entry = next((e for e in entries if e.get("taskType") == task_type), None)
+    if entry is None and entries:
+        entry = entries[0]
+    entry = entry or {}
     return {
-        "request_schema": schema.get("request"),
-        "triton_schema": (schema.get("response") or {}).get("triton"),
+        "request_schema": entry.get("request"),
+        "triton_schema": (entry.get("response") or {}).get("triton"),
     }
 
 
@@ -185,9 +193,13 @@ class ServiceService:
 
         # 2. Validate the endpoint (live probe + SSRF guard)
         await self._validate_endpoint_for_model(
-            endpoint=payload.endpoint,
-            api_key=payload.api_key,
-            model_inference_endpoint=model.inference_endpoint or {},
+            endpoint=payload.inferenceEndPoint.callbackUrl,
+            api_key=(
+                payload.inferenceEndPoint.inferenceApiKey.value
+                if payload.inferenceEndPoint.inferenceApiKey
+                else None
+            ),
+            endpoint_schema=payload.inferenceEndPoint.endpoint_schema,
             task_type=(model.task or {}).get("type"),
         )
 
@@ -218,23 +230,30 @@ class ServiceService:
         instance = Service(
             service_id=service_id,
             name=payload.name,
-            service_description=payload.serviceDescription,
+            version=payload.version,
+            service_description=payload.description,
+            ref_url=payload.refUrl,
+            task=jsonable_encoder(payload.task),
+            languages=payload.languages,
+            license=payload.license,
+            domain=payload.domain,
+            submitter=jsonable_encoder(payload.submitter),
+            training_dataset=jsonable_encoder(payload.trainingDataset),
+            inference_endpoint=jsonable_encoder(payload.inferenceEndPoint, by_alias=True),
             hardware_description=payload.hardwareDescription,
             model_id=payload.modelId,
             model_version=payload.modelVersion,
-            endpoint=payload.endpoint,
             inference_server_type=(
                 payload.inferenceServerType.value
                 if payload.inferenceServerType
                 else "triton"
             ),
             ssl_verify=payload.sslVerify,
-            api_key=payload.api_key,
             health_status=jsonable_encoder(payload.healthStatus) if payload.healthStatus else {},
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
             is_published=is_published,
             published_at=now,
-            task_type=payload.taskType,
+            task_type=payload.task.type.value,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
             unit_rate=unit_rate,
@@ -283,8 +302,8 @@ class ServiceService:
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
 
-        # If endpoint changes, re-validate it against the model schema
-        if payload.endpoint:
+        # If the endpoint changes, re-validate it against the model schema
+        if payload.inferenceEndPoint is not None:
             model = await self._models.get_by_id_version(
                 instance.model_id, instance.model_version
             )
@@ -292,23 +311,44 @@ class ServiceService:
                 raise EntityNotFoundError(
                     f"Model '{instance.model_id}' v{instance.model_version}"
                 )
-            api_key = payload.api_key or instance.api_key
+            existing_endpoint = instance.inference_endpoint or {}
+            api_key = (
+                payload.inferenceEndPoint.inferenceApiKey.value
+                if payload.inferenceEndPoint.inferenceApiKey
+                else (existing_endpoint.get("inferenceApiKey") or {}).get("value")
+            )
             await self._validate_endpoint_for_model(
-                endpoint=payload.endpoint,
+                endpoint=payload.inferenceEndPoint.callbackUrl,
                 api_key=api_key,
-                model_inference_endpoint=model.inference_endpoint or {},
+                endpoint_schema=payload.inferenceEndPoint.endpoint_schema,
                 task_type=(model.task or {}).get("type"),
             )
 
         request_dict = payload.model_dump(exclude_unset=True)
         update_data: Dict[str, Any] = {}
 
-        if "serviceDescription" in request_dict:
-            update_data["service_description"] = request_dict["serviceDescription"]
+        if "version" in request_dict:
+            update_data["version"] = request_dict["version"]
+        if "description" in request_dict:
+            update_data["service_description"] = request_dict["description"]
+        if "refUrl" in request_dict:
+            update_data["ref_url"] = request_dict["refUrl"]
+        if "languages" in request_dict:
+            update_data["languages"] = request_dict["languages"]
+        if "license" in request_dict:
+            update_data["license"] = request_dict["license"]
+        if "domain" in request_dict:
+            update_data["domain"] = request_dict["domain"]
+        if "submitter" in request_dict:
+            update_data["submitter"] = jsonable_encoder(payload.submitter)
+        if "trainingDataset" in request_dict:
+            update_data["training_dataset"] = jsonable_encoder(payload.trainingDataset)
+        if "inferenceEndPoint" in request_dict:
+            update_data["inference_endpoint"] = jsonable_encoder(
+                payload.inferenceEndPoint, by_alias=True
+            )
         if "hardwareDescription" in request_dict:
             update_data["hardware_description"] = request_dict["hardwareDescription"]
-        if "endpoint" in request_dict:
-            update_data["endpoint"] = request_dict["endpoint"]
         if request_dict.get("inferenceServerType") is not None:
             ist = request_dict["inferenceServerType"]
             update_data["inference_server_type"] = (
@@ -316,8 +356,6 @@ class ServiceService:
             )
         if request_dict.get("sslVerify") is not None:
             update_data["ssl_verify"] = bool(request_dict["sslVerify"])
-        if "api_key" in request_dict:
-            update_data["api_key"] = request_dict["api_key"]
         if "healthStatus" in request_dict:
             update_data["health_status"] = request_dict["healthStatus"]
         if "benchmarks" in request_dict:
@@ -344,8 +382,9 @@ class ServiceService:
             else:
                 update_data["unpublished_at"] = now
 
-        if "taskType" in request_dict:
-            update_data["task_type"] = request_dict["taskType"]
+        if "task" in request_dict:
+            update_data["task"] = jsonable_encoder(payload.task)
+            update_data["task_type"] = payload.task.type.value
         if "costPerUnit" in request_dict:
             update_data["cost_per_unit"] = request_dict["costPerUnit"]
         if "unitSize" in request_dict:
@@ -371,9 +410,10 @@ class ServiceService:
             raise ValidationError(
                 message=(
                     "No valid update fields provided. Updatable fields: "
-                    "serviceDescription, hardwareDescription, endpoint, "
-                    "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, policy, taskType, "
+                    "version, description, refUrl, languages, license, "
+                    "domain, submitter, trainingDataset, inferenceEndPoint, "
+                    "hardwareDescription, inferenceServerType, sslVerify, "
+                    "healthStatus, benchmarks, isPublished, policy, task, "
                     "costPerUnit, unitSize, tierIds. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),
@@ -439,10 +479,10 @@ class ServiceService:
         *,
         endpoint: str,
         api_key: Optional[str],
-        model_inference_endpoint: Dict[str, Any],
+        endpoint_schema: List[Dict[str, Any]],
         task_type: Optional[str],
     ) -> None:
-        params = _extract_validation_params(model_inference_endpoint)
+        params = _extract_validation_params(endpoint_schema, task_type)
         result = await validate_endpoint(
             endpoint=endpoint,
             task_type=task_type,

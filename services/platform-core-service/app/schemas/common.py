@@ -3,12 +3,17 @@ Shared building-block schemas used by both Model and Service domains.
 """
 
 import re
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
-from app.schemas.enums.model_management import LicenseEnum, TaskTypeEnum
+from app.schemas.enums.model_management import (
+    AudioFormatEnum,
+    LicenseEnum,
+    TaskTypeEnum,
+    TextFormatEnum,
+)
 
 _T = TypeVar("_T")
 
@@ -74,36 +79,62 @@ class TaskSpecLenient(BaseSchema):
         return v
 
 
-# ── Inference endpoint schema (model definition, not the live endpoint URL) ──
+# ── Service-level inference endpoint (ULCA InferenceAPIEndPoint) ──
+# The live, callable endpoint lives only on Service — Model no longer carries
+# an inference_endpoint of its own (AI4IDS-2478 review: the concept belongs
+# to the deployed Service, not the registered Model).
 
 
-class ModelProcessingType(BaseSchema):
-    type: str
+class TrainingDataset(BaseSchema):
+    """Metadata about the dataset a service's underlying model was trained on."""
+
+    datasetId: Optional[str] = None
+    description: str
 
 
-class InferenceSchemaSpec(BaseModel):
-    """The (request, response) schema embedded in a model's inference_endpoint."""
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
-
-    modelProcessingType: Optional[ModelProcessingType] = None
-    model_name: Optional[str] = None
-    request: Dict[str, Any] = {}
-    response: Dict[str, Any] = {}
+class InferenceApiKey(BaseSchema):
+    name: str = "Authorization"
+    value: str
 
 
-class InferenceEndPoint(BaseModel):
-    """Model-level inference endpoint metadata (the model card).
+class AsyncApiDetails(BaseSchema):
+    pollingUrl: str
+    pollInterval: int
+    asyncApiSchema: Optional[Dict[str, Any]] = None
+    asyncApiPollingSchema: Optional[Dict[str, Any]] = None
+
+
+class AudioFormats(BaseSchema):
+    audio: List[AudioFormatEnum]
+
+
+class TextFormats(BaseSchema):
+    text: List[TextFormatEnum]
+
+
+class InferenceAPIEndPoint(BaseModel):
+    """ULCA Service.inferenceEndPoint — how to actually invoke the deployed service.
 
     The ``schema`` JSON key is aliased to ``endpoint_schema`` in Python to
     avoid shadowing Pydantic v2's ``BaseModel.schema`` class method.
-    Serialization back to JSON still uses the ``schema`` key via the alias.
+    ``adapterConfig`` is an AI4Bharat extension (not part of the ULCA spec)
+    carrying the Triton tensor-mapping config for this deployment.
     """
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
 
-    endpoint_schema: Optional[InferenceSchemaSpec] = Field(None, alias="schema")
-    call_back_url: Optional[str] = None
+    callbackUrl: str
+    inferenceApiKey: Optional[InferenceApiKey] = None
+    isMultilingualEnabled: bool = False
+    supportedInputFormats: Optional[Union[AudioFormats, TextFormats]] = None
+    supportedOutputFormats: Optional[Union[AudioFormats, TextFormats]] = None
+    endpoint_schema: List[Dict[str, Any]] = Field(alias="schema")
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
+    providerName: Optional[str] = Field(None, min_length=5, max_length=100)
+    serviceId: Optional[str] = Field(None, min_length=5, max_length=100)
+    infraDescription: Optional[str] = Field(None, min_length=5, max_length=100)
+    inferenceModelId: Optional[str] = Field(None, min_length=5, max_length=100)
     adapter_config: Optional[Dict[str, Any]] = Field(None, alias="adapterConfig")
 
 

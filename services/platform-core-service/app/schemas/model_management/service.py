@@ -1,5 +1,12 @@
 """
 Pydantic request/response schemas for the Service domain.
+
+Field set follows the ULCA Service schema exactly (name, version, description,
+refUrl, task, languages, license, domain, submitter, trainingDataset,
+inferenceEndPoint)
+plus AI4Bharat-specific operational/billing extensions that ULCA does not model
+(serviceId, hardwareDescription, modelId/modelVersion, inferenceServerType,
+sslVerify, healthStatus, policy, costPerUnit/unitSize/tierIds).
 """
 
 import re
@@ -8,13 +15,21 @@ from typing import Any, Dict, List, Optional
 from pydantic import Field, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
-from app.schemas.common import BenchmarkEntry, validate_entity_name
+from app.schemas.common import (
+    BenchmarkEntry,
+    InferenceAPIEndPoint,
+    Submitter,
+    TaskSpec,
+    TaskSpecLenient,
+    TrainingDataset,
+    validate_entity_name,
+    validate_license,
+)
 from app.schemas.enums.model_management import (
     InferenceServerTypeEnum,
     PolicyAccuracyEnum,
     PolicyCostEnum,
     PolicyLatencyEnum,
-    resolve_task_type,
 )
 from app.schemas.model_management.model import ModelResponse
 
@@ -46,27 +61,35 @@ class ServiceCreateRequest(BaseSchema):
     """Request body for POST /services."""
 
     serviceId: str
-    name: str
-    serviceDescription: str
+    name: str = Field(..., min_length=5, max_length=100)
+    version: str = Field(..., min_length=1, max_length=20)
+    description: str = Field(..., min_length=25, max_length=1000)
+    refUrl: Optional[str] = Field(None, min_length=5, max_length=200)
+    task: TaskSpec
+    languages: List[Dict[str, Any]]
+    license: str
+    domain: List[str]
+    submitter: Submitter
+    trainingDataset: TrainingDataset
+    inferenceEndPoint: InferenceAPIEndPoint
     hardwareDescription: str
     modelId: str
     modelVersion: str
-    endpoint: str
-    api_key: Optional[str] = None
     inferenceServerType: InferenceServerTypeEnum = InferenceServerTypeEnum.triton
     sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
-    taskType: str
     costPerUnit: float = Field(..., ge=0)
     unitSize: int
     tierIds: List[str] = Field(..., min_length=1)
 
-    @field_validator("taskType")
+    @field_validator("license", mode="before")
     @classmethod
-    def _validate_task_type(cls, v: str) -> str:
-        return resolve_task_type(v)
+    def _validate_license(cls, v: Any) -> Any:
+        if v is None or v == "":
+            raise ValueError("License field is required")
+        return validate_license(v)
 
     @field_validator("serviceId")
     @classmethod
@@ -129,30 +152,36 @@ class ServiceUpdateRequest(BaseSchema):
     # 2527 — requiring them unconditionally, including on this toggle, would
     # break that flow; see _require_billing_fields_on_substantive_edit below).
     _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished"}
-    _BILLING_FIELDS_REQUIRED_TOGETHER = ("taskType", "costPerUnit", "unitSize", "tierIds")
+    _BILLING_FIELDS_REQUIRED_TOGETHER = ("task", "costPerUnit", "unitSize", "tierIds")
 
     serviceId: str
-    serviceDescription: Optional[str] = None
+    version: Optional[str] = Field(None, min_length=1, max_length=20)
+    description: Optional[str] = Field(None, min_length=25, max_length=1000)
+    refUrl: Optional[str] = Field(None, min_length=5, max_length=200)
+    task: Optional[TaskSpec] = None
+    languages: Optional[List[Dict[str, Any]]] = None
+    license: Optional[str] = None
+    domain: Optional[List[str]] = None
+    submitter: Optional[Submitter] = None
+    trainingDataset: Optional[TrainingDataset] = None
+    inferenceEndPoint: Optional[InferenceAPIEndPoint] = None
     hardwareDescription: Optional[str] = None
-    endpoint: Optional[str] = None
-    api_key: Optional[str] = None
     inferenceServerType: Optional[InferenceServerTypeEnum] = None
     sslVerify: Optional[bool] = None
     healthStatus: Optional[str] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
-    taskType: Optional[str] = None
     costPerUnit: Optional[float] = Field(None, ge=0)
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
 
-    @field_validator("taskType")
+    @field_validator("license", mode="before")
     @classmethod
-    def _validate_task_type(cls, v: Optional[str]) -> Optional[str]:
+    def _validate_license(cls, v: Any) -> Any:
         if v is None:
             return v
-        return resolve_task_type(v)
+        return validate_license(v)
 
     @field_validator("unitSize")
     @classmethod
@@ -186,7 +215,7 @@ class ServiceUpdateRequest(BaseSchema):
 
     @model_validator(mode="after")
     def _require_billing_fields_on_substantive_edit(self) -> "ServiceUpdateRequest":
-        """taskType/costPerUnit/unitSize/tierIds must be supplied together on
+        """task/costPerUnit/unitSize/tierIds must be supplied together on
         any edit beyond the publish/unpublish toggle (AI4IDS-2524/2525/2526/2527).
 
         A request touching only serviceId/isPublished (the publish/unpublish
@@ -214,21 +243,27 @@ class ServiceResponse(BaseSchema):
 
     serviceId: str
     name: str
-    serviceDescription: Optional[str] = None
+    version: Optional[str] = None
+    description: Optional[str] = None
+    refUrl: Optional[str] = None
+    task: Optional[TaskSpecLenient] = None
+    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    license: Optional[str] = None
+    domain: List[str] = Field(default_factory=list)
+    submitter: Optional[Submitter] = None
+    trainingDataset: Optional[TrainingDataset] = None
+    inferenceEndPoint: Optional[InferenceAPIEndPoint] = None
     hardwareDescription: Optional[str] = None
     modelId: str
     modelVersion: str
-    endpoint: Optional[str] = None
     inferenceServerType: str = InferenceServerTypeEnum.triton.value
     sslVerify: bool = True
-    api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, Any]] = None
     policy: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
-    taskType: Optional[str] = None
     costPerUnit: Optional[float] = None
     unitSize: Optional[int] = None
     unitRate: Optional[float] = None
@@ -239,10 +274,8 @@ class ServiceResponse(BaseSchema):
 
 
 class ServiceListItem(ServiceResponse):
-    """List response item — augmented with the inline model snippet."""
+    """List response item — augmented with the linked model's lifecycle status."""
 
-    task: Optional[Dict[str, Any]] = None
-    languages: List[Dict[str, Any]] = Field(default_factory=list)
     versionStatus: Optional[str] = None
 
 

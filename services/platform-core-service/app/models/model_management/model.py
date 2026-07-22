@@ -54,7 +54,6 @@ class Model(Base):
     languages = Column(JSONB, nullable=False, default=list)
     license = Column(String(255), nullable=True)
     domain = Column(JSONB, nullable=False, default=list)
-    inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB, nullable=True)
     submitter = Column(JSONB, nullable=False)
     class_instance = Column(String(100), nullable=True)

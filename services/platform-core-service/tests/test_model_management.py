@@ -147,7 +147,6 @@ def _make_model_orm(
     m.name = name
     m.version = version
     m.version_status = version_status
-    m.inference_endpoint = {}
     m.task = {"type": "nmt"}
     m.created_at = None
     m.updated_at = None
@@ -174,7 +173,6 @@ def _make_create_payload(**overrides) -> ModelCreateRequest:
         languages=[{"sourceLanguage": "en"}],
         license="MIT",
         domain=["general"],
-        inferenceEndPoint={},
         submitter={"name": "Test User"},
     )
     defaults.update(overrides)
@@ -453,12 +451,19 @@ class TestServiceServiceCreate:
         payload = ServiceCreateRequest(
             serviceId="svc-1",
             name="my-service",
-            serviceDescription="desc",
+            version="v1",
+            description="A sufficiently detailed service description for tests.",
+            refUrl="https://github.com/ai4bharat/example",
+            task={"type": "asr"},
+            languages=[{"sourceLanguage": "en", "targetLanguage": "hi"}],
+            license="MIT",
+            domain=["general"],
+            submitter={"name": "AI4Bharat"},
+            trainingDataset={"description": "Internal training corpus."},
+            inferenceEndPoint={"callbackUrl": "http://localhost:8000", "schema": []},
             hardwareDescription="hw",
             modelId="no-model",
             modelVersion="1.0",
-            endpoint="http://localhost:8000",
-            taskType="asr",
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
@@ -481,12 +486,19 @@ class TestServiceServiceCreate:
         payload = ServiceCreateRequest(
             serviceId="svc-1",
             name="dup-service",
-            serviceDescription="desc",
+            version="v1",
+            description="A sufficiently detailed service description for tests.",
+            refUrl="https://github.com/ai4bharat/example",
+            task={"type": "asr"},
+            languages=[{"sourceLanguage": "en", "targetLanguage": "hi"}],
+            license="MIT",
+            domain=["general"],
+            submitter={"name": "AI4Bharat"},
+            trainingDataset={"description": "Internal training corpus."},
+            inferenceEndPoint={"callbackUrl": "http://localhost:8000", "schema": []},
             hardwareDescription="hw",
             modelId="abc123",
             modelVersion="1.0",
-            endpoint="http://localhost:8000",
-            taskType="asr",
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],

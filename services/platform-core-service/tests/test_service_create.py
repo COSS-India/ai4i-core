@@ -78,12 +78,19 @@ for _name in _newly_stubbed:
 
 _VALID_BASE = dict(
     name="my-service",
-    serviceDescription="desc",
+    version="v1",
+    description="A sufficiently detailed service description for tests.",
+    refUrl="https://github.com/ai4bharat/example",
+    task={"type": "asr"},
+    languages=[{"sourceLanguage": "en", "targetLanguage": "hi"}],
+    license="MIT",
+    domain=["general"],
+    submitter={"name": "AI4Bharat"},
+    trainingDataset={"description": "Internal training corpus for the ASR model."},
+    inferenceEndPoint={"callbackUrl": "http://localhost:8080", "schema": []},
     hardwareDescription="hw",
     modelId="model-1",
     modelVersion="1.0",
-    endpoint="http://localhost:8080",
-    taskType="asr",
     costPerUnit=0.01,
     unitSize=1,
     tierIds=["tier-1"],
@@ -103,7 +110,6 @@ def _make_svc(existing_service_id: str | None = None) -> ServiceService:
 
     model_repo = MagicMock()
     model_mock = MagicMock()
-    model_mock.inference_endpoint = {}
     model_mock.task = {"type": "asr"}
     model_repo.get_by_id_version = AsyncMock(return_value=model_mock)
 
@@ -147,24 +153,69 @@ class TestServiceIdValidator:
             ServiceCreateRequest(serviceId="service.name", **_VALID_BASE)
 
 
-# ── taskType / costPerUnit / unitSize required + validated on create (AI4IDS-2518/2519/2520/2521) ──
+# ── ULCA minLength/maxLength constraints (name/version/description/refUrl) ──
+
+
+class TestUlcaLengthConstraints:
+    def test_name_too_short_rejected(self) -> None:
+        base = {**_VALID_BASE, "name": "ab"}
+        with pytest.raises(PydanticValidationError, match="at least 5 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_name_too_long_rejected(self) -> None:
+        base = {**_VALID_BASE, "name": "a" * 101}
+        with pytest.raises(PydanticValidationError, match="at most 100 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_version_too_long_rejected(self) -> None:
+        base = {**_VALID_BASE, "version": "v" * 21}
+        with pytest.raises(PydanticValidationError, match="at most 20 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_description_too_short_rejected(self) -> None:
+        base = {**_VALID_BASE, "description": "too short"}
+        with pytest.raises(PydanticValidationError, match="at least 25 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_description_too_long_rejected(self) -> None:
+        base = {**_VALID_BASE, "description": "a" * 1001}
+        with pytest.raises(PydanticValidationError, match="at most 1000 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_ref_url_too_short_rejected(self) -> None:
+        base = {**_VALID_BASE, "refUrl": "abc"}
+        with pytest.raises(PydanticValidationError, match="at least 5 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_ref_url_too_long_rejected(self) -> None:
+        base = {**_VALID_BASE, "refUrl": "https://" + "a" * 200}
+        with pytest.raises(PydanticValidationError, match="at most 200 characters"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_ref_url_omitted_is_valid(self) -> None:
+        base = {k: v for k, v in _VALID_BASE.items() if k != "refUrl"}
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.refUrl is None
+
+
+# ── task / costPerUnit / unitSize required + validated on create (AI4IDS-2518/2519/2520/2521) ──
 
 
 class TestCreateRequiredFields:
-    def test_missing_task_type_rejected(self) -> None:
-        base = {k: v for k, v in _VALID_BASE.items() if k != "taskType"}
-        with pytest.raises(PydanticValidationError, match="taskType"):
+    def test_missing_task_rejected(self) -> None:
+        base = {k: v for k, v in _VALID_BASE.items() if k != "task"}
+        with pytest.raises(PydanticValidationError, match="task"):
             ServiceCreateRequest(serviceId="svc-1", **base)
 
     def test_invalid_task_type_enum_rejected(self) -> None:
-        base = {**_VALID_BASE, "taskType": "not-a-real-task-type"}
+        base = {**_VALID_BASE, "task": {"type": "not-a-real-task-type"}}
         with pytest.raises(PydanticValidationError, match="Invalid task type"):
             ServiceCreateRequest(serviceId="svc-1", **base)
 
     def test_task_type_is_case_insensitive(self) -> None:
-        base = {**_VALID_BASE, "taskType": "ASR"}
+        base = {**_VALID_BASE, "task": {"type": "ASR"}}
         req = ServiceCreateRequest(serviceId="svc-1", **base)
-        assert req.taskType == "asr"
+        assert req.task.type == "asr"
 
     def test_missing_cost_per_unit_rejected(self) -> None:
         base = {k: v for k, v in _VALID_BASE.items() if k != "costPerUnit"}
@@ -193,7 +244,7 @@ class TestCreateRequiredFields:
 class TestUpdateValueValidators:
     def test_invalid_task_type_enum_rejected(self) -> None:
         with pytest.raises(PydanticValidationError, match="Invalid task type"):
-            ServiceUpdateRequest(serviceId="svc-1", taskType="bogus")
+            ServiceUpdateRequest(serviceId="svc-1", task={"type": "bogus"})
 
     def test_negative_cost_per_unit_rejected(self) -> None:
         with pytest.raises(
@@ -220,35 +271,45 @@ class TestUpdateValueValidators:
 
 class TestUpdateRequiresBillingFieldsTogether:
     """AI4IDS-2524/2525/2526/2527: any substantive edit (anything beyond the
-    publish/unpublish toggle) must resend taskType/costPerUnit/unitSize/tierIds
+    publish/unpublish toggle) must resend task/costPerUnit/unitSize/tierIds
     together — but the publish/unpublish toggle itself stays exempt, since
     forcing them there would break that flow (see PR #1171's revert of the
     same over-broad requirement on tierIds alone)."""
 
     def test_editing_endpoint_alone_is_rejected(self) -> None:
         with pytest.raises(PydanticValidationError, match="must be provided together"):
-            ServiceUpdateRequest(serviceId="svc-1", endpoint="http://x")
+            ServiceUpdateRequest(
+                serviceId="svc-1", inferenceEndPoint={"callbackUrl": "http://x", "schema": []}
+            )
 
     def test_editing_endpoint_with_all_four_fields_succeeds(self) -> None:
         req = ServiceUpdateRequest(
             serviceId="svc-1",
-            endpoint="http://x",
-            taskType="asr",
+            inferenceEndPoint={"callbackUrl": "http://x", "schema": []},
+            task={"type": "asr"},
             costPerUnit=1.0,
             unitSize=1,
             tierIds=["tier-1"],
         )
-        assert req.endpoint == "http://x"
+        assert req.inferenceEndPoint.callbackUrl == "http://x"
 
     def test_editing_endpoint_with_only_some_of_the_four_is_rejected(self) -> None:
         with pytest.raises(PydanticValidationError, match="costPerUnit, unitSize, tierIds"):
-            ServiceUpdateRequest(serviceId="svc-1", endpoint="http://x", taskType="asr")
+            ServiceUpdateRequest(
+                serviceId="svc-1",
+                inferenceEndPoint={"callbackUrl": "http://x", "schema": []},
+                task={"type": "asr"},
+            )
 
     def test_publish_plus_another_field_is_not_exempt(self) -> None:
         """isPublished alongside any other real edit is NOT the publish-only
         case — the four fields are still required."""
         with pytest.raises(PydanticValidationError, match="must be provided together"):
-            ServiceUpdateRequest(serviceId="svc-1", isPublished=True, endpoint="http://x")
+            ServiceUpdateRequest(
+                serviceId="svc-1",
+                isPublished=True,
+                inferenceEndPoint={"callbackUrl": "http://x", "schema": []},
+            )
 
 
 # ── tierIds must reference existing tiers (AI4IDS-2523/2530) ────────────────
@@ -276,13 +337,13 @@ class TestTierIdsExistenceCheck:
         svc = _make_svc()
         svc._services.get_tier_names_by_ids = AsyncMock(return_value={})
         svc._services.get_by_service_id = AsyncMock(return_value=MagicMock(
-            model_id="model-1", model_version="1.0", api_key=None,
+            model_id="model-1", model_version="1.0",
         ))
 
         payload = ServiceUpdateRequest(
             serviceId="svc-1",
             tierIds=["ghost-tier"],
-            taskType="asr",
+            task={"type": "asr"},
             costPerUnit=1.0,
             unitSize=1,
         )

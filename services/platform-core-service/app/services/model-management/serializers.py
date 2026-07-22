@@ -39,7 +39,6 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "domain": model.domain or [],
         "submitter": model.submitter,
         "license": model.license,
-        "inferenceEndPoint": model.inference_endpoint,
         "source": model.ref_url or "",
         "task": model.task or {},
         "classInstance": model.class_instance,
@@ -56,26 +55,32 @@ def service_to_dict(
     include_task_languages: bool = False,
     tier_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Serialize a Service ORM row. Optionally enrich with task & languages
-    from the joined Model (used by list endpoints)."""
+    """Serialize a Service ORM row. Optionally enrich with the linked model's
+    lifecycle status (used by list endpoints)."""
     out: Dict[str, Any] = {
         "serviceId": service.service_id,
         "name": service.name,
-        "serviceDescription": service.service_description,
+        "version": service.version,
+        "description": service.service_description,
+        "refUrl": service.ref_url,
+        "task": service.task or {"type": "unknown"},
+        "languages": _normalize_languages(service.languages or []),
+        "license": service.license,
+        "domain": service.domain or [],
+        "submitter": service.submitter,
+        "trainingDataset": service.training_dataset,
+        "inferenceEndPoint": service.inference_endpoint,
         "hardwareDescription": service.hardware_description,
         "modelId": service.model_id,
         "modelVersion": service.model_version,
-        "endpoint": service.endpoint,
         "inferenceServerType": service.inference_server_type or "triton",
         "sslVerify": bool(service.ssl_verify),
-        "api_key": service.api_key,
         "healthStatus": service.health_status,
         "benchmarks": service.benchmarks,
         "policy": dict(service.policy) if service.policy else None,
         "isPublished": bool(service.is_published),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
-        "taskType": service.task_type,
         "costPerUnit": float(service.cost_per_unit) if service.cost_per_unit is not None else None,
         "unitSize": service.unit_size,
         "unitRate": float(service.unit_rate) if service.unit_rate is not None else None,
@@ -87,8 +92,6 @@ def service_to_dict(
         "updatedBy": service.updated_by,
     }
     if include_task_languages and model is not None:
-        out["task"] = model.task or {"type": "unknown"}
-        out["languages"] = _normalize_languages(model.languages or [])
         out["versionStatus"] = (
             model.version_status.value if model.version_status else None
         )

@@ -112,9 +112,11 @@ class InferenceServerResolver:
         """
         Normalize MMS response to internal service info format.
 
-        Real MMS returns {"success": true, "data": {...camelCase...}} with base endpoint
-        and inference path split across data.endpoint and data.model.inferenceEndPoint.schema.endpoint.
-        Flat shape (no envelope) is passed through as-is for legacy/fallback.
+        Real MMS returns {"success": true, "data": {...camelCase...}} — the live
+        callback base URL, Triton model name, and adapter config all live under
+        data.inferenceEndPoint (Model no longer carries an inferenceEndPoint of
+        its own). Flat shape (no envelope) is passed through as-is for
+        legacy/fallback.
 
         Returns:
             Normalized dict with keys: name, endpoint, api_key, adapter_config
@@ -123,18 +125,17 @@ class InferenceServerResolver:
         if "success" in raw and "data" in raw:
             data = raw["data"]
             model_block = data.get("model") or {}
-            inference_endpoint = model_block.get("inferenceEndPoint", {})
-            schema = inference_endpoint.get("schema", {})
 
-            base_endpoint = data.get("endpoint", "").rstrip("/")
-            model_name = schema.get("model_name", "")
+            service_endpoint = data.get("inferenceEndPoint") or {}
+            base_endpoint = (service_endpoint.get("callbackUrl") or "").rstrip("/")
+            model_name = service_endpoint.get("inferenceModelId") or ""
             endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
+            api_key = (service_endpoint.get("inferenceApiKey") or {}).get("value")
 
-            # adapter_config can be at data level or nested under inferenceEndPoint
             adapter_config = (
                 data.get("adapter_config")
-                or inference_endpoint.get("adapter_config")
-                or inference_endpoint.get("adapterConfig")
+                or service_endpoint.get("adapter_config")
+                or service_endpoint.get("adapterConfig")
             )
             if not adapter_config:
                 logger.warning(
@@ -146,7 +147,7 @@ class InferenceServerResolver:
             return {
                 "name": data.get("serviceName") or data.get("name"),
                 "endpoint": endpoint,
-                "api_key": data.get("apiKey") or data.get("api_key"),
+                "api_key": api_key,
                 "adapter_config": adapter_config,
                 "class_instance": model_block.get("classInstance"),
                 "is_published": bool(data.get("isPublished", False)),

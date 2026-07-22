@@ -57,7 +57,6 @@ def _make_service_orm(service_id: str = "svc-abc") -> MagicMock:
     instance.service_id = service_id
     instance.model_id = "model-1"
     instance.model_version = "1.0"
-    instance.api_key = None
     return instance
 
 
@@ -94,7 +93,7 @@ class TestUpdateServicePolicy:
                 accuracy=PolicyAccuracyEnum.SENSITIVE,
                 cost=PolicyCostEnum.TIER_1,
             ),
-            taskType="asr",
+            task={"type": "asr"},
             costPerUnit=1.0,
             unitSize=1,
             tierIds=["tier-1"],
@@ -115,7 +114,7 @@ class TestUpdateServicePolicy:
                 latency=PolicyLatencyEnum.LOW,
                 cost=PolicyCostEnum.TIER_1,
             ),
-            taskType="asr",
+            task={"type": "asr"},
             costPerUnit=1.0,
             unitSize=1,
             tierIds=["tier-1"],
@@ -132,8 +131,8 @@ class TestUpdateServicePolicy:
         svc = _make_svc()
         payload = ServiceUpdateRequest(
             serviceId="svc-abc",
-            serviceDescription="Updated description",
-            taskType="asr",
+            description="Updated description with enough length to pass validation.",
+            task={"type": "asr"},
             costPerUnit=1.0,
             unitSize=1,
             tierIds=["tier-1"],

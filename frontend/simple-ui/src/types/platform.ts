@@ -22,25 +22,6 @@ export interface Submitter {
   team?: TeamMember[];
 }
 
-export interface ModelProcessingType {
-  type: string;
-}
-
-export interface InferenceSchemaSpec {
-  modelProcessingType?: ModelProcessingType;
-  model_name?: string;
-  request?: Record<string, unknown>;
-  response?: Record<string, unknown>;
-}
-
-export interface InferenceEndPoint {
-  schema?: InferenceSchemaSpec;
-  endpoint?: string;
-  model_name?: string;
-  modelName?: string;
-  model?: string;
-}
-
 export interface TaskSpec {
   type: string;
 }
@@ -67,6 +48,60 @@ export interface Benchmark {
 
 export type LanguageRecord = Record<string, unknown>;
 
+export interface TrainingDataset {
+  datasetId?: string;
+  description: string;
+}
+
+export interface InferenceApiKey {
+  name?: string;
+  value: string;
+}
+
+export interface AsyncApiDetails {
+  pollingUrl: string;
+  pollInterval: number;
+  asyncApiSchema?: Record<string, unknown>;
+  asyncApiPollingSchema?: Record<string, unknown>;
+}
+
+/** ULCA AudioFormat enum. */
+export type AudioFormat = "wav" | "pcm" | "mp3" | "flac" | "sph";
+
+/** ULCA TextFormat enum. */
+export type TextFormat = "srt" | "transcript" | "webvtt" | "alternatives";
+
+export interface AudioFormats {
+  audio: AudioFormat[];
+}
+
+export interface TextFormats {
+  text: TextFormat[];
+}
+
+/** ULCA Service.inferenceEndPoint — how to actually invoke the deployed service. */
+export interface InferenceAPIEndPoint {
+  callbackUrl: string;
+  inferenceApiKey?: InferenceApiKey;
+  isMultilingualEnabled?: boolean;
+  supportedInputFormats?: AudioFormats | TextFormats;
+  supportedOutputFormats?: AudioFormats | TextFormats;
+  /** ULCA InferenceSchemaArray — mandatory (may be an empty array). */
+  schema: Record<string, unknown>[];
+  isSyncApi?: boolean;
+  asyncApiDetails?: AsyncApiDetails;
+  /** minLength 5, maxLength 100 (ULCA). */
+  providerName?: string;
+  /** minLength 5, maxLength 100 (ULCA). */
+  serviceId?: string;
+  /** minLength 5, maxLength 100 (ULCA). */
+  infraDescription?: string;
+  /** minLength 5, maxLength 100 (ULCA). */
+  inferenceModelId?: string;
+  /** AI4Bharat extension (not part of ULCA): Triton tensor-mapping config. */
+  adapterConfig?: Record<string, unknown>;
+}
+
 // ── Model API ──
 
 export type ModelVersionStatus = string;
@@ -84,7 +119,6 @@ export interface ModelResponse {
   domain?: string[];
   submitter?: Submitter | null;
   license?: string | null;
-  inferenceEndPoint?: InferenceEndPoint | null;
   /** Alias for refUrl in API responses. */
   source?: string | null;
   refUrl?: string | null;
@@ -139,7 +173,6 @@ export interface ModelCreateRequest {
   languages: LanguageRecord[];
   license: string;
   domain: string[];
-  inferenceEndPoint: InferenceEndPoint;
   benchmarks?: Benchmark[];
   submitter: Submitter;
 }
@@ -154,7 +187,6 @@ export interface ModelUpdateRequest {
   languages?: LanguageRecord[];
   license?: string;
   domain?: string[];
-  inferenceEndPoint?: InferenceEndPoint;
   benchmarks?: Benchmark[];
   submitter?: Submitter;
 }
@@ -184,15 +216,21 @@ export interface ServicePolicy {
 export interface ServiceResponse {
   serviceId: string;
   name: string;
-  serviceDescription?: string | null;
+  version?: string | null;
+  description?: string | null;
+  refUrl?: string | null;
+  task?: TaskSpec | { type?: string } | null;
+  languages?: LanguageRecord[];
+  license?: string | null;
+  domain?: string[];
+  submitter?: Submitter | null;
+  trainingDataset?: TrainingDataset | null;
+  inferenceEndPoint?: InferenceAPIEndPoint | null;
   hardwareDescription?: string | null;
   modelId: string;
   modelVersion: string;
-  endpoint?: string | null;
   inferenceServerType?: string;
   sslVerify?: boolean;
-  api_key?: string | null;
-  apiKey?: string | null;
   healthStatus?: ServiceStatus | null;
   benchmarks?: Record<string, unknown> | null;
   policy?: Record<string, unknown> | ServicePolicy | null;
@@ -207,10 +245,8 @@ export interface ServiceResponse {
   versionStatusUpdatedAt?: string | null;
 }
 
-/** GET /services list row — includes inline model task/languages snippet. */
+/** GET /services list row — includes the linked model's lifecycle status. */
 export interface ServiceListItem extends ServiceResponse {
-  task?: TaskSpec | { type?: string };
-  languages?: LanguageRecord[];
   versionStatus?: string | null;
   model?: ModelResponse | null;
 }
@@ -238,10 +274,18 @@ export interface ServiceListParams {
 /** Legacy snake_case keys for backward compatibility. */
 export interface ServiceLegacyFields {
   service_id?: string;
-  description?: string;
   model_id?: string;
   model_version?: string;
+  /** UI-only convenience alias, mapped client-side into `description`. */
+  serviceDescription?: string;
+  /** UI-only convenience alias, mapped client-side into inferenceEndPoint.callbackUrl. */
+  endpoint?: string;
+  /** UI-only convenience alias, mapped client-side into inferenceEndPoint.callbackUrl. */
   endpoint_url?: string;
+  /** UI-only convenience alias, mapped client-side into inferenceEndPoint.inferenceApiKey.value. */
+  api_key?: string;
+  /** UI-only convenience alias, mapped client-side into inferenceEndPoint.inferenceApiKey.value. */
+  apiKey?: string;
   task_type?: string;
   created_at?: string;
   updated_at?: string;
@@ -269,33 +313,54 @@ export interface ServiceLegacyFields {
 export type Service = ServiceListItem & ServiceLegacyFields;
 
 export interface ServiceCreateRequest {
+  serviceId: string;
+  /** ULCA: minLength 5, maxLength 100. */
   name: string;
-  serviceDescription: string;
+  /** ULCA: minLength 1, maxLength 20. */
+  version: string;
+  /** ULCA: minLength 25, maxLength 1000. */
+  description: string;
+  /** ULCA: minLength 5, maxLength 200. */
+  refUrl?: string;
+  task: TaskSpec;
+  languages: LanguageRecord[];
+  license: string;
+  domain: string[];
+  submitter: Submitter;
+  trainingDataset: TrainingDataset;
+  inferenceEndPoint: InferenceAPIEndPoint;
   hardwareDescription: string;
   modelId: string;
   modelVersion: string;
-  endpoint: string;
-  api_key?: string;
   inferenceServerType?: string;
   sslVerify?: boolean;
   healthStatus?: ServiceStatus;
   benchmarks?: Record<string, unknown>;
   isPublished?: boolean;
+  costPerUnit: number;
+  unitSize: number;
+  tierIds: string[];
 }
 
 export interface ServiceUpdateRequest {
   serviceId: string;
-  serviceDescription?: string;
+  version?: string;
+  description?: string;
+  refUrl?: string;
+  task?: TaskSpec;
+  languages?: LanguageRecord[];
+  license?: string;
+  domain?: string[];
+  submitter?: Submitter;
+  trainingDataset?: TrainingDataset;
+  inferenceEndPoint?: InferenceAPIEndPoint;
   hardwareDescription?: string;
-  endpoint?: string;
-  api_key?: string;
   inferenceServerType?: string;
   sslVerify?: boolean;
   healthStatus?: string | ServiceStatus;
   benchmarks?: Record<string, unknown>;
   isPublished?: boolean;
   policy?: ServicePolicy;
-  taskType?: string;
   costPerUnit?: number;
   unitSize?: number;
   tierIds?: string[];

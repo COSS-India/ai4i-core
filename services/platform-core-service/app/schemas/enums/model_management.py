@@ -84,7 +84,7 @@ class LicenseEnum(str, Enum):
 
 
 class InferenceServerTypeEnum(str, Enum):
-    """Supported inference server types for Service.endpoint."""
+    """Supported inference server types for Service.inferenceEndPoint.callbackUrl."""
 
     triton = "triton"
     custom = "custom"
@@ -112,3 +112,22 @@ class PolicyCostEnum(str, Enum):
 class PolicyAccuracyEnum(str, Enum):
     SENSITIVE = "sensitive"
     STANDARD = "standard"
+
+
+class AudioFormatEnum(str, Enum):
+    """ULCA AudioFormat — audio formats supported by an inference endpoint."""
+
+    wav = "wav"
+    pcm = "pcm"
+    mp3 = "mp3"
+    flac = "flac"
+    sph = "sph"
+
+
+class TextFormatEnum(str, Enum):
+    """ULCA TextFormat — textual formats supported by an inference endpoint."""
+
+    srt = "srt"
+    transcript = "transcript"
+    webvtt = "webvtt"
+    alternatives = "alternatives"
