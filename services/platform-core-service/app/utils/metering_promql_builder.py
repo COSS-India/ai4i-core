@@ -105,9 +105,9 @@ def sum_over_window(metric_expr: str, time_range: str | None) -> str:
 # Keys match the URL task segment: /api/v1/{task}/inference.
 #
 # native_metric: the Prometheus Histogram _sum series that accumulates the
-#   native unit (characters, seconds, tokens). Use the _sum suffix because
-#   that is what Prometheus appends to a Histogram name.  None means the
-#   task has no dedicated native-unit metric — the API returns null for
+#   native unit (characters, seconds, tokens, images). Use the _sum suffix
+#   because that is what Prometheus appends to a Histogram name. None means
+#   the task has no dedicated native-unit metric — the API returns null for
 #   native_units in that case.
 # native_extra_labels: additional label selectors applied only to the
 #   native query (e.g. token_type="total" for LLM to avoid double-counting
@@ -146,9 +146,12 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "ocr": {
         "display_name": "OCR",
-        "metering_unit": "Image KB processed",
-        "native_unit_suffix": "KB",
-        "native_metric": "telemetry_obsv_ocr_image_size_kb_sum",
+        "metering_unit": "Images processed",
+        "native_unit_suffix": "images",
+        # Metric name says "characters" for historical reasons, but it
+        # carries an image COUNT — inference_types.yaml's billed unit for
+        # OCR is images, not characters or KB.
+        "native_metric": "telemetry_obsv_ocr_characters_processed_sum",
         "native_extra_labels": None,
     },
     "transliteration": {

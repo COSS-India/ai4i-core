@@ -125,7 +125,11 @@ def count_output_tokens(response_data: List[Dict[str, Any]], unit_type: str) -> 
         elif unit_type == "audio_minutes":
             return _count_output_audio_tokens(response_data)
         elif unit_type == "images":
-            return _count_output_image_tokens(response_data)
+            # OCR (the only image-unit service, inference_types.yaml unit:
+            # images) never outputs images — its output is extracted TEXT
+            # (the mapper renames Surya's full_text to output[].source), so
+            # output is counted the same way NER/NMT output is: characters.
+            return _count_output_text_tokens(response_data)
 
         return 0
     except Exception as e:
@@ -237,7 +241,13 @@ def _count_image_tokens(input_items: List[Any]) -> int:
 
 
 def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """Count tokens from text output by character count (see _count_text_tokens)."""
+    """Count tokens from text output by character count (see _count_text_tokens).
+
+    ``text`` covers OCR here too: OCR's adapter_config maps its output tensor
+    to ``text`` (maps_to) at this point in the pipeline — the response_key
+    rename to ``output[].source`` happens later, in postprocess_output's
+    shape_output_items, which runs after this count is already taken.
+    """
     total = 0
     for item in response_data:
         if isinstance(item, dict):
@@ -262,21 +272,6 @@ def _count_output_audio_tokens(response_data: List[Dict[str, Any]]) -> int:
             audio_content = item.get("audio_content") or item.get("audio") or ""
             if audio_content:
                 tokens = max(len(str(audio_content)) // 100, 1)
-                total += tokens
-
-    return total
-
-
-def _count_output_image_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """
-    Estimate tokens from image output by content size.
-    """
-    total = 0
-    for item in response_data:
-        if isinstance(item, dict):
-            image_content = item.get("image_content") or item.get("image") or ""
-            if image_content:
-                tokens = max(len(str(image_content)) // 1000, 1)
                 total += tokens
 
     return total

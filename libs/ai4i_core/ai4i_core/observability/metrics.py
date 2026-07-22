@@ -79,18 +79,13 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # OCR character tracking (Histogram for percentile calculations)
+        # OCR tracking (Histogram for percentile calculations). Despite the
+        # metric name, this carries an image COUNT, not a character count —
+        # billed_input's unit for OCR is images (inference_types.yaml) — kept
+        # under its original name to avoid a dashboard-breaking rename.
         self.enterprise_ocr_characters_processed = Histogram(
             "telemetry_obsv_ocr_characters_processed",
-            "OCR characters processed per request",
-            ["tenant", "service_id"],
-            buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
-            registry=self.registry,
-        )
-        # OCR image size tracking (Histogram for percentile calculations)
-        self.enterprise_ocr_image_size_kb = Histogram(
-            "telemetry_obsv_ocr_image_size_kb",
-            "OCR image payload size in kilobytes per request",
+            "OCR images processed per request",
             ["tenant", "service_id"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
@@ -238,18 +233,10 @@ class MetricsCollector:
     def track_ocr_characters(
         self, characters: int, tenant: str = "unknown", service_id: str = ""
     ):
-        """Track OCR character processing."""
+        """Track OCR images processed (see enterprise_ocr_characters_processed)."""
         self.enterprise_ocr_characters_processed.labels(
             tenant=tenant, service_id=service_id
         ).observe(characters)
-
-    def track_ocr_image_size(
-        self, image_size_kb: float, tenant: str = "unknown", service_id: str = ""
-    ):
-        """Track OCR image payload size in KB."""
-        self.enterprise_ocr_image_size_kb.labels(
-            tenant=tenant, service_id=service_id
-        ).observe(image_size_kb)
 
     def track_transliteration_characters(
         self,

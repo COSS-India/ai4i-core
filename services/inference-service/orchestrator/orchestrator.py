@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 from fastapi import Request
 import logging
 
+from ai4i_core.observability import set_billed_state, set_metric_labels
+
 from trace.request_span import (
     get_context_attributes,
     get_endpoint_path,
@@ -77,6 +79,13 @@ class Orchestrator:
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
 
+            # Set as soon as it's known (covers the SMR-fallback-resolved case
+            # too, via service_info["serviceId"]) so ObservabilityMiddleware
+            # has it without re-parsing the body — same request.state.service_id
+            # pattern the LLM chat route already uses in routes/inference.py.
+            if request is not None:
+                request.state.service_id = service_info.get("serviceId", "") or ""
+
             # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
             if request:
                 tier_id = request.headers.get("X-Tier-ID", "")
@@ -95,13 +104,22 @@ class Orchestrator:
             task_service = self._get_task_service(service_info)
             task_response = await task_service.process(payload, service_info)
 
-            # Mirror the count task_service already computed once (billing's
-            # source of truth) onto request.state, so ObservabilityMiddleware
-            # can read it instead of re-deriving its own from the raw body.
+            # Mirror the count task_service already computed once onto
+            # request.state, so ObservabilityMiddleware can read it instead of
+            # re-deriving its own from the raw body. Input only: non-LLM
+            # billing/metrics are input-only (billing reads the span, and the
+            # non-LLM Prometheus metrics track input units only). Language
+            # labels are metric labels (not billing) — set separately.
             if request is not None:
-                request.state.billed_input = getattr(task_service, "billed_input", 0)
-                request.state.billed_output = getattr(task_service, "billed_output", 0)
-                request.state.billed_unit_type = getattr(task_service, "billed_unit_type", "unknown")
+                set_billed_state(
+                    request,
+                    billed_input=getattr(task_service, "billed_input", 0),
+                )
+                set_metric_labels(
+                    request,
+                    source_lang=getattr(task_service, "source_lang", ""),
+                    target_lang=getattr(task_service, "target_lang", ""),
+                )
 
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
 

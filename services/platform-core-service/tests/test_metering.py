@@ -97,10 +97,18 @@ class TestServiceBreakdownConfig:
     def test_audio_language_detection_divide_by_60(self):
         assert SERVICE_BREAKDOWN_CONFIG["audio_language_detection"]["divide_by_60"] is True
 
-    def test_ocr_use_success_as_native(self):
-        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["use_success_as_native"] is True
-        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_metric"] is None
+    def test_ocr_native_metric_is_image_count(self):
+        # OCR bills by image count (inference_types.yaml unit: images). The
+        # native metric is the histogram that now carries that exact billed
+        # count (track_ocr_characters(characters=billed_input)), so the
+        # dashboard equals billing even when a request carries >1 image —
+        # request-success count would under-count in that case.
+        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_metric"] == (
+            "telemetry_obsv_ocr_characters_processed_sum"
+        )
         assert SERVICE_BREAKDOWN_CONFIG["ocr"]["metering_unit"] == "Images processed"
+        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_unit_suffix"] == "images"
+        assert "use_success_as_native" not in SERVICE_BREAKDOWN_CONFIG["ocr"]
 
     def test_llm_has_token_type_filter(self):
         assert 'token_type="total"' in SERVICE_BREAKDOWN_CONFIG["llm"]["native_extra_labels"]
@@ -283,7 +291,7 @@ class TestServiceBreakdown:
         # 3600 seconds / 60 = 60 minutes
         assert asr_row["native_units"] == 60.0
 
-    async def test_ocr_uses_success_count_as_native(self):
+    async def test_ocr_native_units_from_image_count_histogram(self):
         client = MagicMock()
 
         async def fake_query(promql):
@@ -293,14 +301,22 @@ class TestServiceBreakdown:
                 return self._make_endpoint_result("/api/v1/ocr/inference", 300)
             return []
 
+        async def fake_scalar(promql):
+            # OCR's native metric now carries the billed image count.
+            if "telemetry_obsv_ocr_characters_processed_sum" in promql:
+                return 512.0
+            return 0.0
+
         client.query = AsyncMock(side_effect=fake_query)
-        client.scalar = AsyncMock(return_value=0.0)
+        client.scalar = AsyncMock(side_effect=fake_scalar)
         svc = MeteringService(client=client)
 
         result = await svc.service_breakdown(tenant=None, time_range="24h")
         ocr_row = next(s for s in result["services"] if s["service"] == "OCR")
-        # native_units should be the success count, not a histogram value
-        assert ocr_row["native_units"] == 250
+        # native_units is the billed image count (histogram sum), NOT the
+        # request-success count — the two differ when a request has >1 image.
+        assert ocr_row["native_units"] == 512
+        assert ocr_row["native_unit_suffix"] == "images"
 
     async def test_native_units_zero_not_null_when_no_usage(self):
         client = MagicMock()

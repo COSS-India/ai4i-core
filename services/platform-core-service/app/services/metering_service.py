@@ -382,14 +382,11 @@ class MeteringService:
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
 
-            if cfg.get("use_success_as_native"):
-                native_v = success_v
+            raw_native = natives.get(task, 0)
+            if cfg.get("divide_by_60"):
+                native_v = round(raw_native / 60, 2)
             else:
-                raw_native = natives.get(task, 0)
-                if cfg.get("divide_by_60"):
-                    native_v = round(raw_native / 60, 2)
-                else:
-                    native_v = raw_native
+                native_v = raw_native
 
             services.append({
                 "service": cfg["display_name"],

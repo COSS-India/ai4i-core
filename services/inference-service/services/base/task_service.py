@@ -5,7 +5,6 @@ Base class defining the contract and shared pipeline for all inference task serv
 import json
 import logging
 from dataclasses import dataclass, field
-from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
 
 # ── Persistent Triton HTTP client (Fix 5) ────────────────────────────────────
@@ -313,16 +312,27 @@ class BaseTaskService:
         # service, which zeroes out both count_input_tokens/count_output_tokens.
         unit_type = get_unit_type(payload.get("task_type", ""))
 
-        # Billed totals, summed across groups (per_item call_mode makes more
-        # than one). Exposed as instance attrs — not a run_inference return
-        # value — so Orchestrator.route_inference can read them straight off
-        # the task_service instance after process() returns, without
-        # threading `request` down into this method. This is the single
-        # count ObservabilityMiddleware reads via request.state instead of
-        # re-deriving its own from the raw request/response body.
+        # Billed input, summed across groups (per_item call_mode makes more
+        # than one). Exposed as an instance attr — not a run_inference return
+        # value — so Orchestrator.route_inference can read it straight off the
+        # task_service instance after process() returns, without threading
+        # `request` down into this method. This is the count
+        # ObservabilityMiddleware reads via request.state instead of
+        # re-deriving its own from the raw request body. Output is NOT mirrored
+        # here: non-LLM billing is input-only (the Kafka consumer reads the
+        # span, and bills input only), and the non-LLM Prometheus metrics
+        # track input units only — so an output instance attr would be dead.
         self.billed_input = 0
-        self.billed_output = 0
-        self.billed_unit_type = unit_type
+
+        # Language labels — metric labels, not billed quantities, hence no
+        # "billed_" prefix (unlike billed_input above). Read once from the
+        # already-parsed config_data and exposed as instance attrs for
+        # Orchestrator.route_inference to mirror onto request.state, so
+        # ObservabilityMiddleware doesn't need its own request.body() +
+        # json.loads() of the same payload just to label metrics.
+        language = config_data.get("language") if isinstance(config_data, dict) else None
+        self.source_lang = str((language or {}).get("sourceLanguage") or "").strip()
+        self.target_lang = str((language or {}).get("targetLanguage") or "").strip()
 
         response_data = []
         for group in groups:
@@ -355,9 +365,10 @@ class BaseTaskService:
                 # Recorded on the span for observability/trace inspection, but
                 # PPU billing for non-LLM services is input-only by design — the
                 # Kafka consumer (payperuse_consumer/handler.py) ignores this
-                # field for every inference_name except llm.
+                # field for every inference_name except llm. Not accumulated
+                # onto an instance attr: nothing downstream reads a non-LLM
+                # output count (Prometheus tracks input units only).
                 span_ctx["output"] = count_output_tokens(group_response_data, unit_type)
-                self.billed_output += span_ctx["output"]
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,

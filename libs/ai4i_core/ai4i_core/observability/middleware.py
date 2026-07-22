@@ -6,20 +6,26 @@ emission. Tenant is read from the gateway-injected ``X-Tenant-Id`` header
 (set by ``auth-service /validate``) — this middleware does NOT decode JWTs and
 does NOT open OpenTelemetry spans.
 
-Unit counts (characters/audio-minutes/images/tokens) are NOT re-derived here.
-They're computed exactly once by the request handler (task_service.py /
-llm_service.py, via trace/span_attributes.py) — the same count already used
-to bill the request and attached to the ai-inference OTel span. Orchestrator
-.route_inference (Triton) and the LLM chat route mirror that single value
-onto ``request.state.billed_*``; this middleware only reads it, so Prometheus
-can never disagree with what was actually billed.
+Unit counts (characters/audio-minutes/images/tokens), language labels, and
+service_id are NOT re-derived here — this middleware never reads or parses
+the request body at all. Every value is computed exactly once by the request
+handler (task_service.py / llm_service.py, via trace/span_attributes.py) —
+the same values already used to bill the request and attached to the
+ai-inference OTel span. Orchestrator.route_inference (Triton) and the LLM
+chat route mirror them onto ``request.state``: ``billed_input`` /
+``billed_output`` are the billed quantities (via ``set_billed_state``);
+``source_lang`` / ``target_lang`` / ``model`` / ``service_id`` are metric
+labels, not billing data (languages + model via ``set_metric_labels``,
+service_id set at resolution time). This middleware only reads them, so
+Prometheus can never disagree with what was actually billed, and the request
+body is never parsed a second time. OCR bills and is tracked purely by image
+count (``billed_input`` via ``track_ocr_characters``) — there is no separate
+size-based metric.
 """
 import asyncio
-import json
 import logging
-import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,20 +36,57 @@ from .metrics import MetricsCollector
 logger = logging.getLogger(__name__)
 
 
-# Service types whose request bodies carry language labels (source/target)
-# worth extracting for metric labeling. Membership check is O(1). LLM is
-# handled separately — no source/target language labels apply.
-_BODY_METRIC_SERVICES = frozenset({
-    "tts", "translation", "asr", "ocr", "transliteration",
-    "language_detection", "audio_lang_detection",
-    "speaker_diarization", "language_diarization", "ner",
-})
+def set_billed_state(
+    request: Request,
+    *,
+    billed_input: float,
+    billed_output: float = 0,
+) -> None:
+    """Record the billed quantities on ``request.state`` for
+    ObservabilityMiddleware to read, so it never re-parses the request body.
 
-# Body parsing is gated on the request path — only inference endpoints carry
-# the structured payloads we extract from. Matches `/inference` as a path
-# segment (followed by `/` or end-of-path), so it picks up both the unified
-# `/api/v1/inference` endpoint and dedicated `…/nmt/inference` style paths.
-_INFERENCE_PATH_RE = re.compile(r"/inference(?:/|$)")
+    This is the WRITE side of the request.state contract the middleware reads
+    (see this module's docstring). Every inference handler must call it once,
+    after the billed count is known, instead of setting the ``billed_*``
+    attributes by hand — that keeps the attribute names in one place so a new
+    inference path can't silently diverge from what the middleware looks for.
+    ``billed_input`` / ``billed_output`` are the same counts on the
+    ai-inference span (billing's source of truth) — the ``billed_`` prefix
+    marks them as the quantities that actually get billed, so the metric
+    equals the bill.
+
+    Metric LABELS (``source_lang`` / ``target_lang`` / ``model``) are not
+    billing data and are NOT set here — set them with ``set_metric_labels``.
+    ``service_id`` is likewise separate: handlers set it right after service
+    resolution (before inference runs) so it survives an inference failure,
+    whereas the billed count only exists on success.
+    """
+    st = request.state
+    st.billed_input = billed_input
+    st.billed_output = billed_output
+
+
+def set_metric_labels(
+    request: Request,
+    *,
+    source_lang: str = "",
+    target_lang: str = "",
+    model: str = "",
+) -> None:
+    """Record Prometheus metric LABELS on ``request.state`` (not billing data).
+
+    ``source_lang`` / ``target_lang`` drive the per-language dashboard
+    breakdown for NMT/TTS/ASR/transliteration; ``model`` is the ``model``
+    label on the LLM token metric. None of these are billed quantities —
+    they're dimensions on the metrics. They ride request.state only so the
+    middleware doesn't re-read the body to label its metrics; a service that
+    lacks a given dimension simply never sets it (the middleware defaults it
+    to "").
+    """
+    st = request.state
+    st.source_lang = source_lang
+    st.target_lang = target_lang
+    st.model = model
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -67,18 +110,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         method = request.method
         service_type = self._detect_service_type(path)
 
-        # Only read the body for POSTs to inference endpoints — needed for
-        # language labels (source/target), NOT for unit counts anymore
-        # (those come from request.state.billed_* below).
-        body_bytes: Optional[bytes] = None
-        if method == "POST" and _INFERENCE_PATH_RE.search(path) and service_type in _BODY_METRIC_SERVICES:
-            try:
-                body_bytes = await request.body()
-            except Exception:
-                body_bytes = None
-                if self.config.debug:
-                    logger.debug("Failed to read request body for metrics", exc_info=True)
-
         if self.config.debug:
             logger.debug(f"Request: {method} {path} -> service_type={service_type}")
 
@@ -100,19 +131,23 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # orchestrator for Triton services. Falls back to empty string.
         service_id = getattr(request.state, "service_id", "") or ""
 
-        # The single billed count — set by orchestrator.route_inference
-        # (Triton) or the LLM chat route, from the same computation used for
-        # billing and the OpenSearch trace. None means the handler never set
-        # it (e.g. a non-inference path, or an error before billing ran).
+        # The billed count — set by orchestrator.route_inference (Triton) or
+        # the LLM chat route, from the same computation used for billing and
+        # the OpenSearch trace. None means the handler never set it (e.g. a
+        # non-inference path, or an error before billing ran).
         billed_input = getattr(request.state, "billed_input", None)
         billed_output = getattr(request.state, "billed_output", None)
-        billed_model = getattr(request.state, "billed_model", "") or ""
+        # Metric labels (not billed quantities) — set alongside the billed
+        # count from the same single parse, so a label can never disagree
+        # with what a second body parse would have produced.
+        source_lang = getattr(request.state, "source_lang", "") or ""
+        target_lang = getattr(request.state, "target_lang", "") or ""
+        model = getattr(request.state, "model", "") or ""
 
         # Fire-and-forget: emit metrics WITHOUT blocking the response.
         # Holding the task in self._pending_tasks keeps it alive —
         # asyncio.create_task only keeps a weak reference.
         task = asyncio.create_task(self._record_metrics(
-            body_bytes=body_bytes,
             path=path,
             method=method,
             service_type=service_type,
@@ -122,7 +157,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             duration=duration,
             billed_input=billed_input,
             billed_output=billed_output,
-            billed_model=billed_model,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            model=model,
         ))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
@@ -177,7 +214,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     # ------------------------------------------------------------------
     async def _record_metrics(
         self,
-        body_bytes: Optional[bytes],
         path: str,
         method: str,
         service_type: str,
@@ -187,34 +223,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         duration: float,
         billed_input: Optional[float] = None,
         billed_output: Optional[float] = None,
-        billed_model: str = "",
+        source_lang: str = "",
+        target_lang: str = "",
+        model: str = "",
     ) -> None:
-        """Emit Prometheus metrics out-of-band, using the already-billed count."""
+        """Emit Prometheus metrics out-of-band, using the already-billed count.
+
+        Every value comes from request.state (set once by the route handler /
+        orchestrator — see dispatch()); the request body is never read here.
+        """
         try:
-            # Parsed only for language labels (source/target) now — unit
-            # counts come from billed_input/billed_output, not this body.
-            request_data: Optional[Dict[str, Any]] = None
-            if body_bytes:
-                try:
-                    request_data = json.loads(body_bytes.decode("utf-8"))
-                except Exception:
-                    if self.config.debug:
-                        logger.debug("Failed to parse inference body", exc_info=True)
-                    request_data = None
-
-            # Both `service_id` and `serviceId` appear in inference payloads.
-            # Only override the request-state value when the payload provides
-            # a non-empty one. (LLM endpoints already got service_id=model
-            # from the caller — do not re-override from the request body.)
-            if isinstance(request_data, dict) and service_type != "llm":
-                cfg = request_data.get("config")
-                if isinstance(cfg, dict):
-                    payload_service_id = str(
-                        cfg.get("service_id") or cfg.get("serviceId") or ""
-                    ).strip()
-                    if payload_service_id:
-                        service_id = payload_service_id
-
             # Request count + duration fire for every request, regardless of
             # whether a billed unit was recorded.
             self.metrics_collector.track_request(
@@ -235,7 +253,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if service_type == "llm":
                 if billed_input or billed_output:
                     self.metrics_collector.track_llm_tokens(
-                        model=billed_model or "unknown",
+                        model=model or "unknown",
                         prompt_tokens=billed_input,
                         completion_tokens=billed_output or 0,
                         total_tokens=billed_input + (billed_output or 0),
@@ -246,10 +264,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 return
 
             if billed_input > 0:
-                source_lang, target_lang = (
-                    self._extract_languages(request_data)
-                    if isinstance(request_data, dict) else ("", "")
-                )
                 self._track_payload_metrics(
                     service_type=service_type,
                     billed_input=billed_input,
@@ -259,14 +273,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     service_id=service_id,
                 )
 
-            # OCR's payload size (KB) is a size metric, not a unit count —
-            # orthogonal to billing, so it still comes from the request body.
-            if service_type == "ocr" and isinstance(request_data, dict):
-                kb = self._extract_ocr_image_size_kb(request_data)
-                if kb > 0:
-                    self.metrics_collector.track_ocr_image_size(
-                        image_size_kb=kb, tenant=tenant, service_id=service_id,
-                    )
         except Exception:
             if self.config.debug:
                 logger.debug("Background metrics recording failed", exc_info=True)
@@ -346,44 +352,3 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         except Exception:
             if self.config.debug:
                 logger.debug("Per-service metric emission failed", exc_info=True)
-
-    # ------------------------------------------------------------------
-    # Pure extractors — operate on the already-parsed request_data dict.
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _extract_languages(request_data: Dict[str, Any]) -> Tuple[str, str]:
-        """Return (source_language, target_language) from ``config.language``.
-
-        Empty strings when absent — Prometheus accepts "" label values, and
-        we explicitly want no hardcoded defaults like ``en``/``hi``.
-        """
-        cfg = request_data.get("config")
-        if not isinstance(cfg, dict):
-            return "", ""
-        lang = cfg.get("language")
-        if not isinstance(lang, dict):
-            return "", ""
-        src = str(lang.get("sourceLanguage") or "").strip()
-        tgt = str(lang.get("targetLanguage") or "").strip()
-        return src, tgt
-
-    @staticmethod
-    def _extract_ocr_image_size_kb(request_data: Dict[str, Any]) -> float:
-        """Image payload size in KB, corrected for base64 inflation.
-
-        base64 inflates the underlying bytes by ~4/3, so the decoded payload
-        is roughly ``len(content) * 3 / 4`` bytes. Using the raw base64 length
-        over-reports by ~33%.
-        """
-        images = request_data.get("image")
-        if not isinstance(images, list):
-            return 0.0
-        total_kb = 0.0
-        for item in images:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("imageContent")
-            if isinstance(content, str):
-                total_kb += (len(content) * 3 / 4) / 1024
-        return total_kb
-
