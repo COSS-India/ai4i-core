@@ -47,6 +47,7 @@ from app.models.pay_per_use.ppu_quota_usage import PPUQuotaUsage  # noqa: E402
 
 # Feedback tables (ef_ prefix, no cross-domain FKs)
 from app.models.feedback.feedback import Feedback  # noqa: E402
+from app.models.feedback.feedback_reasons import FeedbackReason  # noqa: E402
 
 __all__ = [
     "Base",
@@ -72,4 +73,5 @@ __all__ = [
     "PPUQuotaUsage",
     # feedback
     "Feedback",
+    "FeedbackReason",
 ]
