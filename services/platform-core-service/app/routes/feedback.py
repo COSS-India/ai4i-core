@@ -7,7 +7,8 @@ import logging
 from fastapi import APIRouter, Depends, Request
 
 from app.dependencies.services import FeedbackService, get_feedback_service
-from app.schemas.feedback.feedback import FeedbackResponse, FeedbackSubmission
+from app.schemas.enums.feedback import ModelTaskTypeEnum
+from app.schemas.feedback.feedback import FeedbackResponse, FeedbackSubmission, Reason
 
 logger = logging.getLogger(__name__)
 
@@ -40,3 +41,23 @@ async def submit_feedback(
     tenant_id = request.headers.get("X-Tenant-Id")
     created_by = request.headers.get("X-User-Id")
     return await svc.submit(payload, tenant_id=tenant_id, created_by=created_by)
+
+
+@router.get(
+    "/reasons",
+    response_model=dict[str, list[Reason]],
+    summary="Get configurable feedback reasons per task type",
+)
+async def get_feedback_reasons(
+    taskType: ModelTaskTypeEnum | None = None,
+    lang: str | None = None,
+    svc: FeedbackService = Depends(get_feedback_service),
+) -> dict[str, list[Reason]]:
+    """
+    Returns the reason catalog the UI renders on thumbs down: a map of task
+    type to its active reasons. Omit taskType to get every task type.
+
+    lang is reserved for localised labels — v0.1 returns English regardless
+    of value; localisation is deferred.
+    """
+    return svc.get_reasons(taskType)
