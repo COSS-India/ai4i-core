@@ -26,7 +26,7 @@ function TotalSpendBanner({
   const fillPct = Math.min(Math.max(pct, 0), 100);
 
   return (
-    <Box bgGradient="linear(135deg, #184a9e, #2a67d6)" borderRadius="12px" p="24px 28px" color="white">
+    <Box bgGradient="linear(135deg, #12224f, #2a67d6)" borderRadius="12px" p="24px 28px" color="white">
       <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" opacity={0.85} mb={2}>
         TOTAL SPEND
       </Text>

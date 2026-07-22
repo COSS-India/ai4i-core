@@ -63,7 +63,7 @@ function TenantBudgetCard({
   const over = spent - limit;
 
   return (
-    <Box bgGradient="linear(135deg, #184a9e, #2a67d6)" borderRadius="12px" p="22px 24px" color="white">
+    <Box bgGradient="linear(135deg, #184a9e, #4676d0)" borderRadius="12px" p="22px 24px" color="white">
       {isLoading ? (
         <Center minH="120px"><Spinner color="whiteAlpha.700" /></Center>
       ) : (
@@ -206,7 +206,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     </VStack>
   ) : (
     <Box
-      bgGradient="linear(135deg, #184a9e, #2a67d6)"
+      bgGradient="linear(135deg, #12224f, #2a67d6)"
       borderRadius="12px"
       p="22px 24px"
       color="white"
