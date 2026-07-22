@@ -53,7 +53,13 @@ _ROLE_MODERATOR = 2
 
 # Only fields actually consumed by the inference-submission flow and the
 # public try-it picker (confirmed against every *Service.ts call site and
-# shared picker component in frontend/simple-ui/src).
+# shared picker component in frontend/simple-ui/src), plus "model" — required
+# by inference-service's own internal GET /services/{id} call (no identity
+# headers, so it always hits this filtered path), which reads
+# model.inferenceEndPoint.adapter_config to build the actual Triton request.
+# Dropping "model" here breaks inference for every service (AI4IDS-2562
+# investigation) — the model card is Triton tensor-mapping/schema config, not
+# a secret (no api_key/policy/billing inside it), so it's safe to allow.
 _NON_ADMIN_SERVICE_FIELDS = {
     "serviceId",
     "name",
@@ -66,6 +72,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "task",
     "languages",
     "versionStatus",
+    "model",
 }
 
 
