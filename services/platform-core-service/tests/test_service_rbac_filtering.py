@@ -52,6 +52,12 @@ _FULL_SERVICE = {
     "task": {"type": "asr"},
     "languages": [{"sourceLanguage": "en"}],
     "versionStatus": "ACTIVE",
+    "model": {
+        "modelId": "model-1",
+        "inferenceEndPoint": {
+            "adapter_config": {"inputs": [], "outputs": [], "version": "1.0"},
+        },
+    },
     "api_key": "super-secret-key",
     "policy": {"accuracy": "sensitive", "cost": "tier_1"},
     "healthStatus": "healthy",
@@ -99,6 +105,19 @@ class TestFilterServiceFields:
             "task": {"type": "asr"},
             "languages": [{"sourceLanguage": "en"}],
             "versionStatus": "ACTIVE",
+            "model": _FULL_SERVICE["model"],
+        }
+
+    def test_keeps_adapter_config_for_inference_service(self) -> None:
+        """Regression: inference-service's internal GET /services/{id} call
+        carries no permission headers, so it always hits this filtered path.
+        Dropping "model" here breaks every inference request platform-wide,
+        since adapter_config lives at model.inferenceEndPoint.adapter_config
+        and GenericTritonMapper fails validation without it (AI4IDS-2562
+        investigation)."""
+        filtered = _filter_service_fields(_FULL_SERVICE)
+        assert filtered["model"]["inferenceEndPoint"]["adapter_config"] == {
+            "inputs": [], "outputs": [], "version": "1.0",
         }
 
 
@@ -173,6 +192,24 @@ class TestViewServiceRoute:
 
         assert "api_key" not in result["data"]
         assert result["data"]["serviceId"] == "svc-1"
+
+    @pytest.mark.asyncio
+    async def test_no_permission_header_still_returns_adapter_config(self) -> None:
+        """Exact shape of inference-service's real internal call to this
+        route: no X-Permission-IDS header at all (it sends no headers on
+        this HTTP call, period). Must still get "model" through, or every
+        real inference request 502s (AI4IDS-2562 investigation)."""
+        svc = MagicMock()
+        svc.get_service_detail = AsyncMock(return_value=dict(_FULL_SERVICE))
+
+        request = MagicMock()
+        request.headers = {}  # no X-Permission-IDS key present at all
+
+        result = await view_service(request=request, service_id="svc-1", svc=svc)
+
+        assert result["data"]["model"]["inferenceEndPoint"]["adapter_config"] == {
+            "inputs": [], "outputs": [], "version": "1.0",
+        }
 
     @pytest.mark.asyncio
     async def test_admin_gets_full_detail(self) -> None:
