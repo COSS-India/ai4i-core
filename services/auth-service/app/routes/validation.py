@@ -120,6 +120,7 @@ async def _validate_api_key(
     api_key_svc: APIKeyService,
 ) -> Response:
     """Hex API key path — Redis-only validation, then endpoint authz."""
+    start = time.perf_counter()
     try:
         result = await api_key_svc.validate_api_key(token)
     except InvalidAPIKeyError:
@@ -127,6 +128,11 @@ async def _validate_api_key(
             status_code=401,
             content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.", message="API key not found or has been revoked.").model_dump(),
         )
+    finally:
+        # Isolated cost of the Redis lookup alone — excludes the permission
+        # check and header/quota assembly below, so it's comparable to /auth/test's
+        # validation_time_ms. Captured on both the valid and invalid-key paths.
+        request.state.key_validation_duration_ms = round((time.perf_counter() - start) * 1000, 3)
 
     permission_ids = result.get("permissions") or result.get("permission_ids") or []
     if not await _check_endpoint_permission(request, permission_ids):
@@ -171,12 +177,18 @@ async def _validate_jwt(
     cache_svc: CacheService,
 ) -> Response:
     """JWT path — verify signature, check revocation, then endpoint authz."""
+    start = time.perf_counter()
     try:
         claims = await get_jwt_verifier().verify(token)
     except JWTExpiredError:
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED", "message": "Token has expired."})
     except JWTVerificationError:
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID", "message": "Token is invalid."})
+    finally:
+        # Isolated cost of signature verification alone — excludes revocation
+        # check, permission check, and header assembly below. Captured on both
+        # the valid and invalid-signature paths.
+        request.state.jwt_validation_duration_ms = round((time.perf_counter() - start) * 1000, 3)
 
     if claims.token_id and await check_token_revocation(
         claims.token_id, claims.token_type, cache_svc,
@@ -248,6 +260,13 @@ async def validate_token(
         # itself, these describe the upstream request being authorized and the
         # handler-only cost. Same name, two meanings would silently corrupt any
         # aggregate over the index.
+        #
+        # key_validation_duration_ms / jwt_validation_duration_ms are the raw
+        # validation-call cost alone (Redis lookup / signature verify), stashed
+        # on request.state by the respective branch — excludes permission check
+        # and header/quota assembly, which validate_duration_ms still includes.
+        # Only one is ever non-None per request, matching auth_type; the other
+        # stays None rather than being omitted, so the index schema is stable.
         logger.info(
             "auth validate completed",
             extra={
@@ -255,6 +274,8 @@ async def validate_token(
                     "event": "auth_validate",
                     "auth_type": auth_type,
                     "validate_duration_ms": round((time.perf_counter() - start) * 1000, 3),
+                    "key_validation_duration_ms": getattr(request.state, "key_validation_duration_ms", None),
+                    "jwt_validation_duration_ms": getattr(request.state, "jwt_validation_duration_ms", None),
                     "upstream_method": request.headers.get("X-Original-Method", ""),
                     "upstream_path": request.headers.get("X-Original-URI", "").split("?", 1)[0],
                 }
