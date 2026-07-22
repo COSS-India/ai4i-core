@@ -1127,7 +1127,7 @@ export default function TenantManagementTab({
         return [
           {
             key: "resend-verification",
-            label: "Resend verification email",
+            label: "Resend setup link",
             onSelect: () => void tm.handleResendTenantUserVerification(u),
             color: "blue.600",
             hoverBg: "blue.50",

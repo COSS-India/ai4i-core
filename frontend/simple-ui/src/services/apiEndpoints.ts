@@ -57,6 +57,9 @@ export const apiEndpoints = {
     /** POST — re-send onboarding verification to tenant contact (pending backend). */
     resendVerification: (tenantId: string) =>
       `${API_V1}/auth/tenants/${tenantId}/resend-verification`,
+    /** POST — re-send set-password setup link to a not-yet-activated tenant user. */
+    resendUserSetupLink: (tenantId: string, userId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/users/${userId}/resend-setup-link`,
   },
 
   alerts: {

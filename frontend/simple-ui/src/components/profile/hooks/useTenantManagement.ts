@@ -1111,16 +1111,30 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleResendTenantUserVerification = async (u: TenantUserView) => {
-    if (!u.email) return;
+    const tenantId = tenantDetailView?.tenant_id ?? user?.tenant_id;
+    if (!tenantId || !u.user_id) {
+      showToast({
+        type: "warning",
+        message: "Missing tenant or user ID to resend the setup link.",
+      });
+      return;
+    }
     try {
       setResendVerificationUserId(u.user_id);
-      await authService.resendVerification({ email: u.email });
+      // Resolve by user_id (unmasked) — do not use masked email or
+      // /auth/resend-verification (no-ops for passwordless tenant users).
+      const res = await tenantService.resendTenantUserSetupLink(
+        tenantId,
+        u.user_id,
+      );
       showToast({
         type: "success",
-        message: `A new verification link was sent to ${u.email}.`,
+        message:
+          res?.message ??
+          "A password setup link has been sent to the user's email.",
       });
     } catch (err) {
-      console.error("Failed to resend tenant user verification:", err);
+      console.error("Failed to resend tenant user setup link:", err);
       showError(err);
     } finally {
       setResendVerificationUserId(null);
