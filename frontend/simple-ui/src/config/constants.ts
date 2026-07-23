@@ -1032,13 +1032,25 @@ export function isTenantLifecycleBlockingUsers(
 
 /**
  * Derive tenant-user display status for UI badges and action menus.
- * When ``tenantStatus`` is SUSPENDED/DEACTIVATED, all users show Suspended
- * (per multi-tenant cascade spec) even if per-user flags are stale.
+ *
+ * A user who never completed setup (no credentials → ``is_activated`` falsy and
+ * ``is_active`` false) is always Pending Activation, even while the tenant is
+ * SUSPENDED/DEACTIVATED. Suspended implies a previously active account was
+ * blocked, which is semantically wrong for an unactivated user; treating them
+ * as Suspended could also strand them if the tenant is reactivated. When the
+ * tenant blocks users, only previously active/activated users show Suspended.
  */
 export function resolveTenantUserDisplayStatus(
   user: TenantUserStatusSource,
   tenantStatus?: string | null
 ): TenantUserStatusValue {
+  // Never completed setup → Pending Activation, regardless of tenant lifecycle
+  // or a stale ``is_tenant_active`` left over from the old lock-everyone cascade.
+  if (!user.is_active && !user.is_activated) {
+    return TENANT.USER_STATUS.PENDING_ACTIVATION;
+  }
+
+  // Tenant lifecycle cascade: previously active/activated users show Suspended.
   if (isTenantLifecycleBlockingUsers(tenantStatus)) {
     return TENANT.USER_STATUS.SUSPENDED;
   }
@@ -1046,18 +1058,8 @@ export function resolveTenantUserDisplayStatus(
   if (user.is_active && (user.is_tenant_active ?? true)) {
     return TENANT.USER_STATUS.ACTIVE;
   }
-  if (!user.is_active) {
-    // Completed setup but now inactive → admin-suspended (per-user Suspend).
-    if (user.is_activated) {
-      return TENANT.USER_STATUS.SUSPENDED;
-    }
-    // Locked by the tenant lifecycle cascade (tenant SUSPENDED/DEACTIVATED).
-    if (user.is_tenant_active === false) {
-      return TENANT.USER_STATUS.SUSPENDED;
-    }
-    // Never completed setup (no credentials) → still Pending Activation.
-    return TENANT.USER_STATUS.PENDING_ACTIVATION;
-  }
+  // Inactive with credentials → admin-suspended (per-user Suspend) or locked by
+  // the tenant lifecycle cascade (``is_tenant_active`` false).
   return TENANT.USER_STATUS.SUSPENDED;
 }
 
