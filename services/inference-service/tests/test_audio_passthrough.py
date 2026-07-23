@@ -98,7 +98,7 @@ async def test_forwards_file_bytes_unchanged() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("clip.wav", wav, "audio/wav")},
-            data={"serviceId": "llm-service-1"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 200, resp.text
         assert captured["path"] == "/audio/transcriptions", (
@@ -115,7 +115,7 @@ async def test_forwards_file_bytes_unchanged() -> None:
 
 
 async def test_forwards_non_file_form_fields() -> None:
-    """serviceId, language, prompt, response_format, temperature all reach upstream."""
+    """model, language, prompt, response_format, temperature all reach upstream."""
     captured: Dict[str, Any] = {}
 
     async def stub(path, *, files, data=None, request=None):
@@ -128,7 +128,7 @@ async def test_forwards_non_file_form_fields() -> None:
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
             data={
-                "serviceId": "llm-service-1",
+                "model": "llm-service-1",
                 "language": "hi",
                 "prompt": "medical context",
                 "response_format": "json",
@@ -136,9 +136,10 @@ async def test_forwards_non_file_form_fields() -> None:
             },
         )
         assert resp.status_code == 200, resp.text
-        # serviceId is forwarded to proxy_multipart which will pop it and inject model.
-        # language, prompt, response_format, temperature must always reach upstream.
-        for key in ("serviceId", "language", "prompt", "response_format", "temperature"):
+        # `model` carries the service ID; proxy_multipart resolves MMS by it and
+        # replaces it with the real upstream model. language, prompt,
+        # response_format, temperature must always reach upstream.
+        for key in ("model", "language", "prompt", "response_format", "temperature"):
             assert key in captured["data"], f"{key} missing from forwarded data"
         assert captured["data"]["language"] == "hi"
         logger.info("   [PASS] non-file form fields forwarded as data")
@@ -155,7 +156,7 @@ async def test_upstream_200_json_returned_unchanged() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"serviceId": "llm-service-1"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/json")
@@ -175,7 +176,7 @@ async def test_upstream_200_text_returned_as_plain_text() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"serviceId": "llm-service-1", "response_format": "text"},
+            data={"model": "llm-service-1", "response_format": "text"},
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/plain")
@@ -204,7 +205,7 @@ async def test_upstream_400_passes_through() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"serviceId": "llm-service-1", "response_format": "verbose_json"},
+            data={"model": "llm-service-1", "response_format": "verbose_json"},
         )
         assert resp.status_code == 400
         assert resp.json() == upstream_400
@@ -227,7 +228,7 @@ async def test_file_too_large_returns_413() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("big.wav", oversized, "audio/wav")},
-            data={"serviceId": "llm-service-1"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 413, resp.text
         err = resp.json()["error"]
@@ -253,7 +254,7 @@ async def test_missing_file_returns_422() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"_dummy": ("dummy.txt", b"x", "text/plain")},
-            data={"serviceId": "llm-service-1"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 422, resp.text
         # FastAPI shape: {"detail": [{"type": "missing", "loc": ["body", "file"], ...}]}
@@ -292,7 +293,7 @@ async def test_transport_error_returns_502_openai_shape() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"serviceId": "llm-service-1"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 502, resp.text
         err = resp.json()["error"]
@@ -319,7 +320,7 @@ async def test_misconfigured_upstream_returns_503_openai_shape() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"serviceId": "llm-service-1"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 503, resp.text
         err = resp.json()["error"]
