@@ -24,7 +24,7 @@ function readIds(): Set<string> {
 
 function writeIds(ids: Set<string>): void {
   if (typeof window === "undefined") return;
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]));
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(ids)));
 }
 
 /** Mark a tenant as soft-deleted from PENDING (terminal — no further actions). */
