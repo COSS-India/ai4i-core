@@ -105,7 +105,7 @@ export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> =>
 
 /**
  * Translate via POST /api/v1/chat/completions (OpenAI-compatible).
- * Sends the registry `serviceId` (not the model name).
+ * Sends the registry `serviceId` as the `model` field (not the model name).
  */
 export const performLLMChat = async (
   text: string,
@@ -124,13 +124,13 @@ export const performLLMChat = async (
     const isAgrinet = config.modelName === AGRINET_MODEL;
     const payload = isAgrinet
       ? {
-          serviceId,
+          model: serviceId,
           messages: [{ role: 'user', content }],
           max_tokens: 200,
           chat_template_kwargs: { enable_thinking: false },
         }
       : {
-          serviceId,
+          model: serviceId,
           messages: [{ role: 'user', content }],
           stream: false,
         };
