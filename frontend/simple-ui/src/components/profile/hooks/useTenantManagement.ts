@@ -578,9 +578,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     patchUserFormError("full_name", validateFullName(full_name));
   };
 
+  const handleUserFullNameBlur = (full_name: string) => {
+    patchUserFormError("full_name", validateFullName(full_name));
+  };
+
   const handleUserEmailChange = (email: string) => {
     setUserForm((prev) => ({ ...prev, email }));
     addUserEmailAvailability.handleChange(email);
+  };
+
+  const handleTenantEmailBlur = () => {
+    void createTenantEmailAvailability.verifyNow();
+  };
+
+  const handleUserEmailBlur = () => {
+    void addUserEmailAvailability.verifyNow();
   };
 
   const handleUserPhoneChange = (phone_number: string) => {
@@ -1398,6 +1410,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleTenantContactNameChange,
     handleTenantContactNameBlur,
     handleTenantEmailChange,
+    handleTenantEmailBlur,
     handleTenantPhoneChange,
     tenantEmailStatus: createTenantEmailAvailability.status,
     canSubmitTenantForm,
@@ -1416,7 +1429,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserFormTenantId,
     handleRegisterUser,
     handleUserFullNameChange,
+    handleUserFullNameBlur,
     handleUserEmailChange,
+    handleUserEmailBlur,
     handleUserPhoneChange,
     userEmailStatus: addUserEmailAvailability.status,
     canSubmitUserForm,

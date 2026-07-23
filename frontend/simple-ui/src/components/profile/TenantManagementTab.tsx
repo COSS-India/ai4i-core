@@ -1277,6 +1277,7 @@ export default function TenantManagementTab({
                   type="email"
                   value={tm.tenantForm.email}
                   onChange={(e) => tm.handleTenantEmailChange(e.target.value)}
+                  onBlur={tm.handleTenantEmailBlur}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
                 {tm.tenantEmailStatus === "checking" &&
@@ -1510,6 +1511,7 @@ export default function TenantManagementTab({
                   type="email"
                   value={tm.userForm.email}
                   onChange={(e) => tm.handleUserEmailChange(e.target.value)}
+                  onBlur={tm.handleUserEmailBlur}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
                 {tm.userEmailStatus === "checking" &&
@@ -1533,6 +1535,7 @@ export default function TenantManagementTab({
                 <Input
                   value={tm.userForm.full_name}
                   onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
+                  onBlur={(e) => tm.handleUserFullNameBlur(e.target.value)}
                 />
                 <FormErrorMessage>
                   {tm.userFormErrors.full_name}
