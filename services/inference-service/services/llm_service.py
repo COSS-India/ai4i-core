@@ -110,11 +110,12 @@ class OpenAIProxyService:
 
         # Tier entitlement check — mirrors orchestrator.py for Triton services.
         # Runs before creating billing spans so a 403 produces no ai-inference span.
+        # Only enforced when the service has explicit tier assignments.
         if request is not None:
             tier_id = request.headers.get("X-Tier-ID", "")
             if tier_id:
                 allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
-                if tier_id not in allowed_tiers:
+                if allowed_tiers and tier_id not in allowed_tiers:
                     return 403, {"detail": f"Service '{service_id}' is not available for your quota"}
 
         # Inject model name from MMS adapter_config so upstream vLLM receives
@@ -196,12 +197,12 @@ class OpenAIProxyService:
             logger.error("LLM audio proxy unavailable for service: %s", service_id)
             return 503, {"error": {"message": "Service unavailable", "type": "api_error"}}
 
-        # Tier entitlement check.
+        # Tier entitlement check. Only enforced when service has explicit tier assignments.
         if request is not None:
             tier_id = request.headers.get("X-Tier-ID", "")
             if tier_id:
                 allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
-                if tier_id not in allowed_tiers:
+                if allowed_tiers and tier_id not in allowed_tiers:
                     return 403, {"error": {
                         "message": f"Service '{service_id}' is not available for your quota",
                         "type": "permission_error",
