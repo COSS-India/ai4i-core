@@ -74,6 +74,14 @@ class CoreSettings(BaseSettings):
     default_receiver_emails: Optional[str] = None
     prometheus_url: Optional[str] = None
     prometheus_timeout: float = 10.0
+    # Label carrying the HTTP path on telemetry_obsv_requests_total (and related
+    # metrics). Scraped via a K8s Prometheus Operator ServiceMonitor, the target's
+    # own "endpoint" label collides with the ServiceMonitor's port-name label of
+    # the same name, so Prometheus relabels the original to "exported_endpoint".
+    # Local docker-compose Prometheus uses plain static_configs (no ServiceMonitor,
+    # no collision), so the metric keeps its literal "endpoint" label there —
+    # override PROMETHEUS_API_PATH_LABEL=endpoint in local .env to match.
+    prometheus_api_path_label: str = "exported_endpoint"
     alertmanager_url: Optional[str] = None
     prometheus_application_alerts_path: Optional[str] = None
     prometheus_infrastructure_alerts_path: Optional[str] = None
@@ -104,9 +112,9 @@ class CoreSettings(BaseSettings):
     redis_timeout: int = 10
     # Cache TTLs
     model_cache_ttl_seconds: int = 3600
-    service_cache_ttl_seconds: int = 3600
+    service_cache_ttl_seconds: int = 300
     metering_cache_ttl_seconds: int = 60
-    ppu_tier_cache_ttl_seconds: int = 3600
+    ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
 

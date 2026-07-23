@@ -28,6 +28,7 @@ from app.core.exceptions import (
 from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
 from app.services.tenant_lifecycle import (
+    TENANT_ONBOARDING_STATUSES,
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -95,7 +96,7 @@ def assert_tenant_allows_onboarding(tenant: Optional[Tenant]) -> None:
     if tenant is None:
         return
 
-    if tenant.status in (TenantStatus.PENDING, TenantStatus.ACTIVE):
+    if tenant.status in TENANT_ONBOARDING_STATUSES:
         return
 
     if tenant.status == TenantStatus.SUSPENDED:

@@ -5,7 +5,7 @@ Pydantic request/response schemas for the Service domain.
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import BenchmarkEntry, validate_entity_name
@@ -14,6 +14,7 @@ from app.schemas.enums.model_management import (
     PolicyAccuracyEnum,
     PolicyCostEnum,
     PolicyLatencyEnum,
+    resolve_task_type,
 )
 from app.schemas.model_management.model import ModelResponse
 
@@ -37,8 +38,24 @@ class ServicePolicy(BaseSchema):
 # ── Create / Update ──
 
 
-_SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
-_SERVICE_ID_MAX_LEN = 255
+SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
+SERVICE_ID_MAX_LEN = 255
+
+
+def validate_service_id(v: str) -> str:
+    """Validate a serviceId value. Raises ValueError on failure."""
+    if not v or not v.strip():
+        raise ValueError("serviceId must not be empty")
+    if len(v) > SERVICE_ID_MAX_LEN:
+        raise ValueError(
+            f"serviceId must not exceed {SERVICE_ID_MAX_LEN} characters"
+        )
+    if not SERVICE_ID_RE.match(v):
+        raise ValueError(
+            "serviceId must contain only alphanumeric characters, /, -, or _ "
+            "and include at least one alphanumeric character"
+        )
+    return v
 
 
 class ServiceCreateRequest(BaseSchema):
@@ -57,26 +74,20 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
-    taskType: Optional[str] = None
-    costPerUnit: Optional[float] = None
-    unitSize: Optional[int] = None
+    taskType: str
+    costPerUnit: float = Field(..., ge=0)
+    unitSize: int
     tierIds: List[str] = Field(..., min_length=1)
+
+    @field_validator("taskType")
+    @classmethod
+    def _validate_task_type(cls, v: str) -> str:
+        return resolve_task_type(v)
 
     @field_validator("serviceId")
     @classmethod
     def _validate_service_id(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("serviceId must not be empty")
-        if len(v) > _SERVICE_ID_MAX_LEN:
-            raise ValueError(
-                f"serviceId must not exceed {_SERVICE_ID_MAX_LEN} characters"
-            )
-        if not _SERVICE_ID_RE.match(v):
-            raise ValueError(
-                "serviceId must contain only alphanumeric characters, /, -, or _ "
-                "and include at least one alphanumeric character"
-            )
-        return v
+        return validate_service_id(v)
 
     @field_validator("name")
     @classmethod
@@ -118,6 +129,13 @@ class ServiceUpdateRequest(BaseSchema):
     Note: name, modelId, modelVersion are NOT updatable. serviceId is not editable.
     """
 
+    # A request touching only these is the publish/unpublish toggle and is
+    # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER (see AI4IDS-2524/2525/2526/
+    # 2527 — requiring them unconditionally, including on this toggle, would
+    # break that flow; see _require_billing_fields_on_substantive_edit below).
+    _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished"}
+    _BILLING_FIELDS_REQUIRED_TOGETHER = ("taskType", "costPerUnit", "unitSize", "tierIds")
+
     serviceId: str
     serviceDescription: Optional[str] = None
     hardwareDescription: Optional[str] = None
@@ -130,9 +148,16 @@ class ServiceUpdateRequest(BaseSchema):
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
     taskType: Optional[str] = None
-    costPerUnit: Optional[float] = None
+    costPerUnit: Optional[float] = Field(None, ge=0)
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
+
+    @field_validator("taskType")
+    @classmethod
+    def _validate_task_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return resolve_task_type(v)
 
     @field_validator("unitSize")
     @classmethod
@@ -163,6 +188,27 @@ class ServiceUpdateRequest(BaseSchema):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+    @model_validator(mode="after")
+    def _require_billing_fields_on_substantive_edit(self) -> "ServiceUpdateRequest":
+        """taskType/costPerUnit/unitSize/tierIds must be supplied together on
+        any edit beyond the publish/unpublish toggle (AI4IDS-2524/2525/2526/2527).
+
+        A request touching only serviceId/isPublished (the publish/unpublish
+        action) is exempt — requiring these fields there too would 422 that
+        flow, which sends only {serviceId, isPublished} by design.
+        """
+        if self.model_fields_set - self._PUBLISH_ONLY_FIELDS:
+            missing = [
+                f for f in self._BILLING_FIELDS_REQUIRED_TOGETHER
+                if getattr(self, f) is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"{', '.join(missing)} must be provided together on any "
+                    "update other than publish/unpublish."
+                )
+        return self
 
 
 # ── Response ──

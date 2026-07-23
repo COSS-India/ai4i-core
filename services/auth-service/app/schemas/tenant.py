@@ -275,6 +275,14 @@ class TenantUserResponse(BaseSchema):
     phone_number: Optional[str] = None
     full_name: Optional[str] = None
     is_active: bool
+    # Tenant-lock flag: cleared (False) for every user while the tenant is
+    # SUSPENDED/DEACTIVATED and restored (True) on reactivation. The user's own
+    # ``is_active`` is never touched by tenant lifecycle changes, so the frontend
+    # combines both flags to render the effective status.
     is_tenant_active: Optional[bool] = None
+    # True once the user has completed setup (a credentials row exists). Lets the
+    # frontend tell an admin-suspended user (activated, is_active=False) apart
+    # from one who never set a password (Pending Activation).
+    is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
     role: TenantUserRole

@@ -3,8 +3,11 @@ import React, { useMemo, useState } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 import { METERING } from "../../config/meteringConstants";
 import {
+  aggregateTasks,
   formatSpendMoney,
   formatSpendUnit,
+  hasPopulatedQuotaUsage,
+  isMultiTaskQuotaTenant,
   taskTypeColor,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem, UsageSummaryResponse } from "../../types/usageSpend";
@@ -60,7 +63,7 @@ function TenantBudgetCard({
   const over = spent - limit;
 
   return (
-    <Box bgGradient="linear(135deg, #184a9e, #2a67d6)" borderRadius="12px" p="22px 24px" color="white">
+    <Box bgGradient="linear(135deg, #184a9e, #4676d0)" borderRadius="12px" p="22px 24px" color="white">
       {isLoading ? (
         <Center minH="120px"><Spinner color="whiteAlpha.700" /></Center>
       ) : (
@@ -90,6 +93,78 @@ function TenantBudgetCard({
         </>
       )}
     </Box>
+  );
+}
+
+/**
+ * Quota Summary for a single tenant.
+ *
+ * - One task type: show the API's flat `usage` quota bar (homogeneous unit + limit).
+ * - Multiple task types: list each type from `tierBreakdown` — no cross-unit summary.
+ *   The flat `usage` block is intentionally null in that case (can't sum characters +
+ *   images + minutes into one consumed/quotaLimit).
+ */
+function TenantQuotaSummary({ detail }: Readonly<{ detail: TenantUsageItem }>) {
+  const tasks = useMemo(
+    () => aggregateTasks(detail.tierBreakdown ?? []).sort((a, b) => b.spend - a.spend),
+    [detail.tierBreakdown],
+  );
+
+  if (tasks.length === 0) {
+    return (
+      <Text fontSize="sm" color="gray.400">
+        No quota data for this period.
+      </Text>
+    );
+  }
+
+  if (!isMultiTaskQuotaTenant(detail.usage) && hasPopulatedQuotaUsage(detail.usage)) {
+    const u = detail.usage;
+    return (
+      <UsageCell
+        consumed={u.consumed ?? 0}
+        quotaLimit={u.quotaLimit}
+        remaining={u.remaining}
+        percentage={u.percentage}
+        unit={u.unit ?? tasks[0]?.unit ?? ""}
+      />
+    );
+  }
+
+  if (!isMultiTaskQuotaTenant(detail.usage) && tasks.length === 1) {
+    const t = tasks[0];
+    if (!t) return null;
+    return (
+      <UsageCell
+        consumed={t.consumed}
+        quotaLimit={t.quotaLimit}
+        remaining={t.remaining}
+        unit={t.unit}
+      />
+    );
+  }
+
+  return (
+    <VStack align="stretch" spacing="14px" maxH="240px" overflowY="auto" pr={1}>
+      {tasks.map((t, i) => (
+        <Box key={t.taskType}>
+          <TaskTypeLabel
+            taskType={t.taskType}
+            color={taskTypeColor(t.taskType, i)}
+            fontSize="12px"
+            fontWeight="semibold"
+          />
+          <Box mt="7px">
+            <UsageCell
+              consumed={t.consumed}
+              quotaLimit={t.quotaLimit}
+              remaining={t.remaining}
+              unit={t.unit}
+            />
+          </Box>
+        </Box>
+      ))}
+    </VStack>
   );
 }
 
@@ -124,18 +199,14 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
             <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" color="gray.600" mb={3}>
               {METERING.USAGE_SPEND.QUOTA_SUMMARY}
             </Text>
-            {tenantDetail.usage ? (
-              <UsageCell {...tenantDetail.usage} />
-            ) : (
-              <Text fontSize="sm" color="gray.400">No quota data for this period.</Text>
-            )}
+            <TenantQuotaSummary detail={tenantDetail} />
           </>
         )}
       </Box>
     </VStack>
   ) : (
     <Box
-      bgGradient="linear(135deg, #184a9e, #2a67d6)"
+      bgGradient="linear(135deg, #12224f, #2a67d6)"
       borderRadius="12px"
       p="22px 24px"
       color="white"

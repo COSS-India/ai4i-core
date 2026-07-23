@@ -15,6 +15,15 @@ ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] =
     TenantStatus.DEACTIVATED: frozenset({TenantStatus.ACTIVE}),
 }
 
+# Statuses during which a tenant's users may still complete onboarding (set
+# password). PENDING is included: the contact admin onboards before the tenant
+# is ACTIVE, and setting their password is what activates the tenant. Shared by
+# the set-password guard (AuthService.assert_tenant_allows_onboarding) and the
+# resend-setup-link endpoint so the two windows can never drift.
+TENANT_ONBOARDING_STATUSES: frozenset[TenantStatus] = frozenset(
+    {TenantStatus.PENDING, TenantStatus.ACTIVE}
+)
+
 
 def assert_valid_tenant_status_transition(
     current: TenantStatus,

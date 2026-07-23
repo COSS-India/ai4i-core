@@ -65,6 +65,20 @@ class _ServiceUnavailableError(_AppError): pass
 class _UnpublishedServiceError(_AppError): pass
 class _RateLimitExceededError(_AppError): pass
 
+def _success_response(data=None, meta=None):
+    resp = {"success": True, "data": data}
+    if meta:
+        resp["meta"] = meta
+    return resp
+
+
+def _error_response(code, message, details=None):
+    err = {"code": code, "message": message}
+    if details:
+        err["details"] = details
+    return {"success": False, "error": err}
+
+
 _ai4i_exc = _conftest_stub(
     "ai4i_core.exceptions",
     AppError=_AppError,
@@ -78,6 +92,10 @@ _ai4i_exc = _conftest_stub(
     UnpublishedServiceError=_UnpublishedServiceError,
     RateLimitExceededError=_RateLimitExceededError,
     register_exception_handlers=MagicMock(),
+    # app.core.responses re-exports these — needed by any test that loads a
+    # route module directly (e.g. app/routes/model.py, app/routes/service.py).
+    success_response=_success_response,
+    error_response=_error_response,
 )
 _conftest_stub("ai4i_core", exceptions=_ai4i_exc)
 
@@ -103,3 +121,14 @@ _db_stub.get_primary_session_factory = MagicMock()
 _db_stub.get_auth_session_factory = MagicMock(return_value=None)
 _db_stub.get_db = MagicMock()
 _db_stub.get_engine = MagicMock()
+
+# Stub app.dependencies.services so route modules (app/routes/model.py,
+# app/routes/service.py, ...) can be loaded directly by file path without
+# dragging in the full alert-management repository chain those DI factories
+# pull in — tests that load a route module pass their own mock `svc` and
+# never call get_model_service()/get_service_service() for real.
+_deps_stub = _conftest_stub("app.dependencies.services")
+_deps_stub.ModelService = MagicMock
+_deps_stub.get_model_service = MagicMock()
+_deps_stub.ServiceService = MagicMock
+_deps_stub.get_service_service = MagicMock()

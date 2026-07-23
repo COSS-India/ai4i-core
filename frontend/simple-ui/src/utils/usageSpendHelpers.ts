@@ -1,9 +1,13 @@
+import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import type {
   TenantTierBreakdown,
+  TenantUsageAggregate,
   TenantUsageDetail,
   UsageSummaryResponse,
 } from "../types/usageSpend";
+
+type TaskTypeColorKey = keyof typeof METERING.COLORS.TASK_TYPE;
 
 export const USAGE_SPEND_STALE_MS = 60_000;
 export const USAGE_SPEND_ACCENT = "#2a67d6";
@@ -26,10 +30,25 @@ export type BillingPeriodKey = "current" | "last";
 export interface AggregatedTaskUsage {
   taskType: string;
   unit: string;
-  quotaLimit: number;
+  quotaLimit?: number | null;
   consumed: number;
-  remaining: number;
+  remaining?: number | null;
   spend: number;
+}
+
+/** True when the API populated the flat quota-bar fields for one homogeneous unit. */
+export function hasPopulatedQuotaUsage(usage: TenantUsageAggregate): boolean {
+  return (
+    usage.consumed != null &&
+    usage.quotaLimit != null &&
+    usage.unit != null &&
+    usage.unit !== "Units"
+  );
+}
+
+/** True when the tenant consumed multiple model task types — per-type quota only. */
+export function isMultiTaskQuotaTenant(usage: TenantUsageAggregate): boolean {
+  return usage.taskTypeCount > 1;
 }
 
 export function billingPeriodValue(key: BillingPeriodKey): string {
@@ -87,8 +106,30 @@ export function tenantAvatarBg(name: string): string {
   return AVATAR_COLORS[sum % AVATAR_COLORS.length];
 }
 
-export function taskTypeColor(_taskType: string, index: number): string {
-  return meteringColorAt(index);
+/** Fixed color per task type (same identifier everywhere = same color), falling back to the rank cycle for unmapped types. */
+export function taskTypeColor(taskType: string, index: number): string {
+  const key = taskType.trim().toLowerCase() as TaskTypeColorKey;
+  return METERING.COLORS.TASK_TYPE[key] ?? meteringColorAt(index);
+}
+
+/** Client-side tier/task-type filter for a single tenant's breakdown (no server round-trip). */
+export function filterTierBreakdown(
+  tierBreakdown: TenantTierBreakdown[],
+  filterTierId: string,
+  filterTaskType: string,
+): TenantTierBreakdown[] {
+  const normalizedTaskType = filterTaskType.trim().toLowerCase();
+  return tierBreakdown
+    .filter((tier) => !filterTierId || tier.tierId === filterTierId)
+    .map((tier) => ({
+      ...tier,
+      taskTypes: normalizedTaskType
+        ? (tier.taskTypes ?? []).filter(
+            (t) => t.taskType.trim().toLowerCase() === normalizedTaskType,
+          )
+        : tier.taskTypes,
+    }))
+    .filter((tier) => (tier.taskTypes ?? []).length > 0);
 }
 
 /** Flat task list aggregated across tiers (quota from last tier write). */
