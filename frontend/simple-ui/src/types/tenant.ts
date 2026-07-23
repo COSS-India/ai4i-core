@@ -13,7 +13,7 @@ export interface TenantView {
   email: string;
   phone_number?: string | null;
   status: TenantStatus;
-  /** True when contact admin completed setup; gates DEACTIVATED → ACTIVE. */
+  /** Client-side flag for PENDING → Deactivate soft deletes (terminal). */
   onboarding_completed?: boolean;
   created_at: string;
   created_by?: string | null;

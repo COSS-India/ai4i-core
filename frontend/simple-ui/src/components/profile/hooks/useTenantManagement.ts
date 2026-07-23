@@ -56,6 +56,11 @@ import {
   DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
   isDefaultTenant,
 } from "../../../utils/defaultTenant";
+import {
+  applyTenantPendingSoftDeleteFlags,
+  isPendingSoftDeletedTenant,
+  markPendingSoftDeletedTenant,
+} from "../../../utils/tenantPendingSoftDelete";
 
 const USER_EMAIL_PAGE_SIZE = 100;
 const DEFAULT_TENANT_USER_ROLE = "USER" as const;
@@ -280,11 +285,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           return;
         }
         const tenant = await tenantService.getViewTenant(tenantId);
-        setTenants(tenant ? [tenant] : []);
+        setTenants(
+          tenant
+            ? applyTenantPendingSoftDeleteFlags([tenant])
+            : [],
+        );
         return;
       }
       const res = await tenantService.listTenants();
-      const rows = res.tenants ?? [];
+      const rows = applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
       setTenants(rows);
       setKnownTenantEmails(collectTenantContactEmails(rows));
     } catch (err) {
@@ -1182,10 +1191,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsSubmittingStatus(true);
     try {
       if (statusUpdateTarget.type === "tenant") {
+        const wasPendingDeactivate =
+          isTenantStatus(
+            statusUpdateTarget.currentStatus,
+            TENANT.STATUS.PENDING,
+          ) && statusUpdateNewStatus === TENANT.STATUS.DEACTIVATED;
         await tenantService.updateTenantStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           status: statusUpdateNewStatus as TenantStatus,
         });
+        if (wasPendingDeactivate) {
+          markPendingSoftDeletedTenant(statusUpdateTarget.tenant_id);
+        }
         showToast({ type: "success", message: "Tenant status updated" });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
@@ -1478,6 +1495,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     resendVerificationUserId,
     handleResendTenantVerificationEmail,
     handleResendTenantUserVerification,
+    isPendingSoftDeletedTenant,
     // Edit user
     isEditUserModalOpen,
     editUserRow,
