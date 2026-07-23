@@ -73,6 +73,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "languages",
     "versionStatus",
     "model",
+    "tierIds",  # required by inference-service tier enforcement
 }
 
 

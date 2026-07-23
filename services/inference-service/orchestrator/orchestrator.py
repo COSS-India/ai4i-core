@@ -77,12 +77,14 @@ class Orchestrator:
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
 
-            # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
+            # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID).
+            # Only enforced when the service has explicit tier assignments —
+            # a service with no tier_ids is unrestricted.
             if request:
                 tier_id = request.headers.get("X-Tier-ID", "")
                 if tier_id:
                     allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
-                    if tier_id not in allowed_tiers:
+                    if allowed_tiers and tier_id not in allowed_tiers:
                         service_id = (
                             (payload.get("config") or {}).get("serviceId")
                             or payload.get("serviceId", "")
