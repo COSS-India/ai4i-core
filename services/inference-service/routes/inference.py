@@ -22,7 +22,7 @@ router = APIRouter(tags=["inference"])
 
 
 _CHAT_EXAMPLE = {
-    "serviceId": "llm-service-1",
+    "model": "llm-service-1",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": False,
 }
@@ -399,14 +399,11 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     """
     # Set service_id on request state so the observability middleware picks it
     # up for Prometheus metrics without reading the body a second time.
-    # Precedence matches proxy_traced/orchestrator.py: config.serviceId first,
-    # then top-level, so metrics tagging can never diverge from what's
-    # actually resolved/billed downstream.
-    service_id = (
-        (payload.get("config") or {}).get("serviceId")
-        or payload.get("serviceId")
-        or ""
-    )
+    # LLM follows the OpenAI spec: the client sends the model name in `model`,
+    # and we treat that as the service ID (used for MMS resolution and PPU
+    # billing). Reading the same field proxy_traced resolves/bills on keeps
+    # metrics tagging from ever diverging from what's billed downstream.
+    service_id = payload.get("model", "")
     request.state.service_id = service_id
 
     with traced_span("request", root=True, classify_status=True) as req_attrs:
@@ -578,10 +575,10 @@ async def audio_transcriptions(
     file: UploadFile = File(
         ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
     ),
-    serviceId: str = Form(
+    model: str = Form(
         ...,
         examples=["llm-service-1"],
-        description="Service identifier as registered in the platform.",
+        description="Model name (OpenAI `model` field); the service identifier as registered in the platform.",
     ),
     language: Optional[str] = Form(
         None, description="ISO-639-1 source language code (optional).",
@@ -598,7 +595,7 @@ async def audio_transcriptions(
     ),
 ) -> Response:
     data = _build_form_data(
-        serviceId=serviceId,
+        model=model,
         language=language,
         prompt=prompt,
         response_format=response_format,
@@ -622,10 +619,10 @@ async def audio_translations(
     file: UploadFile = File(
         ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
     ),
-    serviceId: str = Form(
+    model: str = Form(
         ...,
         examples=["llm-service-1"],
-        description="Service identifier as registered in the platform.",
+        description="Model name (OpenAI `model` field); the service identifier as registered in the platform.",
     ),
     prompt: Optional[str] = Form(
         None,
@@ -643,7 +640,7 @@ async def audio_translations(
     ),
 ) -> Response:
     data = _build_form_data(
-        serviceId=serviceId,
+        model=model,
         prompt=prompt,
         response_format=response_format,
         temperature=temperature,

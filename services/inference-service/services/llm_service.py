@@ -21,9 +21,10 @@ class OpenAIProxyService:
     """
     Thin proxy to an OpenAI-compatible upstream LLM server.
 
-    Resolves the upstream base URL from MMS using serviceId (same lookup used
-    by Triton-backed services), appends the OpenAI-compatible path, and
-    forwards the JSON payload.
+    Follows the OpenAI spec: the client sends the model name in ``model``,
+    which we treat as the service ID. Resolves the upstream base URL from MMS
+    using that model name (the same lookup Triton-backed services do with
+    serviceId), appends the OpenAI-compatible path, and forwards the payload.
     """
 
     def __init__(self) -> None:
@@ -82,19 +83,18 @@ class OpenAIProxyService:
         Full LLM proxy with MMS resolution, tier gate, and OTel spans.
 
         Order matches the Orchestrator + BaseTaskService pattern:
-          1. Extract serviceId from payload
+          1. Extract the service ID from the OpenAI `model` field
           2. Resolve endpoint + service_info from MMS (cached)
           3. Tier entitlement check — before creating billing spans
-          4. Inject model name into payload for upstream vLLM
+          4. Inject the real upstream model name into payload for vLLM
           5. Emit model + ai-inference spans wrapping the actual forward
         """
-        # Strip serviceId before forwarding — upstream doesn't accept it.
+        # LLM follows the OpenAI spec: the client sends the model name in
+        # `model`, which we treat as the service ID for MMS resolution and PPU
+        # billing. The real upstream model is injected from adapter_config in
+        # step 4 below, overwriting this before the request reaches vLLM.
         if isinstance(payload, dict):
-            config_block = payload.get("config") or {}
-            service_id = (
-                config_block.get("serviceId") if isinstance(config_block, dict) else None
-            ) or payload.get("serviceId", "") or ""
-            payload = {k: v for k, v in payload.items() if k != "serviceId"}
+            service_id = payload.get("model", "") or ""
         else:
             service_id = ""
 
@@ -118,8 +118,9 @@ class OpenAIProxyService:
                 if allowed_tiers and tier_id not in allowed_tiers:
                     return 403, {"detail": f"Service '{service_id}' is not available for your quota"}
 
-        # Inject model name from MMS adapter_config so upstream vLLM receives
-        # the model field it expects — clients send serviceId, not model.
+        # Inject the real upstream model name from MMS adapter_config, replacing
+        # the client's `model` value (which was the service ID) with the model
+        # vLLM actually expects.
         model_name = (service_info.get("adapter_config") or {}).get("model_name", "") if isinstance(payload, dict) else ""
         if model_name and isinstance(payload, dict):
             payload = {**payload, "model": model_name}
@@ -158,8 +159,9 @@ class OpenAIProxyService:
                     infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
                     infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
                     infer_attrs["output_type"] = "text"
-                    # vLLM echoes the model name in the response — capture it for
-                    # the model span now that clients no longer send it in the request.
+                    # vLLM echoes the real upstream model name in the response —
+                    # capture it for the model span (the client's `model` field
+                    # carried the service ID, not the upstream model name).
                     model_attrs["model_name"] = body.get("model", "unknown")
 
         return status_code, body
@@ -181,11 +183,12 @@ class OpenAIProxyService:
         dict that ``httpx.AsyncClient.post`` expects. ``data`` carries the
         non-file form fields (e.g. ``language``, …).
 
-        Endpoint resolution uses MMS via serviceId (same as JSON routes).
-        model name is injected from adapter_config before forwarding.
+        Endpoint resolution uses MMS via the `model` form field — the OpenAI
+        service identifier (same as JSON routes). The real upstream model name
+        is injected from adapter_config before forwarding.
         """
         data = dict(data or {})
-        service_id = data.pop("serviceId", "") or ""
+        service_id = data.get("model", "") or ""
 
         # Resolve service from MMS (result is TTL-cached).
         try:
