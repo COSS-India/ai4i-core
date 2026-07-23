@@ -187,3 +187,7 @@ docs/asr_latecny_fix_plan.md
 # Branch-local analysis docs not intended for main
 docs/ASR_LATENCY_ANALYSIS.md
 docs/asr_latecny_fix_plan.md
+
+# Local dev helpers for /auth/validate latency work, not part of the service
+services/auth-service/demo_validate_latency.sh
+services/auth-service/watch_validate_logs.py
