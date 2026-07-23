@@ -17,12 +17,15 @@ from app.schemas.feedback.feedback import FeedbackSubmission, LanguageInfo
 from app.services.feedback.feedback_service import FeedbackService, FeedbackValidationError
 
 
-def _make_service(saved_id: UUID | None = None):
+def _make_service(saved_id: UUID | None = None, reason_repo: MagicMock | None = None):
     repo = MagicMock()
     repo.create_or_update = AsyncMock(
         side_effect=lambda entity: _stamp(entity, saved_id or uuid4())
     )
-    return FeedbackService(feedback_repo=repo, reason_repo=MagicMock()), repo
+    if reason_repo is None:
+        reason_repo = MagicMock()
+        reason_repo.get_by_task_type_with_language = AsyncMock(return_value=[])
+    return FeedbackService(feedback_repo=repo, reason_repo=reason_repo), repo
 
 
 def _stamp(entity, id_):
@@ -65,14 +68,14 @@ async def test_thumbs_down_persists_reasons_and_comments():
     svc, repo = _make_service()
     payload = _submission(
         rating=RatingEnum.NEGATIVE,
-        reasons=["incorrect_meaning", "wrong_terminology"],
+        reasons=["incorrect_meaning", "missing_translation"],
         comments="translation dropped the negation",
     )
 
     await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
 
     saved_entity = repo.create_or_update.call_args.args[0]
-    assert saved_entity.reasons == ["incorrect_meaning", "wrong_terminology"]
+    assert saved_entity.reasons == ["incorrect_meaning", "missing_translation"]
     assert saved_entity.comments == "translation dropped the negation"
 
 
@@ -80,6 +83,57 @@ async def test_thumbs_down_persists_reasons_and_comments():
 async def test_positive_rating_with_reasons_is_rejected():
     svc, _repo = _make_service()
     payload = _submission(rating=RatingEnum.POSITIVE, reasons=["incorrect_meaning"])
+
+    with pytest.raises(FeedbackValidationError) as exc_info:
+        await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_negative_rating_with_unknown_reason_code_is_rejected():
+    """Falls back to the static CATALOG (no DB rows) — 'not_a_real_reason'
+    isn't in NMT's catalog entry."""
+    svc, _repo = _make_service()
+    payload = _submission(rating=RatingEnum.NEGATIVE, reasons=["not_a_real_reason"])
+
+    with pytest.raises(FeedbackValidationError) as exc_info:
+        await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_negative_rating_with_seeded_reason_code_is_accepted():
+    """A code seeded in ef_feedback_reason (not in the static CATALOG) is
+    accepted — the DB catalog takes precedence for a seeded task type."""
+    reason_repo = MagicMock()
+    reason_repo.get_by_task_type_with_language = AsyncMock(
+        return_value=[MagicMock(task_type="asr", code="names", label="Names")]
+    )
+    svc, repo = _make_service(reason_repo=reason_repo)
+    payload = _submission(modelTaskType=ModelTaskTypeEnum.ASR, rating=RatingEnum.NEGATIVE, reasons=["names"])
+
+    await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")
+
+    saved_entity = repo.create_or_update.call_args.args[0]
+    assert saved_entity.reasons == ["names"]
+
+
+@pytest.mark.asyncio
+async def test_negative_rating_with_reason_code_not_in_seeded_catalog_is_rejected():
+    """A task type with active DB rows validates against those rows only —
+    the static CATALOG fallback is not consulted once seeded."""
+    reason_repo = MagicMock()
+    reason_repo.get_by_task_type_with_language = AsyncMock(
+        return_value=[MagicMock(task_type="asr", code="names", label="Names")]
+    )
+    svc, _repo = _make_service(reason_repo=reason_repo)
+    payload = _submission(
+        modelTaskType=ModelTaskTypeEnum.ASR,
+        rating=RatingEnum.NEGATIVE,
+        reasons=["missing_words"],
+    )
 
     with pytest.raises(FeedbackValidationError) as exc_info:
         await svc.submit(payload, tenant_id="tenant-1", created_by="user-1")

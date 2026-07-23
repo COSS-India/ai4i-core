@@ -14,8 +14,10 @@ Owns the rules:
   tagged feedback_source=PORTAL_TRY_IT_NOW; everything else is API.
 - One feedback per requestId — a duplicate submission updates the existing
   row (FeedbackRepository.create_or_update), rather than erroring.
-- Reason codes are NOT validated against a catalog yet: reasons are accepted
-  as free strings regardless of what GET /feedback/reasons returns.
+- Reason codes (NEGATIVE only) are validated against the same effective
+  catalog GET /feedback/reasons would return for that modelTaskType: active
+  ef_feedback_reason rows if seeded, else the static CATALOG fallback in
+  feedback_reasons_catalog.py. An unrecognised code is rejected (400).
 - GET /feedback/reasons reads from ef_feedback_reason (the configurable
   catalog table) first; any task type with no active DB rows falls back to
   the static CATALOG in feedback_reasons_catalog.py (e.g. task types not yet
@@ -71,6 +73,15 @@ class FeedbackService:
                 "reasons, comments, and correctedOutput are only accepted when rating is NEGATIVE."
             )
 
+        if is_negative and payload.reasons:
+            valid_codes = await self._valid_reason_codes(payload.modelTaskType, model_task_type)
+            invalid_codes = [code for code in payload.reasons if code not in valid_codes]
+            if invalid_codes:
+                raise FeedbackValidationError(
+                    f"Reason code(s) {invalid_codes} are not valid for modelTaskType "
+                    f"'{payload.modelTaskType.value}'."
+                )
+
         language_info = payload.languageInfo or []
         # source_language/target_language are flattened single-value columns
         # for basic filtering — best-effort from the first pair when the
@@ -109,7 +120,6 @@ class FeedbackService:
             message="Feedback recorded successfully.",
         )
 
-
     async def get_reasons(
         self,
         task_types: list[ModelTaskTypeEnum] | None,
@@ -146,3 +156,17 @@ class FeedbackService:
     @staticmethod
     def _to_reasons(rows: list) -> list[Reason]:
         return [Reason(code=row.code, label=row.label) for row in rows]
+
+    async def _valid_reason_codes(
+        self, model_task_type: ModelTaskTypeEnum, internal_task_type: str
+    ) -> set[str]:
+        """The set of reason codes accepted for one modelTaskType — active
+        ef_feedback_reason rows if seeded, else the static CATALOG fallback.
+        Same source GET /feedback/reasons reads from, so a code POST /feedback
+        rejects is never one GET /feedback/reasons would have offered."""
+        rows = await self._reason_repo.get_by_task_type_with_language(
+            [internal_task_type], lang=None
+        )
+        if rows:
+            return {row.code for row in rows}
+        return {reason.code for reason in CATALOG[model_task_type]}
