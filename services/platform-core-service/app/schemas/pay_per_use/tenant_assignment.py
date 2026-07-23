@@ -29,7 +29,7 @@ class TierReassignRequest(BaseModel):
 class ReviseBudgetRequest(BaseModel):
     tenant_id: str = Field(..., description="ID of the tenant whose budget is being revised")
     action: Literal["top-up", "top-down"] = Field(..., description="Whether to increase (top-up) or decrease (top-down) the current budget by amount")
-    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=4, description="Amount in INR to add (top-up) or subtract (top-down) from the current budget_limit")
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=8, description="Amount in INR to add (top-up) or subtract (top-down) from the current budget_limit")
 
 
 class ReviseBudgetResponse(BaseModel):
