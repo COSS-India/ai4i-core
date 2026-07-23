@@ -994,9 +994,7 @@ export const TENANT_ADMIN_UPDATABLE_STATUSES: readonly TenantStatusValue[] = [
   TENANT.STATUS.DEACTIVATED,
 ];
 
-/** Allowed PATCH transitions — keep in sync with auth-service tenant_lifecycle.py.
- * DEACTIVATED → ACTIVE additionally requires onboarding_completed (API enforced).
- */
+/** Allowed PATCH transitions — keep in sync with auth-service tenant_lifecycle.py. */
 export const ALLOWED_TENANT_STATUS_TRANSITIONS: Readonly<
   Record<TenantStatusValue, readonly TenantStatusValue[]>
 > = {
@@ -1150,7 +1148,8 @@ export function getTenantStatusActionTargets(
 ): TenantStatusValue[] {
   const current = normalizeTenantStatus(currentStatus ?? "");
   const targets = [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
-  // Never-verified deactivated tenants: no Activate — offer resend in the UI instead.
+  // PENDING → Deactivate is a soft delete: never-verified tenants have no
+  // status actions (no Activate). ACTIVE → Deactivate keeps Activate.
   if (
     current === TENANT.STATUS.DEACTIVATED &&
     options?.onboardingCompleted === false

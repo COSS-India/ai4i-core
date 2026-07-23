@@ -999,28 +999,19 @@ export default function TenantManagementTab({
         ];
       }
 
-      // DEACTIVATED — Activate only after email verification; otherwise resend setup link
-      if (t.onboarding_completed) {
-        return [
-          {
-            key: "activate",
-            label: "Activate",
-            onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
-            color: "green.600",
-            hoverBg: "green.50",
-            icon: <FiPower size={16} />,
-          },
-        ];
+      // DEACTIVATED — previous behavior (Activate) unless this tenant was
+      // soft-deleted from PENDING verification (terminal, no actions).
+      if (tm.isPendingSoftDeletedTenant(t)) {
+        return [];
       }
       return [
         {
-          key: "resend-verification",
-          label: "Send verification email",
-          onSelect: () => void tm.handleResendTenantVerificationEmail(t),
-          color: "blue.600",
-          hoverBg: "blue.50",
-          icon: <FiMail size={16} />,
-          isDisabled: tm.resendVerificationTenantId === t.tenant_id,
+          key: "activate",
+          label: "Activate",
+          onSelect: () => tm.handleOpenTenantStatus(t, TENANT.STATUS.ACTIVE),
+          color: "green.600",
+          hoverBg: "green.50",
+          icon: <FiPower size={16} />,
         },
       ];
     })();
