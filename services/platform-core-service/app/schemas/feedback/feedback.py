@@ -70,3 +70,10 @@ class FeedbackResponse(BaseSchema):
     status: str = "SUCCESS"
     feedbackId: UUID
     message: str = "Feedback recorded successfully."
+
+
+class Reason(BaseSchema):
+    """GET /feedback/reasons entry — a single selectable reason code/label."""
+
+    code: str
+    label: str

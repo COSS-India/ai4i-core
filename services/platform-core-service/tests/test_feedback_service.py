@@ -22,7 +22,7 @@ def _make_service(saved_id: UUID | None = None):
     repo.create_or_update = AsyncMock(
         side_effect=lambda entity: _stamp(entity, saved_id or uuid4())
     )
-    return FeedbackService(feedback_repo=repo), repo
+    return FeedbackService(feedback_repo=repo, reason_repo=MagicMock()), repo
 
 
 def _stamp(entity, id_):
