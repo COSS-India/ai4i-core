@@ -1402,6 +1402,160 @@ export function formatModelTaskTypeLabel(taskType: string): string {
   return taskType.trim().toUpperCase();
 }
 
+/**
+ * ULCA Model Registry enums (AI4IDS-2478) — closed lists for create/update validation.
+ * Mirrors services/platform-core-service/app/schemas/enums/model_management.py
+ */
+export const MODEL_LICENSE_LIST = [
+  "cc-by-4.0",
+  "cc-by-sa-4.0",
+  "cc-by-nd-2.0",
+  "cc-by-nd-4.0",
+  "cc-by-nc-3.0",
+  "cc-by-nc-4.0",
+  "cc-by-nc-sa-4.0",
+  "cc0",
+  "mit",
+  "gpl-3.0",
+  "bsd-3-clause",
+  "private-commercial",
+  "unknown-license",
+  "custom-license",
+] as const;
+
+export type ModelLicenseValue = (typeof MODEL_LICENSE_LIST)[number];
+
+export const MODEL_DOMAIN_LIST = [
+  "general",
+  "news",
+  "education",
+  "legal",
+  "government-press-release",
+  "healthcare",
+  "agriculture",
+  "automobile",
+  "tourism",
+  "financial",
+  "movies",
+  "subtitles",
+  "sports",
+  "technology",
+  "lifestyle",
+  "entertainment",
+  "parliamentary",
+  "art-and-culture",
+  "economy",
+  "history",
+  "philosophy",
+  "religion",
+  "national-security-and-defence",
+  "literature",
+  "geography",
+] as const;
+
+export type ModelDomainValue = (typeof MODEL_DOMAIN_LIST)[number];
+
+/** Indic + English language codes accepted on Model.languages (45). */
+export const MODEL_LANGUAGE_CODE_LIST = [
+  "en",
+  "hi",
+  "mr",
+  "ta",
+  "te",
+  "kn",
+  "gu",
+  "pa",
+  "bn",
+  "ml",
+  "as",
+  "brx",
+  "doi",
+  "ks",
+  "kok",
+  "mai",
+  "mni",
+  "ne",
+  "or",
+  "sd",
+  "si",
+  "ur",
+  "sat",
+  "lus",
+  "njz",
+  "pnr",
+  "kha",
+  "grt",
+  "sa",
+  "raj",
+  "bho",
+  "gom",
+  "awa",
+  "hne",
+  "mag",
+  "mwr",
+  "sjp",
+  "gbm",
+  "tcy",
+  "hlb",
+  "bih",
+  "anp",
+  "bns",
+  "mixed",
+  "unknown",
+] as const;
+
+export type ModelLanguageCodeValue = (typeof MODEL_LANGUAGE_CODE_LIST)[number];
+
+/** ISO 15924 script codes for Model.languages (16). */
+export const MODEL_SCRIPT_CODE_LIST = [
+  "Beng",
+  "Deva",
+  "Thaa",
+  "Gujr",
+  "Aran",
+  "Orya",
+  "Guru",
+  "Arab",
+  "Sinh",
+  "Knda",
+  "Mlym",
+  "Taml",
+  "Telu",
+  "Mtei",
+  "Olck",
+  "Latn",
+] as const;
+
+export type ModelScriptCodeValue = (typeof MODEL_SCRIPT_CODE_LIST)[number];
+
+export const MODEL_OAUTH_PROVIDER_LIST = [
+  "custom",
+  "github",
+  "facebook",
+  "instagram",
+  "google",
+  "yahoo",
+] as const;
+
+/** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
+export const MODEL_API_KEY_REDACTED = "[REDACTED]";
+
+export const MODEL_FIELD_LIMITS = {
+  NAME_MIN: 5,
+  NAME_MAX: 100,
+  VERSION_MIN: 1,
+  VERSION_MAX: 20,
+  DESCRIPTION_MIN: 25,
+  DESCRIPTION_MAX: 1000,
+  REF_URL_MIN: 5,
+  REF_URL_MAX: 200,
+  LICENSE_URL_MAX: 500,
+  SUBMITTER_NAME_MIN: 3,
+  SUBMITTER_NAME_MAX: 50,
+  TEAM_NAME_MIN: 5,
+  TEAM_NAME_MAX: 50,
+} as const;
+
 /** Service publish state (services-management). */
 export const SERVICE_PUBLISH = {
   FILTER: {
