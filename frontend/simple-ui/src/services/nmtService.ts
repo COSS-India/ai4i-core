@@ -195,7 +195,9 @@ function mapModelManagementServiceToNMTDetails(service: any): NMTServiceDetailsR
 async function listAnonymousNMTServices(): Promise<NMTServiceDetailsResponse[]> {
   try {
     const raw = await listTryItNMTServices();
-    const normalized = raw.map(normalizeServiceToNMTDetails);
+    const normalized = raw
+      .map(normalizeServiceToNMTDetails)
+      .filter((s) => s.name === 'indictrans-gpu-t4');
     return dedupeByServiceId(normalized);
   } catch (error) {
     console.error('Failed to fetch try-it NMT services:', error);
