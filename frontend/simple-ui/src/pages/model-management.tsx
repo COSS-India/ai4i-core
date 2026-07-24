@@ -64,11 +64,6 @@ import AdminDataTable, {
 import {
   MODEL_VERSION,
   MODEL_VERSION_FILTER_LIST,
-  MODEL_LICENSE_LIST,
-  MODEL_DOMAIN_LIST,
-  MODEL_LANGUAGE_CODE_LIST,
-  MODEL_SCRIPT_CODE_LIST,
-  MODEL_OAUTH_PROVIDER_LIST,
   MODEL_FIELD_LIMITS,
   MODEL_API_KEY_REDACTED,
   formatModelTaskTypeLabel,
@@ -364,11 +359,6 @@ const ModelManagementPage: React.FC = () => {
 
   const validateModelData = (data: any): string[] => {
     const errors: string[] = [];
-    const licenseSet = new Set<string>(MODEL_LICENSE_LIST);
-    const domainSet = new Set<string>(MODEL_DOMAIN_LIST);
-    const languageSet = new Set<string>(MODEL_LANGUAGE_CODE_LIST);
-    const scriptSet = new Set<string>(MODEL_SCRIPT_CODE_LIST);
-    const oauthProviderSet = new Set<string>(MODEL_OAUTH_PROVIDER_LIST);
     const {
       NAME_MIN,
       NAME_MAX,
@@ -385,7 +375,8 @@ const ModelManagementPage: React.FC = () => {
       TEAM_NAME_MAX,
     } = MODEL_FIELD_LIMITS;
 
-    // modelId is server-generated from name + version; not required in upload JSON
+    // Enum membership (license/domain/language/script) is enforced by the API —
+    // do not duplicate ULCA closed lists here. Validate shape + lengths only.
 
     if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
       errors.push("name is required and must be a non-empty string");
@@ -437,47 +428,20 @@ const ModelManagementPage: React.FC = () => {
       errors.push("task is required and must be an object with a type field");
     }
 
-    if (data.languages != null) {
-      if (!Array.isArray(data.languages)) {
-        errors.push("languages must be an array when provided");
-      } else {
-        data.languages.forEach((pair: any, index: number) => {
-          if (!pair || typeof pair !== "object") {
-            errors.push(`languages[${index}] must be an object`);
-            return;
-          }
-          if (!pair.sourceLanguage || typeof pair.sourceLanguage !== "string") {
-            errors.push(`languages[${index}].sourceLanguage is required`);
-          } else if (!languageSet.has(pair.sourceLanguage)) {
-            errors.push(
-              `languages[${index}].sourceLanguage '${pair.sourceLanguage}' is not a supported Indic/English code`
-            );
-          }
-          if (pair.targetLanguage != null && !languageSet.has(pair.targetLanguage)) {
-            errors.push(
-              `languages[${index}].targetLanguage '${pair.targetLanguage}' is not a supported Indic/English code`
-            );
-          }
-          if (pair.sourceScriptCode != null && !scriptSet.has(pair.sourceScriptCode)) {
-            errors.push(
-              `languages[${index}].sourceScriptCode '${pair.sourceScriptCode}' is not a valid script code`
-            );
-          }
-          if (pair.targetScriptCode != null && !scriptSet.has(pair.targetScriptCode)) {
-            errors.push(
-              `languages[${index}].targetScriptCode '${pair.targetScriptCode}' is not a valid script code`
-            );
-          }
-        });
-      }
+    if (data.languages != null && !Array.isArray(data.languages)) {
+      errors.push("languages must be an array when provided");
+    } else if (Array.isArray(data.languages)) {
+      data.languages.forEach((pair: any, index: number) => {
+        if (!pair || typeof pair !== "object") {
+          errors.push(`languages[${index}] must be an object`);
+        } else if (!pair.sourceLanguage || typeof pair.sourceLanguage !== "string") {
+          errors.push(`languages[${index}].sourceLanguage is required`);
+        }
+      });
     }
 
     if (!data.license || typeof data.license !== "string" || data.license.trim() === "") {
       errors.push("license is required and must be a non-empty string");
-    } else if (!licenseSet.has(String(data.license).toLowerCase())) {
-      errors.push(
-        `license '${data.license}' is invalid. Valid values: ${MODEL_LICENSE_LIST.join(", ")}`
-      );
     }
 
     if (data.licenseUrl != null && data.licenseUrl !== "") {
@@ -490,14 +454,6 @@ const ModelManagementPage: React.FC = () => {
 
     if (!data.domain || !Array.isArray(data.domain) || data.domain.length === 0) {
       errors.push("domain is required and must be a non-empty array");
-    } else {
-      data.domain.forEach((d: unknown, index: number) => {
-        if (typeof d !== "string" || !domainSet.has(d)) {
-          errors.push(
-            `domain[${index}] '${String(d)}' is invalid. Valid values: ${MODEL_DOMAIN_LIST.join(", ")}`
-          );
-        }
-      });
     }
 
     if (!data.trainingDataset || typeof data.trainingDataset !== "object") {
@@ -570,13 +526,6 @@ const ModelManagementPage: React.FC = () => {
         errors.push(
           `submitter.name must be ${SUBMITTER_NAME_MIN}–${SUBMITTER_NAME_MAX} characters`
         );
-      }
-      if (data.submitter.oauthId?.provider != null) {
-        if (!oauthProviderSet.has(data.submitter.oauthId.provider)) {
-          errors.push(
-            `submitter.oauthId.provider '${data.submitter.oauthId.provider}' is invalid`
-          );
-        }
       }
       if (Array.isArray(data.submitter.team)) {
         data.submitter.team.forEach((member: any, index: number) => {
