@@ -161,7 +161,3 @@ skills/
 # Architecture docs (local ADRs, designs, diagrams), not committed
 arch-docs/
 rough
-
-# Local ASR latency investigation docs, not for the repo
-docs/asr_latecny_fix_plan.md
-docs/ASR_LATENCY_ANALYSIS.md
