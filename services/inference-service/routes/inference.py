@@ -460,7 +460,12 @@ async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: 
             async for chunk in result:
                 yield chunk
 
-    return StreamingResponse(gen(), status_code=status_code, media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        status_code=status_code,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> Response:

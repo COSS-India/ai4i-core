@@ -146,8 +146,15 @@ class OpenAIProxyService:
         Caller owns closing both (see ``_stream_lines``, which does this
         for the success path). Raises ``UpstreamStreamError`` for a
         4xx/5xx upstream response.
+
+        Uses a connect timeout but no read timeout: ``self.timeout`` is a
+        per-read timeout in httpx, and headers arriving fast just pushes the
+        wait for the first token into ``aiter_lines`` — a slow model under
+        load would otherwise abort the stream mid-response.
         """
-        client = httpx.AsyncClient(timeout=self.timeout)
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=self.timeout, read=None, write=self.timeout, pool=self.timeout)
+        )
         request = client.build_request(
             "POST", upstream_url, json=payload,
             headers={"Content-Type": "application/json"},
@@ -242,7 +249,11 @@ class OpenAIProxyService:
                 config_block.get("serviceId") if isinstance(config_block, dict) else None
             ) or payload.get("serviceId", "") or ""
             payload.pop("serviceId", None)
-            payload.setdefault("stream_options", {"include_usage": True})
+            stream_options = payload.setdefault("stream_options", {})
+            if not isinstance(stream_options, dict):
+                stream_options = {}
+                payload["stream_options"] = stream_options
+            stream_options.setdefault("include_usage", True)
         else:
             service_id = ""
 
