@@ -1402,6 +1402,26 @@ export function formatModelTaskTypeLabel(taskType: string): string {
   return taskType.trim().toUpperCase();
 }
 
+/** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
+export const MODEL_API_KEY_REDACTED = "[REDACTED]";
+
+/** ULCA field length limits (AI4IDS-2478) — used for client-side create validation. */
+export const MODEL_FIELD_LIMITS = {
+  NAME_MIN: 5,
+  NAME_MAX: 100,
+  VERSION_MIN: 1,
+  VERSION_MAX: 20,
+  DESCRIPTION_MIN: 25,
+  DESCRIPTION_MAX: 1000,
+  REF_URL_MIN: 5,
+  REF_URL_MAX: 200,
+  LICENSE_URL_MAX: 500,
+  SUBMITTER_NAME_MIN: 3,
+  SUBMITTER_NAME_MAX: 50,
+  TEAM_NAME_MIN: 5,
+  TEAM_NAME_MAX: 50,
+} as const;
+
 /** Service publish state (services-management). */
 export const SERVICE_PUBLISH = {
   FILTER: {
