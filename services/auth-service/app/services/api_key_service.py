@@ -6,8 +6,12 @@ The raw hex key is stored directly in Postgres (api_key column = primary key).
 Redis is the sole validation path at inference time — zero DB calls per request.
 Revocation immediately deletes the Redis entry; subsequent lookups find nothing.
 
-Tenant/user access changes only evict or refresh Redis. ``api_key.is_active`` is for
-explicit revoke only; ``user.is_tenant_active`` / tenant status gate auth via cache refresh.
+Effective key status (no separate DB status column):
+  * Active   — ``is_active=True`` and user/tenant allow access (Redis cached)
+  * Inactive — ``is_active=True`` but tenant SUSPENDED / user locked (Redis evicted;
+               auto-resumes to Active on reactivation via cache refresh)
+  * Revoked  — ``is_active=False`` (tenant DEACTIVATED or explicit revoke;
+               reactivation does not restore the key)
 """
 
 import logging
@@ -166,7 +170,11 @@ class APIKeyService:
             await self._cache.delete_api_key_cache(key.api_key)
 
     async def evict_keys_for_tenant(self, tenant_id: int) -> None:
-        """Evict Redis cache for all tenant users' keys. No DB writes."""
+        """Evict Redis cache for all tenant users' keys. No DB writes.
+
+        Used for tenant SUSPENDED: keys stay ``is_active=True`` (Inactive) so
+        reactivation can repopulate Redis without issuing a new key.
+        """
         if self._repo is None or self._users is None:
             logger.warning(
                 "evict_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
@@ -185,6 +193,44 @@ class APIKeyService:
             if len(users) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
+
+    async def revoke_keys_for_tenant(self, tenant_id: int) -> None:
+        """Permanently revoke all active API keys for a tenant (DEACTIVATED).
+
+        Sets ``is_active=False`` and deletes Redis entries. Reactivating the
+        tenant will not restore these keys — an admin must create new ones.
+        """
+        if self._repo is None or self._users is None:
+            logger.warning(
+                "revoke_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
+                tenant_id,
+            )
+            return
+        revoked = 0
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if not key.is_active:
+                        continue
+                    await self._repo.revoke(key)
+                    await self._cache.delete_api_key_cache(key.api_key)
+                    revoked += 1
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+        if revoked:
+            await self._repo.commit()
+        logger.info(
+            "Revoked %s API key(s) for deactivated tenant_id=%s",
+            revoked,
+            tenant_id,
+        )
 
     async def refresh_keys_cache_for_user(
         self,

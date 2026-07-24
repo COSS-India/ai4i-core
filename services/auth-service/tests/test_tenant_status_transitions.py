@@ -178,6 +178,8 @@ class TestUpdateTenantStatusAuthorization:
         )
         svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        api_keys = AsyncMock()
+        svc._api_keys = api_keys
 
         await svc.update_tenant_status(
             system_admin,
@@ -188,6 +190,43 @@ class TestUpdateTenantStatusAuthorization:
         svc._tenants.update.assert_awaited_once()
         svc._users.lock_tenant_users_for_status.assert_awaited_once()
         assert svc._tenants.update.await_args.args[1]["status"] == target
+        if target == TenantStatus.SUSPENDED:
+            api_keys.evict_keys_for_tenant.assert_awaited_once_with(1)
+            api_keys.revoke_keys_for_tenant.assert_not_awaited()
+        else:
+            api_keys.revoke_keys_for_tenant.assert_awaited_once_with(1)
+            api_keys.evict_keys_for_tenant.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reactivate_suspended_refreshes_api_key_cache(self) -> None:
+        svc = _tenant_service_with_mocks()
+        system_admin = User(
+            id=uuid4(),
+            email="test-system-admin@example.invalid",
+            username=uuid4().hex[:12],
+            tenant_id=1,
+        )
+        tenant = Tenant(
+            id=1,
+            name="Acme",
+            organisation="Acme",
+            email="test-contact@example.invalid",
+            status=TenantStatus.SUSPENDED,
+        )
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        api_keys = AsyncMock()
+        svc._api_keys = api_keys
+
+        await svc.update_tenant_status(
+            system_admin,
+            1,
+            _status_body(TenantStatus.ACTIVE),
+        )
+
+        api_keys.refresh_keys_cache_for_tenant.assert_awaited_once_with(1)
+        api_keys.revoke_keys_for_tenant.assert_not_awaited()
+        api_keys.evict_keys_for_tenant.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_tenant_admin_cannot_activate_pending_tenant(self) -> None:
