@@ -12,6 +12,12 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
+from ai4i_core.context import (
+    get_llm_usage_input_tokens,
+    get_llm_usage_model_name,
+    get_llm_usage_output_tokens,
+)
+
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
@@ -459,6 +465,16 @@ async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: 
             req_attrs.update(get_context_attributes())
             async for chunk in result:
                 yield chunk
+        # Token usage only arrives in the final SSE chunk, so this must run
+        # after the stream is fully drained (model name is known earlier, but
+        # read here too for a single request.state assignment point).
+        # proxy_traced_stream() (same task) set these via ai4i_core.context;
+        # ObservabilityMiddleware reads them back off request.state once it
+        # finishes draining the response body, instead of re-parsing the SSE
+        # body itself.
+        request.state.llm_usage_input_tokens = get_llm_usage_input_tokens()
+        request.state.llm_usage_output_tokens = get_llm_usage_output_tokens()
+        request.state.llm_usage_model_name = get_llm_usage_model_name()
 
     return StreamingResponse(
         gen(),
@@ -486,6 +502,9 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         req_attrs.update(get_context_attributes())
 
         status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
+        request.state.llm_usage_input_tokens = get_llm_usage_input_tokens()
+        request.state.llm_usage_output_tokens = get_llm_usage_output_tokens()
+        request.state.llm_usage_model_name = get_llm_usage_model_name()
 
         if status_code >= 400:
             req_attrs["status"] = "failure"
