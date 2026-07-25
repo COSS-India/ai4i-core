@@ -6,9 +6,14 @@ from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 import httpx
 
+from ai4i_core.context import (
+    set_llm_usage_input_tokens,
+    set_llm_usage_model_name,
+    set_llm_usage_output_tokens,
+)
+from ai4i_core.observability import get_llm_usage
 from config import settings
 from trace.request_span import traced_span, traced_inference, get_context_attributes
-
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +87,8 @@ class OpenAIProxyService:
         if isinstance(payload, dict):
             config_block = payload.get("config") or {}
             service_id = (
-                config_block.get("serviceId") if isinstance(config_block, dict) else None
-            ) or payload.get("serviceId", "") or ""
+                             config_block.get("serviceId") if isinstance(config_block, dict) else None
+                         ) or payload.get("serviceId", "") or ""
             payload.pop("serviceId", None)
         else:
             service_id = ""
@@ -94,6 +99,7 @@ class OpenAIProxyService:
             model_attrs["model_version"] = "unknown"
             model_attrs.update(get_context_attributes())
             model_attrs["service_id"] = service_id
+            set_llm_usage_model_name(model_attrs["model_name"])
 
             async with traced_inference(payload, "LLM", logger) as infer_attrs:
                 # service_id is not in context vars — must be copied explicitly.
@@ -106,10 +112,10 @@ class OpenAIProxyService:
                 status_code, body = await self.proxy(path=path, payload=payload)
 
                 if isinstance(body, dict):
-                    usage = body.get("usage") or {}
-                    infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
-                    infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
+                    infer_attrs["input_tokens"], infer_attrs["output_tokens"] = get_llm_usage(body)
                     infer_attrs["output_type"] = "text"
+                    set_llm_usage_input_tokens(infer_attrs["input_tokens"])
+                    set_llm_usage_output_tokens(infer_attrs["output_tokens"])
 
         return status_code, body
 
@@ -246,8 +252,8 @@ class OpenAIProxyService:
         if isinstance(payload, dict):
             config_block = payload.get("config") or {}
             service_id = (
-                config_block.get("serviceId") if isinstance(config_block, dict) else None
-            ) or payload.get("serviceId", "") or ""
+                             config_block.get("serviceId") if isinstance(config_block, dict) else None
+                         ) or payload.get("serviceId", "") or ""
             payload.pop("serviceId", None)
             stream_options = payload.setdefault("stream_options", {})
             if not isinstance(stream_options, dict):
@@ -270,6 +276,7 @@ class OpenAIProxyService:
                 model_attrs["model_version"] = "unknown"
                 model_attrs.update(get_context_attributes())
                 model_attrs["service_id"] = service_id
+                set_llm_usage_model_name(model_attrs["model_name"])
 
                 async with traced_inference(payload, "LLM", logger) as infer_attrs:
                     infer_attrs["service_id"] = service_id
@@ -284,10 +291,21 @@ class OpenAIProxyService:
                                     chunk = json.loads(data)
                                 except Exception:
                                     chunk = None
-                                usage = chunk.get("usage") if isinstance(chunk, dict) else None
-                                if usage:
-                                    infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
-                                    infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
+                                # get_llm_usage() returns (0, 0) both when a chunk
+                                # carries no `usage` block at all (every normal
+                                # content-delta chunk) and when it carries a
+                                # genuinely all-zero one (e.g. a request rejected/
+                                # truncated before producing tokens) — checking the
+                                # block's presence directly, instead of truthiness
+                                # of the extracted counts, tells those apart so a
+                                # real zero-token usage chunk still gets recorded.
+                                has_usage = isinstance(chunk, dict) and isinstance(chunk.get("usage"), dict)
+                                if has_usage:
+                                    input_tokens, output_tokens = get_llm_usage(chunk)
+                                    infer_attrs["input_tokens"] = input_tokens
+                                    infer_attrs["output_tokens"] = output_tokens
+                                    set_llm_usage_input_tokens(input_tokens)
+                                    set_llm_usage_output_tokens(output_tokens)
                         yield line
 
         return "stream", 200, gen()
