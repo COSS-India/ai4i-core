@@ -11,7 +11,7 @@ from ai4i_core.context import (
     set_llm_usage_model_name,
     set_llm_usage_output_tokens,
 )
-from ai4i_core.observability import get_llm_usage
+from ai4i_core.observability.utils import get_llm_usage
 from config import settings
 from trace.request_span import traced_span, traced_inference, get_context_attributes
 

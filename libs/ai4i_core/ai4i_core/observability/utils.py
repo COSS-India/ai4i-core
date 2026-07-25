@@ -26,7 +26,7 @@ def get_llm_usage(chunk: Any) -> Tuple[int, int]:
     """
     try:
         usage = (chunk.get("usage") if isinstance(chunk, dict) else None) or {}
-        return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+        return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
     except Exception as e:
-        logger.warning(f"Error extracting LLM usage: {e}")
+        logger.error(f"Error extracting LLM usage: {e}")
         return 0, 0
