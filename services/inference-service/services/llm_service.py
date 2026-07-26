@@ -13,6 +13,7 @@ from ai4i_core.context import (
 )
 from ai4i_core.observability.utils import get_llm_usage
 from config import settings
+from services.service_registry import service_id_resolver
 from trace.request_span import traced_span, traced_inference, get_context_attributes
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,11 @@ class OpenAIProxyService:
             payload.pop("serviceId", None)
         else:
             service_id = ""
+
+        # OpenAI clients send `model`, not `serviceId`. Resolve the registered
+        # service_id from the model name so PPU billing/metering have a key.
+        if not service_id and isinstance(payload, dict):
+            service_id = await service_id_resolver.resolve(payload.get("model", ""))
 
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
@@ -262,6 +268,11 @@ class OpenAIProxyService:
             stream_options.setdefault("include_usage", True)
         else:
             service_id = ""
+
+        # OpenAI clients send `model`, not `serviceId`. Resolve the registered
+        # service_id from the model name so PPU billing/metering have a key.
+        if not service_id and isinstance(payload, dict):
+            service_id = await service_id_resolver.resolve(payload.get("model", ""))
 
         kind, status_code, result = await self.proxy_stream(path=path, payload=payload)
         if kind == "error":

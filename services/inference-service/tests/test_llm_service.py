@@ -294,3 +294,72 @@ async def test_proxy_traced_stream_parses_non_zero_usage_from_final_chunk(llm_se
     assert lines[-1] == "data: [DONE]\n"
     assert captured_attrs["input_tokens"] == 12
     assert captured_attrs["output_tokens"] == 34
+
+
+# ── service_id resolution from the model name (PPU billing key) ───────────────
+async def test_stream_resolves_service_id_from_model_when_absent(llm_service):
+    """No client serviceId -> registry-resolved id lands on the ai-inference span."""
+    llm_service.model_endpoints = {}
+    llm_service.default_endpoint = "http://upstream:8000"
+
+    async def fake_gen():
+        yield 'data: {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 7}}\n'
+        yield "data: [DONE]\n"
+
+    async def fake_proxy_stream(path, payload):
+        return "stream", 200, fake_gen()
+
+    captured = {}
+
+    def capture(span_name, span, attributes):
+        if span_name == "ai-inference":
+            captured.update(attributes)
+
+    from trace import request_span as rs_module
+    import services.llm_service as llm_mod
+
+    with patch.object(llm_service, "proxy_stream", side_effect=fake_proxy_stream), \
+         patch.object(rs_module, "log_span_attributes", side_effect=capture), \
+         patch.object(llm_mod.service_id_resolver, "resolve",
+                      new=AsyncMock(return_value="f1fd6f964a44beb68078f7db9c6fa897")) as mock_resolve:
+        _, _, gen = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "google/gemma-4-31B-it", "messages": []}
+        )
+        _ = [line async for line in gen]
+
+    mock_resolve.assert_awaited_once_with("google/gemma-4-31B-it")
+    assert captured["service_id"] == "f1fd6f964a44beb68078f7db9c6fa897"
+
+
+async def test_stream_client_service_id_wins_over_registry(llm_service):
+    """An explicit serviceId in the payload is used as-is; the registry is not consulted."""
+    llm_service.model_endpoints = {}
+    llm_service.default_endpoint = "http://upstream:8000"
+
+    async def fake_gen():
+        yield 'data: {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}\n'
+        yield "data: [DONE]\n"
+
+    async def fake_proxy_stream(path, payload):
+        return "stream", 200, fake_gen()
+
+    captured = {}
+
+    def capture(span_name, span, attributes):
+        if span_name == "ai-inference":
+            captured.update(attributes)
+
+    from trace import request_span as rs_module
+    import services.llm_service as llm_mod
+
+    with patch.object(llm_service, "proxy_stream", side_effect=fake_proxy_stream), \
+         patch.object(rs_module, "log_span_attributes", side_effect=capture), \
+         patch.object(llm_mod.service_id_resolver, "resolve", new=AsyncMock()) as mock_resolve:
+        _, _, gen = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions",
+            {"model": "google/gemma-4-31B-it", "serviceId": "client-supplied-id", "messages": []},
+        )
+        _ = [line async for line in gen]
+
+    mock_resolve.assert_not_awaited()
+    assert captured["service_id"] == "client-supplied-id"
