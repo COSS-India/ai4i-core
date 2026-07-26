@@ -31,6 +31,16 @@ python-multipart>=0.0.6
 kafka-python==2.3.2
 pydub==0.25.1
 
+# OpenTelemetry tracing (required by trace/setup.py).
+# The OTLP/gRPC exporter is NOT pulled transitively by ai4i-core, so without it
+# setup_tracing() raises ImportError, disabling the Kafka span exporter and
+# stopping PPU billing. api/sdk pinned to the same version as the exporter to
+# keep them consistent. Confirm against a builder `pip freeze` before release.
+opentelemetry-api==1.42.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-otlp-proto-grpc==1.42.1
+grpcio==1.80.0
+
 # Security: pin transitive dependencies to patched versions
 idna>=3.15
 starlette>=1.0.1
