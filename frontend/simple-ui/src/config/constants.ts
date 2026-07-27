@@ -1268,13 +1268,7 @@ export function resolveApiKeyDisplayStatus(
   if (isApiKeyExpired(key.expires_at)) {
     return API_KEY.DISPLAY_STATUS.INACTIVE;
   }
-  if (context.userIsActive === false) {
-    return API_KEY.DISPLAY_STATUS.INACTIVE;
-  }
-  if (context.userTenantActive === false) {
-    return API_KEY.DISPLAY_STATUS.INACTIVE;
-  }
-  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.SUSPENDED)) {
+  if (!userMayUseApiKeys(context)) {
     return API_KEY.DISPLAY_STATUS.INACTIVE;
   }
   return API_KEY.DISPLAY_STATUS.ACTIVE;
