@@ -27,12 +27,11 @@ async def main() -> None:
     db_cfg = settings.db_settings
     logger.info(
         "Initialising database registry | host=%s port=%d pool_size=%d max_overflow=%d"
-        " inference_db=%s platform_core_db=%s",
+        " platform_core_db=%s",
         db_cfg.POSTGRES_HOST,
         db_cfg.POSTGRES_PORT,
         db_cfg.DB_POOL_SIZE,
         db_cfg.DB_MAX_OVERFLOW,
-        db_cfg.INFERENCE_DB,
         db_cfg.PLATFORM_CORE_DB,
     )
     try:

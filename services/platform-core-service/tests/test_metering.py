@@ -13,6 +13,7 @@ import pytest
 # ── Builder tests ─────────────────────────────────────────────────────────────
 
 from app.utils.metering_promql_builder import (
+    PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
     apply_time_range,
@@ -28,11 +29,11 @@ class TestBuildBaseSelectors:
 
     def test_inference_only_adds_endpoint_filter(self):
         sel = build_base_selectors(inference_only=True)
-        assert "endpoint=~" in sel
+        assert f"{PROMETHEUS_API_PATH_LABEL}=~" in sel
 
     def test_no_inference_only(self):
         sel = build_base_selectors(inference_only=False)
-        assert "endpoint=~" not in sel
+        assert f"{PROMETHEUS_API_PATH_LABEL}=~" not in sel
 
     def test_tenant_filter_added(self):
         sel = build_base_selectors(tenant="42")
@@ -258,13 +259,13 @@ class TestTenantCount:
 @pytest.mark.asyncio
 class TestServiceBreakdown:
     def _make_endpoint_result(self, endpoint: str, value: float):
-        return [{"metric": {"endpoint": endpoint}, "value": [0, str(value)]}]
+        return [{"metric": {PROMETHEUS_API_PATH_LABEL: endpoint}, "value": [0, str(value)]}]
 
     async def test_asr_native_units_divided_by_60(self):
         client = MagicMock()
 
         async def fake_query(promql):
-            if "sum by(endpoint)" in promql:
+            if f"sum by({PROMETHEUS_API_PATH_LABEL})" in promql:
                 return self._make_endpoint_result("/api/v1/asr/inference", 100)
             return []
 
@@ -289,7 +290,7 @@ class TestServiceBreakdown:
         async def fake_query(promql):
             if 'status_code=~"2.."' in promql:
                 return self._make_endpoint_result("/api/v1/ocr/inference", 250)
-            if "sum by(endpoint)" in promql:
+            if f"sum by({PROMETHEUS_API_PATH_LABEL})" in promql:
                 return self._make_endpoint_result("/api/v1/ocr/inference", 300)
             return []
 
@@ -301,6 +302,18 @@ class TestServiceBreakdown:
         ocr_row = next(s for s in result["services"] if s["service"] == "OCR")
         # native_units should be the success count, not a histogram value
         assert ocr_row["native_units"] == 250
+
+    async def test_native_units_zero_not_null_when_no_usage(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client)
+
+        result = await svc.service_breakdown(tenant=None, time_range="24h")
+
+        for row in result["services"]:
+            assert row["native_units"] is not None
+            assert row["native_units"] >= 0
 
     async def test_tenant_unknown_excluded_from_selectors(self):
         client = MagicMock()
@@ -360,6 +373,42 @@ class TestActiveTenantsExcludesUnknown:
 
         call_args = svc._client.query.call_args[0][0]
         assert 'tenant!="unknown"' in call_args
+
+    async def test_filters_deleted_tenants_when_db_available(self):
+        """Tenants present in Prometheus but absent from the DB are excluded.
+
+        This covers the post-DB-flush scenario where stale Prometheus series
+        for deleted tenants would otherwise inflate 7d/30d active-tenant counts.
+        """
+        prom_rows = [
+            {"metric": {"tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant": "2"}, "value": [0, "3"]},  # deleted tenant
+            {"metric": {"tenant": "3"}, "value": [0, "8"]},
+        ]
+        # DB has only tenants 1 and 3; tenant 2 was deleted
+        auth_db = AsyncMock()
+        db_result = MagicMock()
+        db_result.all.return_value = [(1,), (3,)]
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("7d")
+
+        assert result["count"] == 2
+        returned_ids = {t["tenant"] for t in result["active_tenants"]}
+        assert returned_ids == {"1", "3"}
+        assert "2" not in returned_ids
+
+    async def test_no_filter_when_db_unavailable(self):
+        """Falls back to unfiltered Prometheus results when auth DB is absent."""
+        prom_rows = [
+            {"metric": {"tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant": "99"}, "value": [0, "2"]},
+        ]
+        svc = _make_service(query_return=prom_rows)  # no auth_db
+        result = await svc.active_tenants("7d")
+
+        assert result["count"] == 2
 
 
 class TestFormatCount:

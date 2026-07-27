@@ -4,7 +4,7 @@
 
 This guide documents how to run **AI4I Core** and a local **NMT** model together on **Linux** — auth, inference APIs, optional web UI, and CPU-based translation via Triton. You do **not** need a GPU for the NMT path described here.
 
-It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md` (alongside `docs/SETUP_GUIDE.md`).
+It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md`.
 
 ### Two repositories
 
@@ -371,6 +371,8 @@ TRITON_ENDPOINT_NMT=http://localhost:8000
 
 Replace the template placeholders, e.g. change `POSTGRES_USER=<YOUR_POSTGRES_USER>` to `POSTGRES_USER=postgres`, and `REDIS_PASSWORD=<YOUR_REDIS_PASSWORD>` to `REDIS_PASSWORD=changeme`. Leave lines such as `ALEMBIC_DB_HOST=localhost` and `ALEMBIC_DB_PORT=5432` unchanged.
 
+> **Other model servers besides NMT:** the seed migration in [B5](#b5-run-database-migrations) reads one `TRITON_ENDPOINT_*` variable per service (ASR, OCR, NER, TTS, LLM, etc.) and leaves the `endpoint` blank for anything not set here. If you already have one of those servers running, add its variable now (e.g. `TRITON_ENDPOINT_ASR=http://localhost:5000`) — otherwise fill it in later via [C4](#c4-set-an-inference-service-endpoint-after-migration).
+
 **Alternative — set values with `sed` after `cp`:**
 
 ```bash
@@ -379,6 +381,7 @@ sed -i \
   -e 's/POSTGRES_PASSWORD=<YOUR_POSTGRES_PASSWORD>/POSTGRES_PASSWORD=postgres/' \
   -e 's/REDIS_PASSWORD=<YOUR_REDIS_PASSWORD>/REDIS_PASSWORD=changeme/' \
   .env
+echo 'TRITON_ENDPOINT_NMT=http://localhost:8000' >> .env
 grep -E '^(POSTGRES_|REDIS_|TRITON_|ALEMBIC_)' .env
 ```
 
@@ -512,6 +515,31 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 
 - `KafkaConnectionError: localhost:9093` — Kafka is not started (Option A infra). Tracing falls back to logs. **NMT still works.**
 - `Couldn't find ffmpeg` — only affects ASR/TTS, not NMT.
+
+### C4. Set an inference service endpoint after migration
+
+Skip this for any service whose `TRITON_ENDPOINT_*` var you already set in [B1](#b1-create-root-env) — it was seeded with the endpoint filled in. Use this for any service whose var was never added to root `.env` in the first place, one you bring online later, or to fix an endpoint that changed.
+
+Look up the `serviceId` first, then patch its endpoint — the update call is keyed by `serviceId`, not by name.
+
+```bash
+curl -s "http://localhost:8095/api/v1/services?task_type=asr" | python3 -m json.tool
+```
+
+Grab the `serviceId` of the service you want from the response, then:
+
+```bash
+curl -s -X PATCH http://localhost:8095/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "serviceId": "<serviceId-from-above>",
+    "endpoint": "http://localhost:5000"
+  }'
+```
+
+**Expected:** `{"success":true, ... "message":"Service '<serviceId>' updated successfully."}`
+
+This call probes the endpoint live before accepting it, so start the model server first — a `400` here almost always means it isn't reachable yet at that URL. No `Authorization` header is needed for this native, non-gateway setup.
 
 ---
 
@@ -732,6 +760,7 @@ docker compose -f docker-compose-local.yml down -v
 | Inference: `KafkaConnectionError` | Expected without Kafka; NMT unaffected |
 | NMT via inference returns 502 / upstream failed | Ensure `indictrans` is running; verify Part A5 curl works |
 | NMT endpoint wrong | Set `TRITON_ENDPOINT_NMT=http://localhost:8000` in `.env` before migrations; if already migrated, run `docker compose down -v` and re-run Part B |
+| Other service (ASR/OCR/NER/TTS/LLM/...) has a blank endpoint | Its `TRITON_ENDPOINT_*` var wasn't set before migrating. Fix via [C4](#c4-set-an-inference-service-endpoint-after-migration) once its model server is running |
 | Admin login fails (wrong password) | Email `admin@ai4inclusion.org`, password literal `ADMIN_PASSWORD` |
 
 ### Supported NMT languages
@@ -769,10 +798,10 @@ Optional full stack (Kafka, OpenSearch, Prometheus, Grafana): **`docs/TRACING-OB
 
 ## Related documents
 
-| Document | Location |
-|----------|----------|
-| This guide | `docs/END-TO-END-SETUP-GUIDE.md` |
-| Tracing and observability (local) | `docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md` |
-| Platform setup reference | `docs/SETUP_GUIDE.md` |
-| model-hosting | https://github.com/COSS-India/model-hosting (`feat/nmt-local-setup`) |
-| ai4i-core (PyPI) | https://libraries.io/pypi/ai4i-core |
+| Document | Link |
+|----------|------|
+| This guide | [END-TO-END-SETUP-GUIDE.md](END-TO-END-SETUP-GUIDE.md) |
+| Tracing and observability (local) | [TRACING-OBSERVABILITY-LOCAL-SETUP.md](TRACING-OBSERVABILITY-LOCAL-SETUP.md) |
+| Docker Compose local reference | [DOCKER-COMPOSE-LOCAL-REFERENCE.md](DOCKER-COMPOSE-LOCAL-REFERENCE.md) |
+| model-hosting | [github.com/COSS-India/model-hosting](https://github.com/COSS-India/model-hosting) (`feat/nmt-local-setup`) |
+| ai4i-core (PyPI) | [libraries.io/pypi/ai4i-core](https://libraries.io/pypi/ai4i-core) |

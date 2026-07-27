@@ -736,7 +736,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     category = "middleware";
     isImportant = false;
     icon = FiSettings;
-    displayName = span.operationName.replace("middleware.", "").replace(/_/g, " ");
+    displayName = span.operationName.replace("middleware.", "").replaceAll("_", " ");
     description = "Request processing middleware";
   }
   // Triton inference - check this BEFORE batch processing
@@ -846,7 +846,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       displayName = span.operationName;
       description = `Handles ${span.operationName}`;
     } else {
-      displayName = span.operationName.replace(/\./g, " ").replace(/_/g, " ");
+      displayName = span.operationName.replaceAll(".", " ").replaceAll("_", " ");
       description = `Processes ${displayName}`;
     }
   }
@@ -1342,16 +1342,16 @@ const formatTagValue = (key: string, value: any): string => {
       // Show first 500 chars with proper SQL formatting
       const truncated = sqlStatement.substring(0, 500);
       const formattedSql = truncated
-        .replace(/\s+/g, ' ') // Collapse multiple spaces
-        .replace(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
+        .replaceAll(/\s+/g, ' ') // Collapse multiple spaces
+        .replaceAll(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
         .trim();
       return `${formattedSql}\n\n... (truncated, ${sqlStatement.length} total chars)`;
     }
 
     // Format SQL for readability
     return sqlStatement
-      .replace(/\s+/g, ' ') // Collapse multiple spaces
-      .replace(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
+      .replaceAll(/\s+/g, ' ') // Collapse multiple spaces
+      .replaceAll(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
       .trim();
   }
 
@@ -1363,10 +1363,10 @@ const formatTagValue = (key: string, value: any): string => {
     description = description.replace(/^<class ['"]([^'"]+)['"]>:\s*/, '$1:\n');
 
     // Format DETAIL sections on new lines
-    description = description.replace(/ {1,100}DETAIL: {1,100}/g, '\n\nDETAIL:\n  ');
+    description = description.replaceAll(/ {1,100}DETAIL: {1,100}/g, '\n\nDETAIL:\n  ');
 
     // Format constraint violations nicely
-    description = description.replace(/duplicate key value violates unique constraint/gi,
+    description = description.replaceAll(/duplicate key value violates unique constraint/gi,
       'Duplicate key value violates unique constraint');
 
     return description.trim();

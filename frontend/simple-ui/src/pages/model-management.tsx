@@ -64,6 +64,8 @@ import AdminDataTable, {
 import {
   MODEL_VERSION,
   MODEL_VERSION_FILTER_LIST,
+  MODEL_FIELD_LIMITS,
+  MODEL_API_KEY_REDACTED,
   formatModelTaskTypeLabel,
   formatModelVersionFilterLabel,
   formatModelVersionStatusLabel,
@@ -75,7 +77,7 @@ import { useInferenceTypes } from "../hooks/useInferenceTypes";
 type Model = ModelDetails & {
   name: string;
   description: string;
-  languages: Record<string, unknown>[];
+  languages: NonNullable<ModelDetails["languages"]>;
   domain: string[];
   license: string;
   inferenceEndPoint: NonNullable<ModelDetails["inferenceEndPoint"]>;
@@ -258,50 +260,56 @@ const ModelManagementPage: React.FC = () => {
 
   const handleDownloadSample = () => {
     const sampleModel = {
-      version: "1.0.0",
-      name: "example-model",
-      description: "A sample model for demonstration purposes",
+      version: "v1",
+      name: "example/sample-asr-model",
+      description:
+        "A sample ASR model for demonstration purposes. Description must be at least 25 characters.",
       refUrl: "https://github.com/example/example-model",
       task: {
-        type: "asr"
+        type: "asr",
       },
       languages: [
         {
           sourceLanguage: "hi",
+          sourceLanguageName: "Hindi",
           sourceScriptCode: "Deva",
-          targetLanguage: "hi",
-          targetScriptCode: "Deva"
-        }
+        },
       ],
+      isLangDetectionEnabled: false,
+      isMultilingual: false,
       license: "mit",
-      domain: [
-        "general"
-      ],
+      licenseUrl: "https://opensource.org/licenses/MIT",
+      domain: ["general"],
       inferenceEndPoint: {
+        callbackUrl: "https://inference.example.com/v2/models/sample-asr/infer",
+        inferenceApiKey: {
+          name: "Authorization",
+          value: "<your-api-key>",
+        },
+        isMultilingualEnabled: false,
+        isSyncApi: true,
         schema: {
+          taskType: "asr",
           modelProcessingType: {
-            type: "batch"
+            type: "batch",
           },
           request: {
-            input: [
-              {
-                audio: "base64_encoded_audio_string"
-              }
-            ],
+            input: [{ audio: "base64_encoded_audio_string" }],
             config: {
               language: {
-                sourceLanguage: "hi"
-              }
-            }
+                sourceLanguage: "hi",
+              },
+            },
           },
           response: {
-            output: [
-              {
-                transcript: "string"
-              }
-            ]
-          }
-        }
+            output: [{ transcript: "string" }],
+          },
+        },
+      },
+      trainingDataset: {
+        description:
+          "Sample training dataset description for the example ASR model registration.",
+        datasetId: "example-asr-corpus-v1",
       },
       benchmarks: [
         {
@@ -312,18 +320,18 @@ const ModelManagementPage: React.FC = () => {
           createdOn: "2025-01-15T10:00:00.000Z",
           languages: {
             sourceLanguage: "hi",
-            targetLanguage: "hi"
+            targetLanguage: "hi",
           },
           score: [
             {
               metricName: "WER",
-              score: "7.5"
-            }
-          ]
-        }
+              score: "7.5",
+            },
+          ],
+        },
       ],
       submitter: {
-        name: "Example Organization",
+        name: "Example Org",
         aboutMe: "An example organization",
         team: [
           {
@@ -331,18 +339,18 @@ const ModelManagementPage: React.FC = () => {
             aboutMe: "Lead Researcher",
             oauthId: {
               oauthId: "1234567890",
-              provider: "google"
-            }
-          }
-        ]
-      }
+              provider: "google",
+            },
+          },
+        ],
+      },
     };
 
-    const blob = new Blob([JSON.stringify(sampleModel, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(sampleModel, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
-    link.download = 'sample-model.json';
+    link.download = "sample-model.json";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -351,50 +359,187 @@ const ModelManagementPage: React.FC = () => {
 
   const validateModelData = (data: any): string[] => {
     const errors: string[] = [];
+    const {
+      NAME_MIN,
+      NAME_MAX,
+      VERSION_MIN,
+      VERSION_MAX,
+      DESCRIPTION_MIN,
+      DESCRIPTION_MAX,
+      REF_URL_MIN,
+      REF_URL_MAX,
+      LICENSE_URL_MAX,
+      SUBMITTER_NAME_MIN,
+      SUBMITTER_NAME_MAX,
+      TEAM_NAME_MIN,
+      TEAM_NAME_MAX,
+    } = MODEL_FIELD_LIMITS;
 
-    // modelId is server-generated from name + version; not required in upload JSON
+    // Enum membership (license/domain/language/script) is enforced by the API —
+    // do not duplicate ULCA closed lists here. Validate shape + lengths only.
 
-    if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
-      errors.push('name is required and must be a non-empty string');
+    if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
+      errors.push("name is required and must be a non-empty string");
+    } else {
+      const name = data.name.trim();
+      if (name.length < NAME_MIN || name.length > NAME_MAX) {
+        errors.push(`name must be ${NAME_MIN}–${NAME_MAX} characters (got ${name.length})`);
+      }
+      if (/\s/.test(name)) {
+        errors.push("name must not contain spaces");
+      }
+      const namePattern = /^[a-zA-Z0-9/-]+$/;
+      if (!namePattern.test(name)) {
+        errors.push(
+          'name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). Example: "example-model" or "org/model-name"'
+        );
+      }
     }
 
-    if (!data.version || typeof data.version !== 'string' || data.version.trim() === '') {
-      errors.push('version is required and must be a non-empty string');
+    if (!data.version || typeof data.version !== "string" || data.version.trim() === "") {
+      errors.push("version is required and must be a non-empty string");
+    } else if (
+      data.version.trim().length < VERSION_MIN ||
+      data.version.trim().length > VERSION_MAX
+    ) {
+      errors.push(`version must be ${VERSION_MIN}–${VERSION_MAX} characters`);
     }
 
-    if (!data.description || typeof data.description !== 'string' || data.description.trim() === '') {
-      errors.push('description is required and must be a non-empty string');
+    if (!data.description || typeof data.description !== "string" || data.description.trim() === "") {
+      errors.push("description is required and must be a non-empty string");
+    } else {
+      const descLen = data.description.length;
+      if (descLen < DESCRIPTION_MIN || descLen > DESCRIPTION_MAX) {
+        errors.push(
+          `description must be ${DESCRIPTION_MIN}–${DESCRIPTION_MAX} characters (got ${descLen})`
+        );
+      }
     }
 
-    if (!data.task || typeof data.task !== 'object' || !data.task.type) {
-      errors.push('task is required and must be an object with a type field');
+    if (data.refUrl != null && data.refUrl !== "") {
+      if (typeof data.refUrl !== "string") {
+        errors.push("refUrl must be a string when provided");
+      } else if (data.refUrl.length < REF_URL_MIN || data.refUrl.length > REF_URL_MAX) {
+        errors.push(`refUrl must be ${REF_URL_MIN}–${REF_URL_MAX} characters when provided`);
+      }
     }
 
-    if (!data.languages || !Array.isArray(data.languages) || data.languages.length === 0) {
-      errors.push('languages is required and must be a non-empty array');
+    if (!data.task || typeof data.task !== "object" || !data.task.type) {
+      errors.push("task is required and must be an object with a type field");
     }
 
-    if (!data.license || typeof data.license !== 'string' || data.license.trim() === '') {
-      errors.push('license is required and must be a non-empty string');
+    if (data.languages != null && !Array.isArray(data.languages)) {
+      errors.push("languages must be an array when provided");
+    } else if (Array.isArray(data.languages)) {
+      data.languages.forEach((pair: any, index: number) => {
+        if (!pair || typeof pair !== "object") {
+          errors.push(`languages[${index}] must be an object`);
+        } else if (!pair.sourceLanguage || typeof pair.sourceLanguage !== "string") {
+          errors.push(`languages[${index}].sourceLanguage is required`);
+        }
+      });
+    }
+
+    if (!data.license || typeof data.license !== "string" || data.license.trim() === "") {
+      errors.push("license is required and must be a non-empty string");
+    }
+
+    if (data.licenseUrl != null && data.licenseUrl !== "") {
+      if (typeof data.licenseUrl !== "string") {
+        errors.push("licenseUrl must be a string when provided");
+      } else if (data.licenseUrl.length > LICENSE_URL_MAX) {
+        errors.push(`licenseUrl must be at most ${LICENSE_URL_MAX} characters`);
+      }
     }
 
     if (!data.domain || !Array.isArray(data.domain) || data.domain.length === 0) {
-      errors.push('domain is required and must be a non-empty array');
+      errors.push("domain is required and must be a non-empty array");
     }
 
-    if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== 'object') {
-      errors.push('inferenceEndPoint is required and must be an object');
+    if (!data.trainingDataset || typeof data.trainingDataset !== "object") {
+      errors.push(
+        "trainingDataset is required and must be an object with a description field"
+      );
+    } else if (
+      !data.trainingDataset.description ||
+      typeof data.trainingDataset.description !== "string" ||
+      data.trainingDataset.description.trim() === ""
+    ) {
+      errors.push("trainingDataset.description is required and must be a non-empty string");
     }
 
-    if (!data.submitter || typeof data.submitter !== 'object' || !data.submitter.name) {
-      errors.push('submitter is required and must be an object with a name field');
+    if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== "object") {
+      errors.push("inferenceEndPoint is required and must be an object");
+    } else {
+      const ep = data.inferenceEndPoint;
+      if (!ep.callbackUrl || typeof ep.callbackUrl !== "string" || ep.callbackUrl.trim() === "") {
+        errors.push("inferenceEndPoint.callbackUrl is required");
+      }
+      if (ep.schema == null || typeof ep.schema !== "object" || Array.isArray(ep.schema)) {
+        errors.push("inferenceEndPoint.schema is required and must be an object ({} is valid)");
+      }
+      if (ep.inferenceApiKey != null) {
+        if (typeof ep.inferenceApiKey !== "object") {
+          errors.push("inferenceEndPoint.inferenceApiKey must be an object");
+        } else if (
+          !ep.inferenceApiKey.value ||
+          typeof ep.inferenceApiKey.value !== "string" ||
+          ep.inferenceApiKey.value === MODEL_API_KEY_REDACTED
+        ) {
+          errors.push(
+            "inferenceEndPoint.inferenceApiKey.value must be a real API key (do not use [REDACTED])"
+          );
+        }
+      }
+      if (ep.isSyncApi === false) {
+        if (!ep.asyncApiDetails || typeof ep.asyncApiDetails !== "object") {
+          errors.push(
+            "inferenceEndPoint.asyncApiDetails is required when isSyncApi is false"
+          );
+        } else {
+          if (
+            !ep.asyncApiDetails.pollingUrl ||
+            typeof ep.asyncApiDetails.pollingUrl !== "string"
+          ) {
+            errors.push("inferenceEndPoint.asyncApiDetails.pollingUrl is required");
+          }
+          if (
+            ep.asyncApiDetails.pollInterval == null ||
+            typeof ep.asyncApiDetails.pollInterval !== "number"
+          ) {
+            errors.push(
+              "inferenceEndPoint.asyncApiDetails.pollInterval is required (milliseconds)"
+            );
+          }
+        }
+      }
     }
 
-    // Validate model name format (alphanumeric, hyphens, forward slashes only)
-    if (data.name) {
-      const namePattern = /^[a-zA-Z0-9/-]+$/;
-      if (!namePattern.test(data.name)) {
-        errors.push('name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). Example: "example-model" or "org/model-name"');
+    if (!data.submitter || typeof data.submitter !== "object" || !data.submitter.name) {
+      errors.push("submitter is required and must be an object with a name field");
+    } else {
+      const submitterName = String(data.submitter.name);
+      if (
+        submitterName.length < SUBMITTER_NAME_MIN ||
+        submitterName.length > SUBMITTER_NAME_MAX
+      ) {
+        errors.push(
+          `submitter.name must be ${SUBMITTER_NAME_MIN}–${SUBMITTER_NAME_MAX} characters`
+        );
+      }
+      if (Array.isArray(data.submitter.team)) {
+        data.submitter.team.forEach((member: any, index: number) => {
+          if (!member?.name || typeof member.name !== "string") {
+            errors.push(`submitter.team[${index}].name is required`);
+          } else if (
+            member.name.length < TEAM_NAME_MIN ||
+            member.name.length > TEAM_NAME_MAX
+          ) {
+            errors.push(
+              `submitter.team[${index}].name must be ${TEAM_NAME_MIN}–${TEAM_NAME_MAX} characters`
+            );
+          }
+        });
       }
     }
 
@@ -414,8 +559,12 @@ const ModelManagementPage: React.FC = () => {
       // Prepare model data with timestamps if not present
       const currentTimestamp = Math.floor(Date.now() / 1000);
       const { modelId: _ignoredModelId, ...rest } = parsedModelData;
-      const modelData: any = {
+      const modelData: ModelCreateRequest = {
         ...rest,
+        license:
+          typeof rest.license === "string"
+            ? (rest.license.toLowerCase() as ModelCreateRequest["license"])
+            : rest.license,
         submittedOn: parsedModelData.submittedOn || currentTimestamp,
         updatedOn: parsedModelData.updatedOn || currentTimestamp,
       };
@@ -525,18 +674,26 @@ const ModelManagementPage: React.FC = () => {
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
-      // Ensure task field is properly initialized
+      // Ensure task field is properly initialized; never seed API key with [REDACTED]
+      const inferenceEndPoint = model.inferenceEndPoint
+        ? {
+            ...model.inferenceEndPoint,
+            inferenceApiKey: undefined,
+          }
+        : undefined;
       setUpdateFormData({
         ...(model as unknown as Partial<Model>),
         task: { type: model.task?.type ?? model.task_type ?? model.taskType ?? "" },
+        inferenceEndPoint: inferenceEndPoint as Model["inferenceEndPoint"],
       });
       setIsViewingModel(true);
       setActiveTab(viewTabIndex);
       router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
     } catch (error) {
+      const { message } = parseError(error);
       showToast({
         type: "error",
-        message: error instanceof Error ? error.message : "Failed to fetch model details",
+        message,
       });
     }
   };
@@ -550,15 +707,36 @@ const ModelManagementPage: React.FC = () => {
 
     setIsUpdating(true);
     try {
-      const updateData: any = {
+      // Never include `name` — API returns 422 NAME_NOT_UPDATABLE.
+      // Read source (not refUrl) from GET; send as refUrl on write.
+      // Omit inferenceApiKey unless the user entered a new (non-redacted) value.
+      const ep = updateFormData.inferenceEndPoint;
+      let inferenceEndPoint: ModelUpdateRequest["inferenceEndPoint"] | undefined;
+      if (ep) {
+        const { inferenceApiKey, ...epRest } = ep;
+        inferenceEndPoint = { ...epRest };
+        if (
+          inferenceApiKey?.value &&
+          inferenceApiKey.value !== MODEL_API_KEY_REDACTED
+        ) {
+          inferenceEndPoint.inferenceApiKey = inferenceApiKey;
+        }
+      }
+
+      const updateData: ModelUpdateRequest = {
         modelId: selectedModel.modelId,
-        name: updateFormData.name,
+        version: selectedModel.version,
         description: updateFormData.description,
         task: updateFormData.task,
-        license: updateFormData.license,
-        source: updateFormData.source,
-        domain: updateFormData.domain || [],
-        languages: updateFormData.languages || [],
+        license: updateFormData.license as ModelUpdateRequest["license"],
+        licenseUrl: updateFormData.licenseUrl ?? undefined,
+        refUrl: updateFormData.source || undefined,
+        domain: updateFormData.domain as ModelUpdateRequest["domain"],
+        languages: updateFormData.languages,
+        isLangDetectionEnabled: updateFormData.isLangDetectionEnabled,
+        isMultilingual: updateFormData.isMultilingual,
+        trainingDataset: updateFormData.trainingDataset ?? undefined,
+        inferenceEndPoint,
       };
 
       await updateModel(updateData);
@@ -572,12 +750,18 @@ const ModelManagementPage: React.FC = () => {
       await fetchModels();
       const updatedModel = await getModelById(selectedModel.modelId);
       setSelectedModel(updatedModel as unknown as Model);
-      setUpdateFormData(updatedModel as unknown as Partial<Model>);
+      setUpdateFormData({
+        ...(updatedModel as unknown as Partial<Model>),
+        inferenceEndPoint: updatedModel.inferenceEndPoint
+          ? { ...updatedModel.inferenceEndPoint, inferenceApiKey: undefined }
+          : undefined,
+      } as Partial<Model>);
       setIsEditingModel(false);
     } catch (error) {
+      const { message } = parseError(error);
       showToast({
         type: "error",
-        message: error instanceof Error ? error.message : "Failed to update model",
+        message,
       });
     } finally {
       setIsUpdating(false);
@@ -1007,10 +1191,16 @@ const ModelManagementPage: React.FC = () => {
                             </Text>
                             <Box mt={2} p={3} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
                               <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>
-                                Required Fields:
+                                Required Fields (ULCA):
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                name, version, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: refUrl, benchmarks. modelId is auto-generated from name and version. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                name (5–100 chars, no spaces), version, description (25–1000 chars),
+                                task.type, license (closed enum), domain (closed enum, ≥1),
+                                trainingDataset.{"{description}"}, inferenceEndPoint.{"{callbackUrl, schema}"},
+                                submitter.name. Optional: refUrl, languages (Indic + English codes only),
+                                licenseUrl, isLangDetectionEnabled, isMultilingual, benchmarks.
+                                modelId is auto-generated from name:version. Do not send submittedOn/updatedOn
+                                unless you intend to override — they are server-set by default.
                               </Text>
                             </Box>
                             </FormControl>
@@ -1322,6 +1512,30 @@ const ModelManagementPage: React.FC = () => {
                                 </Text>
                                 <Text fontSize="md">{selectedModel.source || "—"}</Text>
                               </Box>
+                              {selectedModel.licenseUrl ? (
+                                <Box>
+                                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                    License URL
+                                  </Text>
+                                  <Text fontSize="md">{selectedModel.licenseUrl}</Text>
+                                </Box>
+                              ) : null}
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Language auto-detection
+                                </Text>
+                                <Text fontSize="md">
+                                  {selectedModel.isLangDetectionEnabled ? "Enabled" : "Disabled"}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Multilingual
+                                </Text>
+                                <Text fontSize="md">
+                                  {selectedModel.isMultilingual ? "Yes" : "No"}
+                                </Text>
+                              </Box>
                             </SimpleGrid>
 
                             <Box>
@@ -1340,6 +1554,50 @@ const ModelManagementPage: React.FC = () => {
                                 )}
                               </HStack>
                             </Box>
+
+                            {selectedModel.trainingDataset ? (
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Training dataset
+                                </Text>
+                                <Text fontSize="md">
+                                  {selectedModel.trainingDataset.description || "—"}
+                                </Text>
+                                {selectedModel.trainingDataset.datasetId ? (
+                                  <Text fontSize="sm" color="gray.500" mt={1}>
+                                    ID: {selectedModel.trainingDataset.datasetId}
+                                  </Text>
+                                ) : null}
+                              </Box>
+                            ) : null}
+
+                            {selectedModel.inferenceEndPoint ? (
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Inference endpoint
+                                </Text>
+                                <Text fontSize="md">
+                                  {selectedModel.inferenceEndPoint.callbackUrl || "—"}
+                                </Text>
+                                <HStack spacing={3} mt={2} flexWrap="wrap">
+                                  <Badge fontSize="sm" colorScheme="gray" p={2}>
+                                    {selectedModel.inferenceEndPoint.isSyncApi === false
+                                      ? "Async"
+                                      : "Sync"}
+                                  </Badge>
+                                  {selectedModel.inferenceEndPoint.isMultilingualEnabled ? (
+                                    <Badge fontSize="sm" colorScheme="purple" p={2}>
+                                      Multilingual inference
+                                    </Badge>
+                                  ) : null}
+                                  {selectedModel.inferenceEndPoint.inferenceApiKey ? (
+                                    <Badge fontSize="sm" colorScheme="orange" p={2}>
+                                      API key configured
+                                    </Badge>
+                                  ) : null}
+                                </HStack>
+                              </Box>
+                            ) : null}
                           </VStack>
                         )}
                         {/* Editing disabled for models after creation - edit form removed */}

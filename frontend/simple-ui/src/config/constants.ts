@@ -1016,6 +1016,8 @@ export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
 export type TenantUserStatusSource = {
   is_active: boolean;
   is_tenant_active?: boolean | null;
+  /** True once the user completed setup (set a password). */
+  is_activated?: boolean | null;
 };
 
 /** True when tenant lifecycle status blocks all users at the tenant level. */
@@ -1030,13 +1032,25 @@ export function isTenantLifecycleBlockingUsers(
 
 /**
  * Derive tenant-user display status for UI badges and action menus.
- * When ``tenantStatus`` is SUSPENDED/DEACTIVATED, all users show Suspended
- * (per multi-tenant cascade spec) even if per-user flags are stale.
+ *
+ * A user who never completed setup (no credentials → ``is_activated`` falsy and
+ * ``is_active`` false) is always Pending Activation, even while the tenant is
+ * SUSPENDED/DEACTIVATED. Suspended implies a previously active account was
+ * blocked, which is semantically wrong for an unactivated user; treating them
+ * as Suspended could also strand them if the tenant is reactivated. When the
+ * tenant blocks users, only previously active/activated users show Suspended.
  */
 export function resolveTenantUserDisplayStatus(
   user: TenantUserStatusSource,
   tenantStatus?: string | null
 ): TenantUserStatusValue {
+  // Never completed setup → Pending Activation, regardless of tenant lifecycle
+  // or a stale ``is_tenant_active`` left over from the old lock-everyone cascade.
+  if (!user.is_active && !user.is_activated) {
+    return TENANT.USER_STATUS.PENDING_ACTIVATION;
+  }
+
+  // Tenant lifecycle cascade: previously active/activated users show Suspended.
   if (isTenantLifecycleBlockingUsers(tenantStatus)) {
     return TENANT.USER_STATUS.SUSPENDED;
   }
@@ -1044,12 +1058,8 @@ export function resolveTenantUserDisplayStatus(
   if (user.is_active && (user.is_tenant_active ?? true)) {
     return TENANT.USER_STATUS.ACTIVE;
   }
-  if (!user.is_active && user.is_tenant_active === false) {
-    return TENANT.USER_STATUS.SUSPENDED;
-  }
-  if (!user.is_active) {
-    return TENANT.USER_STATUS.PENDING_ACTIVATION;
-  }
+  // Inactive with credentials → admin-suspended (per-user Suspend) or locked by
+  // the tenant lifecycle cascade (``is_tenant_active`` false).
   return TENANT.USER_STATUS.SUSPENDED;
 }
 
@@ -1135,10 +1145,20 @@ export function getTenantStatusColorScheme(status?: string | null): string {
 
 /** Target statuses offered as row actions for the given tenant status. */
 export function getTenantStatusActionTargets(
-  currentStatus: string | null | undefined
+  currentStatus: string | null | undefined,
+  options?: { onboardingCompleted?: boolean }
 ): TenantStatusValue[] {
   const current = normalizeTenantStatus(currentStatus ?? "");
-  return [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+  const targets = [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+  // PENDING → Deactivate is a soft delete: never-verified tenants have no
+  // status actions (no Activate). ACTIVE → Deactivate keeps Activate.
+  if (
+    current === TENANT.STATUS.DEACTIVATED &&
+    options?.onboardingCompleted === false
+  ) {
+    return targets.filter((status) => status !== TENANT.STATUS.ACTIVE);
+  }
+  return targets;
 }
 
 /** Action button label when changing tenant status. */
@@ -1314,22 +1334,6 @@ export function isApiKeyFilterStatus(
   return actual.trim().toLowerCase() === expected;
 }
 
-/** Inference permission IDs → display names when GET /permissions is unavailable. */
-export const INFERENCE_PERMISSION_LABEL_BY_ID: Record<number, string> = {
-  60: "NMT.INFERENCE",
-  61: "ASR.INFERENCE",
-  62: "TTS.INFERENCE",
-  63: "LLM.INFERENCE",
-  64: "NER.INFERENCE",
-  65: "OCR.INFERENCE",
-  66: "TRANSLITERATION.INFERENCE",
-  67: "LANGUAGE-DETECTION.INFERENCE",
-  68: "LANGUAGE-DIARIZATION.INFERENCE",
-  69: "SPEAKER-DIARIZATION.INFERENCE",
-  70: "AUDIO-LANG-DETECTION.INFERENCE",
-  71: "PIPELINE.INFERENCE",
-};
-
 /** Model version lifecycle (model-management). */
 export const MODEL_VERSION = {
   STATUS: {
@@ -1397,6 +1401,26 @@ export type ModelTaskTypeValue = (typeof MODEL_TASK_TYPE_LIST)[number];
 export function formatModelTaskTypeLabel(taskType: string): string {
   return taskType.trim().toUpperCase();
 }
+
+/** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
+export const MODEL_API_KEY_REDACTED = "[REDACTED]";
+
+/** ULCA field length limits (AI4IDS-2478) — used for client-side create validation. */
+export const MODEL_FIELD_LIMITS = {
+  NAME_MIN: 5,
+  NAME_MAX: 100,
+  VERSION_MIN: 1,
+  VERSION_MAX: 20,
+  DESCRIPTION_MIN: 25,
+  DESCRIPTION_MAX: 1000,
+  REF_URL_MIN: 5,
+  REF_URL_MAX: 200,
+  LICENSE_URL_MAX: 500,
+  SUBMITTER_NAME_MIN: 3,
+  SUBMITTER_NAME_MAX: 50,
+  TEAM_NAME_MIN: 5,
+  TEAM_NAME_MAX: 50,
+} as const;
 
 /** Service publish state (services-management). */
 export const SERVICE_PUBLISH = {

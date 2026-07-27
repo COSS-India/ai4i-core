@@ -13,6 +13,8 @@ export interface TenantView {
   email: string;
   phone_number?: string | null;
   status: TenantStatus;
+  /** Client-side flag for PENDING → Deactivate soft deletes (terminal). */
+  onboarding_completed?: boolean;
   created_at: string;
   created_by?: string | null;
   updated_at?: string | null;
@@ -32,6 +34,9 @@ export interface TenantUserView {
   full_name?: string | null;
   is_active: boolean;
   is_tenant_active?: boolean | null;
+  /** True once the user completed setup (set a password). Distinguishes a
+   * suspended user (is_active=false, activated) from one pending activation. */
+  is_activated?: boolean;
   creation_type?: CreationType | null;
   /** Primary role from list-users API (upcoming: singular `role`). */
   role?: string | null;

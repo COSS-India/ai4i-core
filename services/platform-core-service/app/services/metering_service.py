@@ -12,6 +12,7 @@ from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
+    PROMETHEUS_API_PATH_LABEL,
     build_base_selectors,
     sum_over_window,
 )
@@ -166,13 +167,20 @@ class MeteringService:
     async def active_tenants(self, time_range: Optional[str]) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
-        results = await self._client.query(promql)
+        prom_results, valid_ids = await asyncio.gather(
+            self._client.query(promql),
+            self._fetch_valid_tenant_ids(),
+        )
+        # Filter Prometheus results to only tenants that currently exist in the
+        # DB. Without this, deleted tenants whose Prometheus series are still
+        # within the retention window inflate 7d/30d counts after a DB flush.
         tenants = [
             {
                 "tenant": r["metric"].get("tenant", "unknown"),
                 "request_count": int(float(r["value"][1])),
             }
-            for r in results
+            for r in prom_results
+            if valid_ids is None or r["metric"].get("tenant") in valid_ids
         ]
         return {
             "active_tenants": tenants,
@@ -301,7 +309,7 @@ class MeteringService:
         """
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
-        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _base = _ep + ',tenant!="unknown"' + (f',tenant="{tenant}"' if tenant else "")
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
@@ -311,11 +319,11 @@ class MeteringService:
         def _by_ep(selector: str) -> str:
             metric = f"{_METRIC}{selector}"
             if not window:
-                return f"sum by(endpoint) ({metric})"
+                return f"sum by({PROMETHEUS_API_PATH_LABEL}) ({metric})"
             return (
-                f"sum by(endpoint) ("
-                f"(increase({metric}[{window}]) > 0)"
-                f" or ({metric} unless {metric} offset {window})"
+                f"sum by({PROMETHEUS_API_PATH_LABEL}) ("
+                f"({metric} unless {metric} offset {window})"
+                f" or (increase({metric}[{window}]) > 0)"
                 f")"
             )
 
@@ -359,14 +367,14 @@ class MeteringService:
         totals = self._endpoint_dict(_safe_list(raw[0]))
         successes = self._endpoint_dict(_safe_list(raw[1]))
 
-        # Unpack native results (start after fixed queries).
-        # Only store when > 0: a 0.0 result means the metric doesn't exist yet
-        # (the or vector(0) fallback fires), so we return null rather than 0.
+        # Unpack native results (start after fixed queries). A 0.0 result means
+        # either no usage occurred or the metric doesn't exist yet (the
+        # `or vector(0)` fallback fires) — both cases legitimately report 0.
         native_offset = len(fixed_queries)
         natives: dict = {}
         for i, task in enumerate(native_tasks):
             v = _safe_float(raw[native_offset + i])
-            if v is not None and v > 0:
+            if v is not None:
                 natives[task] = round(v)
 
         # ── Assemble service rows ────────────────────────────────────────────
@@ -376,10 +384,10 @@ class MeteringService:
             success_v = successes.get(task, 0)
 
             if cfg.get("use_success_as_native"):
-                native_v = success_v or None
+                native_v = success_v
             else:
-                raw_native = natives.get(task)
-                if raw_native is not None and cfg.get("divide_by_60"):
+                raw_native = natives.get(task, 0)
+                if cfg.get("divide_by_60"):
                     native_v = round(raw_native / 60, 2)
                 else:
                     native_v = raw_native
@@ -403,11 +411,6 @@ class MeteringService:
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
     ) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
-        # Offset subtraction avoids increase() extrapolation errors on short-lived series.
-        # increase() scales down the raw counter by (observed_duration / window_duration),
-        # so a series that's only a few hours old in a 7d query returns ~0 instead of its
-        # real counter value. Subtracting the offset snapshot gives exact integer deltas and
-        # correctly handles series that didn't exist at the start of the window (implied 0).
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
 
@@ -459,13 +462,13 @@ class MeteringService:
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
-        Uses a single sum by(tenant, endpoint) query with offset subtraction
+        Uses a single sum by(tenant, exported_endpoint) query with offset subtraction
         (same approach as service_breakdown) to avoid increase() extrapolation errors.
         When ``tenant`` is given, the matrix is scoped to that single tenant.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
-        _ep = f'endpoint=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
+        _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant_sel = f',tenant="{tenant}"' if tenant else ''
         base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
         metric = f"{_METRIC}{base_sel}"
@@ -473,20 +476,20 @@ class MeteringService:
 
         if window:
             promql = (
-                f"sum by(tenant, endpoint) ("
-                f"(increase({metric}[{window}]) > 0)"
-                f" or ({metric} unless {metric} offset {window})"
+                f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ("
+                f"({metric} unless {metric} offset {window})"
+                f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         else:
-            promql = f"sum by(tenant, endpoint) ({metric}) > 0"
+            promql = f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
 
         results = await self._client.query(promql)
 
         # Accumulate (tenant, task) → count
         tenant_task: dict[str, dict[str, int]] = {}
         for r in results:
-            ep = r["metric"].get("endpoint", "")
+            ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
             tenant_label = r["metric"].get("tenant", "unknown")
             task = ENDPOINT_TO_TASK.get(ep)
             if task is None:
@@ -552,7 +555,7 @@ class MeteringService:
 
     @staticmethod
     def _endpoint_dict(results: list) -> dict:
-        """Map task key → rounded value from a `sum by(endpoint)` result vector.
+        """Map task key → rounded value from a `sum by(exported_endpoint)` result vector.
 
         Handles two endpoint patterns:
           - Standard: /api/v1/{task}/inference  → task = path segment at index 2
@@ -560,7 +563,7 @@ class MeteringService:
         """
         out: dict = {}
         for r in results:
-            ep = r["metric"].get("endpoint", "")
+            ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
             task = ENDPOINT_TO_TASK.get(ep)
             if task is None:
                 parts = [p for p in ep.split("/") if p]
@@ -589,8 +592,8 @@ class MeteringService:
             return f"sum by(tenant) ({metric}) > 0"
         return (
             f"sum by(tenant) ("
-            f"(increase({metric}[{window}]) > 0)"
-            f" or ({metric} unless {metric} offset {window})"
+            f"({metric} unless {metric} offset {window})"
+            f" or (increase({metric}[{window}]) > 0)"
             f") > 0"
         )
 
@@ -600,9 +603,24 @@ class MeteringService:
         if window:
             return (
                 f"sum by(tenant) ("
-                f"(increase({metric}[{window}]) > 0)"
-                f" or ({metric} unless {metric} offset {window})"
+                f"({metric} unless {metric} offset {window})"
+                f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         base = f"sum by(tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base
+
+    async def _fetch_valid_tenant_ids(self) -> Optional[set]:
+        """Return the set of currently-valid tenant ID strings from the auth DB.
+
+        Returns None when the auth DB is unavailable so callers fall back to
+        unfiltered Prometheus results rather than returning an empty count.
+        """
+        if self._auth_db is None:
+            return None
+        try:
+            rows = await self._auth_db.execute(text("SELECT id FROM tenants"))
+            return {str(r[0]) for r in rows.all()}
+        except Exception:
+            logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
+            return None

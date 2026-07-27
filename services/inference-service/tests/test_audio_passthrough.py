@@ -33,6 +33,14 @@ from fastapi.testclient import TestClient
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Stub service_info returned by resolve_upstream_url in integration tests.
+_STUB_SERVICE_INFO = {
+    "is_published": True,
+    "tier_ids": [],
+    "adapter_config": {"model_name": "google/gemma-4-E4B-it"},
+    "endpoint": "http://upstream-stub",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -78,7 +86,7 @@ async def test_forwards_file_bytes_unchanged() -> None:
     """The bytes the upstream sees must equal the bytes the client sent."""
     captured: Dict[str, Any] = {}
 
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         captured["path"] = path
         captured["files"] = files
         captured["data"] = data
@@ -90,7 +98,7 @@ async def test_forwards_file_bytes_unchanged() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("clip.wav", wav, "audio/wav")},
-            data={"model": "google/gemma-4-E4B-it"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 200, resp.text
         assert captured["path"] == "/audio/transcriptions", (
@@ -110,7 +118,7 @@ async def test_forwards_non_file_form_fields() -> None:
     """model, language, prompt, response_format, temperature all reach upstream."""
     captured: Dict[str, Any] = {}
 
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         captured["data"] = data
         return 200, {"text": "ok"}
 
@@ -120,7 +128,7 @@ async def test_forwards_non_file_form_fields() -> None:
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
             data={
-                "model": "google/gemma-4-E4B-it",
+                "model": "llm-service-1",
                 "language": "hi",
                 "prompt": "medical context",
                 "response_format": "json",
@@ -128,6 +136,9 @@ async def test_forwards_non_file_form_fields() -> None:
             },
         )
         assert resp.status_code == 200, resp.text
+        # `model` carries the service ID; proxy_multipart resolves MMS by it and
+        # replaces it with the real upstream model. language, prompt,
+        # response_format, temperature must always reach upstream.
         for key in ("model", "language", "prompt", "response_format", "temperature"):
             assert key in captured["data"], f"{key} missing from forwarded data"
         assert captured["data"]["language"] == "hi"
@@ -137,7 +148,7 @@ async def test_forwards_non_file_form_fields() -> None:
 
 
 async def test_upstream_200_json_returned_unchanged() -> None:
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         return 200, {"text": "transcribed text"}
 
     client = _build_client(stub)
@@ -145,7 +156,7 @@ async def test_upstream_200_json_returned_unchanged() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"model": "x"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/json")
@@ -157,7 +168,7 @@ async def test_upstream_200_json_returned_unchanged() -> None:
 
 async def test_upstream_200_text_returned_as_plain_text() -> None:
     """When response_format=text the upstream returns a bare string body."""
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         return 200, "transcribed text only"
 
     client = _build_client(stub)
@@ -165,7 +176,7 @@ async def test_upstream_200_text_returned_as_plain_text() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"model": "x", "response_format": "text"},
+            data={"model": "llm-service-1", "response_format": "text"},
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/plain")
@@ -186,7 +197,7 @@ async def test_upstream_400_passes_through() -> None:
         }
     }
 
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         return 400, upstream_400
 
     client = _build_client(stub)
@@ -194,7 +205,7 @@ async def test_upstream_400_passes_through() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"model": "x", "response_format": "verbose_json"},
+            data={"model": "llm-service-1", "response_format": "verbose_json"},
         )
         assert resp.status_code == 400
         assert resp.json() == upstream_400
@@ -207,7 +218,7 @@ async def test_file_too_large_returns_413() -> None:
     """A Content-Length over 25 MB short-circuits BEFORE the upstream call."""
     upstream_called = {"yes": False}
 
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         upstream_called["yes"] = True
         return 200, {"text": "should not reach here"}
 
@@ -217,7 +228,7 @@ async def test_file_too_large_returns_413() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("big.wav", oversized, "audio/wav")},
-            data={"model": "x"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 413, resp.text
         err = resp.json()["error"]
@@ -233,7 +244,7 @@ async def test_missing_file_returns_422() -> None:
     """With typed File(...) params, FastAPI rejects missing required fields
     at the validation layer with its standard 422 envelope BEFORE our route
     runs. We accept this trade-off in exchange for proper Swagger docs."""
-    async def stub(path, *, files, data=None):
+    async def stub(path, *, files, data=None, request=None):
         raise AssertionError("upstream must not be called when `file` is missing")
 
     client = _build_client(stub)
@@ -243,7 +254,7 @@ async def test_missing_file_returns_422() -> None:
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"_dummy": ("dummy.txt", b"x", "text/plain")},
-            data={"model": "x"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 422, resp.text
         # FastAPI shape: {"detail": [{"type": "missing", "loc": ["body", "file"], ...}]}
@@ -271,14 +282,18 @@ async def test_transport_error_returns_502_openai_shape() -> None:
     real_post = AsyncMock(side_effect=httpx.ConnectError("unreachable"))
     with patch.object(httpx.AsyncClient, "post", real_post), \
          patch.object(
-             llm_service.OpenAIProxyService, "resolve_upstream_url",
-             return_value="http://upstream-stub/v1/audio/transcriptions",
+             llm_service.OpenAIProxyService,
+             "resolve_upstream_url",
+             new=AsyncMock(return_value=(
+                 "http://upstream-stub/v1/audio/transcriptions",
+                 _STUB_SERVICE_INFO,
+             )),
          ):
         client = TestClient(app)
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"model": "x"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 502, resp.text
         err = resp.json()["error"]
@@ -288,7 +303,7 @@ async def test_transport_error_returns_502_openai_shape() -> None:
 
 
 async def test_misconfigured_upstream_returns_503_openai_shape() -> None:
-    """No LLM_DEFAULT_ENDPOINT configured → 503 with OpenAI error envelope."""
+    """MMS returns no endpoint for service → 503 with OpenAI error envelope."""
     from routes.inference import router
     from services import llm_service
 
@@ -299,18 +314,17 @@ async def test_misconfigured_upstream_returns_503_openai_shape() -> None:
     with patch.object(
         llm_service.OpenAIProxyService,
         "resolve_upstream_url",
-        side_effect=ValueError("No upstream LLM endpoint configured."),
+        new=AsyncMock(side_effect=ValueError("No endpoint configured in MMS.")),
     ):
         client = TestClient(app)
         resp = client.post(
             "/api/v1/audio/transcriptions",
             files={"file": ("a.wav", _wav_bytes(), "audio/wav")},
-            data={"model": "x"},
+            data={"model": "llm-service-1"},
         )
         assert resp.status_code == 503, resp.text
         err = resp.json()["error"]
         assert err["type"] == "api_error"
-        assert "No upstream" in err["message"]
         logger.info("   [PASS] misconfig → 503 OpenAI envelope")
 
 

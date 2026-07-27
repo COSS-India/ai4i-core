@@ -5,7 +5,6 @@ import { useMutation } from '@tanstack/react-query';
 import { showToast } from '../utils/toast';
 import {
   performLLMChat,
-  isLlmChatService,
   LLM_CHAT_DEFAULT_SOURCE_LANGUAGE,
   LLM_CHAT_DEFAULT_TARGET_LANGUAGE,
 } from '../services/llmService';
@@ -15,15 +14,17 @@ import { parseError, showError } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
 
-export const useLLM = (serviceId?: string): UseLLMReturn => {
-  const useChatDefaults = isLlmChatService(serviceId);
-
+/**
+ * @param serviceId - Registry `serviceId` sent as the completions `serviceId` field.
+ * @param modelName - Service `name`, used only for model-specific payload handling.
+ */
+export const useLLM = (serviceId?: string, modelName?: string): UseLLMReturn => {
   const [selectedModelId, setSelectedModelId] = useState<string>('');
   const [inputLanguage, setInputLanguage] = useState<string>(
-    useChatDefaults ? LLM_CHAT_DEFAULT_SOURCE_LANGUAGE : ''
+    LLM_CHAT_DEFAULT_SOURCE_LANGUAGE
   );
   const [outputLanguage, setOutputLanguage] = useState<string>(
-    useChatDefaults ? LLM_CHAT_DEFAULT_TARGET_LANGUAGE : ''
+    LLM_CHAT_DEFAULT_TARGET_LANGUAGE
   );
   const [inputText, setInputText] = useState<string>('');
   const [outputText, setOutputText] = useState<string>('');
@@ -37,15 +38,16 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const hasShownTextLimitToastRef = useRef(false);
 
   useEffect(() => {
-    if (!isLlmChatService(serviceId)) return;
+    if (!modelName) return;
     setInputLanguage(LLM_CHAT_DEFAULT_SOURCE_LANGUAGE);
     setOutputLanguage(LLM_CHAT_DEFAULT_TARGET_LANGUAGE);
-  }, [serviceId]);
+  }, [modelName]);
 
   const llmMutation = useMutation({
     mutationFn: async (text: string) => {
       const config: LLMInferenceRequest['config'] = {
         serviceId: serviceId || selectedModelId,
+        modelName,
         inputLanguage,
         outputLanguage,
       };
@@ -90,8 +92,8 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
         return;
       }
 
-      const effectiveServiceId = serviceId || selectedModelId;
-      if (!effectiveServiceId) {
+      const effectiveModel = serviceId || selectedModelId;
+      if (!effectiveModel) {
         showToast({ type: 'warning', message: 'Please select an LLM service.' });
         return;
       }

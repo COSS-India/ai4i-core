@@ -1,26 +1,42 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+# Pydantic v2 embeds the raw Decimal bound (e.g. ctx={"ge": Decimal("0")}) in
+# the error context for gt/ge/lt/le constraint failures on a Decimal field.
+# ai4i_core's RequestValidationError handler now sanitizes any non-JSON-safe
+# value in ctx generically (not just Exception instances), so plain
+# Field(ge=...)/Field(gt=...) constraints are safe to use directly here —
+# they also keep the "minimum"/"exclusiveMinimum" constraint visible in the
+# OpenAPI schema, unlike enforcing the bound via a validator.
 
 
 class TierAssignRequest(BaseModel):
     tenant_id: str = Field(..., description="ID of the tenant to assign the tier to")
     tier_id: str = Field(..., description="UUID of the PPU tier to assign")
-    budget: Decimal = Field(..., ge=0, max_digits=15, decimal_places=4, description="Budget limit in INR (paise precision)")
+    budget: Decimal = Field(..., ge=0, max_digits=15, decimal_places=8, description="Budget limit in INR (paise precision)")
     effective_from: datetime = Field(..., description="Assignment start date (UTC)")
     effective_to: datetime = Field(..., description="Assignment end date (UTC)")
 
 
-class TopUpRequest(BaseModel):
-    tenant_id: str = Field(..., description="ID of the tenant to top up")
-    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=4, description="Amount to add in INR")
+class TierReassignRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant to reassign")
+    tier_id: str = Field(..., description="UUID of the new PPU tier to assign")
 
 
-class TopUpResponse(BaseModel):
+class ReviseBudgetRequest(BaseModel):
+    tenant_id: str = Field(..., description="ID of the tenant whose budget is being revised")
+    action: Literal["top-up", "top-down"] = Field(..., description="Whether to increase (top-up) or decrease (top-down) the current budget by amount")
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=8, description="Amount in INR to add (top-up) or subtract (top-down) from the current budget_limit")
+
+
+class ReviseBudgetResponse(BaseModel):
     tenant_id: str
-    added: Decimal
+    budget_limit: Decimal
     available_balance: Decimal
+    updated_at: datetime
 
 
 class TierAssignResponse(BaseModel):

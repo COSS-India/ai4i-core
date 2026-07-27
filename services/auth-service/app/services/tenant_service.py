@@ -41,6 +41,7 @@ from app.repositories.verification_repository import VerificationRepository
 from app.core.responses import to_response
 from app.schemas.tenant import (
     TenantCreate,
+    TenantResponse,
     TenantStatusUpdate,
     TenantUpdate,
     TenantUserCreate,
@@ -53,6 +54,7 @@ from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
+    TENANT_ONBOARDING_STATUSES,
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -195,6 +197,28 @@ class TenantService:
                 },
             )
 
+    async def _assert_can_reveal_pii(self, user: User) -> None:
+        """Gate unmasked-PII reads to the roles that can actually edit a tenant.
+
+        Reading (masked) is available to anyone with tenant.read scope, but
+        cleartext contact details are only needed by the Edit forms, which are
+        limited to ADMIN and TENANT ADMIN. This excludes moderators and plain
+        tenant users even when they hold read scope, so ``?unmask=true`` cannot
+        be used to harvest cleartext PII. Callers must still pass
+        ``enforce_scope`` first (a TENANT ADMIN is thereby limited to their own
+        tenant; an ADMIN passes scope for any tenant).
+        """
+        roles = await self._roles.get_user_roles(user.id)
+        if RoleName.ADMIN.value in roles or RoleName.TENANT_ADMIN.value in roles:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "INSUFFICIENT_PERMISSIONS",
+                "message": "You do not have permission to view unmasked contact details.",
+            },
+        )
+
     async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
         """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
 
@@ -245,26 +269,44 @@ class TenantService:
                 await self._roles.remove_role(user_id, assignable, commit=commit)
         await self._roles.assign_role(user_id, target, commit=commit)
 
-    async def build_tenant_user_response(self, user: User) -> dict:
-        roles = await self._roles.get_user_roles(user.id)
-        role = self.resolve_tenant_user_role(roles)
-        base = to_response(user, UserListResponse)
-        return mask_pii_in_dict(
-            TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+    async def build_tenant_user_response(
+        self, user: User, *, unmask_phone: bool = False
+    ) -> dict:
+        # Delegate to the batched builder so the payload shape is defined in
+        # one place; the credentials/roles lookups handle a one-element list
+        # at no extra cost.
+        responses = await self.build_tenant_user_responses(
+            [user], unmask_phone=unmask_phone
         )
+        return responses[0]
 
-    async def build_tenant_user_responses(self, users: list[User]) -> list[dict]:
-        """Build list responses with a single batched role lookup."""
+    async def build_tenant_user_responses(
+        self, users: list[User], *, unmask_phone: bool = False
+    ) -> list[dict]:
+        """Build list responses with a single batched role lookup.
+
+        ``unmask_phone=True`` returns each user's phone number in cleartext so
+        the Edit Tenant User form can pre-fill an editable value; the email is
+        always masked (it is non-editable for tenant users).
+        """
         if not users:
             return []
-        roles_by_user = await self._roles.get_roles_for_users([u.id for u in users])
+        user_ids = [u.id for u in users]
+        roles_by_user = await self._roles.get_roles_for_users(user_ids)
+        activated_ids = await self._credentials.user_ids_with_credentials(user_ids)
         responses: list[dict] = []
         for user in users:
             role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
             base = to_response(user, UserListResponse)
             responses.append(
                 mask_pii_in_dict(
-                    TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+                    TenantUserResponse(
+                        **base,
+                        role=role,
+                        is_tenant_active=user.is_tenant_active,
+                        is_activated=user.id in activated_ids,
+                    ).model_dump(mode="json", by_alias=True),
+                    mask_phones=not unmask_phone,
                 )
             )
         return responses
@@ -480,9 +522,33 @@ class TenantService:
             )
         return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
 
-    async def get_tenant(self, current_user: User, tenant_id: int) -> Tenant:
+    async def get_tenant(
+        self, current_user: User, tenant_id: int, *, unmask: bool = False
+    ) -> Tenant:
         await self.enforce_scope(current_user, tenant_id)
+        # Revealing cleartext PII is limited to the roles that can edit the
+        # tenant; masked reads stay open to anyone with tenant.read scope.
+        if unmask:
+            await self._assert_can_reveal_pii(current_user)
         return await self._load_tenant_or_404(tenant_id)
+
+    @staticmethod
+    def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
+        """Shape a tenant into its API dict, applying the PII-masking policy.
+
+        Default (list/view): email and phone are masked. With ``unmask`` (Edit
+        Tenant form): the phone is always revealed and the contact email is
+        revealed only while the tenant is PENDING — i.e. before verification,
+        the only window in which the email may still be corrected.
+        """
+        data = to_response(tenant, TenantResponse)
+        if unmask:
+            return mask_pii_in_dict(
+                data,
+                mask_emails=tenant.status != TenantStatus.PENDING,
+                mask_phones=False,
+            )
+        return mask_pii_in_dict(data)
 
     async def update_tenant(
         self,
@@ -704,10 +770,20 @@ class TenantService:
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
 
     async def list_tenant_users(
-        self, current_user: User, tenant_id: int, offset: int, limit: int
+        self,
+        current_user: User,
+        tenant_id: int,
+        offset: int,
+        limit: int,
+        *,
+        unmask: bool = False,
     ) -> list[User]:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
+        # Cleartext phone numbers are only for the Edit Tenant User form, which
+        # is limited to ADMIN / TENANT ADMIN (masked listing stays open).
+        if unmask:
+            await self._assert_can_reveal_pii(current_user)
         await self._load_tenant_or_404(tenant_id)
         return await self._users.list_by_tenant(tenant_id, offset=offset, limit=limit)
 
@@ -784,6 +860,74 @@ class TenantService:
         if self._api_keys is not None:
             await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target
+
+    async def resend_tenant_user_setup_link(
+        self,
+        current_user: User,
+        tenant_id: int,
+        user_id: UUID,
+        background_tasks: BackgroundTasks,
+    ) -> None:
+        """Re-send the set-password (SETUP) email for a not-yet-activated tenant user.
+
+        Tenant users are provisioned passwordless (``email_kind="setup"``), so
+        the onboarding email is a set-password link — NOT an email-verification
+        link. ``/auth/resend-verification`` therefore no-ops for them (it only
+        serves self-registered users who already hold credentials). Resolving
+        by ``user_id`` (already unmasked in the tenant-user list) avoids the
+        masked-email / PENDING-tenant limits of ``/auth/resend-setup-link``,
+        which only targets the tenant contact admin.
+        """
+        await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
+        tenant = await self._load_tenant_or_404(tenant_id)
+        # Match the window enforced at set-password time
+        # (AuthService.assert_tenant_allows_onboarding). PENDING must stay
+        # allowed: a PENDING tenant's contact admin is exactly the user who
+        # needs a resend, and their set-password is what activates the tenant.
+        # Only SUSPENDED/DEACTIVATED would produce a link that dies on click.
+        if tenant.status not in TENANT_ONBOARDING_STATUSES:
+            raise ValidationError(
+                message="Setup links can only be resent while the tenant is pending or active.",
+                code="TENANT_NOT_ACTIVE",
+            )
+        target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        # Per-user tenant lock, set either by the tenant status cascade or by
+        # PATCH /tenants/{id}/users/{id}/status. set_password_with_token does
+        # not check this flag, so the user could set a password and still be
+        # refused at login — block the resend instead.
+        if target.is_tenant_active is False:
+            raise ValidationError(
+                message="This user's access is suspended; reactivate before resending.",
+                code="USER_SUSPENDED",
+            )
+
+        setup_token = await reissue_setup_token(
+            target,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
+            background_tasks=background_tasks,
+        )
+        if setup_token is None:
+            # reissue_setup_token returns None when the user already has
+            # credentials (setup complete) — there is nothing to resend.
+            raise ValidationError(
+                message="This user has already set a password; no activation link is needed.",
+                code="USER_ALREADY_ACTIVATED",
+            )
+
+        await self._users.commit()
+        logger.info(
+            "Set-password link resent for tenant user id=%s (tenant %s)",
+            target.id,
+            tenant_id,
+        )
+        enqueue_email(
+            background_tasks,
+            self._email,
+            lambda: render_setup_link(target, setup_token),
+        )
 
     async def delete_tenant_user(
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks

@@ -11,9 +11,7 @@ import { listServices } from './modelManagementService';
 import {
   NMTInferenceRequest,
   NMTInferenceResponse,
-  NMTModel,
   NMTHealthResponse,
-  NMTModelsResponse,
   NMTLanguagesResponse,
   NMTModelDetailsResponse,
   NMTServiceDetailsResponse,
@@ -136,6 +134,89 @@ function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
   } as NMTServiceDetailsResponse;
 }
 
+// Deduplicate a list of normalized services by service_id, dropping entries without one.
+function dedupeByServiceId<T extends { service_id?: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (!item.service_id || seen.has(item.service_id)) continue;
+    seen.add(item.service_id);
+    out.push(item);
+  }
+  return out;
+}
+
+// Extract language codes from a model-management `languages` array, which mixes
+// plain string entries with {code|sourceLanguage|targetLanguage|language} objects.
+function extractSupportedLanguages(service: any): string[] {
+  const supportedLanguages: string[] = [];
+  if (!service.languages || !Array.isArray(service.languages)) {
+    return supportedLanguages;
+  }
+  service.languages.forEach((lang: any) => {
+    if (typeof lang === 'string') {
+      supportedLanguages.push(lang);
+      return;
+    }
+    if (!lang || typeof lang !== 'object') return;
+
+    const codes: string[] = [];
+    if (lang.code) codes.push(lang.code);
+    if (lang.sourceLanguage && !codes.includes(lang.sourceLanguage)) codes.push(lang.sourceLanguage);
+    if (lang.targetLanguage && !codes.includes(lang.targetLanguage)) codes.push(lang.targetLanguage);
+    if (lang.language && !codes.includes(lang.language)) codes.push(lang.language);
+    supportedLanguages.push(...codes);
+  });
+  return supportedLanguages;
+}
+
+function mapModelManagementServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
+  const supportedLanguages = extractSupportedLanguages(service);
+  let endpoint = service.endpoint || '';
+  if (endpoint) {
+    endpoint = endpoint.replace('http://', '').replace('https://', '');
+  }
+
+  return {
+    service_id: service.serviceId || service.service_id,
+    model_id: service.modelId || service.model_id,
+    model_version: service.modelVersion || service.model_version || '',
+    triton_endpoint: endpoint,
+    triton_model: 'nmt', // Default value
+    provider: service.name || service.serviceId || 'unknown', // Keep for backward compatibility
+    description: service.serviceDescription || service.description || '', // Keep for backward compatibility
+    name: service.name || '',
+    serviceDescription: service.serviceDescription || service.description || '',
+    supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+    modelVersion: service.modelVersion || service.model_version,
+  } as NMTServiceDetailsResponse;
+}
+
+async function listAnonymousNMTServices(): Promise<NMTServiceDetailsResponse[]> {
+  try {
+    const raw = await listTryItNMTServices();
+    const normalized = raw
+      .map(normalizeServiceToNMTDetails)
+      .filter((s) => s.name === 'indictrans-gpu-t4');
+    return dedupeByServiceId(normalized);
+  } catch (error) {
+    console.error('Failed to fetch try-it NMT services:', error);
+    throw new Error('Failed to fetch NMT services for try-it');
+  }
+}
+
+async function listAuthenticatedNMTServices(): Promise<NMTServiceDetailsResponse[]> {
+  try {
+    // Logged-in users: only published services from Service Management
+    const services = await listServices('nmt', true);
+    const normalized = services.map(mapModelManagementServiceToNMTDetails);
+    return dedupeByServiceId(normalized);
+  } catch (error) {
+    console.error('Failed to fetch NMT services:', error);
+    throw new Error('Failed to fetch NMT services');
+  }
+}
+
 /**
  * Get list of available NMT services.
  * For anonymous users: GET model-management/services?task_type=nmt with X-Try-It: true (no auth).
@@ -144,84 +225,9 @@ function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
  */
 export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> => {
   if (isAnonymousUser()) {
-    try {
-      const raw = await listTryItNMTServices();
-      const seen = new Set<string>();
-      const out: NMTServiceDetailsResponse[] = [];
-      for (const s of raw) {
-        const normalized = normalizeServiceToNMTDetails(s);
-        if (!normalized.service_id || seen.has(normalized.service_id)) continue;
-        seen.add(normalized.service_id);
-        out.push(normalized);
-      }
-      return out;
-    } catch (error) {
-      console.error('Failed to fetch try-it NMT services:', error);
-      throw new Error('Failed to fetch NMT services for try-it');
-    }
+    return listAnonymousNMTServices();
   }
-  try {
-    // Logged-in users: only published services from Service Management
-    const services = await listServices('nmt', true);
-    const seen = new Set<string>();
-
-    // Transform model management service response to NMTServiceDetailsResponse format
-    const normalized = services.map((service: any) => {
-      // Extract languages from service.languages array
-      const supportedLanguages: string[] = [];
-      if (service.languages && Array.isArray(service.languages)) {
-        service.languages.forEach((lang: any) => {
-          if (typeof lang === 'string') {
-            supportedLanguages.push(lang);
-          } else if (lang && typeof lang === 'object') {
-            // Collect all codes from this entry (e.g. sourceLanguage + targetLanguage)
-            const codes: string[] = [];
-            if (lang.code) codes.push(lang.code);
-            if (lang.sourceLanguage && !codes.includes(lang.sourceLanguage))
-              codes.push(lang.sourceLanguage);
-            if (lang.targetLanguage && !codes.includes(lang.targetLanguage))
-              codes.push(lang.targetLanguage);
-            if (lang.language && !codes.includes(lang.language)) codes.push(lang.language);
-            codes.forEach((c) => supportedLanguages.push(c));
-          }
-        });
-      }
-
-      // Extract endpoint and clean it
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace('http://', '').replace('https://', '');
-      }
-
-      return {
-        service_id: service.serviceId || service.service_id,
-        model_id: service.modelId || service.model_id,
-        model_version: service.modelVersion || service.model_version || '',
-        triton_endpoint: endpoint,
-        triton_model: 'nmt', // Default value
-        provider: service.name || service.serviceId || 'unknown', // Keep for backward compatibility
-        description: service.serviceDescription || service.description || '', // Keep for backward compatibility
-        name: service.name || '',
-        serviceDescription: service.serviceDescription || service.description || '',
-        supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
-        modelVersion: service.modelVersion || service.model_version,
-      } as NMTServiceDetailsResponse;
-    });
-
-    // Deduplicate by service_id in case API returns duplicates
-    const uniqueServices: NMTServiceDetailsResponse[] = [];
-    for (const svc of normalized) {
-      if (!svc.service_id) continue;
-      if (seen.has(svc.service_id)) continue;
-      seen.add(svc.service_id);
-      uniqueServices.push(svc);
-    }
-
-    return uniqueServices;
-  } catch (error) {
-    console.error('Failed to fetch NMT services:', error);
-    throw new Error('Failed to fetch NMT services');
-  }
+  return listAuthenticatedNMTServices();
 };
 
 /**

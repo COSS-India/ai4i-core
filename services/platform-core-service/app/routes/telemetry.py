@@ -20,6 +20,11 @@ _ROLE_TENANT_ADMIN = 5
 # All allowed roles for telemetry access (roles that can access telemetry endpoints)
 ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
 
+# Fixed display order for the trace-detail waterfall: every task type
+# (LLM, NMT, ASR, ...) resolves a model before calling it, so this sequence
+# is always correct regardless of task type or nesting shape.
+_SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2}
+
 
 def _check_permission_ids(request: Request, *allowed: int) -> None:
     """Raise if X-Permission-IDS header does not contain any of the allowed role IDs."""
@@ -320,6 +325,14 @@ async def get_trace_by_id(
                 "attributes": source.get("attributes", {}),
                 "timestamp": source.get("@timestamp") or source.get("timestamp"),
             })
+
+        # @timestamp is Fluent Bit's ingestion time, not the span's real OTel
+        # end_time (no Time_Key override in fluent-bit.conf), so all spans in a
+        # trace land within a few ms of each other regardless of actual duration
+        # -- unusable for chronological ordering, and start_time/end_time never
+        # reach this index. Every task type follows the same fixed span
+        # sequence, so rank by name instead of by (unreliable) time.
+        spans.sort(key=lambda s: _SPAN_ORDER.get(s.get("name"), len(_SPAN_ORDER)))
 
         trace_response = TraceResponse(
             trace_id=trace_id,

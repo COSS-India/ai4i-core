@@ -22,7 +22,7 @@ router = APIRouter(tags=["inference"])
 
 
 _CHAT_EXAMPLE = {
-    "model": "google/gemma-4-E4B-it",
+    "model": "llm-service-1",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": False,
 }
@@ -66,6 +66,8 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
         cause = cause.__cause__
 
     for e in chain:
+        if isinstance(e, PermissionError):
+            return HTTPException(status_code=403, detail=str(e))
         if isinstance(e, ValueError):
             return HTTPException(status_code=400, detail=str(e))
         if isinstance(e, NotImplementedError):
@@ -73,9 +75,7 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
         # exact type: KeyError/IndexError are LookupError subclasses but are
         # programming errors, not not-found semantics — they must stay 500
         if type(e) is LookupError:
-            return HTTPException(
-                status_code=404, detail=f"{task_type}: requested service not found"
-            )
+            return HTTPException(status_code=404, detail=str(e))
     for e in chain:
         if isinstance(e, (RuntimeError, ConnectionError)):
             return HTTPException(
@@ -97,6 +97,18 @@ async def _run_inference(
     the endpoint contract excludes, and map failures to client-safe HTTP
     errors (full details logged server-side only).
     """
+    # Unwrap TryItRequest envelope ({ service_name, serviceId?, payload: <inner> })
+    # when present. Normal inference payloads carry input/audio/image at the top
+    # level and never have a nested 'payload' wrapper, so this detection is safe.
+    # Handles the case where APISIX rewrites /nmt/try-it → /nmt/inference while
+    # passing the original client body through unchanged.
+    inner = payload.get("payload")
+    if isinstance(inner, dict) and "service_name" in payload:
+        top_service_id = payload.get("serviceId")
+        payload = inner
+        if top_service_id and not (payload.get("config") or {}).get("serviceId"):
+            payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": top_service_id}}
+
     # No manual timing here: the logging middleware records duration_ms for
     # every request, and the request span carries total_time_ms.
     if default_task_type and not payload.get("task_type"):
@@ -183,6 +195,31 @@ async def run_nmt_inference(
 ) -> Dict[str, Any]:
     """Dedicated endpoint for NMT inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="NMT")
+
+
+@router.post(
+    "/nmt/try-it",
+    response_model=GenericInferenceResponse,
+    response_model_exclude={"config"},
+    summary="NMT Try-It Endpoint (anonymous)",
+    description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
+                "({ service_name, serviceId?, payload: NMTPayload }) or a plain NMT "
+                "payload directly (for when APISIX has already unwrapped the envelope).",
+)
+async def run_nmt_try_it(
+    request: Request,
+    body: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    # Unwrap TryItRequest envelope if present; fall back to body as-is when
+    # APISIX has already extracted the inner payload before forwarding here.
+    inner: Dict[str, Any] = body.get("payload") or body
+    # Hoist top-level serviceId into config so the orchestrator finds it
+    # regardless of which level the client placed it.
+    top_service_id = body.get("serviceId")
+    if top_service_id and not (inner.get("config") or {}).get("serviceId"):
+        inner = {**inner, "config": {**(inner.get("config") or {}), "serviceId": top_service_id}}
+    return await _run_inference(request, inner, orchestrator, default_task_type="NMT")
 
 
 @router.post(
@@ -392,21 +429,33 @@ async def run_ocr_inference(
 
 async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
     """
-    Shared handler for LLM chat routes. Owns only the request span — model and
-    ai_inference spans are managed inside OpenAIProxyService.proxy_traced(),
-    mirroring the Orchestrator + BaseTaskService pattern for Triton services.
+    Shared handler for LLM chat routes. Owns only the request span — MMS
+    resolution, tier gate, model + ai_inference spans are managed inside
+    OpenAIProxyService.proxy_traced(), mirroring the Orchestrator +
+    BaseTaskService pattern for Triton services.
     """
+    # Set service_id on request state so the observability middleware picks it
+    # up for Prometheus metrics without reading the body a second time.
+    # LLM follows the OpenAI spec: the client sends the model name in `model`,
+    # and we treat that as the service ID (used for MMS resolution and PPU
+    # billing). Reading the same field proxy_traced resolves/bills on keeps
+    # metrics tagging from ever diverging from what's billed downstream.
+    service_id = payload.get("model", "")
+    request.state.service_id = service_id
+
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         req_attrs["url"] = request.url.path
         req_attrs["method"] = request.method
         req_attrs.update(get_context_attributes())
- 
-        status_code, body = await OpenAIProxyService().proxy_traced(path=path, payload=payload)
- 
+
+        status_code, body = await OpenAIProxyService().proxy_traced(
+            path=path, payload=payload, request=request,
+        )
+
         if status_code >= 400:
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
- 
+
     return JSONResponse(status_code=status_code, content=body)
 
 @router.post(
@@ -488,6 +537,7 @@ _AUDIO_RESPONSES: Dict[int | str, Dict[str, Any]] = {
 
 
 async def _proxy_audio_upload(
+    request: Request,
     file: UploadFile,
     data: Dict[str, Any],
     upstream_path: str,
@@ -520,7 +570,7 @@ async def _proxy_audio_upload(
     }
 
     status_code, body = await OpenAIProxyService().proxy_multipart(
-        path=upstream_path, files=files, data=data,
+        path=upstream_path, files=files, data=data, request=request,
     )
 
     # Body shape decides response type: dict → JSON, str → text/plain.
@@ -558,13 +608,14 @@ def _build_form_data(**fields: Any) -> Dict[str, Any]:
     responses=_AUDIO_RESPONSES,
 )
 async def audio_transcriptions(
+    request: Request,
     file: UploadFile = File(
         ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
     ),
     model: str = Form(
         ...,
-        examples=["google/gemma-4-E4B-it"],
-        description="Model identifier, e.g. `google/gemma-4-E4B-it`.",
+        examples=["llm-service-1"],
+        description="Model name (OpenAI `model` field); the service identifier as registered in the platform.",
     ),
     language: Optional[str] = Form(
         None, description="ISO-639-1 source language code (optional).",
@@ -587,7 +638,7 @@ async def audio_transcriptions(
         response_format=response_format,
         temperature=temperature,
     )
-    return await _proxy_audio_upload(file, data, "/audio/transcriptions")
+    return await _proxy_audio_upload(request, file, data, "/audio/transcriptions")
 
 
 @router.post(
@@ -601,13 +652,14 @@ async def audio_transcriptions(
     responses=_AUDIO_RESPONSES,
 )
 async def audio_translations(
+    request: Request,
     file: UploadFile = File(
         ..., description="Audio file (flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm). Capped at 25 MB.",
     ),
     model: str = Form(
         ...,
-        examples=["google/gemma-4-E4B-it"],
-        description="Model identifier, e.g. `google/gemma-4-E4B-it`.",
+        examples=["llm-service-1"],
+        description="Model name (OpenAI `model` field); the service identifier as registered in the platform.",
     ),
     prompt: Optional[str] = Form(
         None,
@@ -630,7 +682,7 @@ async def audio_translations(
         response_format=response_format,
         temperature=temperature,
     )
-    return await _proxy_audio_upload(file, data, "/audio/translations")
+    return await _proxy_audio_upload(request, file, data, "/audio/translations")
 
 
 @router.get(

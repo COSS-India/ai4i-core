@@ -72,10 +72,11 @@ async def quota_guard(request: Request) -> None:
     X-Budget-Exhausted: true
         → HTTP 429, budget fully exhausted for this tenant.
 
-    X-Quota-Exhausted: <type>[,<type>...]   (e.g. "nmt" or "nmt,asr")
-        → Splits on comma, resolves each type's endpoint_pattern from app.state.
-        → If the incoming request path matches any exhausted type's pattern → HTTP 429.
-        → If none match → the request does not require those types, proceed.
+    X-Quota-Exhausted: true | false
+    X-Quota-Exhausted-Services: <type>[,<type>...]   (e.g. "asr" or "llm,asr")
+        → When true: reads exhausted type names from X-Quota-Exhausted-Services.
+        → If the incoming request's type matches any exhausted type → HTTP 429.
+        → If none match → the request type is not exhausted, proceed.
     """
     if request.headers.get("X-Budget-Exhausted") == "true":
         raise HTTPException(
@@ -83,9 +84,9 @@ async def quota_guard(request: Request) -> None:
             detail={"error": "budget_exhausted", "message": "Budget Exhausted"},
         )
 
-    exhausted_types_raw = request.headers.get("X-Quota-Exhausted")
-    if exhausted_types_raw:
-        exhausted_set = {t.strip() for t in exhausted_types_raw.split(",") if t.strip()}
+    if request.headers.get("X-Quota-Exhausted") == "true":
+        services_raw = request.headers.get("X-Quota-Exhausted-Services", "")
+        exhausted_set = {t.strip() for t in services_raw.split(",") if t.strip()}
 
         if request.url.path == _UNIFIED_INFERENCE_PATH:
             # Unified endpoint: task_type lives in the request body, not the path.

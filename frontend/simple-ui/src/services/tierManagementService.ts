@@ -79,3 +79,42 @@ export async function fetchTenantTiers(): Promise<TenantTiersResponse> {
   const response = await apiClient.get(apiEndpoints.tiers.assignTenant);
   return response.data;
 }
+
+export interface ReassignTenantTierPayload {
+  tenant_id: string;
+  tier_id: string;
+}
+
+export async function reassignTenantTier(
+  payload: ReassignTenantTierPayload,
+): Promise<TenantTierAssignment> {
+  const response = await apiClient.patch(
+    apiEndpoints.tiers.reassignTenant,
+    payload,
+  );
+  return response.data;
+}
+
+export interface AdjustTenantBudgetPayload {
+  tenant_id: string;
+  action: "top-up" | "top-down";
+  amount: number;
+}
+
+export interface AdjustTenantBudgetResponse {
+  tenant_id: string;
+  budget_limit: string;
+  available_balance: string;
+  updated_at: string;
+}
+
+export async function adjustTenantBudget(
+  payload: AdjustTenantBudgetPayload,
+): Promise<AdjustTenantBudgetResponse> {
+  const response = await apiClient.patch(
+    apiEndpoints.tiers.adjustBudget,
+    payload,
+  );
+
+  return response.data;
+}

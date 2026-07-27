@@ -18,60 +18,17 @@ import {
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
-import {
-  formatApiKeyDisplayId,
-  mergeApiKeyHexFromCache,
-  normalizeApiKeyRecord,
-  permissionLabelWithFallback,
-} from "../../../utils/apiKeyUtils";
-
-function permissionIdFromRaw(raw: string | number): number | null {
-  if (typeof raw === "number" && Number.isInteger(raw)) return raw;
-  const s = String(raw);
-  if (/^\d+$/.test(s)) return Number.parseInt(s, 10);
-  return null;
-}
-
-/** Map UI selection (names and/or numeric ids) to permission IDs for the API. */
-function resolvePermissionIds(
-  selected: (string | number)[],
-  catalog: Permission[],
-): number[] {
-  const ids = new Set<number>();
-  for (const item of selected) {
-    if (typeof item === "number" && Number.isInteger(item)) {
-      ids.add(item);
-      continue;
-    }
-    const s = String(item);
-    const byName = catalog.find((p) => p.name === s)?.id;
-    if (byName != null) {
-      ids.add(byName);
-      continue;
-    }
-    if (/^\d+$/.test(s)) {
-      const n = Number.parseInt(s, 10);
-      if (catalog.length === 0 || catalog.some((p) => p.id === n)) {
-        ids.add(n);
-      }
-    }
-  }
-  return Array.from(ids);
-}
+import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
-}
-
-function normalizeListedKeys(keys: APIKeyResponse[]): APIKeyResponse[] {
-  return mergeApiKeyHexFromCache(keys.map((key) => normalizeApiKeyRecord(key)));
 }
 
 function mapKeysToAdminRows(
   keys: APIKeyResponse[],
   currentUser: User | null,
 ): AdminAPIKeyWithUserResponse[] {
-  return normalizeListedKeys(keys).map((key) => ({
+  return keys.map(normalizeApiKeyRecord).map((key) => ({
     ...key,
     user_id: currentUser?.user_id ?? "",
     user_email: currentUser?.email ?? "",
@@ -184,14 +141,13 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   );
 
   const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
-    let catalog = permissions;
-    if (catalog.length === 0) {
-      catalog = await loadPermissionsCatalog();
+    if (permissions.length === 0) {
+      await loadPermissionsCatalog();
     }
     setSelectedKeyForUpdate(key);
     setUpdateFormData({
       key_name: key.key_name,
-      permissions: (key.permissions ?? []).map((p) => permissionLabelWithFallback(p, catalog)),
+      permissions: key.permissions ?? [],
     });
     setIsUpdateModalOpen(true);
   };
@@ -212,29 +168,11 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
-    let catalog = permissions;
-    if (catalog.length === 0) {
-      try {
-        catalog = await authService.getAllPermissions();
-        setPermissions(Array.isArray(catalog) ? catalog : []);
-      } catch {
-        showToast({
-          type: "error",
-          message: "Could not load permissions. Try again or open the Permissions tab first.",
-        });
-        return;
-      }
-    }
-    const permissionIds = resolvePermissionIds(updateFormData.permissions ?? [], catalog);
-    if (!permissionIds.length) {
-      showToast({ type: "error", message: "Select at least one valid permission" });
-      return;
-    }
     setIsUpdating(true);
     try {
       await authService.updateApiKey(selectedKeyForUpdate.id, {
         key_name: updateFormData.key_name?.trim(),
-        permissions: permissionIds,
+        permissions: updateFormData.permissions,
       });
       showToast({ type: "success", message: "API key has been updated successfully" });
       handleCloseUpdateModal();
@@ -308,10 +246,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
             return false;
           }
           if (filterPermission !== "all") {
-            const has = (key.permissions ?? []).some(
-              (p) => permissionLabelWithFallback(p, permissions) === filterPermission,
-            );
-            if (!has) return false;
+            if (!(key.permissions ?? []).includes(filterPermission)) return false;
           }
           if (filterActive !== API_KEY.FILTER_STATUS.ALL) {
             const displayStatus = resolveApiKeyDisplayStatus(key, apiKeyAccessContext);
@@ -323,20 +258,19 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [allApiKeys, apiKeyAccessContext, filterPermission, filterActive, keyNameSearch, permissions],
   );
 
-  /** Static permission names for the filter dropdown (full catalog, not keyed to loaded keys). */
+  /** Permission name+label pairs for the filter dropdown (full catalog, not keyed to loaded keys). */
   const permissionFilterOptions = useMemo(
     () =>
-      permissions
-        .map((p) => p.name)
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b)),
+      [...permissions]
+        .filter((p) => p.name)
+        .sort((a, b) => a.label.localeCompare(b.label)),
     [permissions],
   );
 
-  const formatPermission = (permissionId: number | string) =>
-    permissionLabelWithFallback(permissionId, permissions);
+  const formatPermission = (permissionName: string) =>
+    permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
 
-  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);
+  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => key.api_key ?? "—";
 
   return {
     allApiKeys,

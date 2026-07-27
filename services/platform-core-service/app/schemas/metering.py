@@ -42,7 +42,7 @@ class Scope(BaseModel):
 class ServiceRow(BaseModel):
     service: str
     requests: int
-    native_units: Optional[float] = None
+    native_units: float = 0.0
     native_unit_suffix: str
     success_pct: float
     failure_rate_pct: float = 0.0       # 100 - success_pct

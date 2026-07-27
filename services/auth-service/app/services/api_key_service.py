@@ -83,16 +83,52 @@ class APIKeyService:
     def _is_api_key(token: str) -> bool:
         return bool(_HEX_KEY_RE.fullmatch(token))
 
-    async def _validate_permission_ids(self, permission_ids: list[int]) -> None:
-        """Raise ValidationError if any permission IDs do not exist in the DB."""
-        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
-        missing_ids = [pid for pid in permission_ids if pid not in id_to_name]
-        if missing_ids:
+    async def _resolve_permission_names(self, permission_names: list[str]) -> list[int]:
+        """Resolve stable permission names to DB IDs; raise ValidationError for unknown names."""
+        unique_names = list(dict.fromkeys(permission_names or []))
+        if not unique_names:
+            return []
+        name_to_id = await self._repo.get_permission_ids_by_names(unique_names)
+        missing = [name for name in unique_names if name not in name_to_id]
+        if missing:
             raise ValidationError(
-                message="Invalid permission IDs in request.",
-                code="INVALID_PERMISSION_IDS",
-                errors=[f"Unknown permission_id={pid}" for pid in missing_ids],
+                message="Invalid permission names in request.",
+                code="INVALID_PERMISSION_NAMES",
+                errors=[f"Unknown permission: {name}" for name in missing],
             )
+        return [name_to_id[name] for name in unique_names]
+
+    async def permission_ids_to_names(
+        self, permission_ids: list[int], *, api_key_id: int | None = None
+    ) -> list[str]:
+        """Map stored permission IDs to stable names for client-facing responses."""
+        if not permission_ids:
+            return []
+        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
+        names = []
+        for pid in permission_ids:
+            name = id_to_name.get(pid)
+            if name is None:
+                if api_key_id is not None:
+                    logger.warning(
+                        "api_key id=%s references unknown permission id=%s",
+                        api_key_id,
+                        pid,
+                    )
+                else:
+                    logger.warning("unknown permission id=%s (no name mapping)", pid)
+                continue
+            names.append(name)
+        return names
+
+    async def permission_name_map_for_keys(self, keys: list[APIKey]) -> dict[int, str]:
+        """Batch-fetch id→name for all permission IDs referenced by the given keys."""
+        all_ids: set[int] = set()
+        for key in keys:
+            all_ids.update(key.permissions or [])
+        if not all_ids:
+            return {}
+        return await self._repo.get_permission_names_by_ids(list(all_ids))
 
     async def _refresh_redis_cache(
         self, db_key: APIKey, tenant_id: Optional[str]
@@ -192,26 +228,38 @@ class APIKeyService:
                 break
             offset += _USERS_PAGE_SIZE
 
+    async def _for_each_active_tenant_key(self, tenant_id: Optional[int], op) -> None:
+        """Apply ``op(key)`` to every active, non-expired API key for a tenant
+        (or across all tenants when ``tenant_id`` is None). Callers must check
+        for missing repositories before calling."""
+        offset = 0
+        while True:
+            if tenant_id is not None:
+                users = await self._users.list_by_tenant(
+                    tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+                )
+            else:
+                users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
+            if not users:
+                break
+            for user in users:
+                for key in await self._repo.list_by_user(user.id):
+                    if key.is_active and not key.is_expired():
+                        await op(key)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
     async def _patch_all_tenant_key_caches(
         self, tenant_id: int, field: str, value: str
     ) -> None:
         """Patch a single Redis hash field on every cached API key for the tenant."""
         if self._repo is None or self._users is None:
             return
-        offset = 0
-        while True:
-            users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
-            )
-            if not users:
-                break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if key.is_active and not key.is_expired():
-                        await self._cache.patch_api_key_cache_field(key.api_key, field, value)
-            if len(users) < _USERS_PAGE_SIZE:
-                break
-            offset += _USERS_PAGE_SIZE
+        await self._for_each_active_tenant_key(
+            tenant_id,
+            lambda key: self._cache.patch_api_key_cache_field(key.api_key, field, value),
+        )
 
     async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on all cached API key hashes for the tenant."""
@@ -222,22 +270,26 @@ class APIKeyService:
     async def reset_all_quota_fields(self) -> None:
         """HDEL every quota-* field from all active API key hashes across all tenants.
         Called by the monthly cron on the 1st of each month.
+
+        Reads api_keys directly, paginated by key id — no join through users
+        (list_active_keys), and clears each page via one pipelined Redis call
+        (delete_api_key_cache_fields_bulk) instead of one HDEL per key. This
+        was previously one DB query per user plus one serial HDEL per key,
+        which doesn't scale to a large (lakhs-of-keys) tenant population.
         """
-        if self._repo is None or self._users is None or self._tenants is None:
+        if self._repo is None:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
             return
         inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
         offset = 0
         while True:
-            # list_by_tenant with tenant_id=None isn't available; iterate all users via repo
-            users = await self._users.list_all(offset=offset, limit=_USERS_PAGE_SIZE)
-            if not users:
+            keys = await self._repo.list_active_keys(offset=offset, limit=_USERS_PAGE_SIZE)
+            if not keys:
                 break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if key.is_active and not key.is_expired():
-                        await self._cache.delete_api_key_cache_fields(key.api_key, inference_fields)
-            if len(users) < _USERS_PAGE_SIZE:
+            await self._cache.delete_api_key_cache_fields_bulk(
+                [key.api_key for key in keys], inference_fields
+            )
+            if len(keys) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
 
@@ -249,11 +301,31 @@ class APIKeyService:
             tenant_id, f"quota-{inference_name}", "1"
         )
 
+    async def clear_quota_flags_for_tenant(self, tenant_id: int) -> None:
+        """HDEL every quota-* field from this tenant's cached API key hashes.
+
+        Used when a tenant is reassigned to a new tier: ppu_quota_usage starts
+        a fresh row under the new tier_id, so any quota-exhausted flag set
+        under the previous tier is stale and must not keep 429'ing requests
+        until the monthly cron runs.
+        """
+        if self._repo is None or self._users is None:
+            logger.warning(
+                "clear_quota_flags_for_tenant skipped: missing repositories (tenant_id=%s)",
+                tenant_id,
+            )
+            return
+        inference_fields = [f"quota-{entry['name']}" for entry in get_inference_types()]
+        await self._for_each_active_tenant_key(
+            tenant_id,
+            lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
+        )
+
     async def create_api_key(
         self,
         user_id: UUID,
         key_name: str,
-        permissions: list[int],
+        permissions: list[str],
         expires_days: Optional[int] = None,
         tenant_id: Optional[str] = None,
         platform_core_db: Optional[AsyncSession] = None,
@@ -270,11 +342,7 @@ class APIKeyService:
                     code="INVALID_EXPIRES_DAYS",
                 )
 
-        permission_ids = list(dict.fromkeys(permissions or []))
-
-        # Validate permission IDs
-        if permission_ids:
-            await self._validate_permission_ids(permission_ids)
+        permission_ids = await self._resolve_permission_names(permissions)
 
         raw_key = self.generate_api_key()
         days = expires_days or settings.api_key_expire_days
@@ -448,7 +516,7 @@ class APIKeyService:
 
         permissions = data.get("permissions")
         if permissions is not None:
-            await self._validate_permission_ids(permissions)
+            data["permissions"] = await self._resolve_permission_names(permissions)
 
         expires_days = data.pop("expires_days", None)
         if expires_days is not None:

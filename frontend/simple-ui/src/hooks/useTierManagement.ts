@@ -9,8 +9,11 @@ import {
   createTier,
   updateTier,
   deleteTier,
+  fetchTenantTiers,
   type Tier,
 } from "../services/tierManagementService";
+import { listTenants } from "../services/tenantService";
+import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 
@@ -29,6 +32,28 @@ function defaultFormData(): TierFormData {
   return { name: "", description: "", quotas: [newQuota()] };
 }
 
+/**
+ * Validate the quota rows of a tier form. Returns a user-facing error message
+ * for the first problem found, or null when every row is valid. Enforces that
+ * each row has a model task type, a non-empty unit, and a limit strictly
+ * greater than 0 (rejecting empty, non-numeric, 0, and negative limits).
+ */
+function validateQuotas(quotas: TierFormQuota[]): string | null {
+  for (const q of quotas) {
+    if (!q.modelTaskType) {
+      return "Each quota must have a model task type.";
+    }
+    if (!q.unit.trim()) {
+      return "Unit is required for each quota.";
+    }
+    const limitNum = Number(q.limit);
+    if (q.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0) {
+      return "Limit must be greater than 0.";
+    }
+  }
+  return null;
+}
+
 export function useTierManagement() {
   const toast = useToastWithDeduplication();
   const queryClient = useQueryClient();
@@ -41,10 +66,21 @@ export function useTierManagement() {
   const [tierToDelete, setTierToDelete] = useState<Tier | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [viewTier, setViewTier] = useState<Tier | null>(null);
+  const [viewTierId, setViewTierId] = useState<string | null>(null);
   const [formData, setFormData] = useState<TierFormData>(defaultFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showQuotaErrors, setShowQuotaErrors] = useState(false);
   const [editingTier, setEditingTier] = useState<Tier | null>(null);
+
+  const [scheduleTarget, setScheduleTarget] = useState<TierFormQuota | null>(
+    null,
+  );
+  const [scheduleLimit, setScheduleLimit] = useState("");
+  const [isScheduling, setIsScheduling] = useState(false);
+  const [cancelingTaskType, setCancelingTaskType] = useState<string | null>(
+    null,
+  );
+  const [removingTaskType, setRemovingTaskType] = useState<string | null>(null);
 
   const {
     isOpen: isDeleteOpen,
@@ -66,6 +102,11 @@ export function useTierManagement() {
     onOpen: onViewOpen,
     onClose: onViewClose,
   } = useDisclosure();
+  const {
+    isOpen: isScheduleOpen,
+    onOpen: onScheduleOpen,
+    onClose: onScheduleClose,
+  } = useDisclosure();
 
   const tiersQuery = useQuery({
     queryKey: [TIER_QUERY_KEY, filterTaskType],
@@ -75,6 +116,92 @@ export function useTierManagement() {
   });
 
   const tiers = tiersQuery.data?.data ?? [];
+
+  const viewTier = useMemo(
+    () => tiers.find((t) => t.id === viewTierId) ?? null,
+    [tiers, viewTierId],
+  );
+
+  // Tenant→tier assignments. Shares the ["tenant-tiers"] query key with the
+  // Tenant Management tab so assigning a tier there keeps this view in sync.
+  const tenantTiersQuery = useQuery({
+    queryKey: ["tenant-tiers"],
+    queryFn: () => fetchTenantTiers(),
+    staleTime: 30 * 1000,
+    enabled: !!viewTierId,
+  });
+
+  // Tenant directory, used to resolve tenant_id → organisation name for display.
+  // limit is capped at 500 by the auth-service tenants endpoint (le=500).
+  const tenantsDirectoryQuery = useQuery({
+    queryKey: ["tenants-directory"],
+    queryFn: () => listTenants({ limit: 500 }),
+    staleTime: 5 * 60 * 1000,
+    enabled: !!viewTierId,
+  });
+
+  const assignedTenantsForViewTier = useMemo(() => {
+    if (!viewTier) return [];
+    const assignments = tenantTiersQuery.data?.data ?? [];
+    const tenantById = new Map(
+      (tenantsDirectoryQuery.data?.tenants ?? []).map((t) => [
+        String(t.tenant_id),
+        t,
+      ]),
+    );
+    return assignments
+      .filter((a) => String(a.tier_id) === String(viewTier.id))
+      .map((a) => ({
+        tenantId: String(a.tenant_id),
+        organisation:
+          tenantById.get(String(a.tenant_id))?.organisation ??
+          `Tenant ${a.tenant_id}`,
+        budgetLimit: a.budget_limit,
+        availableBalance: a.available_balance,
+        effectiveFrom: a.effective_from,
+        effectiveTo: a.effective_to,
+      }));
+  }, [viewTier, tenantTiersQuery.data, tenantsDirectoryQuery.data]);
+
+  const isAssignedTenantsLoading =
+    !!viewTierId &&
+    (tenantTiersQuery.isLoading || tenantsDirectoryQuery.isLoading);
+
+  // Services carry their tier mapping as an array of tier UUIDs (tierIds).
+  // There's no server-side tier filter, so fetch all services and filter here.
+  const servicesQuery = useQuery({
+    queryKey: ["services-for-tiers"],
+    queryFn: () => fetchAllServicesMatchingFilters({}),
+    staleTime: 60 * 1000,
+    enabled: !!viewTierId,
+  });
+
+  const servicesForViewTier = useMemo(() => {
+    if (!viewTier) return [];
+    const services = servicesQuery.data?.items ?? [];
+    return services
+      .filter(
+        (s) =>
+          (s.tierIds ?? []).includes(viewTier.id) ||
+          (s.tierNames ?? []).includes(viewTier.name),
+      )
+      .map((s) => {
+        const taskType =
+          (typeof s.task === "object" && s.task && "type" in s.task
+            ? s.task.type
+            : undefined) ??
+          s.task_type ??
+          "";
+        return {
+          serviceId: s.serviceId ?? s.service_id ?? "",
+          name: s.name,
+          taskType,
+          isPublished: !!s.isPublished,
+        };
+      });
+  }, [viewTier, servicesQuery.data]);
+
+  const isServicesForViewTierLoading = !!viewTierId && servicesQuery.isLoading;
 
   const filteredTiers = useMemo(() => {
     let result = tiers;
@@ -147,6 +274,7 @@ export function useTierManagement() {
 
   const handleOpenCreate = useCallback(() => {
     setFormData(defaultFormData());
+    setShowQuotaErrors(false);
     onCreateOpen();
   }, [onCreateOpen]);
 
@@ -161,12 +289,11 @@ export function useTierManagement() {
       });
       return;
     }
-    const invalidQuota = formData.quotas.find(
-      (q) => !q.modelTaskType || !q.limit,
-    );
-    if (invalidQuota) {
+    const quotaError = validateQuotas(formData.quotas);
+    if (quotaError) {
+      setShowQuotaErrors(true);
       toast({
-        title: "Each quota must have a task type and limit",
+        title: quotaError,
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -213,6 +340,7 @@ export function useTierManagement() {
   const handleOpenEdit = useCallback(
     (tier: Tier) => {
       if (!checkSessionExpiry()) return;
+      setShowQuotaErrors(false);
       setEditingTier(tier);
       setFormData({
         name: tier.name,
@@ -223,12 +351,13 @@ export function useTierManagement() {
               modelTaskType: q.modelTaskType,
               unit: q.unit || unitByTaskType[q.modelTaskType] || "",
               limit: String(q.limit),
+              isExisting: true,
             }))
           : [newQuota()],
       });
       onEditOpen();
     },
-    [checkSessionExpiry, onEditOpen],
+    [checkSessionExpiry, onEditOpen, unitByTaskType],
   );
 
   const handleEditSubmit = useCallback(async () => {
@@ -236,6 +365,17 @@ export function useTierManagement() {
     if (!formData.name.trim()) {
       toast({
         title: "Tier name is required",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    const quotaError = validateQuotas(formData.quotas);
+    if (quotaError) {
+      setShowQuotaErrors(true);
+      toast({
+        title: quotaError,
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -280,12 +420,178 @@ export function useTierManagement() {
     }
   }, [checkSessionExpiry, formData, toast, onEditClose, refreshTiers]);
 
+  const handleRemoveQuota = useCallback(
+    async (modelTaskType: string) => {
+      if (!checkSessionExpiry()) return;
+      if (!editingTier) return;
+      const currentQuota = formData.quotas.find(
+        (q) => q.modelTaskType === modelTaskType,
+      );
+      setRemovingTaskType(modelTaskType);
+      try {
+        await updateTier(editingTier.id, {
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          quotas: currentQuota
+            ? [{ modelTaskType, limit: Number(currentQuota.limit) }]
+            : undefined,
+        });
+        setFormData((prev) => ({
+          ...prev,
+          quotas: prev.quotas.filter((q) => q.modelTaskType !== modelTaskType),
+        }));
+        toast({
+          title: "Quota removed",
+          description: `${modelTaskType} quota has been removed from this tier.`,
+          status: "success",
+          duration: 4000,
+          isClosable: true,
+        });
+        refreshTiers();
+      } catch (error: any) {
+        const {
+          title: errTitle,
+          message: errMsg,
+          showOnlyMessage,
+        } = extractErrorInfo(error);
+        toast({
+          title: showOnlyMessage ? undefined : errTitle,
+          description: errMsg,
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setRemovingTaskType(null);
+      }
+    },
+    [checkSessionExpiry, editingTier, formData, toast, refreshTiers],
+  );
+
+  const handleOpenSchedule = useCallback(
+    (quota: TierFormQuota) => {
+      setScheduleTarget(quota);
+      setScheduleLimit("");
+      onScheduleOpen();
+    },
+    [onScheduleOpen],
+  );
+
+  const handleScheduleClose = useCallback(() => {
+    onScheduleClose();
+    setScheduleTarget(null);
+    setScheduleLimit("");
+  }, [onScheduleClose]);
+
+  const handleScheduleConfirm = useCallback(async () => {
+    if (!checkSessionExpiry()) return;
+    if (!scheduleTarget || !editingTier) return;
+    const newLimit = Number(scheduleLimit);
+    if (!scheduleLimit || !Number.isFinite(newLimit) || newLimit <= 0) {
+      toast({
+        title: "Enter a valid quota limit",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    setIsScheduling(true);
+    try {
+      await updateTier(editingTier.id, {
+        name: formData.name.trim(),
+        description: formData.description.trim() || undefined,
+        quotas: [
+          { modelTaskType: scheduleTarget.modelTaskType, limit: newLimit },
+        ],
+      });
+      toast({
+        title: "Quota change scheduled",
+        description: `${scheduleTarget.modelTaskType} quota change will take effect from the next billing cycle.`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      handleScheduleClose();
+      refreshTiers();
+    } catch (error: any) {
+      const {
+        title: errTitle,
+        message: errMsg,
+        showOnlyMessage,
+      } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errTitle,
+        description: errMsg,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsScheduling(false);
+    }
+  }, [
+    checkSessionExpiry,
+    scheduleTarget,
+    editingTier,
+    scheduleLimit,
+    formData,
+    toast,
+    handleScheduleClose,
+    refreshTiers,
+  ]);
+
   const handleViewClick = useCallback(
     (tier: Tier) => {
-      setViewTier(tier);
+      setViewTierId(tier.id);
       onViewOpen();
     },
     [onViewOpen],
+  );
+
+  const handleCancelPendingQuota = useCallback(
+    async (modelTaskType: string) => {
+      if (!checkSessionExpiry()) return;
+      if (!viewTier) return;
+      setCancelingTaskType(modelTaskType);
+      try {
+        const currentQuota = viewTier.quotas.find(
+          (q) => q.modelTaskType === modelTaskType,
+        );
+        await updateTier(viewTier.id, {
+          name: viewTier.name,
+          description: viewTier.description,
+          quotas: currentQuota
+            ? [{ modelTaskType, limit: currentQuota.limit }]
+            : undefined,
+          cancel_pending_quota: [modelTaskType],
+        });
+        toast({
+          title: "Pending change canceled",
+          description: `${modelTaskType} quota change has been canceled.`,
+          status: "success",
+          duration: 4000,
+          isClosable: true,
+        });
+        refreshTiers();
+      } catch (error: any) {
+        const {
+          title: errTitle,
+          message: errMsg,
+          showOnlyMessage,
+        } = extractErrorInfo(error);
+        toast({
+          title: showOnlyMessage ? undefined : errTitle,
+          description: errMsg,
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setCancelingTaskType(null);
+      }
+    },
+    [checkSessionExpiry, viewTier, toast, refreshTiers],
   );
 
   return {
@@ -319,15 +625,33 @@ export function useTierManagement() {
     onEditClose,
     handleOpenEdit,
     handleEditSubmit,
+    removingTaskType,
+    handleRemoveQuota,
+    // Schedule quota change
+    scheduleTarget,
+    scheduleLimit,
+    setScheduleLimit,
+    isScheduleOpen,
+    isScheduling,
+    handleOpenSchedule,
+    handleScheduleClose,
+    handleScheduleConfirm,
     // View
     viewTier,
     isViewOpen,
     onViewClose,
     handleViewClick,
+    cancelingTaskType,
+    handleCancelPendingQuota,
+    assignedTenantsForViewTier,
+    isAssignedTenantsLoading,
+    servicesForViewTier,
+    isServicesForViewTierLoading,
     // Shared form
     formData,
     setFormData,
     isSubmitting,
+    showQuotaErrors,
     // Refs
     cancelRef,
   };

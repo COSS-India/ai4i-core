@@ -31,6 +31,11 @@ class CoreSettings(BaseSettings):
     debug: bool = False
     environment: str = "development"
 
+    # ── Server ──
+    host: str = "0.0.0.0"
+    port: int = 8095
+    workers: int = 1
+
     # ── Database (single primary DB) ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None
@@ -69,6 +74,14 @@ class CoreSettings(BaseSettings):
     default_receiver_emails: Optional[str] = None
     prometheus_url: Optional[str] = None
     prometheus_timeout: float = 10.0
+    # Label carrying the HTTP path on telemetry_obsv_requests_total (and related
+    # metrics). Scraped via a K8s Prometheus Operator ServiceMonitor, the target's
+    # own "endpoint" label collides with the ServiceMonitor's port-name label of
+    # the same name, so Prometheus relabels the original to "exported_endpoint".
+    # Local docker-compose Prometheus uses plain static_configs (no ServiceMonitor,
+    # no collision), so the metric keeps its literal "endpoint" label there —
+    # override PROMETHEUS_API_PATH_LABEL=endpoint in local .env to match.
+    prometheus_api_path_label: str = "exported_endpoint"
     alertmanager_url: Optional[str] = None
     prometheus_application_alerts_path: Optional[str] = None
     prometheus_infrastructure_alerts_path: Optional[str] = None
@@ -99,8 +112,9 @@ class CoreSettings(BaseSettings):
     redis_timeout: int = 10
     # Cache TTLs
     model_cache_ttl_seconds: int = 3600
-    service_cache_ttl_seconds: int = 3600
+    service_cache_ttl_seconds: int = 300
     metering_cache_ttl_seconds: int = 60
+    ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60
 
@@ -128,10 +142,18 @@ class CoreSettings(BaseSettings):
     telemetry_enabled: bool = True
 
     # ── OpenSearch (traces) ──
-    opensearch_url: Optional[str] = Field(default=None, description="OpenSearch URL (e.g., http://localhost:9204)")
-    opensearch_username: Optional[str] = Field(default=None, description="OpenSearch username")
-    opensearch_password: Optional[str] = Field(default=None, description="OpenSearch password")
-    opensearch_index: str = Field(default="traces-*", description="OpenSearch traces index pattern")
+    opensearch_url: Optional[str] = Field(
+        default=None, description="OpenSearch URL (e.g., http://localhost:9204)"
+    )
+    opensearch_username: Optional[str] = Field(
+        default=None, description="OpenSearch username"
+    )
+    opensearch_password: Optional[str] = Field(
+        default=None, description="OpenSearch password"
+    )
+    opensearch_index: str = Field(
+        default="traces-*", description="OpenSearch traces index pattern"
+    )
 
     # ── Derived helpers ──
 
@@ -158,7 +180,9 @@ class CoreSettings(BaseSettings):
         if not db:
             return None
         user = self.auth_db_user or self.app_db_user or self.postgres_user
-        password = self.auth_db_password or self.app_db_password or self.postgres_password
+        password = (
+            self.auth_db_password or self.app_db_password or self.postgres_password
+        )
         host = self.auth_db_host or self.app_db_host or self.postgres_host
         port = self.auth_db_port or self.app_db_port or self.postgres_port
         return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"

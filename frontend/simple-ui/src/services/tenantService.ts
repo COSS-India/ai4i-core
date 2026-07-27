@@ -46,8 +46,12 @@ export async function listTenants(params?: {
   return { count: tenants.length, tenants };
 }
 
-export async function getViewTenant(tenant_id: string): Promise<TenantView> {
+export async function getViewTenant(
+  tenant_id: string,
+  opts?: { unmask?: boolean }
+): Promise<TenantView> {
   const response = await apiService.get(`${BASE}/${tenant_id}`, {
+    params: opts?.unmask ? { unmask: true } : undefined,
     suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });
@@ -107,8 +111,39 @@ export async function resendTenantVerificationEmail(
   return { message: data?.message ?? "Verification email sent." };
 }
 
-export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
+/**
+ * Re-send the set-password (SETUP) onboarding email to a tenant user.
+ * Tenant users are passwordless until they complete the setup link —
+ * do not use /auth/resend-verification for them.
+ */
+export async function resendTenantUserSetupLink(
+  tenant_id: string,
+  user_id: string
+): Promise<{ message: string }> {
+  const response = await apiService.post(
+    apiEndpoints.tenants.resendUserSetupLink(tenant_id, user_id),
+    {},
+    {
+      suppressErrorAlert: true,
+      responseSchema: tenantSuccessEnvelopeSchema(
+        z.object({ message: z.string() }).passthrough()
+      ),
+    }
+  );
+  const data = response.data.data as { message?: string };
+  return {
+    message:
+      data?.message ??
+      "A password setup link has been sent to the user's email.",
+  };
+}
+
+export async function listUsers(
+  tenant_id: string,
+  opts?: { unmask?: boolean }
+): Promise<ListUsersResponse> {
   const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
+    params: opts?.unmask ? { unmask: true } : undefined,
     suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
   });

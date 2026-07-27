@@ -35,6 +35,8 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
+    /** Tenant Admin lands on Usage and Spend (not legacy My Usage overview). */
+    TENANT_SUB_TAB: "usage-spend" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
   },
@@ -106,14 +108,21 @@ export const METERING = {
   TENANT_VIEW: {
     TITLE: "My Usage",
   },
+  USAGE_SPEND: {
+    TITLE: "Usage and Spend",
+    ADOPTER_SUBTITLE:
+      "Monitor model task type consumption and spend across all tenants",
+    TENANT_SUBTITLE_SUFFIX:
+      "consumption and spend for the selected billing period",
+    BILLING_PERIOD: "BILLING PERIOD",
+    CURRENT_MONTH: "Current month",
+    LAST_MONTH: "Last month",
+    BUDGET_SUMMARY: "BUDGET SUMMARY",
+    QUOTA_SUMMARY: "QUOTA SUMMARY",
+    SPEND_BY_TASK_TYPE: "SPEND BY MODEL TASK TYPE",
+  },
   COLORS: {
-    RANK: [
-      "#DD6B20",
-      "#3182CE",
-      "#38A169",
-      "#805AD5",
-      "#00B5D8",
-    ] as const,
+    RANK: ["#DD6B20", "#3182CE", "#38A169", "#805AD5", "#00B5D8"] as const,
     PALETTE: [
       "#DD6B20",
       "#3182CE",
@@ -149,6 +158,21 @@ export const METERING = {
       "speaker-diarization": "#718096",
       "language-diarization": "#4FD1C5",
     } as const,
+    /** Fixed per-task-type color, keyed by the raw `inference_types[].name` values from the metering API. */
+    TASK_TYPE: {
+      llm: "#F061C8",
+      asr: "#9B2C2C",
+      nmt: "#38A169",
+      tts: "#855a69",
+      ner: "#060fb4",
+      ocr: "#319795",
+      transliteration: "#99F45A",
+      "language-detection": "#F5C554",
+      "language-diarization": "#00B5D8",
+      "speaker-diarization": "#718096",
+      "audio-lang-detection": "#DD6B20",
+      pipeline: "#805AD5",
+    } as const,
     CHART: {
       GRID: "#E2E8F0",
       GRID_DARK: "#4A5568",
@@ -169,12 +193,28 @@ export const METERING = {
       { key: "tts", shortLabel: "TTS", displayName: "TTS" },
       { key: "llm", shortLabel: "LLM", displayName: "LLM" },
       { key: "ocr", shortLabel: "OCR", displayName: "OCR" },
-      { key: "transliteration", shortLabel: "Translit", displayName: "Transliteration" },
+      {
+        key: "transliteration",
+        shortLabel: "Translit",
+        displayName: "Transliteration",
+      },
       { key: "pipeline", shortLabel: "Pipeline", displayName: "Pipeline" },
       { key: "ner", shortLabel: "NER", displayName: "NER" },
-      { key: "language_detection", shortLabel: "Text LD", displayName: "Language Detection" },
-      { key: "audio_language_detection", shortLabel: "Audio LD", displayName: "Audio Language Detection" },
-      { key: "speaker_diarization", shortLabel: "Spk. Diar.", displayName: "Speaker Diarization" },
+      {
+        key: "language_detection",
+        shortLabel: "Text LD",
+        displayName: "Language Detection",
+      },
+      {
+        key: "audio_language_detection",
+        shortLabel: "Audio LD",
+        displayName: "Audio Language Detection",
+      },
+      {
+        key: "speaker_diarization",
+        shortLabel: "Spk. Diar.",
+        displayName: "Speaker Diarization",
+      },
     ] as const,
     LEGEND_INDICES: [0, 2, 3, 4, 5, 6] as const,
     INTENSITY_TEXT_THRESHOLD: 0.55,
@@ -183,7 +223,8 @@ export const METERING = {
     EMPTY: "No tenant × service data for the selected window.",
     TABLE_TENANT: "Tenant",
     TABLE_TOTAL: "Total",
-    FOOTER_PRIMARY: "Showing Top {topN} tenants by total request volume. Adjust using the selector above.",
+    FOOTER_PRIMARY:
+      "Showing Top {topN} tenants by total request volume. Adjust using the selector above.",
     FOOTER_SECONDARY: "Colour intensity = request volume",
     LEGEND_LOW: "Low",
     LEGEND_HIGH: "High",
@@ -196,6 +237,7 @@ export const METERING = {
   },
   REFRESH: {
     JUST_NOW: "just now",
+    SECONDS_AGO_SUFFIX: " sec ago",
     MINUTES_AGO_SUFFIX: "m ago",
   },
   SECTIONS: {
@@ -203,7 +245,8 @@ export const METERING = {
       TITLE: "Consumption overview",
       SUBTITLE_SUFFIX: "reflects selected time window ·",
       CONCENTRATION_TITLE: "Usage concentration",
-      CONCENTRATION_SUBTITLE: "Top 5 by request volume · reflects selected time window",
+      CONCENTRATION_SUBTITLE:
+        "Top 5 by request volume · reflects selected time window",
       DONUT_PRIMARY: "Top 5",
       DONUT_SECONDARY: "tenants",
     },
@@ -211,11 +254,19 @@ export const METERING = {
       TITLE: "Platform adoption",
       SUBTITLE: "Tenant overview",
       CARDS: [
-        { key: "total_tenants", label: "Total tenants", helper: "registered on platform" },
+        {
+          key: "total_tenants",
+          label: "Total tenants",
+          helper: "registered on platform",
+        },
         { key: "active_24h", label: "Active tenants", helper: "last 24 hours" },
         { key: "active_7d", label: "Active tenants", helper: "last 7 days" },
         { key: "active_30d", label: "Active tenants", helper: "last 30 days" },
-        { key: "new_tenants_7d", label: "New — Last 7 days", helper: "onboarded in last 7 days" },
+        {
+          key: "new_tenants_7d",
+          label: "New — Last 7 days",
+          helper: "onboarded in last 7 days",
+        },
       ] as const,
     },
     TENANT_RANKING: {
@@ -232,7 +283,8 @@ export const METERING = {
     },
     SERVICE: {
       TITLE: "Service consumption",
-      SUBTITLE: "Platform-wide request distribution · reflects selected time window",
+      SUBTITLE:
+        "Platform-wide request distribution · reflects selected time window",
       BREAKDOWN_TITLE: "Service breakdown",
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
       DONUT_PRIMARY: "All",

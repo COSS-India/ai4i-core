@@ -54,11 +54,20 @@ async def list_tenants(
 @router.get("/{tenant_id}")
 async def get_tenant(
     tenant_id: int,
+    unmask: bool = Query(
+        False,
+        description=(
+            "Return editable PII for the Edit Tenant form. Phone number is "
+            "always returned unmasked; the contact email is returned unmasked "
+            "only while the tenant is PENDING (before verification). List/view "
+            "screens must omit this flag so they keep showing masked values."
+        ),
+    ),
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    tenant = await svc.get_tenant(current_user, tenant_id)
-    return success_response(data=mask_pii_in_dict(to_response(tenant, TenantResponse)))
+    tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask)
+    return success_response(data=svc.build_tenant_response(tenant, unmask=unmask))
 
 
 @router.patch("/{tenant_id}")
@@ -102,11 +111,22 @@ async def list_tenant_users(
     tenant_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    unmask: bool = Query(
+        False,
+        description=(
+            "Return editable PII for the Edit Tenant User form. Only the phone "
+            "number is returned unmasked; the email stays masked because it is "
+            "non-editable for tenant users. The list/view screens must omit "
+            "this flag so they keep showing masked values."
+        ),
+    ),
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    users = await svc.list_tenant_users(current_user, tenant_id, offset, limit)
-    data = await svc.build_tenant_user_responses(users)
+    users = await svc.list_tenant_users(
+        current_user, tenant_id, offset, limit, unmask=unmask
+    )
+    data = await svc.build_tenant_user_responses(users, unmask_phone=unmask)
     return success_response(data=data)
 
 
@@ -136,6 +156,27 @@ async def update_tenant_user_status(
 ):
     target = await svc.update_tenant_user_status(current_user, tenant_id, user_id, body)
     return success_response(data=await svc.build_tenant_user_response(target))
+
+
+@router.post("/{tenant_id}/users/{user_id}/resend-setup-link")
+async def resend_tenant_user_setup_link(
+    tenant_id: int,
+    user_id: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+):
+    """Re-send the set-password (SETUP) onboarding email to a tenant user.
+
+    Use this — not /auth/resend-verification — for users created under a tenant,
+    who are provisioned passwordless and onboard via a set-password link.
+    """
+    await svc.resend_tenant_user_setup_link(
+        current_user, tenant_id, user_id, background_tasks
+    )
+    return success_response(
+        data={"message": "A password setup link has been sent to the user's email."}
+    )
 
 
 @router.patch("/{tenant_id}/users/{user_id}")

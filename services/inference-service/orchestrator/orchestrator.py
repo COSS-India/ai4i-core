@@ -77,6 +77,22 @@ class Orchestrator:
             # Resolve service and model BEFORE creating task service
             service_info = await self._resolve_service_and_model(payload)
 
+            # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID).
+            # Only enforced when the service has explicit tier assignments —
+            # a service with no tier_ids is unrestricted.
+            if request:
+                tier_id = request.headers.get("X-Tier-ID", "")
+                if tier_id:
+                    allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
+                    if allowed_tiers and tier_id not in allowed_tiers:
+                        service_id = (
+                            (payload.get("config") or {}).get("serviceId")
+                            or payload.get("serviceId", "")
+                        )
+                        raise PermissionError(
+                            f"Service '{service_id}' is not available for your quota"
+                        )
+
             # Instantiate and run the task service with the raw payload
             task_service = self._get_task_service(service_info)
             task_response = await task_service.process(payload, service_info)
@@ -177,9 +193,19 @@ class Orchestrator:
                     f"Orchestrator: Failed to resolve service '{serviceId}'"
                 ) from e
 
+            if not service_info.get("is_published", False):
+                raise LookupError(
+                    f"Service '{serviceId}' is not published and cannot be used for inference"
+                )
+
             adapter_cfg = service_info.get("adapter_config") or {}
             attrs["model_name"] = service_info.get("name", "")
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
             )
+            # resolve_service()'s returned dict never carries the id it was
+            # resolved from — stash it here so run_inference can copy it onto
+            # the ai-inference span (the PPU Kafka consumer bills on service_id
+            # read from that span only, mirroring the LLM proxy's approach).
+            service_info["serviceId"] = serviceId
             return service_info
