@@ -97,6 +97,18 @@ async def _run_inference(
     the endpoint contract excludes, and map failures to client-safe HTTP
     errors (full details logged server-side only).
     """
+    # Unwrap TryItRequest envelope ({ service_name, serviceId?, payload: <inner> })
+    # when present. Normal inference payloads carry input/audio/image at the top
+    # level and never have a nested 'payload' wrapper, so this detection is safe.
+    # Handles the case where APISIX rewrites /nmt/try-it → /nmt/inference while
+    # passing the original client body through unchanged.
+    inner = payload.get("payload")
+    if isinstance(inner, dict) and "service_name" in payload:
+        top_service_id = payload.get("serviceId")
+        payload = inner
+        if top_service_id and not (payload.get("config") or {}).get("serviceId"):
+            payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": top_service_id}}
+
     # No manual timing here: the logging middleware records duration_ms for
     # every request, and the request span carries total_time_ms.
     if default_task_type and not payload.get("task_type"):
@@ -183,6 +195,31 @@ async def run_nmt_inference(
 ) -> Dict[str, Any]:
     """Dedicated endpoint for NMT inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="NMT")
+
+
+@router.post(
+    "/nmt/try-it",
+    response_model=GenericInferenceResponse,
+    response_model_exclude={"config"},
+    summary="NMT Try-It Endpoint (anonymous)",
+    description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
+                "({ service_name, serviceId?, payload: NMTPayload }) or a plain NMT "
+                "payload directly (for when APISIX has already unwrapped the envelope).",
+)
+async def run_nmt_try_it(
+    request: Request,
+    body: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    # Unwrap TryItRequest envelope if present; fall back to body as-is when
+    # APISIX has already extracted the inner payload before forwarding here.
+    inner: Dict[str, Any] = body.get("payload") or body
+    # Hoist top-level serviceId into config so the orchestrator finds it
+    # regardless of which level the client placed it.
+    top_service_id = body.get("serviceId")
+    if top_service_id and not (inner.get("config") or {}).get("serviceId"):
+        inner = {**inner, "config": {**(inner.get("config") or {}), "serviceId": top_service_id}}
+    return await _run_inference(request, inner, orchestrator, default_task_type="NMT")
 
 
 @router.post(
