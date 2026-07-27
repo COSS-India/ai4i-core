@@ -1,7 +1,7 @@
 # Model Consumption Tab — Planning & Analysis
 
 **Status:** Draft for review
-**Scope:** Add a "Model Consumption" tab to the Metering screen, showing usage broken down by the actual LLM model (e.g. `agrinet-model`, `google/gemma-4-E4B-it`), not just by service.
+**Scope:** Add a "Model Consumption" tab to the Metering screen, showing usage broken down by the actual LLM model (e.g. `agrinet-model`, `google/gemma-4-E4B-it`), not just by service — including a **tenant-wise** breakdown (which tenants are using which models), not just a platform-wide total.
 
 ---
 
@@ -9,7 +9,7 @@
 
 Today the Metering screen has a **Service Consumption** tab. It shows, per *service* (NMT, ASR, TTS, LLM, OCR, etc.), how many requests were made, how much was consumed (characters/tokens/minutes), and success/failure rates.
 
-The ask is to add a **Model Consumption** tab that does something similar, but one level deeper — for LLM traffic specifically, broken down by the *actual model* that served the request, since one LLM "service" (like `agrinet-model`) can be backed by different real models over time or across deployments (e.g. `gemma`, `agrinet`).
+The ask is to add a **Model Consumption** tab that does something similar, but one level deeper — for LLM traffic specifically, broken down by the *actual model* that served the request, since one LLM "service" (like `agrinet-model`) can be backed by different real models over time or across deployments (e.g. `gemma`, `agrinet`). It also needs a **tenant-wise view** — not just "how much did each model get used platform-wide," but "which tenants are using which models," the same way the existing Tenant Consumption tab shows tenants × services today.
 
 Before proposing a design, it's important to explain **what data we already collect** and **what we don't**, because that determines what the new tab can realistically show on day one vs. what needs a small tracking change first.
 
@@ -107,6 +107,17 @@ Mirrors the Service Consumption tab's layout so it feels familiar:
 
 This is already a full match for the Service Consumption table shape — no "coming soon" columns, no caveats needed for Phase 1.
 
+### Tenant-wise breakdown
+
+There are two different ways "tenant-wise" shows up, and both should be covered:
+
+1. **Single-tenant view.** When a Platform Admin picks one tenant from the tenant filter (or a Tenant Admin is simply viewing their own account), the table above already scopes itself to that one tenant — this falls out of Phase 1 for free, the same way the tenant filter already works on Service Consumption today.
+2. **Cross-tenant matrix — "which tenants are using which models."** This is the part that needs a new piece, modeled directly on the existing Tenant Consumption tab, which already shows exactly this shape for services: a **"Usage by tenant & model" heatmap** — top-N tenants as rows, models as columns, each cell showing that tenant's request count and % of their own total for that model, plus a row total. See [`TenantServiceHeatmapSection.tsx`](frontend/simple-ui/src/components/metering/TenantServiceHeatmapSection.tsx) for the existing version of this (services instead of models).
+
+   This second view is **Platform-Admin-only**, same restriction as today's tenant × service heatmap (a Tenant Admin only ever sees their own row, so a cross-tenant matrix isn't meaningful for them — covered by view 1 instead).
+
+   One structural difference from the existing services heatmap worth flagging: the list of services is small and fixed (~11 keys, hardcoded in `SERVICE_BREAKDOWN_CONFIG`/`METERING.HEATMAP.SERVICES`), but the list of models is **not fixed** — it's whatever's registered in `mm_services` and actually saw traffic in the window. So the model heatmap's columns need to come from the query results themselves (e.g. top-K models by volume in that window), not from a static list — see §7 and §9 for what that means for the code.
+
 ---
 
 ## 7. Backend changes (Phase 1)
@@ -121,6 +132,17 @@ All new code, following the existing metering feature's own layout (routes → s
 | [`app/routes/metering.py`](services/platform-core-service/app/routes/metering.py) | Add `GET /api/v1/metering/model-consumption`, copying the existing `/service-consumption` route's auth/scope/redis-cache pattern (cache key `metering:model-consumption:v1:{window}:{tenant}:{role}`) |
 
 No changes needed to `app/dependencies/services.py` — the existing `get_metering_service()` dependency already provides everything this needs. No changes needed to the shared metrics library either — `service_id` is already recorded on every LLM request.
+
+### Tenant × model matrix (for the "Usage by tenant & model" heatmap)
+
+This mirrors [`MeteringService.usage_by_tenant_service()`](services/platform-core-service/app/services/metering_service.py#L456), which already does the tenant × service version.
+
+| File | Change |
+|---|---|
+| [`app/services/metering_service.py`](services/platform-core-service/app/services/metering_service.py) | Add `MeteringService.usage_by_tenant_model(limit, time_range, tenant=None)` — same query shape as `usage_by_tenant_service()` (`sum by(tenant, service_id) (...)`), but against the LLM-only endpoint selector from §7 above instead of all inference endpoints, and grouped by `service_id` instead of by `exported_endpoint`/task. Unlike `usage_by_tenant_service()`, the set of "columns" (models) can't come from a static config dict — build it from the query results themselves (e.g. the top-K distinct `service_id` values by total volume across the returned tenants) |
+| [`app/schemas/metering.py`](services/platform-core-service/app/schemas/metering.py) | The existing `TenantServiceRow`/`ServiceEntry` shapes are already generic (`services: dict[str, ServiceEntry]` is just a string-keyed map) — reusable as-is for models, or duplicate as `TenantModelRow`/`ModelEntry` for clarity. Add a `models: list[{key, display_name}]` list alongside the rows, same as `usage_by_tenant_service()` returns a `services` list today, so the frontend knows what columns exist |
+| [`app/routes/metering.py`](services/platform-core-service/app/routes/metering.py) | In the new `/model-consumption` route, gather `svc.model_breakdown(...)` and `svc.usage_by_tenant_model(...)` together (same `asyncio.gather` pattern as `/tenant-consumption` gathers `tenant_ranking` + `usage_by_tenant_service`), and only run/return the heatmap when the caller is a Platform Admin |
+| `app/schemas/metering.py` | Add `usage_by_tenant_model: list[TenantModelRow]` (or reused `TenantServiceRow`) to `ModelConsumptionResponse` |
 
 ### Example query shape (Phase 1)
 
@@ -167,24 +189,37 @@ Following the exact same file layout as Service Consumption:
 | `services/apiEndpoints.ts` | Add `metering.modelConsumption` endpoint constant |
 | [`services/meteringService.ts`](frontend/simple-ui/src/services/meteringService.ts) | Add `fetchMeteringModelConsumption()`, copying `fetchMeteringServiceConsumption()` |
 | [`hooks/useMeteringDashboard.ts`](frontend/simple-ui/src/hooks/useMeteringDashboard.ts) | Add a `modelQuery` react-query hook, enabled when `subTab === METERING.SUB_TAB.MODEL`, same pattern as `serviceQuery` |
-| **New file** `components/metering/ModelConsumptionTab.tsx` | Clone of [`ServiceConsumptionTab.tsx`](frontend/simple-ui/src/components/metering/ServiceConsumptionTab.tsx) — same KPI cards + donut + table layout, same columns (Model / Requests / Tokens / Success % / Failure %) |
+| **New file** `components/metering/ModelConsumptionTab.tsx` | Clone of [`ServiceConsumptionTab.tsx`](frontend/simple-ui/src/components/metering/ServiceConsumptionTab.tsx) — same KPI cards + donut + table layout, same columns (Model / Requests / Tokens / Success % / Failure %). For the adopter/admin view, also renders the tenant × model heatmap below the table (see next row) |
 | [`components/metering/UsageDashboardPanels.tsx`](frontend/simple-ui/src/components/metering/UsageDashboardPanels.tsx) | Render `<ModelConsumptionTab>` when `subTab === METERING.SUB_TAB.MODEL`, in both the tenant and adopter panel components |
 
-No new shared UI components are needed — `MeteringDonutChart`, `MeteringDataTable`, `MeteringSectionCard`, `MeteringAsyncState` are all already generic and reusable as-is.
+No new shared UI components are needed for the main table — `MeteringDonutChart`, `MeteringDataTable`, `MeteringSectionCard`, `MeteringAsyncState` are all already generic and reusable as-is.
+
+### Tenant × model heatmap (Platform Admin view only)
+
+[`TenantServiceHeatmapSection.tsx`](frontend/simple-ui/src/components/metering/TenantServiceHeatmapSection.tsx) can't be reused unmodified — it reads its column list from a hardcoded catalog, `METERING.HEATMAP.SERVICES` (`config/meteringConstants.ts`), which works for services because there are only ~11 of them and they never change. Models don't have that kind of fixed list.
+
+| File | Change |
+|---|---|
+| **New file** `components/metering/TenantModelHeatmapSection.tsx` | Same layout/behavior as `TenantServiceHeatmapSection.tsx` (sticky tenant column, colored cells by intensity, row totals, legend), but takes its column list from the API response's `models` list (§7) instead of a hardcoded catalog — no "select services" filter menu needed unless the model list gets long enough to warrant one |
+| `types/metering.ts` | Add `TenantModelRow` type (or reuse `TenantServiceRow` if the shapes end up identical) and a `ModelColumn { key, display_name }` type for the dynamic column list |
+| [`hooks/useMeteringDashboard.ts`](frontend/simple-ui/src/hooks/useMeteringDashboard.ts) | The existing `topN` state (already used by Tenant Consumption's heatmap) can be reused here rather than adding a second one, if both heatmaps should share the same "Top 10 / Top 25" control |
+| `components/metering/ModelConsumptionTab.tsx` | Render `<TenantModelHeatmapSection>` only when `roleViewConfig` indicates a Platform Admin, mirroring how `AdopterDashboardPanels` (not `TenantDashboardPanels`) is the one that renders `TenantConsumptionTab`/its heatmap today |
 
 ---
 
 ## 10. Open questions to decide before/while building
 
 1. **Where should this tab live?** As a new top-level sub-tab next to "Service Consumption" (like this doc assumes), or nested inside Service Consumption only when the LLM row is expanded/clicked? A top-level tab is simpler and matches the ask more directly.
-2. **Should Tenant Admins see this too, or only Platform Admins?** Service Consumption is visible to both — recommend the same for consistency.
+2. **Should Tenant Admins see this too, or only Platform Admins?** Service Consumption is visible to both — recommend the same for consistency. The cross-tenant heatmap (§6/§7/§9) would stay Platform-Admin-only either way, matching Tenant Consumption's existing restriction.
 3. **Is the `service_id` grouping (§4) the right definition of "model" for this feature?** It matches how models are registered in `mm_services` and how tenants select them via the API, and it's what makes the full table possible without tracking changes. Worth confirming this matches what stakeholders picture when they say "agrinet, gemma, etc." — if they specifically mean the real backing model file rather than the registered service, that's the Phase 2 drill-down (tokens only) instead.
 4. **Friendly model names (Phase 3)** — worth doing now, or fine to launch with raw `service_id` strings (e.g. `agrinet-model`) as-is?
+5. **How many model columns should the heatmap show at once?** Since models aren't a small fixed catalog like services, an admin with dozens of registered LLM services could end up with a very wide table. Worth deciding a default (e.g. top 10 models by volume, matching the existing `topN` tenant control) rather than showing every model that ever saw traffic.
 
 ---
 
 ## 11. Rough effort shape
 
-- **Phase 1 (full model breakdown tab — Requests, Tokens, Success %, Failure %):** small — one new backend method + route + schema, one new frontend tab component + wiring, all reusing existing shared pieces and requiring no changes to the shared metrics library. Comparable in size to how Service Consumption itself was built.
+- **Phase 1 (full model breakdown tab — Requests, Tokens, Success %, Failure %, platform-wide and single-tenant-scoped):** small — one new backend method + route + schema, one new frontend tab component + wiring, all reusing existing shared pieces and requiring no changes to the shared metrics library. Comparable in size to how Service Consumption itself was built.
+- **Tenant × model heatmap (cross-tenant matrix, Platform-Admin-only):** small-to-medium — one new backend method (close copy of `usage_by_tenant_service()`), and one new frontend component, since the existing heatmap component's fixed-column assumption doesn't carry over to a dynamic model list.
 - **Phase 2 (optional real-backing-model drill-down):** small, independent add-on — one extra query grouped by a label that already exists.
 - **Phase 3 (friendly names):** small, independent, can be done anytime after Phase 1.
