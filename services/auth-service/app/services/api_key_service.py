@@ -197,8 +197,11 @@ class APIKeyService:
     async def revoke_keys_for_tenant(self, tenant_id: int) -> None:
         """Permanently revoke all active API keys for a tenant (DEACTIVATED).
 
-        Sets ``is_active=False`` and deletes Redis entries. Reactivating the
-        tenant will not restore these keys — an admin must create new ones.
+        Bulk-sets ``is_active=False``, commits, then deletes Redis entries.
+        Commit-before-Redis matches ``revoke_by_obj`` ordering so a failed
+        commit cannot leave Redis empty while keys remain active (which would
+        let a later reactivation refresh restore them). Reactivating the
+        tenant will not restore revoked keys — an admin must create new ones.
         """
         if self._repo is None or self._users is None:
             logger.warning(
@@ -206,7 +209,7 @@ class APIKeyService:
                 tenant_id,
             )
             return
-        revoked = 0
+        revoked_keys: list[str] = []
         offset = 0
         while True:
             users = await self._users.list_by_tenant(
@@ -214,21 +217,25 @@ class APIKeyService:
             )
             if not users:
                 break
-            for user in users:
-                for key in await self._repo.list_by_user(user.id):
-                    if not key.is_active:
-                        continue
-                    await self._repo.revoke(key)
-                    await self._cache.delete_api_key_cache(key.api_key)
-                    revoked += 1
+            page_keys = await self._repo.revoke_active_for_users(
+                [user.id for user in users]
+            )
+            revoked_keys.extend(page_keys)
             if len(users) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
-        if revoked:
-            await self._repo.commit()
+        if not revoked_keys:
+            logger.info(
+                "Revoked 0 API key(s) for deactivated tenant_id=%s",
+                tenant_id,
+            )
+            return
+        await self._repo.commit()
+        for api_key in revoked_keys:
+            await self._cache.delete_api_key_cache(api_key)
         logger.info(
             "Revoked %s API key(s) for deactivated tenant_id=%s",
-            revoked,
+            len(revoked_keys),
             tenant_id,
         )
 

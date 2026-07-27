@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import APIKey
@@ -95,3 +95,23 @@ class APIKeyRepository(BaseRepository):
     async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()
+
+    async def revoke_active_for_users(self, user_ids: list[UUID]) -> list[str]:
+        """Bulk-revoke active keys for the given users; return raw key values.
+
+        Single ``UPDATE … RETURNING`` per call (no per-key flush). Callers
+        must ``commit()`` before deleting Redis entries so a failed commit
+        cannot leave Redis empty while ``is_active`` remains true.
+        """
+        if not user_ids:
+            return []
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.user_id.in_(user_ids),
+                APIKey.is_active.is_(True),
+            )
+            .values(is_active=False)
+            .returning(APIKey.api_key)
+        )
+        return list(result.scalars().all())

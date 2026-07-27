@@ -112,7 +112,7 @@ class TestAPIKeyCacheLifecycle:
         assert cache.delete_api_key_cache.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_revoke_keys_for_tenant_sets_inactive_and_evicts_redis(self) -> None:
+    async def test_revoke_keys_for_tenant_commits_before_redis_delete(self) -> None:
         user = User(
             id=uuid4(),
             email="test-user@example.invalid",
@@ -122,25 +122,58 @@ class TestAPIKeyCacheLifecycle:
             is_tenant_active=False,
         )
         active_key = _api_key(is_active=True)
-        already_revoked = _api_key(is_active=False)
-        already_revoked.api_key = uuid4().hex
         active_key.user_id = user.id
-        already_revoked.user_id = user.id
 
         cache = AsyncMock()
         repo = AsyncMock()
-        repo.list_by_user = AsyncMock(return_value=[active_key, already_revoked])
-        repo.revoke = AsyncMock()
+        repo.revoke_active_for_users = AsyncMock(return_value=[active_key.api_key])
         repo.commit = AsyncMock()
         users = AsyncMock()
         users.list_by_tenant = AsyncMock(side_effect=[[user], []])
 
+        call_order: list[str] = []
+
+        async def _commit() -> None:
+            call_order.append("commit")
+
+        async def _delete(_api_key: str) -> None:
+            call_order.append("redis")
+
+        repo.commit = AsyncMock(side_effect=_commit)
+        cache.delete_api_key_cache = AsyncMock(side_effect=_delete)
+
         svc = APIKeyService(repo, cache, user_repo=users)
         await svc.revoke_keys_for_tenant(1)
 
-        repo.revoke.assert_awaited_once_with(active_key)
-        cache.delete_api_key_cache.assert_awaited_once_with(active_key.api_key)
+        repo.revoke_active_for_users.assert_awaited_once_with([user.id])
         repo.commit.assert_awaited_once()
+        cache.delete_api_key_cache.assert_awaited_once_with(active_key.api_key)
+        assert call_order == ["commit", "redis"]
+
+    @pytest.mark.asyncio
+    async def test_revoke_keys_for_tenant_skips_redis_when_commit_fails(self) -> None:
+        user = User(
+            id=uuid4(),
+            email="test-user@example.invalid",
+            username=uuid4().hex[:12],
+            tenant_id=1,
+            is_active=True,
+            is_tenant_active=False,
+        )
+        active_key = _api_key(is_active=True)
+
+        cache = AsyncMock()
+        repo = AsyncMock()
+        repo.revoke_active_for_users = AsyncMock(return_value=[active_key.api_key])
+        repo.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))
+        users = AsyncMock()
+        users.list_by_tenant = AsyncMock(side_effect=[[user], []])
+
+        svc = APIKeyService(repo, cache, user_repo=users)
+        with pytest.raises(RuntimeError, match="db commit failed"):
+            await svc.revoke_keys_for_tenant(1)
+
+        cache.delete_api_key_cache.assert_not_awaited()
 
     def test_user_may_use_api_keys_false_when_tenant_suspended(self) -> None:
         user = User(
