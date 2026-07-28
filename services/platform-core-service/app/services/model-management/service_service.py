@@ -134,7 +134,10 @@ class ServiceService:
         # this deployment, so it resolves as "not available". This is the
         # serviceability boundary inference-service inherits — it resolves every
         # service through this endpoint, so a disabled type has no reachable backend.
-        if not is_task_type_enabled(data.get("taskType") or ""):
+        # The MODEL's task type is authoritative (mm_services.task_type is often
+        # unset on older rows); the model card is embedded at data["model"].
+        model_task_type = ((data.get("model") or {}).get("task") or {}).get("type")
+        if not is_task_type_enabled(model_task_type or ""):
             raise EntityNotFoundError(f"Service '{service_id}'")
 
         return data
@@ -198,10 +201,11 @@ class ServiceService:
 
         # 1b. Reject publishing a service for a task type not enabled in this
         # deployment (ENABLED_TASK_TYPES) — don't let operators register a service
-        # that could never be served.
-        if not is_task_type_enabled(payload.taskType):
+        # that could never be served. The model's task type is authoritative.
+        model_task_type = (model.task or {}).get("type")
+        if not is_task_type_enabled(model_task_type or ""):
             raise ValidationError(
-                message=f"Task type '{payload.taskType}' is not enabled in this deployment.",
+                message=f"Task type '{model_task_type}' is not enabled in this deployment.",
                 code="TASK_TYPE_DISABLED",
             )
 
@@ -305,30 +309,29 @@ class ServiceService:
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
 
-        # Reject managing a service whose current or requested task type is disabled
-        # (ENABLED_TASK_TYPES). Re-enabling a type is a config change, not an API edit.
-        effective_task_type = payload.taskType or instance.task_type
-        if not is_task_type_enabled(effective_task_type or ""):
+        model = await self._models.get_by_id_version(instance.model_id, instance.model_version)
+        if model is None:
+            raise EntityNotFoundError(
+                f"Model '{instance.model_id}' v{instance.model_version}"
+            )
+
+        # Reject managing a service whose task type is disabled (ENABLED_TASK_TYPES);
+        # the model's task type is authoritative. Re-enabling is a config change.
+        model_task_type = (model.task or {}).get("type")
+        if not is_task_type_enabled(model_task_type or ""):
             raise ValidationError(
-                message=f"Task type '{effective_task_type}' is not enabled in this deployment.",
+                message=f"Task type '{model_task_type}' is not enabled in this deployment.",
                 code="TASK_TYPE_DISABLED",
             )
 
         # If endpoint changes, re-validate it against the model schema
         if payload.endpoint:
-            model = await self._models.get_by_id_version(
-                instance.model_id, instance.model_version
-            )
-            if model is None:
-                raise EntityNotFoundError(
-                    f"Model '{instance.model_id}' v{instance.model_version}"
-                )
             api_key = payload.api_key or instance.api_key
             await self._validate_endpoint_for_model(
                 endpoint=payload.endpoint,
                 api_key=api_key,
                 model_inference_endpoint=model.inference_endpoint or {},
-                task_type=(model.task or {}).get("type"),
+                task_type=model_task_type,
             )
 
         request_dict = payload.model_dump(exclude_unset=True)

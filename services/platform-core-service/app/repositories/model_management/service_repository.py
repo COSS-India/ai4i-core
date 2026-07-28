@@ -67,7 +67,7 @@ class ServiceRepository:
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
         if enabled_task_types is not None:
-            stmt = stmt.where(Service.task_type.in_(list(enabled_task_types)))
+            stmt = stmt.where(Model.task["type"].astext.in_(list(enabled_task_types)))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
@@ -100,7 +100,7 @@ class ServiceRepository:
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
         if enabled_task_types is not None:
-            stmt = stmt.where(Service.task_type.in_(list(enabled_task_types)))
+            stmt = stmt.where(Model.task["type"].astext.in_(list(enabled_task_types)))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
