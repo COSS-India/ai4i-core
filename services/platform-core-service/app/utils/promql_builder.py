@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.exceptions import ValidationError
+from app.core.task_type_policy import is_task_type_enabled
 
 
 # ── Public taxonomy (used by the portal + validators) ────────────────────────
@@ -373,6 +374,13 @@ def _normalize_tasks(tasks: Optional[List[str]]) -> List[str]:
         if key not in INFERENCE_TASKS:
             raise ValidationError(
                 f"Unknown inference task '{name}'. Must be one of: {list(INFERENCE_TASKS)}"
+            )
+        # Only task types enabled in this deployment can scope an alert
+        # (ENABLED_TASK_TYPES). Normalization bridges the underscore form here to
+        # the hyphen form of the enabled set.
+        if not is_task_type_enabled(key):
+            raise ValidationError(
+                f"Inference task '{name}' is not enabled in this deployment (ENABLED_TASK_TYPES)."
             )
         if key not in result:
             result.append(key)

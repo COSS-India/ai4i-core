@@ -43,8 +43,12 @@ class CoreSettings(BaseSettings):
     @field_validator("enabled_task_types")
     @classmethod
     def _validate_enabled_task_types(cls, v: str) -> str:
-        known = {t["name"].lower() for t in get_inference_types()}
-        provided = {s.strip().lower() for s in v.split(",") if s.strip()}
+        # Normalize like task_type_policy._normalize (case + underscore→hyphen) so
+        # operators can write any spelling; canonical is the yaml lower-hyphen name.
+        def _norm(s: str) -> str:
+            return s.strip().lower().replace("_", "-")
+        known = {_norm(t["name"]) for t in get_inference_types()}
+        provided = {_norm(s) for s in v.split(",") if s.strip()}
         if not provided:
             raise ValueError(
                 "ENABLED_TASK_TYPES must list at least one task type "
