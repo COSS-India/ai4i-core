@@ -66,7 +66,7 @@ So there are two valid ways to answer "usage per model," and they serve differen
 | Grouping | Answers | Source | Available today? |
 |---|---|---|---|
 | **By `service_id`** (e.g. `agrinet-model`, `gemma-model`) | "How much traffic went to each model tenants can choose from" — matches how `mm_services` is registered and how tenants think about model selection | `telemetry_obsv_requests_total` + `telemetry_obsv_llm_tokens_processed`, both already carry `service_id` | ✅ Yes — full Requests/Tokens/Success%/Failure% |
-| **By real `model`** (e.g. `google/gemma-4-E4B-it`) | "Which underlying model file actually served the traffic" — useful to catch a backing-model swap under one service_id | `telemetry_obsv_llm_tokens_processed` only | ✅ Tokens only, ❌ no request/success/failure breakdown at this finer level |
+| **By real `model`** (e.g. `google/gemma-4-E4B-it`) | "Which underlying model file actually served the traffic" — useful to catch a backing-model swap under one service_id | `telemetry_obsv_llm_tokens_processed` today (tokens only); `telemetry_obsv_requests_total` **can** be extended to carry this too, at very low cost — see §8 | ✅ Tokens available now. Requests/Success%/Failure% at this finer level need the small addition in §8, not currently in place |
 
 **Recommendation: use the `service_id` grouping as the primary "Model Consumption" view** — it's what maps onto `mm_services` registrations (the things ops/admins actually register as "models" in this platform), it's a full match for Service Consumption's table shape, and it needs no tracking changes. The finer `model`-label view can be offered later as an optional drill-down for cases where a service's backing model changed mid-window.
 
@@ -77,8 +77,8 @@ So there are two valid ways to answer "usage per model," and they serve differen
 ### Phase 1 (ship first — no tracking changes needed, full table)
 A "Model Consumption" tab scoped to LLM only, grouped **by `service_id`** (per §4), showing the same columns as Service Consumption: Requests, Tokens processed, Success %, Failure %. This is a full-parity table, buildable entirely from existing Prometheus metrics — no changes to the shared metrics library required.
 
-### Phase 2 (optional — finer drill-down)
-For cases where the same `service_id` was repointed to a different real backing model mid-window (§4), offer an optional secondary breakdown by the real `model` label (from `adapter_config.model_name`) — tokens only, since that's the only metric carrying that finer label. Could be a click-to-expand row, or a footnote, rather than a separate table. Not required for launch; add only if this scenario turns out to matter in practice.
+### Phase 2 (optional — finer drill-down, cheaper than it first looked)
+For cases where the same `service_id` was repointed to a different real backing model mid-window (§4), offer an optional secondary breakdown by the real `model` label (from `adapter_config.model_name`). Tokens are already available for this today; §8 below adds a small, low-risk change to the shared metrics library so Requests/Success%/Failure% become available at this level too, not just tokens — turns out to be only a two-line change (one new label, one new call argument, single call site), not the bigger "touches every service" change originally assumed. Still optional for launch — add if this drill-down turns out to matter in practice, or now if it's cheap enough to just include.
 
 ### Phase 3 (optional polish)
 Look up nicer display names from `mm_services`/`mm_models` (e.g. the service's human-readable `name` field instead of the raw `service_id` string) if the registered service_ids aren't already tenant-friendly. Not required — the raw service_id strings (`agrinet-model`, `gemma-model`) are already fairly readable — so treat as a nice-to-have.
@@ -166,14 +166,29 @@ Both wrapped in the same `increase()`-based time-window logic already used elsew
 
 ## 8. Backend changes (Phase 2 — optional, real-backing-model drill-down)
 
-Only needed if the finer-grained view from §4/§5 (catching a backing-model swap under one `service_id`) turns out to matter in practice.
+**Update: this was re-examined at the user's request ("can I add a `model` label to `telemetry_obsv_requests_total`, just for LLM?") and turns out to be a genuinely small, low-risk change** — smaller than the original draft of this section assumed. Recording it here as a requirement that can be picked up whenever, not just a hypothetical.
+
+### Is it possible to add a `model` label "just for LLM"?
+
+Almost — with one caveat worth understanding. Prometheus counters/histograms require every observation to supply a value for *every* declared label, so the label itself can't be "LLM-only" at the metric-definition level. In practice this is a non-issue here, because:
+
+- `telemetry_obsv_requests_total` has exactly **one call site** in the whole codebase: [`libs/ai4i_core/ai4i_core/observability/middleware.py:224`](libs/ai4i_core/ai4i_core/observability/middleware.py#L224), inside `_record_metrics()`.
+- That same function already computes an `llm_model` variable ([`middleware.py:93`](libs/ai4i_core/ai4i_core/observability/middleware.py#L93)) which defaults to `""` and is only ever populated for `service_type == "llm"` — it's already being passed to `track_llm_tokens()` a few lines later ([`middleware.py:240`](libs/ai4i_core/ai4i_core/observability/middleware.py#L240)).
+
+So non-LLM requests (NMT, ASR, TTS, OCR, ...) would simply get `model=""` on every request — same as today's behavior, no new plumbing needed at those call sites, and no risk of breaking their existing metrics or dashboards (an unused, constant-empty label doesn't change how `sum()`/`sum by(...)` queries behave for label sets that don't reference it).
+
+### The actual change
 
 | File | Change |
 |---|---|
-| `metering_service.py` / `model_breakdown()` | Add an additional query grouped by the `model` label (not `service_id`) against `telemetry_obsv_llm_tokens_processed_sum` — tokens only, since that's the only metric carrying this finer label |
-| `schemas/metering.py` | Add an optional nested `real_model_breakdown` list on `ModelRow`, or a separate lightweight endpoint, if this is surfaced as a drill-down |
+| [`libs/ai4i_core/ai4i_core/observability/metrics.py`](libs/ai4i_core/ai4i_core/observability/metrics.py#L28-L33) | Add `"model"` to the label list of `enterprise_requests_total` (the `telemetry_obsv_requests_total` Counter), and add a `model: str = ""` parameter to `track_request()` ([`metrics.py:153`](libs/ai4i_core/ai4i_core/observability/metrics.py#L153)), passed through to `.labels(...)` |
+| [`libs/ai4i_core/ai4i_core/observability/middleware.py:224`](libs/ai4i_core/ai4i_core/observability/middleware.py#L224) | Pass `model=llm_model or ""` into the existing `track_request(...)` call — `llm_model` is already computed and already `""` for every non-LLM request, so this is a one-line addition, not a new extraction path |
+| [`app/services/metering_service.py`](services/platform-core-service/app/services/metering_service.py) / `model_breakdown()` | Add a query grouped by `model` (not `service_id`) against `telemetry_obsv_requests_total` (LLM endpoints only) for the finer-grained Requests/Success%/Failure%, alongside the existing tokens-by-`model` query |
+| `schemas/metering.py` | Add an optional nested `real_model_breakdown: list[ModelRow]` on the response, or a separate lightweight endpoint, for surfacing this as a drill-down under each `service_id` row |
 
-No changes to the shared metrics library are needed for this either — the `model` label already exists on the tokens histogram today.
+Because this touches a shared library used by every service, it still needs a proper rollout — bump the `ai4i_core` package version, redeploy every dependent service, and confirm (e.g. in a staging environment) that NMT/ASR/TTS/OCR/etc. keep emitting metrics correctly with the new label defaulting to empty. But the code change itself is small and doesn't require touching each service's own code.
+
+**Worth calling out as a follow-up to Phase 1, not a blocker for it** — since Phase 1 already ships the full table at the `service_id` level with zero library changes.
 
 ---
 
@@ -214,6 +229,7 @@ No new shared UI components are needed for the main table — `MeteringDonutChar
 3. **Is the `service_id` grouping (§4) the right definition of "model" for this feature?** It matches how models are registered in `mm_services` and how tenants select them via the API, and it's what makes the full table possible without tracking changes. Worth confirming this matches what stakeholders picture when they say "agrinet, gemma, etc." — if they specifically mean the real backing model file rather than the registered service, that's the Phase 2 drill-down (tokens only) instead.
 4. **Friendly model names (Phase 3)** — worth doing now, or fine to launch with raw `service_id` strings (e.g. `agrinet-model`) as-is?
 5. **How many model columns should the heatmap show at once?** Since models aren't a small fixed catalog like services, an admin with dozens of registered LLM services could end up with a very wide table. Worth deciding a default (e.g. top 10 models by volume, matching the existing `topN` tenant control) rather than showing every model that ever saw traffic.
+6. **Should the Phase 2 metrics-library change (§8) be bundled into the initial launch, or done as a fast-follow?** It's now confirmed to be a small, low-risk change (one new label, one new call argument, single call site) — cheap enough that it could realistically go in alongside Phase 1 rather than waiting. The main reason to still call it "Phase 2" is the rollout mechanics (bumping a shared package version and redeploying every dependent service), which is a bigger lift than the code change itself.
 
 ---
 
@@ -221,5 +237,5 @@ No new shared UI components are needed for the main table — `MeteringDonutChar
 
 - **Phase 1 (full model breakdown tab — Requests, Tokens, Success %, Failure %, platform-wide and single-tenant-scoped):** small — one new backend method + route + schema, one new frontend tab component + wiring, all reusing existing shared pieces and requiring no changes to the shared metrics library. Comparable in size to how Service Consumption itself was built.
 - **Tenant × model heatmap (cross-tenant matrix, Platform-Admin-only):** small-to-medium — one new backend method (close copy of `usage_by_tenant_service()`), and one new frontend component, since the existing heatmap component's fixed-column assumption doesn't carry over to a dynamic model list.
-- **Phase 2 (optional real-backing-model drill-down):** small, independent add-on — one extra query grouped by a label that already exists.
+- **Phase 2 (optional real-backing-model drill-down, incl. the `model`-on-`telemetry_obsv_requests_total` addition):** the metering query work is a small, independent add-on (one extra query grouped by a label that already exists for tokens, or that becomes available via the §8 change for requests). The §8 metrics-library change itself is a two-line code change, but carries shared-library rollout overhead (version bump + redeploy across every service + a staging sanity check) — small in code size, moderate in process/coordination.
 - **Phase 3 (friendly names):** small, independent, can be done anytime after Phase 1.
