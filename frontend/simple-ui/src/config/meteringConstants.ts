@@ -187,12 +187,6 @@ export const METERING = {
     HEATMAP_TEXT_HIGH: "#FFFFFF",
   },
   HEATMAP: {
-    /**
-     * Only these service keys are rendered in the tenant×service heatmap.
-     * UNDO: remove ALLOWED_SERVICE_KEYS (and its filter in TenantServiceHeatmapSection)
-     * and restore the "Select services" dropdown to show all SERVICES again.
-     */
-    ALLOWED_SERVICE_KEYS: ["llm"] as const,
     SERVICES: [
       { key: "nmt", shortLabel: "NMT", displayName: "NMT" },
       { key: "asr", shortLabel: "ASR", displayName: "ASR" },
@@ -320,10 +314,7 @@ export const METERING = {
   } as const,
 } as const;
 
-// UNDO: use SERVICES keys when restoring the multi-service heatmap:
-// export type MeteringHeatmapServiceKey =
-//   (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 export type MeteringHeatmapServiceKey =
-  (typeof METERING.HEATMAP.ALLOWED_SERVICE_KEYS)[number];
+  (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 
 export type MeteringSubTab = (typeof METERING.SUB_TABS)[number]["id"];

@@ -21,7 +21,6 @@ import { useAuth } from "../hooks/useAuth";
 import LoginForm from "../components/auth/LoginForm";
 import RegisterForm from "../components/auth/RegisterForm";
 import { ACCOUNT_DELETED_LOGIN_MESSAGE } from "../components/profile/hooks/useDeleteAccount";
-import { getDefaultLandingPath } from "../utils/navigation";
 
 const AuthPage: React.FC = () => {
   const router = useRouter();
@@ -42,11 +41,7 @@ const AuthPage: React.FC = () => {
   const getRedirectPath = (): string => {
     const redirect = router.query.redirect;
     const path = typeof redirect === "string" ? redirect : "";
-    // Prefer explicit redirect; otherwise Usage Dashboard (or services home if unauthorized).
-    // Omit roles so getDefaultLandingPath reads stored user when React state has not flushed yet.
-    // To restore previous post-login landing (services home `/`), use:
-    // return isSafeRelativePath(path) ? path : "/";
-    return isSafeRelativePath(path) ? path : getDefaultLandingPath();
+    return isSafeRelativePath(path) ? path : "/";
   };
 
   // Redirect to home or intended destination if already authenticated
@@ -87,7 +82,7 @@ const AuthPage: React.FC = () => {
     await router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true });
   };
 
-  // Handle successful login - redirect to intended destination or default landing
+  // Handle successful login - redirect to home or intended destination from query
   const handleLoginSuccess = () => {
     router.push(getRedirectPath());
   };

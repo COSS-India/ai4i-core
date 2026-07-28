@@ -103,14 +103,12 @@ const Header: React.FC = () => {
       case "/api-key-management":
         setTitle("API Key Management");
         break;
-      // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
-      // case "/pii-management":
-      //   setTitle("PII Guardrail");
-      //   break;
-      // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
-      // case "/alerts-management":
-      //   setTitle("Alerts Management");
-      //   break;
+      case "/pii-management":
+        setTitle("PII Guardrail");
+        break;
+      case "/alerts-management":
+        setTitle("Alerts Management");
+        break;
       case "/logs":
         setTitle("Logs Dashboard");
         break;

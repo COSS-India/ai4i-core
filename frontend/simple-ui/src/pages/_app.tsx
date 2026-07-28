@@ -44,10 +44,8 @@ const layoutRoutes = [
   '/logs',
   '/usage-dashboard',
   '/traces',
-  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
-  // '/alerts-management',
-  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
-  // '/pii-management',
+  '/alerts-management',
+  '/pii-management',
   '/tier-management',
   '/policy-management',
 ];

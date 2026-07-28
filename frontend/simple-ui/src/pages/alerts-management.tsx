@@ -1,6 +1,7 @@
 import {
   Box,
   Center,
+  Heading,
   Spinner,
   VStack,
   Text,
@@ -13,13 +14,6 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import AlertingTab from "../components/profile/AlertingTab";
 
-/**
- * AI4IDS-2604: Alerts Management temporarily removed from UI.
- * To restore: set ALERTS_MANAGEMENT_UI_ENABLED = true, and uncomment related
- * Sidebar / AuthGuard / _app / Header entries marked AI4IDS-2604.
- */
-const ALERTS_MANAGEMENT_UI_ENABLED = false;
-
 const AlertsManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -27,27 +21,10 @@ const AlertsManagementPage: React.FC = () => {
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
 
   React.useEffect(() => {
-    if (!ALERTS_MANAGEMENT_UI_ENABLED) {
-      router.replace("/");
-      return;
-    }
     if (!authLoading && (!isAuthenticated || !isAdmin)) {
       router.push("/");
     }
   }, [isAuthenticated, authLoading, isAdmin, router]);
-
-  if (!ALERTS_MANAGEMENT_UI_ENABLED) {
-    return (
-      <ContentLayout>
-        <Center h="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="orange.500" />
-            <Text color="gray.600">Redirecting...</Text>
-          </VStack>
-        </Center>
-      </ContentLayout>
-    );
-  }
 
   if (authLoading) {
     return (

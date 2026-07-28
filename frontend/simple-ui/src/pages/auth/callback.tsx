@@ -6,7 +6,6 @@ import { useRouter } from 'next/router';
 import { Box, Spinner, Text, VStack, Alert, AlertIcon, AlertTitle, AlertDescription } from '@chakra-ui/react';
 import authService from '../../services/authService';
 import { UI_ERROR_MESSAGES } from '../../config/constants';
-import { getDefaultLandingPath } from '../../utils/navigation';
 import { getRememberMeFromStorage } from '../../utils/tokenStorage';
 
 const OAuthCallback = () => {
@@ -68,9 +67,8 @@ const OAuthCallback = () => {
             window.dispatchEvent(new Event('auth:updated'));
           }
 
-          // Redirect to default landing (Usage Dashboard when permitted)
-          // Previous: router.push('/');
-          router.push(getDefaultLandingPath(user?.roles));
+          // Redirect to home page
+          router.push('/');
         } catch (userError) {
           console.error('Failed to fetch user data:', userError);
           setError('Failed to verify authentication. Please try logging in again.');

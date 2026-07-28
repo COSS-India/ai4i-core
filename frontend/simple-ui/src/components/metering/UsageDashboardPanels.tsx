@@ -82,7 +82,7 @@ interface AdopterPanelsProps {
   requestVolumeSection: React.ReactNode;
   topN: MeteringDashboardState["topN"];
   onTopNChange: MeteringDashboardState["setTopN"];
-  // UNDO: onHeatmapServicesChange: MeteringDashboardState["setTenantHeatmapServices"];
+  onHeatmapServicesChange: MeteringDashboardState["setTenantHeatmapServices"];
   tenantQuery: MeteringDashboardState["tenantQuery"];
   serviceQuery: MeteringDashboardState["serviceQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
@@ -97,7 +97,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   requestVolumeSection,
   topN,
   onTopNChange,
-  // onHeatmapServicesChange,
+  onHeatmapServicesChange,
   tenantQuery,
   serviceQuery,
   parseQueryError,
@@ -120,7 +120,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         data={tenantQuery.data}
         topN={topN}
         onTopNChange={onTopNChange}
-        // UNDO: onHeatmapServicesChange={onHeatmapServicesChange}
+        onHeatmapServicesChange={onHeatmapServicesChange}
         tenantOrganisationById={tenantOrganisationById}
         isLoading={tenantQuery.isLoading}
         errorMessage={parseQueryError(tenantQuery.error)}
