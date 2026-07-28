@@ -82,6 +82,9 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
+import ConsentCheckbox, {
+  getConsentValidationError,
+} from "../common/ConsentCheckbox";
 import AdminDataTable, {
   TableSearchField,
   TableSelectField,
@@ -166,6 +169,26 @@ export default function TenantManagementTab({
 
   const toast = useToast();
   const queryClient = useQueryClient();
+
+  // Create Tenant modal — consent checkbox state
+  const [tenantConsentAccepted, setTenantConsentAccepted] = useState(false);
+  const [tenantConsentError, setTenantConsentError] = useState("");
+
+  // Reset consent whenever the Create Tenant modal opens or closes.
+  useEffect(() => {
+    setTenantConsentAccepted(false);
+    setTenantConsentError("");
+  }, [tm.isTenantModalOpen]);
+
+  // Add Tenant User modal — consent checkbox state
+  const [userConsentAccepted, setUserConsentAccepted] = useState(false);
+  const [userConsentError, setUserConsentError] = useState("");
+
+  // Reset consent whenever the Add Tenant User modal opens or closes.
+  useEffect(() => {
+    setUserConsentAccepted(false);
+    setUserConsentError("");
+  }, [tm.isUserModalOpen]);
 
   // Assign Tier modal state
   const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
@@ -1296,6 +1319,14 @@ export default function TenantManagementTab({
                   {tm.tenantFormErrors.phone_number}
                 </FormErrorMessage>
               </FormControl>
+              <ConsentCheckbox
+                isChecked={tenantConsentAccepted}
+                onChange={(checked) => {
+                  setTenantConsentAccepted(checked);
+                  if (checked) setTenantConsentError("");
+                }}
+                error={tenantConsentError}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -1304,9 +1335,16 @@ export default function TenantManagementTab({
             </Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleRegisterTenant}
+              onClick={() => {
+                const consentError = getConsentValidationError(tenantConsentAccepted);
+                if (consentError) {
+                  setTenantConsentError(consentError);
+                  return;
+                }
+                tm.handleRegisterTenant();
+              }}
               isLoading={tm.isSubmittingTenant}
-              isDisabled={!tm.canSubmitTenantForm}
+              isDisabled={!tm.canSubmitTenantForm || !tenantConsentAccepted}
             >
               Create
             </Button>
@@ -1560,6 +1598,14 @@ export default function TenantManagementTab({
                   {tm.userFormErrors.phone_number}
                 </FormErrorMessage>
               </FormControl>
+              <ConsentCheckbox
+                isChecked={userConsentAccepted}
+                onChange={(checked) => {
+                  setUserConsentAccepted(checked);
+                  if (checked) setUserConsentError("");
+                }}
+                error={userConsentError}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -1568,9 +1614,16 @@ export default function TenantManagementTab({
             </Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleRegisterUser}
+              onClick={() => {
+                const consentError = getConsentValidationError(userConsentAccepted);
+                if (consentError) {
+                  setUserConsentError(consentError);
+                  return;
+                }
+                tm.handleRegisterUser();
+              }}
               isLoading={tm.isSubmittingUser}
-              isDisabled={!tm.canSubmitUserForm}
+              isDisabled={!tm.canSubmitUserForm || !userConsentAccepted}
             >
               Add
             </Button>
