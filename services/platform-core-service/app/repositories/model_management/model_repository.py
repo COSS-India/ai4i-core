@@ -5,7 +5,7 @@ Pure data-access — no business rules, no HTTP concerns. Returns ORM
 instances or scalars; the caller decides how to surface them.
 """
 
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import case, delete, desc, func, select, update
@@ -87,11 +87,14 @@ class ModelRepository:
         version_status: Optional[str] = None,
         model_name: Optional[str] = None,
         created_by: Optional[str] = None,
+        enabled_task_types: Optional[Iterable[str]] = None,
     ) -> int:
         """Return the total number of models matching the given filters (no pagination)."""
         stmt = select(func.count(Model.id))
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
+        if enabled_task_types is not None:
+            stmt = stmt.where(Model.task["type"].astext.in_(list(enabled_task_types)))
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
         if version_status == "active":
@@ -111,6 +114,7 @@ class ModelRepository:
         version_status: Optional[str] = None,
         model_name: Optional[str] = None,
         created_by: Optional[str] = None,
+        enabled_task_types: Optional[Iterable[str]] = None,
         offset: int = 0,
         limit: Optional[int] = None,
     ) -> List[Model]:
@@ -121,6 +125,8 @@ class ModelRepository:
         stmt = select(Model)
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
+        if enabled_task_types is not None:
+            stmt = stmt.where(Model.task["type"].astext.in_(list(enabled_task_types)))
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
         # version_status takes precedence over include_deprecated

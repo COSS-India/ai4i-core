@@ -10,8 +10,10 @@ both .env and OS-level vars are accepted.
 
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from ai4i_core.ppu import get_inference_types
 
 
 class CoreSettings(BaseSettings):
@@ -30,6 +32,31 @@ class CoreSettings(BaseSettings):
     api_version: str
     debug: bool = False
     environment: str = "development"
+
+    # ── Task-type enablement ──
+    # Comma-separated allowlist of task types this deployment serves (yaml `name`
+    # form, e.g. "llm,nmt,asr"). platform-core is the ONLY reader; every other
+    # surface derives from it via the enabled set. Required — an unset or unknown
+    # value fails boot (fail-fast). See docs/design/ENABLED_TASK_TYPES.md.
+    enabled_task_types: str = Field(..., description="Comma-separated enabled task types")
+
+    @field_validator("enabled_task_types")
+    @classmethod
+    def _validate_enabled_task_types(cls, v: str) -> str:
+        known = {t["name"].lower() for t in get_inference_types()}
+        provided = {s.strip().lower() for s in v.split(",") if s.strip()}
+        if not provided:
+            raise ValueError(
+                "ENABLED_TASK_TYPES must list at least one task type "
+                f"(valid names: {sorted(known)})"
+            )
+        unknown = provided - known
+        if unknown:
+            raise ValueError(
+                f"ENABLED_TASK_TYPES contains unknown task types: {sorted(unknown)}. "
+                f"Valid names: {sorted(known)}"
+            )
+        return v
 
     # ── Server ──
     host: str = "0.0.0.0"

@@ -3,7 +3,7 @@ Async repository for the Service entity.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import String, and_, cast, delete, desc, func, select, update
@@ -54,6 +54,7 @@ class ServiceRepository:
         task_type: Optional[str] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
+        enabled_task_types: Optional[Iterable[str]] = None,
     ) -> int:
         """Return the total number of services matching the given filters (no pagination)."""
         stmt = select(func.count(Service.id)).join(
@@ -65,6 +66,8 @@ class ServiceRepository:
         ).where(Service.deleted_at.is_(None))
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
+        if enabled_task_types is not None:
+            stmt = stmt.where(Service.task_type.in_(list(enabled_task_types)))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
@@ -78,6 +81,7 @@ class ServiceRepository:
         task_type: Optional[str] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
+        enabled_task_types: Optional[Iterable[str]] = None,
         offset: int = 0,
         limit: Optional[int] = None,
     ) -> List[Tuple[Service, Model]]:
@@ -95,6 +99,8 @@ class ServiceRepository:
         )
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
+        if enabled_task_types is not None:
+            stmt = stmt.where(Service.task_type.in_(list(enabled_task_types)))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
