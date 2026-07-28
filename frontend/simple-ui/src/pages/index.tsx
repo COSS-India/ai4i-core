@@ -37,6 +37,7 @@ import { getServiceDescription, getServiceTitle, type ServiceId } from "../confi
 import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 import { useGuestServices } from "../hooks/useGuestServices";
+import { useInferenceTypes } from "../hooks/useInferenceTypes";
 
 const safeColorMap:any = {
   asr: { // Coral → Pastel Coral
@@ -150,6 +151,7 @@ const HomePage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   const { isGuest, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
+  const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
@@ -175,6 +177,10 @@ const HomePage: React.FC = () => {
     { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose" },
   ]
     .filter((service) => {
+      // Deployment gate (ENABLED_TASK_TYPES) — applies to every user, admins included.
+      if (inferenceTypesLoading) return false;
+      if (!enabledServiceIds.has(service.id)) return false;
+      // Guest allowlist — guests only.
       if (!isGuest) return true;
       if (guestServicesLoading) return false;
       return allowedServiceIds?.has(service.id) ?? false;
