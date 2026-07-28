@@ -16,12 +16,14 @@ interface AuthGuardProps {
 const protectedRoutes = new Set([
   '/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management',
   '/services-management', '/tenant-management', '/api-key-management', '/profile',
-  '/logs', '/usage-dashboard', '/traces', '/alerts-management', '/pii-management',
+  '/logs', '/usage-dashboard', '/traces',
+  // AI4IDS-2604 / AI4IDS-2605: restore '/alerts-management', '/pii-management' when re-enabling UI
   '/policy-management',
 ]);
 
 // Routes that require ADMIN role
-const adminOnlyRoutes = new Set(['/alerts-management']);
+// AI4IDS-2604: Alerts Management removed from UI — restore '/alerts-management' when re-enabling
+const adminOnlyRoutes = new Set<string>([/* '/alerts-management' */]);
 
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
 const usageDashboardRoutes = new Set(['/usage-dashboard']);

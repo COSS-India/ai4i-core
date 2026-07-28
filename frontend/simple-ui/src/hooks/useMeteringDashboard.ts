@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { listTenants } from "../services/tenantService";
@@ -19,6 +20,13 @@ import { meteringQueryDefaults, meteringQueryKey } from "../utils/meteringQuery"
 import { resolveMeteringGeneratedAt, formatMeteringDataStateBanner } from "../utils/meteringFormatters";
 import { getTenantIdFromToken } from "../utils/helpers";
 
+function isMeteringSubTab(
+  value: string,
+  tabs: ReadonlyArray<{ id: string }>,
+): value is MeteringSubTab {
+  return tabs.some((t) => t.id === value);
+}
+
 export interface TenantPreviewOption {
   id: string;
   organisation: string;
@@ -31,6 +39,7 @@ interface UseMeteringDashboardOptions {
 }
 
 export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboardOptions) {
+  const router = useRouter();
   const roleViewConfig = useMemo(
     () => getMeteringRoleViewConfig(userRoles),
     [userRoles],
@@ -38,6 +47,8 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const isAdopterView = roleViewConfig.defaultView === "adopter";
   const isTenantView = roleViewConfig.defaultView === "tenant";
+
+  const availableSubTabs = isTenantView ? METERING.TENANT_SUB_TABS : METERING.SUB_TABS;
 
   const [subTab, setSubTab] = useState<MeteringSubTab>(() =>
     getMeteringRoleViewConfig(userRoles).defaultView === "tenant"
@@ -47,12 +58,22 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
-  const [tenantHeatmapServices, setTenantHeatmapServices] = useState<string[] | null>(null);
+  // UNDO: restore heatmap service-filter state when re-enabling "Select services".
+  // const [tenantHeatmapServices, setTenantHeatmapServices] = useState<string[] | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
+  // Honor ?tab= so login/Home can deep-link to Overview (and refresh keeps the tab).
   useEffect(() => {
-    setTenantHeatmapServices(null);
-  }, [subTab, timeWindow, topN]);
+    if (!router.isReady) return;
+    const raw = router.query.tab;
+    if (typeof raw !== "string" || !isMeteringSubTab(raw, availableSubTabs)) return;
+    setSubTab(raw);
+  }, [router.isReady, router.query.tab, availableSubTabs]);
+
+  // UNDO: reset heatmap service filter when controls change.
+  // useEffect(() => {
+  //   setTenantHeatmapServices(null);
+  // }, [subTab, timeWindow, topN]);
 
   const tenantsQuery = useQuery({
     queryKey: meteringQueryKey(METERING.QUERY.SCOPES.TENANT_DIRECTORY),
@@ -118,11 +139,13 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       METERING.QUERY.SCOPES.TENANT,
       timeWindow,
       topN,
-      tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      // UNDO: tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      METERING.QUERY.HEATMAP_SERVICES_ALL,
       queryTenantId,
     ),
     queryFn: () =>
-      fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices, queryTenantId),
+      // UNDO: fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices, queryTenantId),
+      fetchMeteringTenantConsumption(timeWindow, topN, null, queryTenantId),
     enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
     placeholderData: keepPreviousData,
     ...meteringQueryDefaults,
@@ -230,7 +253,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setTopN,
     scopeTenantId,
     setScopeTenantId,
-    setTenantHeatmapServices,
+    // UNDO: setTenantHeatmapServices,
     isAdopterView,
     isTenantView,
     previewTenants,
