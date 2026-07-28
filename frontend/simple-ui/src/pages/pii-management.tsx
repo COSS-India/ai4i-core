@@ -7,6 +7,13 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import PiiManagement from "../components/pii/PiiManagement";
 import { useAuth } from "../hooks/useAuth";
 
+/**
+ * AI4IDS-2605: PII Guardrail temporarily removed from UI.
+ * To restore: set PII_GUARDRAIL_UI_ENABLED = true, and uncomment related
+ * Sidebar / AuthGuard / _app / Header entries marked AI4IDS-2605.
+ */
+const PII_GUARDRAIL_UI_ENABLED = false;
+
 const PiiManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -14,10 +21,27 @@ const PiiManagementPage: React.FC = () => {
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
 
   React.useEffect(() => {
+    if (!PII_GUARDRAIL_UI_ENABLED) {
+      router.replace("/");
+      return;
+    }
     if (!authLoading && !isAuthenticated) {
       router.push("/auth");
     }
   }, [isAuthenticated, authLoading, router]);
+
+  if (!PII_GUARDRAIL_UI_ENABLED) {
+    return (
+      <ContentLayout>
+        <Center h="400px">
+          <VStack spacing={4}>
+            <Spinner size="xl" color="orange.500" />
+            <Text color="gray.600">Redirecting...</Text>
+          </VStack>
+        </Center>
+      </ContentLayout>
+    );
+  }
 
   if (authLoading) {
     return (
