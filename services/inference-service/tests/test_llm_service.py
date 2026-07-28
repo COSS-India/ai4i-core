@@ -9,6 +9,12 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from services.llm_service import UpstreamStreamError  # noqa: E402
+from ai4i_core.context import (  # noqa: E402
+    get_llm_usage_input_tokens,
+    get_llm_usage_output_tokens,
+)
+
 
 # Reusable stub service_info returned by the MMS resolver.
 _STUB_SERVICE_INFO = {
@@ -174,6 +180,216 @@ async def test_proxy_traced_returns_502_on_connect_error(llm_service):
         )
     assert status == 502
     assert body["detail"] == "Upstream LLM request failed"
+
+
+# ── open_stream / proxy_traced_stream — SSE streaming path ────────────────────
+
+class _FakeStreamResponse:
+    """Minimal stand-in for httpx.Response in streaming mode."""
+
+    def __init__(self, status_code, lines=None, raw_body=b""):
+        self.status_code = status_code
+        self._lines = lines or []
+        self._raw_body = raw_body
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self):
+        return self._raw_body
+
+    async def aclose(self):
+        pass
+
+
+class _FakeStreamClient:
+    """Minimal stand-in for httpx.AsyncClient in streaming mode."""
+
+    def __init__(self, response):
+        self._response = response
+        self.closed = False
+
+    def build_request(self, method, url, json=None, headers=None):
+        return object()
+
+    async def send(self, request, stream=True):
+        return self._response
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_open_stream_raises_upstream_stream_error_on_4xx(llm_service):
+    response = _FakeStreamResponse(404, raw_body=b'{"detail": "not found"}')
+    fake_client = _FakeStreamClient(response)
+    with patch("services.llm_service.httpx.AsyncClient", return_value=fake_client):
+        with pytest.raises(UpstreamStreamError) as exc_info:
+            await llm_service.open_stream("http://vllm:8000/v1/chat/completions", {"model": "gemma"})
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.body == {"detail": "not found"}
+    assert fake_client.closed
+
+
+@pytest.mark.asyncio
+async def test_open_stream_returns_client_and_response_on_200(llm_service):
+    response = _FakeStreamResponse(200, lines=["data: [DONE]"])
+    fake_client = _FakeStreamClient(response)
+    with patch("services.llm_service.httpx.AsyncClient", return_value=fake_client):
+        client, resp = await llm_service.open_stream("http://vllm:8000/v1/chat/completions", {"model": "gemma"})
+    assert resp is response
+    assert client is fake_client
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_returns_error_when_service_not_found(llm_service):
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(side_effect=LookupError("not found"))):
+        kind, status, body = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "missing-svc", "messages": [], "stream": True}
+        )
+    assert kind == "error"
+    assert status == 404
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_returns_403_when_tier_not_entitled(llm_service):
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))):
+        kind, status, body = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions",
+            {"model": "svc-1", "messages": [], "stream": True},
+            request=mock_request,
+        )
+    assert kind == "error"
+    assert status == 403
+    assert "quota" in body["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_returns_upstream_error_body(llm_service):
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream",
+                      new=AsyncMock(side_effect=UpstreamStreamError(500, {"detail": "boom"}))):
+        kind, status, body = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "messages": [], "stream": True},
+        )
+    assert kind == "error"
+    assert status == 500
+    assert body == {"detail": "boom"}
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_returns_502_on_connect_error(llm_service):
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream", side_effect=httpx.ConnectError("unreachable")):
+        kind, status, body = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "messages": [], "stream": True},
+        )
+    assert kind == "error"
+    assert status == 502
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_injects_model_name_and_include_usage_default(llm_service):
+    """Upstream must get the real adapter model name, plus stream_options.include_usage
+    defaulted to True so token counts arrive in the final SSE chunk."""
+    captured = {}
+
+    async def fake_open_stream(url, payload):
+        captured["payload"] = payload
+        return _FakeStreamClient(_FakeStreamResponse(200)), _FakeStreamResponse(200, lines=["data: [DONE]"])
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream", side_effect=fake_open_stream):
+        kind, status, gen = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "messages": [], "stream": True},
+        )
+        assert kind == "stream"
+        assert status == 200
+        async for _ in gen:
+            pass
+
+    assert captured["payload"]["model"] == "google/gemma-4-E4B-it"
+    assert captured["payload"]["stream_options"]["include_usage"] is True
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_preserves_caller_stream_options(llm_service):
+    """A caller-supplied stream_options without include_usage must still get it
+    injected, instead of silently billing 0 tokens."""
+    captured = {}
+
+    async def fake_open_stream(url, payload):
+        captured["payload"] = payload
+        return _FakeStreamClient(_FakeStreamResponse(200)), _FakeStreamResponse(200, lines=["data: [DONE]"])
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream", side_effect=fake_open_stream):
+        _, _, gen = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions",
+            {"model": "svc-1", "messages": [], "stream": True, "stream_options": {"foo": "bar"}},
+        )
+        async for _ in gen:
+            pass
+
+    assert captured["payload"]["stream_options"] == {"foo": "bar", "include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_yields_sse_lines_unchanged(llm_service):
+    lines = [
+        'data: {"choices": [{"delta": {"content": "hi"}}]}',
+        'data: [DONE]',
+    ]
+
+    async def fake_open_stream(url, payload):
+        return _FakeStreamClient(_FakeStreamResponse(200)), _FakeStreamResponse(200, lines=lines)
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream", side_effect=fake_open_stream):
+        _, _, gen = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "messages": [], "stream": True},
+        )
+        collected = [line async for line in gen]
+
+    assert collected == [f"{line}\n" for line in lines]
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_extracts_usage_from_final_chunk(llm_service):
+    """Non-zero input/output tokens from the final usage-bearing chunk must be
+    recorded via ai4i_core.context for the observability middleware to pick up."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "hi"}}]}',
+        'data: {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 3}, '
+        '"model": "google/gemma-4-E4B-it"}',
+        'data: [DONE]',
+    ]
+
+    async def fake_open_stream(url, payload):
+        return _FakeStreamClient(_FakeStreamResponse(200)), _FakeStreamResponse(200, lines=lines)
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream", side_effect=fake_open_stream):
+        _, _, gen = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "messages": [], "stream": True},
+        )
+        async for _ in gen:
+            pass
+
+    assert get_llm_usage_input_tokens() == 5
+    assert get_llm_usage_output_tokens() == 3
 
 
 # ── proxy_multipart — error mapping ──────────────────────────────────────────

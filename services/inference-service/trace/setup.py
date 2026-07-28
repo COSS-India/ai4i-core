@@ -142,9 +142,12 @@ def setup_tracing() -> None:
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.resources import Resource
+    except ImportError:
+        logger.warning("OpenTelemetry SDK not available, tracing disabled")
+        return
 
+    try:
         # Create resource for this service
         service_name = settings.SERVICE_NAME
         service_version = settings.SERVICE_VERSION
@@ -154,45 +157,50 @@ def setup_tracing() -> None:
         tracer_provider = TracerProvider(resource=resource)
 
         # Always register the Kafka exporter — primary trace export path.
+        # This MUST be attached independently of the OTLP exporter below. The
+        # OTLP gRPC exporter import used to sit above this line inside the
+        # same try, so a missing OTLP package raised ImportError and disabled
+        # ALL tracing — silently stopping Kafka publish and PPU billing.
         tracer_provider.add_span_processor(BatchSpanProcessor(KafkaSpanExporter()))
         logger.info("✓ OpenTelemetry tracing configured with Kafka exporter")
 
-        # Optionally register OTLP exporter if endpoint is configured.
+        # OTLP export is optional. A missing exporter package or an
+        # unreachable collector must not disable the Kafka/billing path
+        # above, so its import and construction are isolated in their own try.
         otlp_exporter = None
         try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
             endpoint = settings.OTEL_EXPORTER_OTLP_ENDPOINT
             if endpoint:
                 otlp_exporter = OTLPSpanExporter(
                     endpoint=endpoint,
                     insecure=True,
                 )
+        except ImportError:
+            logger.warning(
+                "OTLP exporter package not installed; skipping OTLP export "
+                "(Kafka/billing unaffected)"
+            )
         except Exception as e:
-            logger.warning(f"Could not configure OTLP exporter: {e}")
+            logger.warning(f"Could not configure OTLP exporter, skipping (Kafka/billing unaffected): {e}")
 
         # Set the global tracer provider
         trace.set_tracer_provider(tracer_provider)
 
-         # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
+        # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
         # Always include send/receive spans for inference service for detailed breakdown
         if otlp_exporter is not None:
             exporter = FilteringSpanExporter(otlp_exporter, service_name=service_name)
-
-            # Add span processors
-            # First add organization processor to add org attribute to all spans
-            # organization_processor = OrganizationSpanProcessor()
-            # tracer_provider.add_span_processor(organization_processor)
-
-            # Then add batch processor for exporting (with filtering exporter)
             span_processor = BatchSpanProcessor(exporter)
             tracer_provider.add_span_processor(span_processor)
+            logger.info("✓ OTLP exporter attached")
 
         # Get tracer
         tracer = trace.get_tracer(service_name)
         logger.info(f"✅ Tracing initialized for tracer: {tracer}")
         logger.info("✓ Global tracer provider initialized")
 
-    except ImportError:
-        logger.warning("OpenTelemetry not available, tracing disabled")
     except Exception as e:
         logger.error(f"Failed to initialize tracing: {e}", exc_info=True)
 

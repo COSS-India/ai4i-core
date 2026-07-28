@@ -1,10 +1,17 @@
 """OpenAI-compatible LLM proxy service."""
 
+import json
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 import httpx
 
+from ai4i_core.context import (
+    set_llm_usage_input_tokens,
+    set_llm_usage_model_name,
+    set_llm_usage_output_tokens,
+)
+from ai4i_core.observability.utils import get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
 from trace.request_span import traced_span, traced_inference, get_context_attributes
@@ -15,6 +22,20 @@ logger = logging.getLogger(__name__)
 # Module-level singleton — mirrors the Orchestrator pattern so the TTL cache
 # is shared across requests rather than rebuilt on every /chat call.
 _resolver = InferenceServerResolver()
+
+
+class UpstreamStreamError(Exception):
+    """
+    Raised by ``open_stream`` when upstream responds with a 4xx/5xx before
+    any SSE body arrives. Error bodies are small and JSON (not SSE), so
+    they're read eagerly and surfaced here rather than force-fit into the
+    stream, letting callers fall back to a normal JSON error response.
+    """
+
+    def __init__(self, status_code: int, body: Any):
+        super().__init__(f"upstream returned {status_code}")
+        self.status_code = status_code
+        self.body = body
 
 
 class OpenAIProxyService:
@@ -131,6 +152,7 @@ class OpenAIProxyService:
             model_attrs["model_version"] = "unknown"
             model_attrs.update(get_context_attributes())
             model_attrs["service_id"] = service_id
+            set_llm_usage_model_name(model_attrs["model_name"])
 
             async with traced_inference(payload, "LLM", logger) as infer_attrs:
                 # service_id and tenantId must be set explicitly: the PPU Kafka
@@ -155,16 +177,198 @@ class OpenAIProxyService:
                     body = {"detail": message}
 
                 if isinstance(body, dict):
-                    usage = body.get("usage") or {}
-                    infer_attrs["input_tokens"] = usage.get("prompt_tokens", 0)
-                    infer_attrs["output_tokens"] = usage.get("completion_tokens", 0)
+                    infer_attrs["input_tokens"], infer_attrs["output_tokens"] = get_llm_usage(body)
                     infer_attrs["output_type"] = "text"
+                    set_llm_usage_input_tokens(infer_attrs["input_tokens"])
+                    set_llm_usage_output_tokens(infer_attrs["output_tokens"])
                     # vLLM echoes the real upstream model name in the response —
                     # capture it for the model span (the client's `model` field
                     # carried the service ID, not the upstream model name).
                     model_attrs["model_name"] = body.get("model", "unknown")
+                    set_llm_usage_model_name(model_attrs["model_name"])
 
         return status_code, body
+
+    async def open_stream(self, upstream_url: str, payload: Any) -> Tuple[httpx.AsyncClient, httpx.Response]:
+        """
+        Send ``payload`` to ``upstream_url`` with the response streamed
+        rather than buffered, returning the still-open ``(client,
+        response)`` pair once headers arrive so the caller can inspect
+        ``response.status_code`` before committing to a streaming reply.
+
+        Caller owns closing both (see ``_stream_lines``, which does this
+        for the success path). Raises ``UpstreamStreamError`` for a
+        4xx/5xx upstream response.
+
+        Uses a connect timeout but no read timeout: ``self.timeout`` is a
+        per-read timeout in httpx, and headers arriving fast just pushes the
+        wait for the first token into ``aiter_lines`` — a slow model under
+        load would otherwise abort the stream mid-response.
+        """
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=self.timeout, read=None, write=self.timeout, pool=self.timeout)
+        )
+        request = client.build_request(
+            "POST", upstream_url, json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            response = await client.send(request, stream=True)
+        except Exception:
+            await client.aclose()
+            raise
+
+        if response.status_code >= 400:
+            raw = await response.aread()
+            await response.aclose()
+            await client.aclose()
+            try:
+                body = json.loads(raw)
+            except Exception:
+                body = {"raw": raw.decode("utf-8", errors="replace")}
+            raise UpstreamStreamError(response.status_code, body)
+
+        return client, response
+
+    async def _stream_lines(
+        self, client: httpx.AsyncClient, response: httpx.Response
+    ) -> AsyncIterator[str]:
+        """
+        Yield raw SSE lines (blank lines included, to preserve event
+        framing) from an already-open streaming response. Closes the
+        client/response once the stream ends or the consumer stops
+        iterating early (e.g. the browser disconnects).
+        """
+        try:
+            async for line in response.aiter_lines():
+                yield line
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    async def proxy_traced_stream(
+        self,
+        path: str,
+        payload: Any,
+        request: Optional[Any] = None,
+    ) -> Tuple[str, int, Any]:
+        """
+        Streaming counterpart to proxy_traced() — same MMS resolution, tier
+        gate, and upstream-model-name injection, but opens the connection
+        with open_stream() and returns raw SSE lines instead of a parsed body.
+
+        Returns one of:
+          ("error", status_code, body)     - MMS lookup failure / tier gate /
+              upstream failure
+          ("stream", 200, async_generator) - success; generator yields raw
+              SSE lines (each with a trailing "\\n"), passed through
+              unchanged from upstream and wrapped with model + ai-inference
+              spans, mirroring proxy_traced(). Spans are opened lazily inside
+              the generator and only finalize once the caller fully iterates
+              it (i.e. once the client has read the whole SSE response) —
+              callers must consume it to completion, not just discard it, or
+              the ai-inference span (used for PPU billing) never gets logged.
+
+        Requests ``stream_options.include_usage`` (an OpenAI-spec field)
+        when the caller hasn't set it, since usage/token counts otherwise
+        only arrive in a non-streaming response body.
+        """
+        if isinstance(payload, dict):
+            service_id = payload.get("model", "") or ""
+        else:
+            service_id = ""
+
+        # Resolve service from MMS (result is TTL-cached).
+        try:
+            url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
+        except LookupError:
+            logger.error("LLM service not found: %s", service_id)
+            return "error", 404, {"detail": f"Service '{service_id}' not found"}
+        except (ConnectionError, ValueError):
+            logger.error("LLM proxy unavailable for service: %s", service_id)
+            return "error", 503, {"detail": "LLM service unavailable"}
+
+        # Tier entitlement check — mirrors proxy_traced(). Runs before opening
+        # the upstream connection so a 403 never touches vLLM.
+        if request is not None:
+            tier_id = request.headers.get("X-Tier-ID", "")
+            if tier_id:
+                allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
+                if allowed_tiers and tier_id not in allowed_tiers:
+                    return "error", 403, {"detail": f"Service '{service_id}' is not available for your quota"}
+
+        # Inject the real upstream model name from MMS adapter_config, replacing
+        # the client's `model` value (which was the service ID) with the model
+        # vLLM actually expects.
+        model_name = (service_info.get("adapter_config") or {}).get("model_name", "") if isinstance(payload, dict) else ""
+        if isinstance(payload, dict):
+            if model_name:
+                payload = {**payload, "model": model_name}
+            # Merge stream_options explicitly instead of setdefault on the whole
+            # dict, so a caller-supplied stream_options without include_usage
+            # still gets usage injected instead of silently billing 0 tokens.
+            stream_options = payload.setdefault("stream_options", {})
+            if not isinstance(stream_options, dict):
+                stream_options = {}
+                payload["stream_options"] = stream_options
+            stream_options.setdefault("include_usage", True)
+
+        logger.info("LLM proxy (stream) -> %s (service_id=%s)", url, service_id)
+        try:
+            client, response = await self.open_stream(url, payload)
+        except UpstreamStreamError as exc:
+            return "error", exc.status_code, exc.body
+        except httpx.RequestError as exc:
+            logger.warning("LLM upstream request failed (path=%s): %s", path, exc)
+            return "error", 502, {"detail": "Upstream LLM request failed"}
+
+        async def gen() -> AsyncIterator[str]:
+            with traced_span("model") as model_attrs:
+                model_attrs["task_type"] = "LLM"
+                model_attrs["model_name"] = model_name or "unknown"
+                model_attrs["model_version"] = "unknown"
+                model_attrs.update(get_context_attributes())
+                model_attrs["service_id"] = service_id
+                set_llm_usage_model_name(model_attrs["model_name"])
+
+                async with traced_inference(payload, "LLM", logger) as infer_attrs:
+                    infer_attrs["service_id"] = service_id
+                    infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
+                    infer_attrs["output_type"] = "text"
+
+                    async for line in self._stream_lines(client, response):
+                        line = f"{line}\n"
+                        if line.startswith("data:"):
+                            data = line[len("data:"):].strip()
+                            if data and data != "[DONE]":
+                                try:
+                                    chunk = json.loads(data)
+                                except Exception:
+                                    chunk = None
+                                # get_llm_usage() returns (0, 0) both when a chunk
+                                # carries no `usage` block at all (every normal
+                                # content-delta chunk) and when it carries a
+                                # genuinely all-zero one (e.g. a request rejected/
+                                # truncated before producing tokens) — checking the
+                                # block's presence directly, instead of truthiness
+                                # of the extracted counts, tells those apart so a
+                                # real zero-token usage chunk still gets recorded.
+                                has_usage = isinstance(chunk, dict) and isinstance(chunk.get("usage"), dict)
+                                if has_usage:
+                                    input_tokens, output_tokens = get_llm_usage(chunk)
+                                    infer_attrs["input_tokens"] = input_tokens
+                                    infer_attrs["output_tokens"] = output_tokens
+                                    set_llm_usage_input_tokens(input_tokens)
+                                    set_llm_usage_output_tokens(output_tokens)
+                                # vLLM echoes the real upstream model name in the
+                                # response chunk — capture it for the model span.
+                                echoed_model = chunk.get("model") if isinstance(chunk, dict) else None
+                                if echoed_model:
+                                    model_attrs["model_name"] = echoed_model
+                                    set_llm_usage_model_name(echoed_model)
+                        yield line
+
+        return "stream", 200, gen()
 
     async def proxy_multipart(
         self,
