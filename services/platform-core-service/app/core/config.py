@@ -15,6 +15,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ai4i_core.ppu import get_inference_types
 
+from app.core.task_type_norm import normalize_task_type
+
 
 class CoreSettings(BaseSettings):
     """Core-service configuration."""
@@ -43,12 +45,11 @@ class CoreSettings(BaseSettings):
     @field_validator("enabled_task_types")
     @classmethod
     def _validate_enabled_task_types(cls, v: str) -> str:
-        # Normalize like task_type_policy._normalize (case + underscore→hyphen) so
-        # operators can write any spelling; canonical is the yaml lower-hyphen name.
-        def _norm(s: str) -> str:
-            return s.strip().lower().replace("_", "-")
-        known = {_norm(t["name"]) for t in get_inference_types()}
-        provided = {_norm(s) for s in v.split(",") if s.strip()}
+        # Normalize via the shared normalizer (case + underscore→hyphen + spelling
+        # aliases) so operators can write any spelling; canonical is the yaml
+        # lower-hyphen name.
+        known = {normalize_task_type(t["name"]) for t in get_inference_types()}
+        provided = {normalize_task_type(s) for s in v.split(",") if s.strip()}
         if not provided:
             raise ValueError(
                 "ENABLED_TASK_TYPES must list at least one task type "

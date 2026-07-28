@@ -20,17 +20,7 @@ from typing import Any, Dict, List
 from ai4i_core.ppu import get_inference_types
 
 from app.core.config import settings
-
-
-def _normalize(name: str) -> str:
-    """Normalize any task-type spelling to the canonical yaml form (lower-hyphen).
-
-    Task types appear in several forms across the codebase — hyphen
-    (`mm_models.task["type"]`, the yaml), underscore (metering
-    `SERVICE_BREAKDOWN_CONFIG`, alert `INFERENCE_TASKS`), and mixed casing.
-    Collapsing case + underscore→hyphen lets one enabled set gate all of them.
-    """
-    return (name or "").strip().lower().replace("_", "-")
+from app.core.task_type_norm import normalize_task_type as _normalize
 
 
 @lru_cache(maxsize=1)
