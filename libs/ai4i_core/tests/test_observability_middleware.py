@@ -214,9 +214,9 @@ class TestPerServiceUnitDispatch:
         ("speaker_diarization", "track_speaker_diarization_length"),
         ("language_diarization", "track_language_diarization_length"),
     ])
-    def test_audio_minutes_converted_to_seconds(self, service_type, tracker):
-        """billed_input is in minutes (inference_types.yaml unit:
-        audio_minutes) — the histogram expects seconds, so it's *60."""
+    def test_audio_minutes_passed_through_unconverted(self, service_type, tracker):
+        """billed_input is already in minutes (inference_types.yaml unit:
+        audio_minutes) — the histogram is minute-scaled too, so no conversion."""
         mw = _middleware()
         mw._track_payload_metrics(
             service_type=service_type, billed_input=2.5, source_lang="en",
@@ -224,7 +224,7 @@ class TestPerServiceUnitDispatch:
         )
         getattr(mw.metrics_collector, tracker).assert_called_once()
         _, kwargs = getattr(mw.metrics_collector, tracker).call_args
-        assert kwargs["audio_seconds"] == 150.0
+        assert kwargs["audio_minutes"] == 2.5
 
     def test_tts_emits_billed_characters(self):
         """billed_input already reflects the post-chunk (<=400-char) sum

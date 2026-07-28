@@ -71,11 +71,11 @@ class MetricsCollector:
         )
 
         # ASR audio length tracking (Histogram for percentile calculations)
-        self.enterprise_asr_audio_seconds_processed = Histogram(
-            "telemetry_obsv_asr_audio_seconds_processed",
-            "ASR audio seconds processed per request",
+        self.enterprise_asr_audio_minutes_processed = Histogram(
+            "telemetry_obsv_asr_audio_minutes_processed",
+            "ASR audio minutes processed per request",
             ["language", "tenant", "service_id"],
-            buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
+            buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
 
@@ -110,11 +110,11 @@ class MetricsCollector:
         )
 
         # Audio language detection audio length tracking
-        self.enterprise_audio_lang_detection_seconds_processed = Histogram(
-            "telemetry_obsv_audio_lang_detection_seconds_processed",
-            "Audio language detection audio seconds processed per request",
+        self.enterprise_audio_lang_detection_minutes_processed = Histogram(
+            "telemetry_obsv_audio_lang_detection_minutes_processed",
+            "Audio language detection audio minutes processed per request",
             ["tenant", "service_id"],
-            buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
+            buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
 
@@ -128,20 +128,20 @@ class MetricsCollector:
         )
 
         # Speaker diarization audio length tracking
-        self.enterprise_speaker_diarization_seconds_processed = Histogram(
-            "telemetry_obsv_speaker_diarization_seconds_processed",
-            "Speaker diarization audio seconds processed per request",
+        self.enterprise_speaker_diarization_minutes_processed = Histogram(
+            "telemetry_obsv_speaker_diarization_minutes_processed",
+            "Speaker diarization audio minutes processed per request",
             ["tenant", "service_id"],
-            buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
+            buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
 
         # Language diarization audio length tracking
-        self.enterprise_language_diarization_seconds_processed = Histogram(
-            "telemetry_obsv_language_diarization_seconds_processed",
-            "Language diarization audio seconds processed per request",
+        self.enterprise_language_diarization_minutes_processed = Histogram(
+            "telemetry_obsv_language_diarization_minutes_processed",
+            "Language diarization audio minutes processed per request",
             ["tenant", "service_id"],
-            buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
+            buckets=(0.017, 0.083, 0.167, 0.5, 0.833, 1, 2, 5, 10, 30, 60, float("inf")),
             registry=self.registry,
         )
 
@@ -223,12 +223,12 @@ class MetricsCollector:
         ).observe(characters)
 
     def track_asr_audio_length(
-        self, language: str, audio_seconds: float, tenant: str = "unknown", service_id: str = ""
+        self, language: str, audio_minutes: float, tenant: str = "unknown", service_id: str = ""
     ):
         """Track ASR audio length processing."""
-        self.enterprise_asr_audio_seconds_processed.labels(
+        self.enterprise_asr_audio_minutes_processed.labels(
             language=language, tenant=tenant, service_id=service_id
-        ).observe(audio_seconds)
+        ).observe(audio_minutes)
 
     def track_ocr_characters(
         self, characters: int, tenant: str = "unknown", service_id: str = ""
@@ -263,12 +263,12 @@ class MetricsCollector:
         ).observe(characters)
 
     def track_audio_lang_detection_length(
-        self, audio_seconds: float, tenant: str = "unknown", service_id: str = ""
+        self, audio_minutes: float, tenant: str = "unknown", service_id: str = ""
     ):
         """Track Audio Language Detection audio length processing."""
-        self.enterprise_audio_lang_detection_seconds_processed.labels(
+        self.enterprise_audio_lang_detection_minutes_processed.labels(
             tenant=tenant, service_id=service_id
-        ).observe(audio_seconds)
+        ).observe(audio_minutes)
 
     def track_ner_tokens(
         self, tokens: int, tenant: str = "unknown", service_id: str = ""
@@ -279,20 +279,20 @@ class MetricsCollector:
         ).observe(tokens)
 
     def track_speaker_diarization_length(
-        self, audio_seconds: float, tenant: str = "unknown", service_id: str = ""
+        self, audio_minutes: float, tenant: str = "unknown", service_id: str = ""
     ):
         """Track Speaker Diarization audio length processing."""
-        self.enterprise_speaker_diarization_seconds_processed.labels(
+        self.enterprise_speaker_diarization_minutes_processed.labels(
             tenant=tenant, service_id=service_id
-        ).observe(audio_seconds)
+        ).observe(audio_minutes)
 
     def track_language_diarization_length(
-        self, audio_seconds: float, tenant: str = "unknown", service_id: str = ""
+        self, audio_minutes: float, tenant: str = "unknown", service_id: str = ""
     ):
         """Track Language Diarization audio length processing."""
-        self.enterprise_language_diarization_seconds_processed.labels(
+        self.enterprise_language_diarization_minutes_processed.labels(
             tenant=tenant, service_id=service_id
-        ).observe(audio_seconds)
+        ).observe(audio_minutes)
 
     def render(self) -> str:
         """Render the registry to Prometheus text-exposition format."""

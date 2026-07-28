@@ -764,7 +764,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -796,13 +796,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[1d])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_minutes_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[1d])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "ASR Payload Size (Seconds)",
+      "title": "ASR Payload Size (Minutes)",
       "type": "stat"
     },
     {
@@ -2546,7 +2546,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -2578,13 +2578,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_minutes_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Speaker Diarization Payload Size (Seconds)",
+      "title": "Speaker Diarization Payload Size (Minutes)",
       "type": "stat"
     },
     {
@@ -2612,7 +2612,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -2644,13 +2644,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_minutes_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Language Diarization Payload Size (Seconds)",
+      "title": "Language Diarization Payload Size (Minutes)",
       "type": "stat"
     },
     {
@@ -2678,7 +2678,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -2710,13 +2710,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_minutes_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Audio Language Detection Payload Size (Seconds)",
+      "title": "Audio Language Detection Payload Size (Minutes)",
       "type": "stat"
     },
     {

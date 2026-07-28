@@ -374,19 +374,18 @@ class MeteringService:
         for i, task in enumerate(native_tasks):
             v = _safe_float(raw[native_offset + i])
             if v is not None:
-                natives[task] = round(v)
+                # Audio-minutes metrics keep 2-decimal precision (a 60-second
+                # rounding step would erase sub-minute usage); everything else
+                # (characters/tokens/images) rounds to a whole unit.
+                cfg = SERVICE_BREAKDOWN_CONFIG[task]
+                natives[task] = round(v, 2) if cfg.get("round_2dp") else round(v)
 
         # ── Assemble service rows ────────────────────────────────────────────
         services = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
-
-            raw_native = natives.get(task, 0)
-            if cfg.get("divide_by_60"):
-                native_v = round(raw_native / 60, 2)
-            else:
-                native_v = raw_native
+            native_v = natives.get(task, 0)
 
             services.append({
                 "service": cfg["display_name"],

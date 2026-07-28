@@ -105,13 +105,16 @@ def sum_over_window(metric_expr: str, time_range: str | None) -> str:
 # Keys match the URL task segment: /api/v1/{task}/inference.
 #
 # native_metric: the Prometheus Histogram _sum series that accumulates the
-#   native unit (characters, seconds, tokens, images). Use the _sum suffix
+#   native unit (characters, minutes, tokens, images). Use the _sum suffix
 #   because that is what Prometheus appends to a Histogram name. None means
 #   the task has no dedicated native-unit metric — the API returns null for
 #   native_units in that case.
 # native_extra_labels: additional label selectors applied only to the
 #   native query (e.g. token_type="total" for LLM to avoid double-counting
 #   prompt + completion + total series).
+# round_2dp: the underlying histogram already reports minutes (not seconds),
+#   so display at 2-decimal precision instead of the whole-number rounding
+#   used for character/token/image counts.
 SERVICE_BREAKDOWN_CONFIG: dict = {
     "nmt": {
         "display_name": "NMT",
@@ -124,9 +127,9 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "display_name": "ASR",
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
-        "native_metric": "telemetry_obsv_asr_audio_seconds_processed_sum",
+        "native_metric": "telemetry_obsv_asr_audio_minutes_processed_sum",
         "native_extra_labels": None,
-        "divide_by_60": True,
+        "round_2dp": True,
     },
     "tts": {
         "display_name": "TTS",
@@ -189,17 +192,17 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "display_name": "Speaker Diarization",
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
-        "native_metric": "telemetry_obsv_speaker_diarization_seconds_processed_sum",
+        "native_metric": "telemetry_obsv_speaker_diarization_minutes_processed_sum",
         "native_extra_labels": None,
-        "divide_by_60": True,
+        "round_2dp": True,
     },
     "audio_language_detection": {
         "display_name": "Audio Language Detection",
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
-        "native_metric": "telemetry_obsv_audio_lang_detection_seconds_processed_sum",
+        "native_metric": "telemetry_obsv_audio_lang_detection_minutes_processed_sum",
         "native_extra_labels": None,
-        "divide_by_60": True,
+        "round_2dp": True,
     },
 }
 

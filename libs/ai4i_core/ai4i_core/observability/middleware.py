@@ -292,9 +292,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         billed_input's unit depends on service_type's inference_types.yaml
         entry: characters (tts/translation/transliteration/language_detection/
-        ner), audio minutes (asr/audio_lang_detection/*_diarization,
-        converted to seconds below to match the histograms' existing unit),
-        or images (ocr).
+        ner), audio minutes (asr/audio_lang_detection/*_diarization — passed
+        straight through, no unit conversion), or images (ocr).
         """
         try:
             if service_type == "tts":
@@ -309,7 +308,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 )
             elif service_type == "asr":
                 self.metrics_collector.track_asr_audio_length(
-                    language=source_lang, audio_seconds=billed_input * 60.0,
+                    language=source_lang, audio_minutes=billed_input,
                     tenant=tenant, service_id=service_id,
                 )
             elif service_type == "ocr":
@@ -331,15 +330,15 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 )
             elif service_type == "audio_lang_detection":
                 self.metrics_collector.track_audio_lang_detection_length(
-                    audio_seconds=billed_input * 60.0, tenant=tenant, service_id=service_id,
+                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
                 )
             elif service_type == "speaker_diarization":
                 self.metrics_collector.track_speaker_diarization_length(
-                    audio_seconds=billed_input * 60.0, tenant=tenant, service_id=service_id,
+                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
                 )
             elif service_type == "language_diarization":
                 self.metrics_collector.track_language_diarization_length(
-                    audio_seconds=billed_input * 60.0, tenant=tenant, service_id=service_id,
+                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
                 )
             elif service_type == "ner":
                 # billed_input is a CHARACTER count (inference_types.yaml
