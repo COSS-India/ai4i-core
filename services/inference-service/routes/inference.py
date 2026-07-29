@@ -115,6 +115,18 @@ async def _run_inference(
         if top_service_id and not (payload.get("config") or {}).get("serviceId"):
             payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": top_service_id}}
 
+    # Unwrap TryItRequest envelope ({ service_name, serviceId?, payload: <inner> })
+    # when present. Normal inference payloads carry input/audio/image at the top
+    # level and never have a nested 'payload' wrapper, so this detection is safe.
+    # Handles the case where APISIX rewrites /nmt/try-it → /nmt/inference while
+    # passing the original client body through unchanged.
+    inner = payload.get("payload")
+    if isinstance(inner, dict) and "service_name" in payload:
+        top_service_id = payload.get("serviceId")
+        payload = inner
+        if top_service_id and not (payload.get("config") or {}).get("serviceId"):
+            payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": top_service_id}}
+
     # No manual timing here: the logging middleware records duration_ms for
     # every request, and the request span carries total_time_ms.
     if default_task_type and not payload.get("task_type"):
@@ -524,6 +536,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
 
+
     return JSONResponse(status_code=status_code, content=body)
 
 @router.post(
@@ -533,10 +546,15 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
                 "When the payload sets \"stream\": true, the response is a "
                 "text/event-stream of OpenAI-spec SSE chunks instead of a single "
                 "JSON body.",
+    description="Forwards the request to the upstream LLM at /v1/chat/completions. "
+                "When the payload sets \"stream\": true, the response is a "
+                "text/event-stream of OpenAI-spec SSE chunks instead of a single "
+                "JSON body.",
 )
 async def chat_completions(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+) -> Response:
 ) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
@@ -547,10 +565,14 @@ async def chat_completions(
     description="Forwards the request to the upstream LLM at /v1/chat. When the "
                 "payload sets \"stream\": true, the response is a text/event-stream "
                 "of OpenAI-spec SSE chunks instead of a single JSON body.",
+    description="Forwards the request to the upstream LLM at /v1/chat. When the "
+                "payload sets \"stream\": true, the response is a text/event-stream "
+                "of OpenAI-spec SSE chunks instead of a single JSON body.",
 )
 async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+) -> Response:
 ) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat")
 
