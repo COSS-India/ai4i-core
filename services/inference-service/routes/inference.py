@@ -10,8 +10,13 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
 )
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
+from ai4i_core.context import (
+    get_llm_usage_input_tokens,
+    get_llm_usage_model_name,
+    get_llm_usage_output_tokens,
+)
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
@@ -427,12 +432,79 @@ async def run_ocr_inference(
     """Dedicated endpoint for OCR inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="OCR")
 
-async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
+def _bridge_llm_usage_to_request(request: Request) -> None:
+    """
+    Copy the LLM token counts and model name from the ai4i_core context vars
+    onto ``request.state``.
+
+    ContextVars set inside the app task are not visible in the
+    BaseHTTPMiddleware task where ObservabilityMiddleware drains the response
+    body, but ``request.state`` is backed by the shared ASGI scope, which does
+    cross that boundary. This is the handoff that lets the middleware emit
+    token metrics without buffering (and re-parsing) the response.
+    """
+    request.state.llm_usage_input_tokens = get_llm_usage_input_tokens()
+    request.state.llm_usage_output_tokens = get_llm_usage_output_tokens()
+    request.state.llm_usage_model_name = get_llm_usage_model_name()
+
+
+async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: str) -> Response:
+    """
+    Streaming counterpart to _run_llm_chat. The upstream connection (and its
+    status code) is resolved eagerly so a misconfiguration, entitlement
+    rejection or upstream failure can still return a normal JSON error — only
+    a genuine 200 SSE stream turns into a StreamingResponse.
+
+    The "request" span can't be closed when this function returns (the client
+    is still reading the body at that point), so on the success path it's
+    opened inside the generator and kept alive until the stream ends, the same
+    trick proxy_traced_stream() uses for the model/ai-inference spans.
+    """
+    kind, status_code, result = await OpenAIProxyService().proxy_traced_stream(
+        path=path, payload=payload, request=request,
+    )
+
+    if kind == "error":
+        with traced_span("request", root=True, classify_status=True) as req_attrs:
+            req_attrs["url"] = request.url.path
+            req_attrs["method"] = request.method
+            req_attrs.update(get_context_attributes())
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = status_code
+        return JSONResponse(status_code=status_code, content=result)
+
+    async def gen():
+        with traced_span("request", root=True, classify_status=True) as req_attrs:
+            req_attrs["url"] = request.url.path
+            req_attrs["method"] = request.method
+            req_attrs.update(get_context_attributes())
+            async for chunk in result:
+                yield chunk
+        # Token usage only arrives in the final SSE chunk, so this must run
+        # after the stream is fully drained (the model name is known earlier,
+        # but is read here too for a single assignment point).
+        _bridge_llm_usage_to_request(request)
+
+    return StreamingResponse(
+        gen(),
+        status_code=status_code,
+        media_type="text/event-stream",
+        # Anti-buffering headers: without these an intermediate proxy can
+        # accumulate the whole SSE body and defeat live streaming.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> Response:
     """
     Shared handler for LLM chat routes. Owns only the request span — MMS
     resolution, tier gate, model + ai_inference spans are managed inside
     OpenAIProxyService.proxy_traced(), mirroring the Orchestrator +
     BaseTaskService pattern for Triton services.
+
+    Requests with a truthy "stream" field are delegated to
+    _run_llm_chat_stream, which returns a real text/event-stream response
+    instead of buffering the upstream SSE body into a JSON payload.
     """
     # Set service_id on request state so the observability middleware picks it
     # up for Prometheus metrics without reading the body a second time.
@@ -443,6 +515,9 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     service_id = payload.get("model", "")
     request.state.service_id = service_id
 
+    if isinstance(payload, dict) and payload.get("stream"):
+        return await _run_llm_chat_stream(request, payload, path)
+
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         req_attrs["url"] = request.url.path
         req_attrs["method"] = request.method
@@ -451,6 +526,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
+        _bridge_llm_usage_to_request(request)
 
         if status_code >= 400:
             req_attrs["status"] = "failure"
@@ -466,7 +542,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
 async def chat_completions(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
-) -> JSONResponse:
+) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
@@ -478,7 +554,7 @@ async def chat_completions(
 async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
-) -> JSONResponse:
+) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat")
 
 # ─────────────────────────────────────────────────────────────────────────────
