@@ -282,9 +282,6 @@ async def get_overview(
 
     degraded = False
 
-    async def _noop():
-        return None
-
     results = await asyncio.gather(
         svc.tenant_count(),
         svc.active_tenants("24h"),
@@ -293,7 +290,7 @@ async def get_overview(
         svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
         _request_volume_chart(svc, window, scope_tenant),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
-        svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else _noop(),
+        svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else asyncio.sleep(0),
         return_exceptions=True,
     )
 

@@ -48,8 +48,21 @@ async def list_tiers(
 
     out = []
     for tier in tiers:
-        quotas = [q for q in tier.tier_quotas if not model_task_type or q.inference_name == model_task_type]
-        if model_task_type and not quotas:
+        # Hide quotas of disabled task types (ENABLED_TASK_TYPES). Stored rows are
+        # retained; re-enabling a type restores them. Matches the enabled-only
+        # contract of /inference-types and the add-quota selector.
+        quotas = [
+            q
+            for q in tier.tier_quotas
+            if (not model_task_type or q.inference_name == model_task_type)
+            and is_task_type_enabled(q.inference_name)
+        ]
+        # Drop a tier whose filtered quota set is empty — either the requested
+        # model_task_type matched nothing, or all its quotas are disabled task
+        # types (would render as a blank row). A genuinely quota-less tier (no
+        # filter, no rows) stays visible as before. Rows are retained in the DB;
+        # re-enabling a type brings the tier back.
+        if not quotas and (model_task_type or tier.tier_quotas):
             continue
         out.append(_build_out(tier, quotas))
 
@@ -71,7 +84,9 @@ async def get_tier_by_id(tier_id: str, session: AsyncSession) -> TierOut:
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
 
-    return _build_out(tier, tier.tier_quotas)
+    # Hide quotas of disabled task types (see list_tiers); rows are retained.
+    enabled_quotas = [q for q in tier.tier_quotas if is_task_type_enabled(q.inference_name)]
+    return _build_out(tier, enabled_quotas)
 
 
 async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optional[str] = None) -> TierOut:

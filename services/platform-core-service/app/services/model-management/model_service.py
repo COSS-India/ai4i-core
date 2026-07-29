@@ -420,7 +420,7 @@ class ModelService:
             instance.model_id, instance.version
         )
         for svc in unpublished:
-            await self._cache.invalidate_service(svc.service_id)
+            self._cache.invalidate_service(svc.service_id)
         if unpublished:
             await self._services.delete_unpublished_for_model_version(
                 instance.model_id, instance.version

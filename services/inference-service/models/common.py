@@ -18,7 +18,6 @@ class ModelMetadata(BaseModel):
 
     modelProvider: Optional[str] = Field(None, description="mm_models.submitter.name")
     modelVersion: Optional[str] = Field(None, description="mm_models.version")
-    modelId: Optional[str] = Field(None, description="mm_models.model_id")
     language: List[Dict[str, Any]] = Field(
         default_factory=list, description="mm_models.languages"
     )
