@@ -2,7 +2,7 @@
 
 This document answers the Digital Public Goods (DPG) certification **Documentation**
 requirement for Open Software. It maps each document the DPG Alliance requires to where it
-lives in this repository, and it summarizes how and where the AI4I-Core platform is
+lives in this repository, and it summarizes how and where the AI4I-Orchestrate platform is
 documented. The documentation is written so a technical person unfamiliar with the solution
 can install, run, and operate it themselves.
 
@@ -13,7 +13,7 @@ Links point to the `release-2.3` branch.
 
 ## Summary
 
-AI4I-Core is an open-source, self-hosted platform of three FastAPI microservices (auth,
+AI4I-Orchestrate is an open-source, self-hosted platform of three FastAPI microservices (auth,
 platform-core, inference) for multilingual language-AI services (translation, speech, OCR,
 NER, LLM). Documentation is versioned in this repository and organized to match the seven
 DPG-required document types below.
