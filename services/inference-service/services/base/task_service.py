@@ -139,7 +139,6 @@ class BaseTaskService:
         return {
             "modelProvider": info.get("model_provider"),
             "modelVersion": info.get("model_version"),
-            "modelId": info.get("model_id"),
             "language": info.get("language") or [],
         }
 
