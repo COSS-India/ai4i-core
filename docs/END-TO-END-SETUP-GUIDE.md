@@ -1,8 +1,8 @@
-# End-to-End Local Setup Guide — AI4I Core + NMT (CPU)
+# End-to-End Local Setup Guide — AI4I-Orchestrate + NMT (CPU)
 
 ## About this guide
 
-This guide documents how to run **AI4I Core** and a local **NMT** model together on **Linux** — auth, inference APIs, optional web UI, and CPU-based translation via Triton. You do **not** need a GPU for the NMT path described here.
+This guide documents how to run **AI4I-Orchestrate** and a local **NMT** model together on **Linux** — auth, inference APIs, optional web UI, and CPU-based translation via Triton. You do **not** need a GPU for the NMT path described here.
 
 It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md`.
 
@@ -18,7 +18,7 @@ It lives in the **ai4i-core** repository at `docs/END-TO-END-SETUP-GUIDE.md`.
 | Component | Location | What it does |
 |-----------|----------|----------------|
 | **NMT (Triton)** | `model-hosting/nmt-triton/` | IndicTrans2 in Docker for English ↔ Indic translation |
-| **AI4I Core** | `ai4i-core/` | auth, platform-core, inference, Postgres, Redis, Simple UI |
+| **AI4I-Orchestrate** | `ai4i-core/` | auth, platform-core, inference, Postgres, Redis, Simple UI |
 
 When setup is complete, you can send *“Hello, how are you?”* through the platform API and receive a Hindi translation — entirely on `localhost`.
 
@@ -39,7 +39,7 @@ Start with [§1 System prerequisites](#1-system-prerequisites), then work throug
 2. [Architecture](#2-architecture)
 3. [Clone repositories](#3-clone-repositories)
 4. [Part A — Local NMT (Triton)](#part-a--local-nmt-triton)
-5. [Part B — AI4I Core platform](#part-b--ai4i-core-platform)
+5. [Part B — AI4I-Orchestrate platform](#part-b--ai4i-orchestrate-platform)
 6. [Part C — Application services](#part-c--application-services)
 7. [Part D — Verify end-to-end NMT](#part-d--verify-end-to-end-nmt)
 8. [Part E — Frontend (optional)](#part-e--frontend-optional)
@@ -94,7 +94,7 @@ npm --version
 
 #### Python commands in this guide
 
-AI4I Core requires **Python >= 3.11** (`ai4i-core` declares `requires-python >= 3.11`).
+AI4I-Orchestrate requires **Python >= 3.11** (`ai4i-core` declares `requires-python >= 3.11`).
 
 Throughout this guide, **`python3`** means the Python 3.11+ executable on your machine (on many systems that is literally the `python3` command; on others it may be `python3.12`, etc.). Before continuing, confirm:
 
@@ -334,7 +334,7 @@ curl -X POST http://localhost:8000/v2/models/nmt/infer \
 
 ---
 
-## Part B — AI4I Core platform
+## Part B — AI4I-Orchestrate platform
 
 All commands below run from the `ai4i-core` repo root unless stated otherwise.
 
@@ -465,7 +465,7 @@ Open **three separate terminals**. Each service needs its own virtualenv.
 
 > The repo-root `.venv` from [B4](#b4-install-migration-dependencies) is for migrations only. Part C still needs a **separate** `.venv` inside each `services/*` folder (do not reuse the migration venv for uvicorn).
 
-If `$AI4I_LOCAL` is unset, run `export AI4I_LOCAL=~/ai4i-local-setup` first (see [§3](#3-clone-repositories) or [Part B](#part-b--ai4i-core-platform)).
+If `$AI4I_LOCAL` is unset, run `export AI4I_LOCAL=~/ai4i-local-setup` first (see [§3](#3-clone-repositories) or [Part B](#part-b--ai4i-orchestrate-platform)).
 
 ### C1. Auth service (port 8081) — Terminal 1
 
@@ -746,7 +746,7 @@ docker compose -f docker-compose-local.yml down -v
 | `401 gated repo` on first translate | Accept model access on HuggingFace; pass `-e HF_TOKEN=hf_...` |
 | First request very slow | One-time model download — watch `docker logs -f indictrans` |
 
-### AI4I Core
+### AI4I-Orchestrate
 
 | Symptom | Fix |
 |---------|-----|
@@ -780,7 +780,7 @@ Short codes: `en`, `hi`, `bn`, `ta`, `te`, `mr`, `gu`, `kn`, `ml`, `pa`, `or`, `
 - [ ] Part D2 curl returns translated `target` field
 - [ ] Part D3 login returns `access_token`; Part D4 authenticated curl returns translated `target` field
 
-When all boxes are checked, your local AI4I Core + NMT stack is fully operational.
+When all boxes are checked, your local AI4I-Orchestrate + NMT stack is fully operational.
 
 ---
 
