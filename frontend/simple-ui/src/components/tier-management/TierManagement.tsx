@@ -238,7 +238,9 @@ function isUnitInvalid(quota: TierFormQuota): boolean {
 
 function isLimitInvalid(quota: TierFormQuota): boolean {
   const limitNum = Number(quota.limit);
-  return quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0;
+  return (
+    quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0
+  );
 }
 
 function QuotaEditor({
@@ -271,22 +273,26 @@ function QuotaEditor({
     onChange(updated);
   };
 
-  // Commented out: only one model task type is available currently, so adding
-  // additional quotas is not needed. Re-enable if multiple task types return.
-  // const addQuota = () => {
-  //   onChange([
-  //     ...quotas,
-  //     {
-  //       _key: crypto.randomUUID(),
-  //       modelTaskType: "",
-  //       unit: "",
-  //       limit: "",
-  //     },
-  //   ]);
-  // };
+  const addQuota = () => {
+    onChange([
+      ...quotas,
+      {
+        _key: crypto.randomUUID(),
+        modelTaskType: "",
+        unit: "",
+        limit: "",
+      },
+    ]);
+  };
 
   const removeQuota = (idx: number) =>
     onChange(quotas.filter((_, i) => i !== idx));
+
+  // "Add Quota" only makes sense when there's more than one model task type
+  // to choose from, and only while there's an unused type left to add.
+  const canAddQuota =
+    (taskTypeNames?.length ?? 0) > 1 && quotas.length < taskTypeNames.length;
+  console.log("canAddQuota", canAddQuota);
 
   return (
     <VStack align="stretch" spacing={3}>
@@ -294,10 +300,7 @@ function QuotaEditor({
         <Text fontSize="sm" fontWeight="semibold" color="gray.700">
           Quotas
         </Text>
-        {/* Commented out: only one model task type is available currently, so
-        adding additional quotas is not needed. Re-enable if multiple task
-        types return.
-        {!isEditMode && (
+        {!isEditMode && canAddQuota && (
           <Button
             size="xs"
             leftIcon={<AddIcon />}
@@ -307,7 +310,7 @@ function QuotaEditor({
           >
             Add Quota
           </Button>
-        )} */}
+        )}
       </HStack>
 
       <Box maxH="340px" overflowY="auto" pr={1}>
