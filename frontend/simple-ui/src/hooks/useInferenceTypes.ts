@@ -1,11 +1,22 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   fetchInferenceTypes,
   type InferenceTypeItem,
 } from "../services/inferenceTypesService";
-import { MODEL_TASK_TYPE_LIST } from "../config/constants";
 
 const INFERENCE_TYPES_QUERY_KEY = "inferenceTypes";
+
+// Backend task-type `name` (yaml form) → frontend `ServiceId`. Identity for all
+// but audio language detection, where the yaml name and the ServiceId differ.
+const NAME_TO_SERVICE_ID: Record<string, string> = {
+  "audio-lang-detection": "audio-language-detection",
+};
+
+const toServiceId = (name: string): string => {
+  const n = name.trim().toLowerCase();
+  return NAME_TO_SERVICE_ID[n] ?? n;
+};
 
 export function useInferenceTypes() {
   const query = useQuery({
@@ -17,21 +28,28 @@ export function useInferenceTypes() {
 
   const inferenceTypes: InferenceTypeItem[] = query.data ?? [];
 
-  // Fall back to the static list if the API hasn't responded or errored
-  const taskTypeNames: string[] =
-    inferenceTypes.length > 0
-      ? inferenceTypes.map((t) => t.name)
-      : [...MODEL_TASK_TYPE_LIST];
+  // The enabled task types are exactly what the backend reports
+  // (ENABLED_TASK_TYPES, filtered server-side). No static fallback — falling
+  // back to a hardcoded list would surface disabled types on an API hiccup.
+  const taskTypeNames: string[] = inferenceTypes.map((t) => t.name);
 
   // { "asr": "Audio minutes", "llm": "M Tokens", ... } derived from API
   const unitByTaskType: Record<string, string> = Object.fromEntries(
     inferenceTypes.map((t) => [t.name, t.unit]),
   );
 
+  // Enabled ServiceIds — the single source for gating the UI catalog
+  // (home cards, sidebar nav, route guards).
+  const enabledServiceIds = useMemo(
+    () => new Set(taskTypeNames.map(toServiceId)),
+    [inferenceTypes],
+  );
+
   return {
     inferenceTypes,
     taskTypeNames,
     unitByTaskType,
+    enabledServiceIds,
     isLoading: query.isLoading,
   };
 }
