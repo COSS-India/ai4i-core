@@ -170,9 +170,10 @@ class PPUUsageRepository:
     async def get_tenant_tier_usage_breakdown(self, billing_month: str, tenant_ids: list[str], enabled_task_types: frozenset | None = None):
         """Per (tenant, tier, inference_name) usage/cost for the billing month, across
         every tier the tenant held that month — not just their most-recently-active tier.
-        Always unfiltered by task type: callers that need a single task type's numbers
-        filter this result in Python so the full breakdown (spend/budget/tierBreakdown)
-        stays consistent regardless of which task type is being drilled into.
+        Filtered to enabled_task_types when provided. Callers that need a single task
+        type's numbers filter this result in Python so the full breakdown
+        (spend/budget/tierBreakdown) stays consistent regardless of which task type is
+        being drilled into.
         """
         if not tenant_ids:
             return []

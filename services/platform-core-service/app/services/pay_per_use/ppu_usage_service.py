@@ -513,8 +513,9 @@ class PPUUsageService:
         uses elsewhere) — falling back to "Unassigned" only when even that
         assignment doesn't exist.
         """
+        enabled = enabled_task_type_names()
         assignments = await self._repo.get_tenants_with_usage_tier(
-            billing_month, tenant_id=tenant_id, enabled_task_types=enabled_task_type_names()
+            billing_month, tenant_id=tenant_id, enabled_task_types=enabled
         )
         if not assignments:
             # No usage this period is a valid tenant configuration (not an error) —
@@ -561,7 +562,7 @@ class PPUUsageService:
             )
 
         async def _fetch_tenant_data():
-            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id], enabled_task_types=enabled_task_type_names())
+            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id], enabled_task_types=enabled)
             tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
             budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
             tier_names = await self._repo.get_tier_names()
