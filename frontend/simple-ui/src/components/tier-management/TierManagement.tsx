@@ -238,7 +238,9 @@ function isUnitInvalid(quota: TierFormQuota): boolean {
 
 function isLimitInvalid(quota: TierFormQuota): boolean {
   const limitNum = Number(quota.limit);
-  return quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0;
+  return (
+    quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0
+  );
 }
 
 function QuotaEditor({
@@ -286,13 +288,18 @@ function QuotaEditor({
   const removeQuota = (idx: number) =>
     onChange(quotas.filter((_, i) => i !== idx));
 
+  // "Add Quota" only makes sense when there's more than one model task type
+  // to choose from, and only while there's an unused type left to add.
+  const canAddQuota =
+    taskTypeNames.length > 1 && quotas.length < taskTypeNames.length;
+
   return (
     <VStack align="stretch" spacing={3}>
       <HStack justify="space-between">
         <Text fontSize="sm" fontWeight="semibold" color="gray.700">
           Quotas
         </Text>
-        {!isEditMode && (
+        {!isEditMode && canAddQuota && (
           <Button
             size="xs"
             leftIcon={<AddIcon />}
