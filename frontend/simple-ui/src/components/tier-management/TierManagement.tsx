@@ -271,17 +271,19 @@ function QuotaEditor({
     onChange(updated);
   };
 
-  const addQuota = () => {
-    onChange([
-      ...quotas,
-      {
-        _key: crypto.randomUUID(),
-        modelTaskType: "",
-        unit: "",
-        limit: "",
-      },
-    ]);
-  };
+  // Commented out: only one model task type is available currently, so adding
+  // additional quotas is not needed. Re-enable if multiple task types return.
+  // const addQuota = () => {
+  //   onChange([
+  //     ...quotas,
+  //     {
+  //       _key: crypto.randomUUID(),
+  //       modelTaskType: "",
+  //       unit: "",
+  //       limit: "",
+  //     },
+  //   ]);
+  // };
 
   const removeQuota = (idx: number) =>
     onChange(quotas.filter((_, i) => i !== idx));
@@ -292,6 +294,9 @@ function QuotaEditor({
         <Text fontSize="sm" fontWeight="semibold" color="gray.700">
           Quotas
         </Text>
+        {/* Commented out: only one model task type is available currently, so
+        adding additional quotas is not needed. Re-enable if multiple task
+        types return.
         {!isEditMode && (
           <Button
             size="xs"
@@ -302,7 +307,7 @@ function QuotaEditor({
           >
             Add Quota
           </Button>
-        )}
+        )} */}
       </HStack>
 
       <Box maxH="340px" overflowY="auto" pr={1}>
