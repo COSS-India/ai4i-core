@@ -14,11 +14,10 @@ import logging
 import re
 import time
 import wave
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 
 from .config import PluginConfig
 from .metrics import MetricsCollector
@@ -80,25 +79,34 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Run the actual handler. All observability work happens AFTER the
         # response is in hand so we never block the user.
         response = await call_next(request)
-        duration = time.time() - start_time
 
-        # LLM (chat / chat-completions): the route always returns a plain
-        # JSONResponse, but Starlette's BaseHTTPMiddleware wraps it so the
-        # body is only readable by draining `body_iterator` (which destroys
-        # the original). Buffer once, rebuild the response, and pull the
-        # `usage` block (prompt/completion/total tokens + the model name).
-        llm_prompt_tokens = 0
-        llm_completion_tokens = 0
-        llm_total_tokens = 0
-        llm_model = ""
+        # LLM (chat / chat-completions): input/output tokens and model name are
+        # never re-parsed from the response body here — llm_service.py already
+        # computed them once (from the same `usage` block, via
+        # ai4i_core.context) and the route copied them onto request.state,
+        # which survives the BaseHTTPMiddleware task boundary that ContextVars
+        # don't. One wrapper handles BOTH response shapes the LLM routes can
+        # return: the plain JSON response (single chunk — request.state is
+        # already populated, since proxy_traced() fully completed before the
+        # route returned) and the SSE stream (multi-chunk — request.state only
+        # becomes populated once the stream is fully drained, since Starlette's
+        # stream_response() sends the final ASGI message only after the app's
+        # own generator, whose post-loop code sets request.state, has
+        # completed). Reading request.state in a `finally` after forwarding
+        # every chunk untouched is correct for both, and means the body is
+        # never buffered — LLM streaming responses reach the client live.
         if service_type == "llm":
-            response, response_body_bytes = await self._buffer_response(response)
-            (
-                llm_prompt_tokens,
-                llm_completion_tokens,
-                llm_total_tokens,
-                llm_model,
-            ) = self._extract_llm_usage_from_body(response_body_bytes)
+            response.body_iterator = self._wrap_llm_response(
+                response.body_iterator,
+                request=request,
+                path=path,
+                method=method,
+                status_code=response.status_code,
+                start_time=start_time,
+            )
+            return response
+
+        duration = time.time() - start_time
 
         # tenant_id comes from the gateway-injected X-Tenant-Id header (set by
         # auth-service /validate after verifying the bearer token; the gateway
@@ -112,9 +120,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_id = getattr(request.state, "service_id", "") or ""
 
         # Fire-and-forget: parse the body and emit metrics WITHOUT blocking
-        # the response. Holding the task in self._pending_tasks keeps it
-        # alive — asyncio.create_task only keeps a weak reference.
-        task = asyncio.create_task(self._record_metrics(
+        # the response.
+        self._schedule_metrics(
             body_bytes=body_bytes,
             path=path,
             method=method,
@@ -123,15 +130,68 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             service_id=service_id,
             status_code=response.status_code,
             duration=duration,
-            llm_prompt_tokens=llm_prompt_tokens,
-            llm_completion_tokens=llm_completion_tokens,
-            llm_total_tokens=llm_total_tokens,
-            llm_model=llm_model,
-        ))
+        )
+
+        return response
+
+    def _schedule_metrics(self, **kwargs: Any) -> None:
+        """Fire-and-forget ``_record_metrics`` WITHOUT blocking the response.
+
+        Holding the task in ``self._pending_tasks`` keeps it alive —
+        ``asyncio.create_task`` only keeps a weak reference.
+        """
+        task = asyncio.create_task(self._record_metrics(**kwargs))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
 
-        return response
+    async def _wrap_llm_response(
+        self,
+        body_iterator: AsyncIterator[Any],
+        *,
+        request: Request,
+        path: str,
+        method: str,
+        status_code: int,
+        start_time: float,
+    ) -> AsyncIterator[Any]:
+        """Forward response bytes to the client untouched, then emit LLM
+        metrics once the body is fully drained — see the comment in
+        ``dispatch()`` for why this single code path is correct for both the
+        single-chunk JSON response and the multi-chunk SSE stream.
+        """
+        try:
+            async for chunk in body_iterator:
+                yield chunk
+        finally:
+            duration = time.time() - start_time
+            llm_prompt_tokens = getattr(request.state, "llm_usage_input_tokens", None) or 0
+            llm_completion_tokens = getattr(request.state, "llm_usage_output_tokens", None) or 0
+            llm_total_tokens = llm_prompt_tokens + llm_completion_tokens
+            llm_model = getattr(request.state, "llm_usage_model_name", None) or ""
+
+            tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
+            # service_id is set on request.state by the LLM route handler from
+            # the OpenAI `model` field, which IS the service ID in this
+            # platform. Deliberately NOT overridden with the upstream model
+            # name here: that would tag Prometheus with the vLLM model
+            # (adapter_config.model_name) while PPU bills the service ID, and
+            # the two label sets would no longer join.
+            service_id = getattr(request.state, "service_id", "") or ""
+
+            self._schedule_metrics(
+                body_bytes=None,
+                path=path,
+                method=method,
+                service_type="llm",
+                tenant=tenant_label,
+                service_id=service_id,
+                status_code=status_code,
+                duration=duration,
+                llm_prompt_tokens=llm_prompt_tokens,
+                llm_completion_tokens=llm_completion_tokens,
+                llm_total_tokens=llm_total_tokens,
+                llm_model=llm_model,
+            )
 
     # ------------------------------------------------------------------
     # Path-based service detection.
@@ -492,51 +552,3 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 return len(base64.b64decode(base64_audio)) / 32000
             except Exception:
                 return 0.0
-
-    # ------------------------------------------------------------------
-    # LLM response handling — buffer the JSON body and pull `usage`.
-    # ------------------------------------------------------------------
-    async def _buffer_response(self, response) -> Tuple[Response, bytes]:
-        """Drain ``response.body_iterator`` and return a fresh Response.
-
-        The Starlette body iterator can only be consumed once; reading it to
-        inspect ``usage`` makes the original response unusable, so we rebuild
-        a new Response that carries the same bytes back to the client.
-        """
-        chunks = []
-        async for chunk in response.body_iterator:
-            chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
-        body = b"".join(chunks)
-        # Drop Content-Length — Response recomputes it from the buffered body.
-        headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
-        new_response = Response(
-            content=body,
-            status_code=response.status_code,
-            headers=headers,
-            media_type=response.media_type,
-        )
-        return new_response, body
-
-    def _extract_llm_usage_from_body(
-        self, body_bytes: bytes
-    ) -> Tuple[int, int, int, str]:
-        """Return (prompt_tokens, completion_tokens, total_tokens, model).
-
-        Reads an OpenAI / vLLM-shaped JSON response. Zeros + empty model on
-        any parse failure — the request still gets counted, only the token
-        histogram is skipped.
-        """
-        try:
-            if not body_bytes:
-                return 0, 0, 0, ""
-            data = json.loads(body_bytes)
-            usage = data.get("usage") or {}
-            prompt = int(usage.get("prompt_tokens") or 0)
-            completion = int(usage.get("completion_tokens") or 0)
-            total = int(usage.get("total_tokens") or (prompt + completion))
-            model = str(data.get("model") or "")
-            return prompt, completion, total, model
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            if self.config.debug:
-                logger.debug(f"LLM usage extraction failed: {e}")
-            return 0, 0, 0, ""

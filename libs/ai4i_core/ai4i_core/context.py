@@ -17,6 +17,9 @@ _tenant_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("
 _user_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("user_id", default=None)
 _endpoint_path_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("endpoint_path", default=None)
 _auth_type_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("auth_type", default=None)
+_llm_usage_input_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_input_tokens", default=None)
+_llm_usage_output_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_output_tokens", default=None)
+_llm_usage_model_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_usage_model_name", default=None)
 
 
 def generate_trace_id() -> str:
@@ -74,3 +77,39 @@ def set_auth_type(auth_type: str) -> contextvars.Token:
 
 def get_auth_type() -> Optional[str]:
     return _auth_type_var.get()
+
+
+def set_llm_usage_input_tokens(input_tokens: Optional[int]) -> contextvars.Token:
+    return _llm_usage_input_tokens_var.set(input_tokens)
+
+
+def get_llm_usage_input_tokens() -> Optional[int]:
+    return _llm_usage_input_tokens_var.get()
+
+
+def reset_llm_usage_input_tokens(token: contextvars.Token) -> None:
+    _llm_usage_input_tokens_var.reset(token)
+
+
+def set_llm_usage_output_tokens(output_tokens: Optional[int]) -> contextvars.Token:
+    return _llm_usage_output_tokens_var.set(output_tokens)
+
+
+def get_llm_usage_output_tokens() -> Optional[int]:
+    return _llm_usage_output_tokens_var.get()
+
+
+def reset_llm_usage_output_tokens(token: contextvars.Token) -> None:
+    _llm_usage_output_tokens_var.reset(token)
+
+
+def set_llm_usage_model_name(model_name: Optional[str]) -> contextvars.Token:
+    return _llm_usage_model_name_var.set(model_name)
+
+
+def get_llm_usage_model_name() -> Optional[str]:
+    return _llm_usage_model_name_var.get()
+
+
+def reset_llm_usage_model_name(token: contextvars.Token) -> None:
+    _llm_usage_model_name_var.reset(token)
