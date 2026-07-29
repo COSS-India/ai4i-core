@@ -1,24 +1,21 @@
 """
 Cache service for models and services.
 
-Stores serialized JSON in Redis with TTL-based invalidation. Cache misses
+Models: stored in Redis with TTL-based invalidation (shared async Redis client).
+Services: stored in process-local in-memory dict with 5-minute TTL. Cache misses
 are handled by the calling service which falls back to the DB and re-warms
-the cache. We deliberately avoid the redis-om HashModel approach used by the
-old model-management-service because it ties our schema to a specific cache
-serialization format and uses a sync Redis client; here we use the platform's
-shared async Redis client instead.
+the cache.
 
 Keys:
-  core:model:{model_id}:{version}       — model details
-  core:model:{model_id}                  — latest active version (default lookup)
-  core:service:{service_id}             — service details
-
-All values are JSON-encoded.
+  core:model:{model_id}:{version}       — model details (Redis)
+  core:model:{model_id}                  — latest active version (Redis)
+  core:service:{service_id}             — service details (in-memory)
 """
 
 import json
 import logging
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, Optional, Tuple
 
 import redis.asyncio as aioredis
 
@@ -26,10 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class CacheService:
-    """Async Redis-backed cache for models and services."""
+    """Cache for models (Redis) and services (in-memory, 5-minute TTL)."""
 
     _MODEL_KEY = "core:model"
     _SERVICE_KEY = "core:service"
+
+    # In-memory store for service cache: key → (data, expires_at)
+    _service_store: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
     def __init__(
         self,
@@ -108,25 +108,31 @@ class CacheService:
     def _service_key(cls, service_id: str) -> str:
         return f"{cls._SERVICE_KEY}:{service_id}"
 
-    async def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
+    def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         try:
-            raw = await self._redis.get(self._service_key(service_id))
-            return json.loads(raw) if raw else None
+            entry = CacheService._service_store.get(self._service_key(service_id))
+            if entry is None:
+                return None
+            data, expires_at = entry
+            if time.time() > expires_at:
+                CacheService._service_store.pop(self._service_key(service_id), None)
+                return None
+            return data
         except Exception as exc:
             logger.warning("Service cache read failed for %s: %s", service_id, exc)
             return None
 
-    async def set_service(self, service_id: str, data: Dict[str, Any]) -> None:
+    def set_service(self, service_id: str, data: Dict[str, Any]) -> None:
         try:
-            payload = json.dumps(data, default=str)
-            await self._redis.setex(
-                self._service_key(service_id), self._service_ttl, payload
+            CacheService._service_store[self._service_key(service_id)] = (
+                data,
+                time.time() + self._service_ttl,
             )
         except Exception as exc:
             logger.warning("Service cache write failed for %s: %s", service_id, exc)
 
-    async def invalidate_service(self, service_id: str) -> None:
+    def invalidate_service(self, service_id: str) -> None:
         try:
-            await self._redis.delete(self._service_key(service_id))
+            CacheService._service_store.pop(self._service_key(service_id), None)
         except Exception as exc:
             logger.warning("Service cache invalidation failed for %s: %s", service_id, exc)

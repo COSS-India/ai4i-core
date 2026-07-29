@@ -17,7 +17,15 @@ from app.models.model_management.model import Model, VersionStatus
 
 # JSONB-backed columns — must call flag_modified() after in-place mutation.
 _JSON_COLUMNS = frozenset(
-    {"task", "languages", "domain", "inference_endpoint", "benchmarks", "submitter"}
+    {
+        "task",
+        "languages",
+        "domain",
+        "inference_endpoint",
+        "benchmarks",
+        "submitter",
+        "training_dataset",
+    }
 )
 
 

@@ -13,6 +13,8 @@ export interface TenantView {
   email: string;
   phone_number?: string | null;
   status: TenantStatus;
+  /** Client-side flag for PENDING → Deactivate soft deletes (terminal). */
+  onboarding_completed?: boolean;
   created_at: string;
   created_by?: string | null;
   updated_at?: string | null;

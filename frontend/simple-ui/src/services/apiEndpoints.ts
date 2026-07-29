@@ -57,6 +57,9 @@ export const apiEndpoints = {
     /** POST — re-send onboarding verification to tenant contact (pending backend). */
     resendVerification: (tenantId: string) =>
       `${API_V1}/auth/tenants/${tenantId}/resend-verification`,
+    /** POST — re-send set-password setup link to a not-yet-activated tenant user. */
+    resendUserSetupLink: (tenantId: string, userId: string) =>
+      `${API_V1}/auth/tenants/${tenantId}/users/${userId}/resend-setup-link`,
   },
 
   alerts: {
@@ -84,8 +87,8 @@ export const apiEndpoints = {
     services: {
       base: `${API_V1}/services`,
       byId: (serviceId: string) => `${API_V1}/services/${serviceId}`,
-      /** Public gateway route (no JWT) — see apisix model-management-try-it-service-list-public-route */
-      tryItList: `${API_V1}/model-management/services/try-it-service-list`,
+      /** Public (no JWT required) — absent from api_permissions.json, so validate allows anonymous. */
+      tryItList: `${API_V1}/services/try-it-service-list`,
     },
     tryIt: {
       execute: `${API_V1}/nmt/try-it`,

@@ -26,6 +26,7 @@ import {
   formatApiKeyDisplayStatusLabel,
   getApiKeyDisplayStatusColorScheme,
   getApiKeyInactiveReason,
+  getApiKeyRevokedReason,
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../config/constants";
@@ -126,6 +127,11 @@ export default function ApiKeyTab({
                                       ? "This API key has expired."
                                       : getApiKeyInactiveReason(apiKeyAccessContext)
                                     : null;
+                                const revokedReason =
+                                  displayStatus === API_KEY.DISPLAY_STATUS.REVOKED
+                                    ? getApiKeyRevokedReason(apiKeyAccessContext)
+                                    : null;
+                                const badgeTooltip = inactiveReason ?? revokedReason;
                                 const badge = (
                                   <Badge
                                     colorScheme={getApiKeyDisplayStatusColorScheme(displayStatus)}
@@ -133,8 +139,8 @@ export default function ApiKeyTab({
                                     {formatApiKeyDisplayStatusLabel(displayStatus)}
                                   </Badge>
                                 );
-                                return inactiveReason ? (
-                                  <Tooltip label={inactiveReason} placement="top" hasArrow>
+                                return badgeTooltip ? (
+                                  <Tooltip label={badgeTooltip} placement="top" hasArrow>
                                     {badge}
                                   </Tooltip>
                                 ) : (

@@ -71,6 +71,7 @@ ServiceService = _svc_svc_mod.ServiceService
 
 ImmutableModelVersionError = _model_svc_mod.ImmutableModelVersionError
 DuplicateModelVersionError = _model_svc_mod.DuplicateModelVersionError
+REDACTED_VALUE = _model_svc_mod.REDACTED_VALUE
 
 from app.core.exceptions import EntityNotFoundError, ValidationError  # noqa: E402
 from app.schemas.enums.model_management import VersionStatusEnum  # noqa: E402
@@ -154,9 +155,13 @@ def _make_model_orm(
     m.version_status_updated_at = None
     m.description = "desc"
     m.languages = []
+    m.is_lang_detection_enabled = False
+    m.is_multilingual = False
     m.domain = []
     m.submitter = {}
-    m.license = "MIT"
+    m.license = "mit"
+    m.license_url = None
+    m.training_dataset = {"description": "test training dataset"}
     m.ref_url = "http://example.com"
     m.class_instance = None
     m.created_by = "user-1"
@@ -168,14 +173,15 @@ def _make_create_payload(**overrides) -> ModelCreateRequest:
     defaults = dict(
         name="test-model",
         version="1.0",
-        description="A test model",
+        description="A test model used for automated unit testing.",
         refUrl="http://example.com/model",
         task={"type": "nmt"},
         languages=[{"sourceLanguage": "en"}],
-        license="MIT",
+        license="mit",
         domain=["general"],
-        inferenceEndPoint={},
+        inferenceEndPoint={"callbackUrl": "http://localhost:8000/infer", "schema": {}},
         submitter={"name": "Test User"},
+        trainingDataset={"description": "test training dataset"},
     )
     defaults.update(overrides)
     return ModelCreateRequest(**defaults)
@@ -244,7 +250,7 @@ class TestModelServiceUpdate:
     @pytest.mark.asyncio
     async def test_update_model_version_required(self):
         svc = _make_model_svc()
-        payload = ModelUpdateRequest(modelId="abc123", version=None, description="new desc")
+        payload = ModelUpdateRequest(modelId="abc123", version=None, description="an updated model description here")
         with pytest.raises(ValidationError):
             await svc.update_model(payload, updated_by="user-1")
 
@@ -253,7 +259,7 @@ class TestModelServiceUpdate:
         svc = _make_model_svc()
         svc._models.get_by_id_version = AsyncMock(return_value=None)
         svc._models.get_by_model_id = AsyncMock(return_value=None)
-        payload = ModelUpdateRequest(modelId="missing", version="1.0", description="x")
+        payload = ModelUpdateRequest(modelId="missing", version="1.0", description="an updated model description here")
         with pytest.raises(EntityNotFoundError):
             await svc.update_model(payload, updated_by="user-1")
 
@@ -264,7 +270,7 @@ class TestModelServiceUpdate:
         svc._services.list_published_for_model_version = AsyncMock(
             return_value=["svc-pub-1"]
         )
-        payload = ModelUpdateRequest(modelId="abc123", version="1.0", description="x")
+        payload = ModelUpdateRequest(modelId="abc123", version="1.0", description="an updated model description here")
         with pytest.raises(ImmutableModelVersionError):
             await svc.update_model(payload, updated_by="user-1")
 
@@ -280,7 +286,7 @@ class TestModelServiceUpdate:
         settings.allow_deprecated_model_changes = False
 
         try:
-            payload = ModelUpdateRequest(modelId="abc123", version="1.0", description="x")
+            payload = ModelUpdateRequest(modelId="abc123", version="1.0", description="an updated model description here")
             with pytest.raises(ValidationError):
                 await svc.update_model(payload, updated_by="user-1")
         finally:
@@ -293,7 +299,7 @@ class TestModelServiceUpdate:
         svc._models.get_by_id_version = AsyncMock(return_value=instance)
         svc._models.refresh = AsyncMock(return_value=instance)
         svc._services.list_published_for_model_version = AsyncMock(return_value=[])
-        payload = ModelUpdateRequest(modelId="abc123", version="1.0", description="new desc")
+        payload = ModelUpdateRequest(modelId="abc123", version="1.0", description="an updated model description here")
         await svc.update_model(payload, updated_by="user-1")
         svc._models.apply_updates.assert_awaited_once()
         svc._models.commit.assert_awaited_once()
@@ -311,6 +317,61 @@ class TestModelServiceUpdate:
         await svc.update_model(payload, updated_by="user-1")
         svc._models.apply_updates.assert_awaited_once()
         svc._models.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_model_echoed_redacted_api_key_does_not_overwrite_real_secret(self):
+        """A client that GETs a model (inferenceApiKey.value comes back as
+        REDACTED_VALUE) and PATCHes the endpoint object straight back must
+        not have the sentinel clobber the real stored secret."""
+        svc = _make_model_svc()
+        instance = _make_model_orm()
+        instance.inference_endpoint = {
+            "callbackUrl": "http://example.com/infer",
+            "inferenceApiKey": {"name": "Authorization", "value": "real-secret-token"},
+            "isMultilingualEnabled": False,
+        }
+        svc._models.get_by_id_version = AsyncMock(return_value=instance)
+        svc._models.refresh = AsyncMock(return_value=instance)
+        svc._services.list_published_for_model_version = AsyncMock(return_value=[])
+
+        payload = ModelUpdateRequest(
+            modelId="abc123",
+            version="1.0",
+            inferenceEndPoint={
+                "callbackUrl": "http://example.com/infer",
+                "inferenceApiKey": {"name": "Authorization", "value": REDACTED_VALUE},
+                "isMultilingualEnabled": True,
+            },
+        )
+        await svc.update_model(payload, updated_by="user-1")
+
+        update_data = svc._models.apply_updates.call_args.args[1]
+        merged_ep = update_data["inference_endpoint"]
+        assert merged_ep["inferenceApiKey"]["value"] == "real-secret-token"
+        assert merged_ep["isMultilingualEnabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_model_real_api_key_value_still_applies(self):
+        """A genuine (non-sentinel) inferenceApiKey.value update must still
+        go through — the guard only strips the exact REDACTED_VALUE sentinel."""
+        svc = _make_model_svc()
+        instance = _make_model_orm()
+        instance.inference_endpoint = {
+            "inferenceApiKey": {"name": "Authorization", "value": "old-token"},
+        }
+        svc._models.get_by_id_version = AsyncMock(return_value=instance)
+        svc._models.refresh = AsyncMock(return_value=instance)
+        svc._services.list_published_for_model_version = AsyncMock(return_value=[])
+
+        payload = ModelUpdateRequest(
+            modelId="abc123",
+            version="1.0",
+            inferenceEndPoint={"inferenceApiKey": {"name": "Authorization", "value": "new-token"}},
+        )
+        await svc.update_model(payload, updated_by="user-1")
+
+        update_data = svc._models.apply_updates.call_args.args[1]
+        assert update_data["inference_endpoint"]["inferenceApiKey"]["value"] == "new-token"
 
 
 # ===========================================================================

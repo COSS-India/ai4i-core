@@ -38,8 +38,24 @@ class ServicePolicy(BaseSchema):
 # ── Create / Update ──
 
 
-_SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
-_SERVICE_ID_MAX_LEN = 255
+SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
+SERVICE_ID_MAX_LEN = 255
+
+
+def validate_service_id(v: str) -> str:
+    """Validate a serviceId value. Raises ValueError on failure."""
+    if not v or not v.strip():
+        raise ValueError("serviceId must not be empty")
+    if len(v) > SERVICE_ID_MAX_LEN:
+        raise ValueError(
+            f"serviceId must not exceed {SERVICE_ID_MAX_LEN} characters"
+        )
+    if not SERVICE_ID_RE.match(v):
+        raise ValueError(
+            "serviceId must contain only alphanumeric characters, /, -, or _ "
+            "and include at least one alphanumeric character"
+        )
+    return v
 
 
 class ServiceCreateRequest(BaseSchema):
@@ -71,18 +87,7 @@ class ServiceCreateRequest(BaseSchema):
     @field_validator("serviceId")
     @classmethod
     def _validate_service_id(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("serviceId must not be empty")
-        if len(v) > _SERVICE_ID_MAX_LEN:
-            raise ValueError(
-                f"serviceId must not exceed {_SERVICE_ID_MAX_LEN} characters"
-            )
-        if not _SERVICE_ID_RE.match(v):
-            raise ValueError(
-                "serviceId must contain only alphanumeric characters, /, -, or _ "
-                "and include at least one alphanumeric character"
-            )
-        return v
+        return validate_service_id(v)
 
     @field_validator("name")
     @classmethod

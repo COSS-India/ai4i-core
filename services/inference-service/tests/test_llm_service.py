@@ -72,7 +72,7 @@ async def test_proxy_traced_returns_404_when_service_not_found(llm_service):
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(side_effect=LookupError("not found"))):
         status, body = await llm_service.proxy_traced(
-            "/v1/chat/completions", {"serviceId": "missing-svc", "messages": []}
+            "/v1/chat/completions", {"model": "missing-svc", "messages": []}
         )
     assert status == 404
     assert "not found" in body["detail"].lower()
@@ -83,7 +83,7 @@ async def test_proxy_traced_returns_503_when_mms_unavailable(llm_service):
     with patch.object(llm_service, "resolve_upstream_url",
                       new=AsyncMock(side_effect=ConnectionError("mms down"))):
         status, body = await llm_service.proxy_traced(
-            "/v1/chat/completions", {"serviceId": "svc-1", "messages": []}
+            "/v1/chat/completions", {"model": "svc-1", "messages": []}
         )
     assert status == 503
 
@@ -97,7 +97,7 @@ async def test_proxy_traced_returns_403_when_tier_not_entitled(llm_service):
                       new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))):
         status, body = await llm_service.proxy_traced(
             "/v1/chat/completions",
-            {"serviceId": "svc-1", "messages": []},
+            {"model": "svc-1", "messages": []},
             request=mock_request,
         )
     assert status == 403
@@ -116,7 +116,7 @@ async def test_proxy_traced_passes_tier_check_when_entitled(llm_service):
                       new=AsyncMock(return_value=(200, expected))):
         status, body = await llm_service.proxy_traced(
             "/v1/chat/completions",
-            {"serviceId": "svc-1", "messages": []},
+            {"model": "svc-1", "messages": []},
             request=mock_request,
         )
     assert status == 200
@@ -137,14 +137,15 @@ async def test_proxy_traced_injects_model_name_from_adapter_config(llm_service):
          patch.object(llm_service, "forward", side_effect=capture_forward):
         await llm_service.proxy_traced(
             "/v1/chat/completions",
-            {"serviceId": "svc-1", "messages": [{"role": "user", "content": "hi"}]},
+            {"model": "svc-1", "messages": [{"role": "user", "content": "hi"}]},
         )
     assert captured["payload"].get("model") == "google/gemma-4-E4B-it"
-    assert "serviceId" not in captured["payload"]
 
 
 @pytest.mark.asyncio
-async def test_proxy_traced_strips_service_id_before_forwarding(llm_service):
+async def test_proxy_traced_replaces_client_model_with_upstream_model(llm_service):
+    """The client's `model` is the service ID; it must be replaced by the real
+    upstream model from adapter_config before forwarding to vLLM."""
     captured = {}
 
     async def capture_forward(url, payload):
@@ -156,9 +157,10 @@ async def test_proxy_traced_strips_service_id_before_forwarding(llm_service):
          patch.object(llm_service, "forward", side_effect=capture_forward):
         await llm_service.proxy_traced(
             "/v1/chat/completions",
-            {"serviceId": "svc-1", "messages": []},
+            {"model": "svc-1", "messages": []},
         )
-    assert "serviceId" not in captured["payload"]
+    # "svc-1" was the service ID sent as `model`; upstream must get the real model.
+    assert captured["payload"]["model"] == "google/gemma-4-E4B-it"
 
 
 @pytest.mark.asyncio
@@ -168,7 +170,7 @@ async def test_proxy_traced_returns_502_on_connect_error(llm_service):
          patch.object(llm_service, "forward",
                       side_effect=httpx.ConnectError("unreachable")):
         status, body = await llm_service.proxy_traced(
-            "/v1/chat/completions", {"serviceId": "svc-1", "messages": []}
+            "/v1/chat/completions", {"model": "svc-1", "messages": []}
         )
     assert status == 502
     assert body["detail"] == "Upstream LLM request failed"
@@ -183,7 +185,7 @@ async def test_proxy_multipart_returns_404_when_service_not_found(llm_service):
         status, body = await llm_service.proxy_multipart(
             "/audio/transcriptions",
             files={"file": ("clip.wav", b"RIFF", "audio/wav")},
-            data={"serviceId": "missing-svc"},
+            data={"model": "missing-svc"},
         )
     assert status == 404
     assert body["error"]["type"] == "not_found"
@@ -196,7 +198,7 @@ async def test_proxy_multipart_returns_503_when_mms_unavailable(llm_service):
         status, body = await llm_service.proxy_multipart(
             "/audio/transcriptions",
             files={"file": ("clip.wav", b"RIFF", "audio/wav")},
-            data={"serviceId": "svc-1"},
+            data={"model": "svc-1"},
         )
     assert status == 503
     assert body["error"]["type"] == "api_error"
@@ -213,7 +215,7 @@ async def test_proxy_multipart_returns_502_on_connect_error(llm_service):
         status, body = await llm_service.proxy_multipart(
             "/audio/transcriptions",
             files={"file": ("clip.wav", b"RIFF", "audio/wav")},
-            data={"serviceId": "svc-1"},
+            data={"model": "svc-1"},
         )
     assert status == 502
     assert body["error"]["type"] == "upstream_error"

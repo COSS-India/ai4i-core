@@ -13,6 +13,7 @@ import pytest
 # ── Builder tests ─────────────────────────────────────────────────────────────
 
 from app.utils.metering_promql_builder import (
+    PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
     apply_time_range,
@@ -28,11 +29,11 @@ class TestBuildBaseSelectors:
 
     def test_inference_only_adds_endpoint_filter(self):
         sel = build_base_selectors(inference_only=True)
-        assert "endpoint=~" in sel
+        assert f"{PROMETHEUS_API_PATH_LABEL}=~" in sel
 
     def test_no_inference_only(self):
         sel = build_base_selectors(inference_only=False)
-        assert "endpoint=~" not in sel
+        assert f"{PROMETHEUS_API_PATH_LABEL}=~" not in sel
 
     def test_tenant_filter_added(self):
         sel = build_base_selectors(tenant="42")
@@ -277,13 +278,13 @@ class TestTenantCount:
 @pytest.mark.asyncio
 class TestServiceBreakdown:
     def _make_endpoint_result(self, endpoint: str, value: float):
-        return [{"metric": {"endpoint": endpoint}, "value": [0, str(value)]}]
+        return [{"metric": {PROMETHEUS_API_PATH_LABEL: endpoint}, "value": [0, str(value)]}]
 
     async def test_asr_native_units_reported_in_minutes(self):
         client = MagicMock()
 
         async def fake_query(promql):
-            if "sum by(endpoint)" in promql:
+            if f"sum by({PROMETHEUS_API_PATH_LABEL})" in promql:
                 return self._make_endpoint_result("/api/v1/asr/inference", 100)
             return []
 
@@ -308,7 +309,7 @@ class TestServiceBreakdown:
         async def fake_query(promql):
             if 'status_code=~"2.."' in promql:
                 return self._make_endpoint_result("/api/v1/ocr/inference", 250)
-            if "sum by(endpoint)" in promql:
+            if f"sum by({PROMETHEUS_API_PATH_LABEL})" in promql:
                 return self._make_endpoint_result("/api/v1/ocr/inference", 300)
             return []
 

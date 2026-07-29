@@ -6,44 +6,179 @@ model-management-service so that consumers (gateway, frontends) do not break
 during migration.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
     Benchmark,
     InferenceEndPoint,
+    InferenceEndPointPatch,
+    LanguagePair,
     Submitter,
     TaskSpec,
     TaskSpecLenient,
+    TrainingDataset,
     validate_entity_name,
     validate_license,
 )
-from app.schemas.enums.model_management import VersionStatusEnum
+from app.schemas.enums.model_management import DomainEnum, VersionStatusEnum
 
 
 # ── Create / Update ──
 
 
-class ModelCreateRequest(BaseSchema):
-    """Request body for POST /models."""
+_MODEL_CREATE_EXAMPLE = {
+    "name": "ai4bharat/indictrans2-en-hi",
+    "version": "v1",
+    "description": (
+        "Neural machine translation model for English to Hindi, fine-tuned "
+        "on parliamentary and news domain text."
+    ),
+    "refUrl": "https://github.com/AI4Bharat/IndicTrans2",
+    "task": {"type": "nmt"},
+    "languages": [
+        {
+            "sourceLanguage": "en",
+            "sourceLanguageName": "English",
+            "targetLanguage": "hi",
+            "targetLanguageName": "Hindi",
+            "targetScriptCode": "Deva",
+        }
+    ],
+    "isLangDetectionEnabled": False,
+    "isMultilingual": False,
+    "license": "mit",
+    "licenseUrl": "https://opensource.org/licenses/MIT",
+    "domain": ["general", "news"],
+    "submitter": {
+        "name": "AI4Bharat",
+        "aboutMe": "Open-source Indic NLP initiative at IIT Madras.",
+        "team": [{"name": "AI4Bharat Research Team"}],
+    },
+    "inferenceEndPoint": {
+        "callbackUrl": "https://inference.example.com/v2/models/indictrans2-en-hi/infer",
+        "inferenceApiKey": {"name": "Authorization", "value": "<your-api-key>"},
+        "isMultilingualEnabled": False,
+        "isSyncApi": True,
+        "schema": {"taskType": "translation"},
+    },
+    "benchmarks": [],
+    "trainingDataset": {
+        "description": (
+            "Parallel English-Hindi corpus sourced from parliamentary "
+            "proceedings and news articles."
+        ),
+        "datasetId": "indictrans2-en-hi-corpus-v1",
+    },
+    "classInstance": None,
+}
 
-    version: str
-    versionStatus: Optional[VersionStatusEnum] = VersionStatusEnum.ACTIVE
-    submittedOn: Optional[int] = None  # Auto-generated server-side
-    updatedOn: Optional[int] = None
-    name: str
-    description: str
-    refUrl: str
-    task: TaskSpec
-    languages: List[Dict[str, Any]]
-    license: str
-    domain: List[str]
-    inferenceEndPoint: InferenceEndPoint
-    benchmarks: List[Benchmark] = Field(default_factory=list)
-    submitter: Submitter
-    classInstance: Optional[str] = None
+
+class ModelCreateRequest(BaseSchema):
+    """Request body for POST /models.
+
+    Field-level notes below call out which fields are optional and which
+    have defaults; everything else listed is required. See the "Example
+    Value" tab for a full worked ULCA-conformant payload.
+    """
+
+    model_config = ConfigDict(json_schema_extra={"example": _MODEL_CREATE_EXAMPLE})
+
+    version: str = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="Required. Version identifier for this model, e.g. 'v1'. 1-20 characters.",
+    )
+    versionStatus: Optional[VersionStatusEnum] = Field(
+        VersionStatusEnum.ACTIVE,
+        description=(
+            "Optional, default: 'ACTIVE'. Models cannot be created directly "
+            "as 'DEPRECATED' — that's a lifecycle transition applied after "
+            "creation via PATCH."
+        ),
+    )
+    submittedOn: Optional[int] = Field(
+        None, description="Ignored on input — auto-generated server-side (Unix epoch seconds)."
+    )
+    updatedOn: Optional[int] = Field(
+        None, description="Ignored on input — auto-generated server-side (Unix epoch seconds)."
+    )
+    name: str = Field(
+        ...,
+        min_length=5,
+        max_length=100,
+        description=(
+            "Required. Model name shown to users. 5-100 characters; "
+            "alphanumeric, hyphens, and slashes only (no spaces), "
+            "e.g. 'ai4bharat/indictrans2-en-hi'."
+        ),
+    )
+    description: str = Field(
+        ...,
+        min_length=25,
+        max_length=1000,
+        description="Required. Brief description of the model and its goal. 25-1000 characters.",
+    )
+    refUrl: Optional[str] = Field(
+        None,
+        min_length=5,
+        max_length=200,
+        description="Optional. GitHub link or URL with more info about the model. 5-200 characters if provided.",
+    )
+    task: TaskSpec = Field(..., description="Required. The task category this model performs.")
+    languages: Optional[List[LanguagePair]] = Field(
+        None,
+        description=(
+            "Optional. Languages (or source/target pairs) this model "
+            "supports — see LanguagePair. Restricted to ULCA's Indic + "
+            "English language list."
+        ),
+    )
+    isLangDetectionEnabled: bool = Field(
+        default=False,
+        description="Optional, default: false. True if this model can auto-detect the input language on its own.",
+    )
+    isMultilingual: bool = Field(
+        default=False,
+        description="Optional, default: false. True if this single model handles multiple languages itself.",
+    )
+    license: str = Field(
+        ...,
+        description=(
+            "Required. License under this model is published — one of "
+            "ULCA's License values (e.g. 'mit', 'cc-by-4.0', 'gpl-3.0', "
+            "'custom-license'). Case-insensitive."
+        ),
+    )
+    licenseUrl: Optional[str] = Field(
+        None, max_length=500, description="Optional. URL of the custom license text. Max 500 characters."
+    )
+    domain: List[DomainEnum] = Field(
+        ...,
+        description="Required, at least one. Business area(s) this model is relevant to (ULCA Domain enum).",
+    )
+    inferenceEndPoint: InferenceEndPoint = Field(
+        ...,
+        description=(
+            "Required. The model's inference endpoint metadata (the model "
+            "card) — callbackUrl and schema are themselves required; see "
+            "InferenceEndPoint."
+        ),
+    )
+    benchmarks: List[Benchmark] = Field(
+        default_factory=list, description="Optional, default: []. Performance benchmark entries for this model."
+    )
+    submitter: Submitter = Field(
+        ..., description="Required. The model provider — who submitted this model to the registry."
+    )
+    trainingDataset: TrainingDataset = Field(
+        ...,
+        description="Required. Metadata describing the dataset used to train this model (at minimum a description).",
+    )
+    classInstance: Optional[str] = Field(None, description="Optional. Internal platform classification tag.")
 
     @field_validator("version", mode="before")
     @classmethod
@@ -78,22 +213,80 @@ class ModelCreateRequest(BaseSchema):
         return validate_license(v)
 
 
-class ModelUpdateRequest(BaseSchema):
-    """Request body for PATCH /models. modelId + version identify the target."""
+_MODEL_UPDATE_EXAMPLE = {
+    "modelId": "65bca5f3baae454fdb411646432ed1a2",  # sha256("ai4bharat/indictrans2-en-hi:v1")[:32] — matches the create example above
+    "version": "v1",
+    "description": (
+        "Updated: neural machine translation model for English to Hindi, "
+        "retrained on an expanded parliamentary and news corpus."
+    ),
+    "license": "cc-by-4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "isMultilingual": True,
+    # Partial inferenceEndPoint update: only the keys below are merged into
+    # the stored endpoint — callbackUrl/schema don't need to be resent.
+    "inferenceEndPoint": {
+        "isMultilingualEnabled": True,
+        "adapterConfig": {"version": "2"},
+    },
+    "trainingDataset": {
+        "description": (
+            "Expanded parallel English-Hindi corpus, now including "
+            "web-crawled news data."
+        ),
+        "datasetId": "indictrans2-en-hi-corpus-v2",
+    },
+}
 
-    modelId: str
-    version: Optional[str] = None
-    versionStatus: Optional[VersionStatusEnum] = None
-    description: Optional[str] = None
-    refUrl: Optional[str] = None
-    task: Optional[TaskSpec] = None
-    languages: Optional[List[Dict[str, Any]]] = None
-    license: Optional[str] = None
-    domain: Optional[List[str]] = None
-    inferenceEndPoint: Optional[InferenceEndPoint] = None
-    benchmarks: Optional[List[Benchmark]] = None
-    submitter: Optional[Submitter] = None
-    classInstance: Optional[str] = None
+
+class ModelUpdateRequest(BaseSchema):
+    """Request body for PATCH /models.
+
+    modelId + version identify the target and are the only fields required;
+    every other field is optional — omit any field to leave it unchanged.
+    See the "Example Value" tab for a realistic partial update, including
+    the inferenceEndPoint partial-merge pattern.
+    """
+
+    model_config = ConfigDict(json_schema_extra={"example": _MODEL_UPDATE_EXAMPLE})
+
+    modelId: str = Field(..., description="Required. Identifies the model to update, together with version.")
+    version: Optional[str] = Field(
+        None, min_length=1, max_length=20, description="Required. The specific version to update."
+    )
+    versionStatus: Optional[VersionStatusEnum] = Field(
+        None, description="Optional — omit to leave unchanged. 'ACTIVE' or 'DEPRECATED'."
+    )
+    description: Optional[str] = Field(
+        None, min_length=25, max_length=1000, description="Optional — omit to leave unchanged. 25-1000 characters."
+    )
+    refUrl: Optional[str] = Field(
+        None, min_length=5, max_length=200, description="Optional — omit to leave unchanged."
+    )
+    task: Optional[TaskSpec] = Field(None, description="Optional — omit to leave unchanged.")
+    languages: Optional[List[LanguagePair]] = Field(None, description="Optional — omit to leave unchanged.")
+    isLangDetectionEnabled: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
+    isMultilingual: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
+    license: Optional[str] = Field(
+        None, description="Optional — omit to leave unchanged. Must be a valid ULCA License value if provided."
+    )
+    licenseUrl: Optional[str] = Field(
+        None, max_length=500, description="Optional — omit to leave unchanged. Max 500 characters."
+    )
+    domain: Optional[List[DomainEnum]] = Field(None, description="Optional — omit to leave unchanged.")
+    inferenceEndPoint: Optional[InferenceEndPointPatch] = Field(
+        None,
+        description=(
+            "Optional — omit to leave unchanged. Partial update: only the "
+            "keys you send are merged into the stored endpoint, so you "
+            "don't need to resend callbackUrl/schema to change e.g. just "
+            "adapterConfig."
+        ),
+    )
+    benchmarks: Optional[List[Benchmark]] = Field(None, description="Optional — omit to leave unchanged.")
+    submitter: Optional[Submitter] = Field(None, description="Optional — omit to leave unchanged.")
+    trainingDataset: Optional[TrainingDataset] = Field(None, description="Optional — omit to leave unchanged.")
+    classInstance: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
 
     @field_validator("license", mode="before")
     @classmethod
@@ -120,13 +313,17 @@ class ModelResponse(BaseSchema):
     versionStatus: Optional[str] = None
     versionStatusUpdatedAt: Optional[str] = None
     description: Optional[str] = None
-    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    languages: List[LanguagePair] = Field(default_factory=list)
+    isLangDetectionEnabled: bool = False
+    isMultilingual: bool = False
     domain: List[str] = Field(default_factory=list)
     submitter: Optional[Submitter] = None
     license: Optional[str] = None
+    licenseUrl: Optional[str] = None
     inferenceEndPoint: Optional[InferenceEndPoint] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
+    trainingDataset: Optional[TrainingDataset] = None
     classInstance: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None

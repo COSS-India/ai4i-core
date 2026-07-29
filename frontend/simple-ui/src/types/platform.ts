@@ -1,45 +1,68 @@
 /**
  * Platform-core API types (models & services).
  * Shapes mirror services/platform-core-service/app/schemas/*.py (camelCase contract).
+ * Model Registry fields follow ULCA model-schema.yml (AI4IDS-2478).
  */
 
 // ── Shared building blocks ──
 
+export type OAuthProvider =
+  | "custom"
+  | "github"
+  | "facebook"
+  | "instagram"
+  | "google"
+  | "yahoo";
+
 export interface OAuthId {
-  oauthId: string;
-  provider: string;
+  identifier?: string;
+  oauthId?: string;
+  provider?: OAuthProvider;
 }
 
 export interface TeamMember {
+  /** 5–50 chars when present */
   name: string;
   aboutMe?: string;
   oauthId?: OAuthId;
 }
 
 export interface Submitter {
+  /** 3–50 chars */
   name: string;
+  oauthId?: OAuthId;
   aboutMe?: string;
   team?: TeamMember[];
 }
 
-export interface ModelProcessingType {
-  type: string;
+export interface InferenceApiKey {
+  /** Defaults to "Authorization" */
+  name?: string;
+  /** Always "[REDACTED]" on every read */
+  value: string;
 }
 
-export interface InferenceSchemaSpec {
-  modelProcessingType?: ModelProcessingType;
-  model_name?: string;
-  request?: Record<string, unknown>;
-  response?: Record<string, unknown>;
+export interface AsyncApiDetails {
+  pollingUrl: string;
+  /** Poll interval in milliseconds */
+  pollInterval: number;
+  asyncApiSchema?: Record<string, unknown>;
+  asyncApiPollingSchema?: Record<string, unknown>;
 }
 
+/** ULCA inference endpoint (callbackUrl + schema required on create). */
 export interface InferenceEndPoint {
-  schema?: InferenceSchemaSpec;
-  endpoint?: string;
-  model_name?: string;
-  modelName?: string;
-  model?: string;
+  callbackUrl: string;
+  inferenceApiKey?: InferenceApiKey;
+  isMultilingualEnabled?: boolean;
+  schema: Record<string, unknown>;
+  isSyncApi?: boolean;
+  asyncApiDetails?: AsyncApiDetails;
+  /** Platform-specific Triton I/O mapping — not part of ULCA */
+  adapterConfig?: Record<string, unknown>;
 }
+
+export type InferenceEndPointPatch = Partial<InferenceEndPoint>;
 
 export interface TaskSpec {
   type: string;
@@ -65,11 +88,136 @@ export interface Benchmark {
   score: BenchmarkScore[];
 }
 
+export interface TrainingDataset {
+  description: string;
+  datasetId?: string;
+}
+
+export type License =
+  | "cc-by-4.0"
+  | "cc-by-sa-4.0"
+  | "cc-by-nd-2.0"
+  | "cc-by-nd-4.0"
+  | "cc-by-nc-3.0"
+  | "cc-by-nc-4.0"
+  | "cc-by-nc-sa-4.0"
+  | "cc0"
+  | "mit"
+  | "gpl-3.0"
+  | "bsd-3-clause"
+  | "private-commercial"
+  | "unknown-license"
+  | "custom-license";
+
+export type Domain =
+  | "general"
+  | "news"
+  | "education"
+  | "legal"
+  | "government-press-release"
+  | "healthcare"
+  | "agriculture"
+  | "automobile"
+  | "tourism"
+  | "financial"
+  | "movies"
+  | "subtitles"
+  | "sports"
+  | "technology"
+  | "lifestyle"
+  | "entertainment"
+  | "parliamentary"
+  | "art-and-culture"
+  | "economy"
+  | "history"
+  | "philosophy"
+  | "religion"
+  | "national-security-and-defence"
+  | "literature"
+  | "geography";
+
+/** ULCA SupportedLanguages — Indic + English only (45 codes). */
+export type SupportedLanguage =
+  | "en"
+  | "hi"
+  | "mr"
+  | "ta"
+  | "te"
+  | "kn"
+  | "gu"
+  | "pa"
+  | "bn"
+  | "ml"
+  | "as"
+  | "brx"
+  | "doi"
+  | "ks"
+  | "kok"
+  | "mai"
+  | "mni"
+  | "ne"
+  | "or"
+  | "sd"
+  | "si"
+  | "ur"
+  | "sat"
+  | "lus"
+  | "njz"
+  | "pnr"
+  | "kha"
+  | "grt"
+  | "sa"
+  | "raj"
+  | "bho"
+  | "gom"
+  | "awa"
+  | "hne"
+  | "mag"
+  | "mwr"
+  | "sjp"
+  | "gbm"
+  | "tcy"
+  | "hlb"
+  | "bih"
+  | "anp"
+  | "bns"
+  | "mixed"
+  | "unknown";
+
+/** ULCA SupportedScripts — ISO 15924 (16 codes). */
+export type SupportedScript =
+  | "Beng"
+  | "Deva"
+  | "Thaa"
+  | "Gujr"
+  | "Aran"
+  | "Orya"
+  | "Guru"
+  | "Arab"
+  | "Sinh"
+  | "Knda"
+  | "Mlym"
+  | "Taml"
+  | "Telu"
+  | "Mtei"
+  | "Olck"
+  | "Latn";
+
+export interface LanguagePair {
+  sourceLanguage: SupportedLanguage;
+  sourceLanguageName?: string;
+  sourceScriptCode?: SupportedScript;
+  targetLanguage?: SupportedLanguage;
+  targetLanguageName?: string;
+  targetScriptCode?: SupportedScript;
+}
+
+/** Loose language bag for service list rows / legacy adapters. */
 export type LanguageRecord = Record<string, unknown>;
 
 // ── Model API ──
 
-export type ModelVersionStatus = string;
+export type ModelVersionStatus = "ACTIVE" | "DEPRECATED" | string;
 
 /** GET /models, GET /models/{id} — single model record. */
 export interface ModelResponse {
@@ -80,15 +228,19 @@ export interface ModelResponse {
   versionStatus?: ModelVersionStatus | null;
   versionStatusUpdatedAt?: string | null;
   description?: string | null;
-  languages?: LanguageRecord[];
-  domain?: string[];
+  languages?: LanguagePair[];
+  isLangDetectionEnabled?: boolean;
+  isMultilingual?: boolean;
+  domain?: Domain[] | string[];
   submitter?: Submitter | null;
-  license?: string | null;
+  license?: License | string | null;
+  licenseUrl?: string | null;
   inferenceEndPoint?: InferenceEndPoint | null;
-  /** Alias for refUrl in API responses. */
+  /** GET/list returns refUrl as `source` — there is no `refUrl` key in responses. */
   source?: string | null;
-  refUrl?: string | null;
   task?: TaskSpec;
+  trainingDataset?: TrainingDataset | null;
+  classInstance?: string | null;
   benchmarks?: Benchmark[];
   createdBy?: string | null;
   updatedBy?: string | null;
@@ -132,29 +284,43 @@ export interface ModelCreateRequest {
   versionStatus?: ModelVersionStatus;
   submittedOn?: number;
   updatedOn?: number;
+  /** 5–100 chars; alphanumeric, -, / only — no spaces */
   name: string;
+  /** 25–1000 chars */
   description: string;
-  refUrl: string;
+  /** Optional (was required). 5–200 chars if provided. */
+  refUrl?: string;
   task: TaskSpec;
-  languages: LanguageRecord[];
-  license: string;
-  domain: string[];
+  languages?: LanguagePair[];
+  isLangDetectionEnabled?: boolean;
+  isMultilingual?: boolean;
+  license: License;
+  licenseUrl?: string;
+  domain: Domain[];
   inferenceEndPoint: InferenceEndPoint;
+  trainingDataset: TrainingDataset;
+  classInstance?: string;
   benchmarks?: Benchmark[];
   submitter: Submitter;
 }
 
+/** Partial update. Never include `name` — API returns 422 NAME_NOT_UPDATABLE. */
 export interface ModelUpdateRequest {
   modelId: string;
-  version?: string;
+  version: string;
   versionStatus?: ModelVersionStatus;
   description?: string;
   refUrl?: string;
   task?: TaskSpec;
-  languages?: LanguageRecord[];
-  license?: string;
-  domain?: string[];
-  inferenceEndPoint?: InferenceEndPoint;
+  languages?: LanguagePair[];
+  isLangDetectionEnabled?: boolean;
+  isMultilingual?: boolean;
+  license?: License;
+  licenseUrl?: string;
+  domain?: Domain[];
+  inferenceEndPoint?: InferenceEndPointPatch;
+  trainingDataset?: TrainingDataset;
+  classInstance?: string;
   benchmarks?: Benchmark[];
   submitter?: Submitter;
 }

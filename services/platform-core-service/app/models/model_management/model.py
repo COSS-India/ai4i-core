@@ -10,7 +10,7 @@ others DEPRECATED.
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -52,11 +52,15 @@ class Model(Base):
     ref_url = Column(String(500), nullable=True)
     task = Column(JSONB, nullable=False)
     languages = Column(JSONB, nullable=False, default=list)
+    is_lang_detection_enabled = Column(Boolean, nullable=False, default=False)
+    is_multilingual = Column(Boolean, nullable=False, default=False)
     license = Column(String(255), nullable=True)
+    license_url = Column(String(500), nullable=True)
     domain = Column(JSONB, nullable=False, default=list)
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB, nullable=True)
     submitter = Column(JSONB, nullable=False)
+    training_dataset = Column(JSONB, nullable=False, default=dict)
     class_instance = Column(String(100), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)

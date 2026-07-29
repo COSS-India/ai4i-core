@@ -3,6 +3,7 @@ Model management API endpoints.
 """
 
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -37,6 +38,28 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
     except ValueError:
         valid = [e.value for e in TaskTypeEnum]
         raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
+
+
+_MODEL_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
+_MODEL_ID_MAX_LEN = 255
+
+
+def _validate_model_id(model_id: str) -> str:
+    """Reject a structurally invalid model_id before any DB lookup is attempted
+    (AI4IDS-1932) — mirrors ServiceCreateRequest._validate_service_id's format
+    (schemas/model_management/service.py), since model_id and serviceId are the
+    same class of opaque identifier in this codebase.
+    """
+    if not model_id or not model_id.strip():
+        raise ValidationError("model_id must not be empty")
+    if len(model_id) > _MODEL_ID_MAX_LEN:
+        raise ValidationError(f"model_id must not exceed {_MODEL_ID_MAX_LEN} characters")
+    if not _MODEL_ID_RE.match(model_id):
+        raise ValidationError(
+            "model_id must contain only alphanumeric characters, /, -, or _ "
+            "and include at least one alphanumeric character"
+        )
+    return model_id
 
 
 @router.get("")
@@ -102,11 +125,26 @@ async def get_model_by_id(
     svc: ModelService = Depends(get_model_service),
 ):
     """Retrieve a model by ID."""
+    model_id = _validate_model_id(model_id)
     data = await svc.get_model(model_id, version=version)
     return success_response(data=data)
 
 
-@router.post("", status_code=201)
+@router.post(
+    "",
+    status_code=201,
+    summary="Register a new model version (ULCA model-schema conformant)",
+    description=(
+        "Registers a new model version in the registry. The request body "
+        "follows ULCA's `model-schema.yml` Model object: `name`, `version`, "
+        "`description`, `task`, `license`, `domain`, `submitter`, "
+        "`inferenceEndPoint`, and `trainingDataset` are required; "
+        "`refUrl`, `languages`, `isLangDetectionEnabled`, `isMultilingual`, "
+        "`licenseUrl`, `benchmarks`, and `classInstance` are optional (see "
+        "each field's description in the schema below for its default, if "
+        "any). Use the 'Example Value' tab for a full worked payload."
+    ),
+)
 async def create_model(
     request: Request,
     payload: ModelCreateRequest,
@@ -125,7 +163,25 @@ async def create_model(
     )
 
 
-@router.patch("")
+@router.patch(
+    "",
+    summary="Partially update a model version (ULCA model-schema conformant)",
+    description=(
+        "Applies a partial update to an existing (modelId, version). Only "
+        "`modelId` and `version` are required — every other ULCA Model "
+        "field (`description`, `task`, `languages`, `license`, `domain`, "
+        "`submitter`, `inferenceEndPoint`, `trainingDataset`, etc.) is "
+        "optional; omit a field to leave it unchanged. `name` cannot be "
+        "changed (modelId is derived from name+version — create a new "
+        "version instead). `inferenceEndPoint` merges: send only the keys "
+        "you want changed (e.g. just `adapterConfig`), no need to resend "
+        "`callbackUrl`/`schema`. Never resend a GET response's "
+        "`inferenceApiKey.value` verbatim — it comes back as '[REDACTED]' "
+        "and that sentinel is stripped before merge, so it won't corrupt "
+        "the stored secret, but it also won't update it. Use the 'Example "
+        "Value' tab for a realistic partial-update payload."
+    ),
+)
 async def update_model(
     request: Request,
     payload: ModelUpdateRequest,

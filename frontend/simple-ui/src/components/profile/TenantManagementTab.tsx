@@ -82,6 +82,9 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
+import ConsentCheckbox, {
+  getConsentValidationError,
+} from "../common/ConsentCheckbox";
 import AdminDataTable, {
   TableSearchField,
   TableSelectField,
@@ -101,6 +104,18 @@ import {
 } from "../../config/constants";
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import type { TenantUserView, TenantView } from "../../types/tenant";
+
+const BUDGET_MAX_INTEGER_DIGITS = 7;
+
+function clampBudgetInput(raw: string): string {
+  const dotIndex = raw.indexOf(".");
+  const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
+    0,
+    BUDGET_MAX_INTEGER_DIGITS,
+  );
+  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
+  return intPart + decimalPart;
+}
 
 function dash(v?: string | null): string {
   return v && v.trim() ? v : "—";
@@ -154,6 +169,26 @@ export default function TenantManagementTab({
 
   const toast = useToast();
   const queryClient = useQueryClient();
+
+  // Create Tenant modal — consent checkbox state
+  const [tenantConsentAccepted, setTenantConsentAccepted] = useState(false);
+  const [tenantConsentError, setTenantConsentError] = useState("");
+
+  // Reset consent whenever the Create Tenant modal opens or closes.
+  useEffect(() => {
+    setTenantConsentAccepted(false);
+    setTenantConsentError("");
+  }, [tm.isTenantModalOpen]);
+
+  // Add Tenant User modal — consent checkbox state
+  const [userConsentAccepted, setUserConsentAccepted] = useState(false);
+  const [userConsentError, setUserConsentError] = useState("");
+
+  // Reset consent whenever the Add Tenant User modal opens or closes.
+  useEffect(() => {
+    setUserConsentAccepted(false);
+    setUserConsentError("");
+  }, [tm.isUserModalOpen]);
 
   // Assign Tier modal state
   const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
@@ -870,6 +905,7 @@ export default function TenantManagementTab({
     stopRowClick: (e: React.MouseEvent) => void,
     menuAriaLabel: string,
   ) {
+    if (items.length === 0) return null;
     return (
       <Menu>
         <MenuButton
@@ -986,7 +1022,11 @@ export default function TenantManagementTab({
         ];
       }
 
-      // DEACTIVATED
+      // DEACTIVATED — previous behavior (Activate) unless this tenant was
+      // soft-deleted from PENDING verification (terminal, no actions).
+      if (tm.isPendingSoftDeletedTenant(t)) {
+        return [];
+      }
       return [
         {
           key: "activate",
@@ -1101,7 +1141,7 @@ export default function TenantManagementTab({
         return [
           {
             key: "resend-verification",
-            label: "Resend verification email",
+            label: "Resend setup link",
             onSelect: () => void tm.handleResendTenantUserVerification(u),
             color: "blue.600",
             hoverBg: "blue.50",
@@ -1251,6 +1291,7 @@ export default function TenantManagementTab({
                   type="email"
                   value={tm.tenantForm.email}
                   onChange={(e) => tm.handleTenantEmailChange(e.target.value)}
+                  onBlur={tm.handleTenantEmailBlur}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
                 {tm.tenantEmailStatus === "checking" &&
@@ -1278,6 +1319,14 @@ export default function TenantManagementTab({
                   {tm.tenantFormErrors.phone_number}
                 </FormErrorMessage>
               </FormControl>
+              <ConsentCheckbox
+                isChecked={tenantConsentAccepted}
+                onChange={(checked) => {
+                  setTenantConsentAccepted(checked);
+                  if (checked) setTenantConsentError("");
+                }}
+                error={tenantConsentError}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -1286,9 +1335,16 @@ export default function TenantManagementTab({
             </Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleRegisterTenant}
+              onClick={() => {
+                const consentError = getConsentValidationError(tenantConsentAccepted);
+                if (consentError) {
+                  setTenantConsentError(consentError);
+                  return;
+                }
+                tm.handleRegisterTenant();
+              }}
               isLoading={tm.isSubmittingTenant}
-              isDisabled={!tm.canSubmitTenantForm}
+              isDisabled={!tm.canSubmitTenantForm || !tenantConsentAccepted}
             >
               Create
             </Button>
@@ -1484,6 +1540,7 @@ export default function TenantManagementTab({
                   type="email"
                   value={tm.userForm.email}
                   onChange={(e) => tm.handleUserEmailChange(e.target.value)}
+                  onBlur={tm.handleUserEmailBlur}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
                 {tm.userEmailStatus === "checking" &&
@@ -1507,6 +1564,7 @@ export default function TenantManagementTab({
                 <Input
                   value={tm.userForm.full_name}
                   onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
+                  onBlur={(e) => tm.handleUserFullNameBlur(e.target.value)}
                 />
                 <FormErrorMessage>
                   {tm.userFormErrors.full_name}
@@ -1540,6 +1598,14 @@ export default function TenantManagementTab({
                   {tm.userFormErrors.phone_number}
                 </FormErrorMessage>
               </FormControl>
+              <ConsentCheckbox
+                isChecked={userConsentAccepted}
+                onChange={(checked) => {
+                  setUserConsentAccepted(checked);
+                  if (checked) setUserConsentError("");
+                }}
+                error={userConsentError}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -1548,9 +1614,16 @@ export default function TenantManagementTab({
             </Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleRegisterUser}
+              onClick={() => {
+                const consentError = getConsentValidationError(userConsentAccepted);
+                if (consentError) {
+                  setUserConsentError(consentError);
+                  return;
+                }
+                tm.handleRegisterUser();
+              }}
               isLoading={tm.isSubmittingUser}
-              isDisabled={!tm.canSubmitUserForm}
+              isDisabled={!tm.canSubmitUserForm || !userConsentAccepted}
             >
               Add
             </Button>
@@ -1736,6 +1809,31 @@ export default function TenantManagementTab({
     return formatTenantStatusLabel(status);
   }
 
+  function getTenantStatusConfirmBody(
+    currentStatus: string,
+    newStatus: string,
+  ): string | null {
+    if (isTenantStatus(newStatus, TENANT.STATUS.SUSPENDED)) {
+      return "API keys become Inactive. Reactivating the tenant restores the same keys to Active.";
+    }
+    if (isTenantStatus(newStatus, TENANT.STATUS.DEACTIVATED)) {
+      return "API keys are Revoked. After reactivation, an admin must create a new key.";
+    }
+    if (
+      isTenantStatus(newStatus, TENANT.STATUS.ACTIVE) &&
+      isTenantStatus(currentStatus, TENANT.STATUS.SUSPENDED)
+    ) {
+      return "Inactive API keys will automatically resume as Active.";
+    }
+    if (
+      isTenantStatus(newStatus, TENANT.STATUS.ACTIVE) &&
+      isTenantStatus(currentStatus, TENANT.STATUS.DEACTIVATED)
+    ) {
+      return "Previously revoked API keys are not restored. Create a new key if needed.";
+    }
+    return null;
+  }
+
   function renderStatusConfirmDialog() {
     const target = tm.statusUpdateTarget;
     const isOpen = tm.isStatusDialogOpen && Boolean(target);
@@ -1744,13 +1842,28 @@ export default function TenantManagementTab({
       target?.type,
       tm.statusUpdateNewStatus,
     );
+    const apiKeyNote =
+      target?.type === "tenant"
+        ? getTenantStatusConfirmBody(
+            target.currentStatus,
+            tm.statusUpdateNewStatus,
+          )
+        : null;
+    const body = apiKeyNote ? (
+      <VStack align="stretch" spacing={2}>
+        <Text>Set {targetLabel} status to &quot;{statusLabel}&quot;?</Text>
+        <Text>{apiKeyNote}</Text>
+      </VStack>
+    ) : (
+      `Set ${targetLabel} status to "${statusLabel}"?`
+    );
     return (
       <ConfirmDialog
         isOpen={isOpen}
         onClose={tm.closeStatusDialog}
         onConfirm={tm.handleConfirmStatusUpdate}
         title={`Change ${targetLabel} status`}
-        body={`Set ${targetLabel} status to "${statusLabel}"?`}
+        body={body}
         confirmLabel="Update"
         confirmColorScheme="blue"
         isConfirmLoading={tm.isSubmittingStatus}
@@ -1836,7 +1949,9 @@ export default function TenantManagementTab({
                   <InputLeftAddon>₹</InputLeftAddon>
                   <Input
                     value={assignBudget}
-                    onChange={(e) => setAssignBudget(e.target.value)}
+                    onChange={(e) =>
+                      setAssignBudget(clampBudgetInput(e.target.value))
+                    }
                     placeholder="e.g. 500000"
                     type="number"
                     min={0}

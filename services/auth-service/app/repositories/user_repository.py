@@ -11,6 +11,7 @@ from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import USERNAME_MAX_LENGTH
+from app.models.credentials import UserCredentials
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
@@ -113,13 +114,29 @@ class UserRepository(BaseRepository):
         *,
         updated_by: Optional[UUID] = None,
     ) -> None:
-        """When tenant is SUSPENDED/DEACTIVATED: clear tenant access only (``is_tenant_active``)."""
+        """When tenant is SUSPENDED/DEACTIVATED: clear tenant access only (``is_tenant_active``).
+
+        Only users who have completed setup (a credentials row exists) are
+        locked. Pending-activation users never had an active account, so
+        marking them Suspended would be semantically wrong and could strand
+        them if the flag is not restored on reactivation; they keep
+        ``is_tenant_active`` untouched and stay Pending Activation.
+        """
         values: dict = {"is_tenant_active": False}
         if updated_by is not None:
             values["updated_by"] = updated_by
+        has_credentials = (
+            select(UserCredentials.id)
+            .where(UserCredentials.user_id == User.id)
+            .exists()
+        )
         await self._db.execute(
             update(User)
-            .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_delete.isnot(True),
+                has_credentials,
+            )
             .values(**values)
         )
         await self._db.flush()

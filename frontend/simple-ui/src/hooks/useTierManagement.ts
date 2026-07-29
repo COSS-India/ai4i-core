@@ -505,17 +505,9 @@ export function useTierManagement() {
           { modelTaskType: scheduleTarget.modelTaskType, limit: newLimit },
         ],
       });
-      setFormData((prev) => ({
-        ...prev,
-        quotas: prev.quotas.map((q) =>
-          q.modelTaskType === scheduleTarget.modelTaskType
-            ? { ...q, limit: scheduleLimit }
-            : q,
-        ),
-      }));
       toast({
-        title: "Quota updated",
-        description: `${scheduleTarget.modelTaskType} quota limit has been updated.`,
+        title: "Quota change scheduled",
+        description: `${scheduleTarget.modelTaskType} quota change will take effect from the next billing cycle.`,
         status: "success",
         duration: 4000,
         isClosable: true,

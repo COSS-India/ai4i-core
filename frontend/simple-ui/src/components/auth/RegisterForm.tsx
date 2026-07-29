@@ -1,7 +1,7 @@
 /**
  * Register form component with Chakra UI
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from "react";
 import {
   Box,
   Heading,
@@ -15,24 +15,33 @@ import {
   Text,
   VStack,
   Link,
-  Select,
   FormErrorMessage,
   FormHelperText,
-} from '@chakra-ui/react';
-import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
-import { useAuth } from '../../hooks/useAuth';
-import { RegisterRequest } from '../../types/auth';
-import { ApiValidationError } from '../../services/dto/apiValidationError';
-import LoadingSpinner from '../common/LoadingSpinner';
-import { showToast } from '../../utils/toast';
-import { PASSWORD_POLICY, COMMON_ERRORS, UI_ERROR_MESSAGES } from '../../config/constants';
-import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
-import authService from '../../services/authService';
+} from "@chakra-ui/react";
+import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
+import { useAuth } from "../../hooks/useAuth";
+import { RegisterRequest } from "../../types/auth";
+import { ApiValidationError } from "../../services/dto/apiValidationError";
+import LoadingSpinner from "../common/LoadingSpinner";
+import ConsentCheckbox, {
+  getConsentValidationError,
+} from "../common/ConsentCheckbox";
+import { showToast } from "../../utils/toast";
+import {
+  PASSWORD_POLICY,
+  COMMON_ERRORS,
+  UI_ERROR_MESSAGES,
+} from "../../config/constants";
+import PasswordRequirements, {
+  getPasswordValidationError,
+  passwordPasses,
+} from "./password/PasswordRequirements";
+import authService from "../../services/authService";
 
 const SIGNUP_EMAIL_ALREADY_EXISTS_MSG =
-  'An account with this email already exists. Please use a different email or sign in.';
+  "An account with this email already exists. Please use a different email or sign in.";
 
-const SIGNUP_EMAIL_INVALID_MSG = 'Please enter a valid email address';
+const SIGNUP_EMAIL_INVALID_MSG = "Please enter a valid email address";
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -41,16 +50,24 @@ interface RegisterFormProps {
   isActive?: boolean; // Prop to indicate if the register tab is currently active
 }
 
-const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess, isActive = true }) => {
-  const { register, isLoading, error, clearError } = useAuth();
+const RegisterForm: React.FC<RegisterFormProps> = ({
+  onSuccess,
+  onSwitchToLogin,
+  onRegisterSuccess,
+  isActive = true,
+}) => {
+  const { register, isLoading, clearError } = useAuth();
   const [formData, setFormData] = useState<RegisterRequest>({
-    full_name: '',
-    email: '',
-    password: '',
-    confirm_password: '',
+    full_name: "",
+    email: "",
+    password: "",
+    confirm_password: "",
   });
 
-  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [validationErrors, setValidationErrors] = useState<
+    Record<string, string>
+  >({});
+  const [consentAccepted, setConsentAccepted] = useState(false);
   const [isCheckingEmail, setIsCheckingEmail] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -62,10 +79,10 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     // Only reset when switching from inactive to active (not on initial mount or re-renders)
     if (isActive && !prevIsActiveRef.current) {
       setFormData({
-        full_name: '',
-        email: '',
-        password: '',
-        confirm_password: '',
+        full_name: "",
+        email: "",
+        password: "",
+        confirm_password: "",
       });
       setValidationErrors({});
       setIsCheckingEmail(false);
@@ -84,14 +101,18 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     return undefined;
   };
 
-  const checkEmailAvailability = async (email: string): Promise<string | undefined> => {
+  const checkEmailAvailability = async (
+    email: string,
+  ): Promise<string | undefined> => {
     const formatError = validateEmailFormat(email);
     if (formatError) return formatError;
 
     const requestId = ++emailCheckRequestIdRef.current;
     setIsCheckingEmail(true);
     try {
-      const exists = await authService.checkEmailExists(email, { withAuth: false });
+      const exists = await authService.checkEmailExists(email, {
+        withAuth: false,
+      });
       if (requestId !== emailCheckRequestIdRef.current) return undefined;
       if (exists) return SIGNUP_EMAIL_ALREADY_EXISTS_MSG;
       return undefined;
@@ -111,9 +132,9 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
     const error = await checkEmailAvailability(trimmed);
     if (error) {
-      setValidationErrors(prev => ({ ...prev, email: error }));
+      setValidationErrors((prev) => ({ ...prev, email: error }));
     } else {
-      setValidationErrors(prev => {
+      setValidationErrors((prev) => {
         if (!prev.email) return prev;
         const next = { ...prev };
         delete next.email;
@@ -125,17 +146,22 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
 
-    const trimmedFullName = formData.full_name?.trim() ?? '';
+    const trimmedFullName = formData.full_name?.trim() ?? "";
     if (!trimmedFullName) {
-      errors.full_name = 'Full name is required';
+      errors.full_name = "Full name is required";
     } else if (trimmedFullName.length < 2) {
-      errors.full_name = 'Full name must be at least 2 characters';
+      errors.full_name = "Full name must be at least 2 characters";
     } else if (trimmedFullName.length > 100) {
-      errors.full_name = 'Full name must be at most 100 characters';
+      errors.full_name = "Full name must be at most 100 characters";
     }
 
     if (formData.password !== formData.confirm_password) {
-      errors.confirm_password = 'Passwords do not match';
+      errors.confirm_password = "Passwords do not match";
+    }
+
+    const consentError = getConsentValidationError(consentAccepted);
+    if (consentError) {
+      errors.consent = consentError;
     }
 
     const passwordError = getPasswordValidationError(formData.password);
@@ -164,26 +190,27 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
     const emailError = await checkEmailAvailability(formData.email);
     if (emailError) {
-      setValidationErrors(prev => ({ ...prev, email: emailError }));
+      setValidationErrors((prev) => ({ ...prev, email: emailError }));
       return;
     }
 
     try {
       await register({
         ...formData,
-        full_name: (formData.full_name ?? '').trim(),
+        full_name: (formData.full_name ?? "").trim(),
       });
 
       // Clear form data after successful registration
       setFormData({
-        full_name: '',
-        email: '',
-        password: '',
-        confirm_password: '',
+        full_name: "",
+        email: "",
+        password: "",
+        confirm_password: "",
       });
       setValidationErrors({});
       setShowPassword(false);
       setShowConfirmPassword(false);
+      setConsentAccepted(false);
 
       // Show success toast — user must verify email before sign-in works.
       showToast({
@@ -201,62 +228,80 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         onSuccess?.();
       }
     } catch (error: any) {
-      console.error('Registration failed:', error);
+      console.error("Registration failed:", error);
 
       // Extract error message from response
       let errorMessage: string = UI_ERROR_MESSAGES.REGISTRATION_FAILED;
-      let errorTitle = 'Registration Error';
+      let errorTitle = "Registration Error";
 
       if (error instanceof ApiValidationError) {
-        errorTitle = 'Registration Error';
+        errorTitle = "Registration Error";
         errorMessage =
-          'We could not confirm your registration. If you received a verification email, use that link to activate your account; otherwise try again or sign in.';
+          "We could not confirm your registration. If you received a verification email, use that link to activate your account; otherwise try again or sign in.";
       } else if (error?.response) {
         const status = error?.response?.status;
         const errorData = error?.response?.data ?? error?.response;
 
         // Extract error message from different possible formats
-        if (typeof errorData === 'string') {
+        if (typeof errorData === "string") {
           errorMessage = errorData;
         } else if (errorData?.detail) {
           errorMessage = String(errorData.detail);
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (Array.isArray(errorData)) {
-          errorMessage = errorData.map((err: any) =>
-            err.detail || err.message || String(err)
-          ).join(', ');
-        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+          errorMessage = errorData
+            .map((err: any) => err.detail || err.message || String(err))
+            .join(", ");
+        } else if (
+          typeof errorData === "object" &&
+          Object.keys(errorData).length > 0
+        ) {
           // Try to extract meaningful error from object
-          const errorText = errorData.detail || errorData.message || errorData.error;
-          errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
+          const errorText =
+            errorData.detail || errorData.message || errorData.error;
+          errorMessage = errorText
+            ? String(errorText)
+            : JSON.stringify(errorData);
         }
 
         // Provide user-friendly messages based on status code
         if (status === 400) {
-          errorTitle = 'Invalid Registration Data';
-          if (!errorMessage.includes('already') && !errorMessage.includes('exists')) {
-            errorMessage = errorMessage || 'Please check your registration information and try again.';
+          errorTitle = "Invalid Registration Data";
+          if (
+            !errorMessage.includes("already") &&
+            !errorMessage.includes("exists")
+          ) {
+            errorMessage =
+              errorMessage ||
+              "Please check your registration information and try again.";
           }
-        } else if (status === 409 || errorMessage.toLowerCase().includes('already exists') ||
-                   errorMessage.toLowerCase().includes('already registered') ||
-                   errorMessage.toLowerCase().includes('duplicate')) {
-          errorTitle = 'Account Already Exists';
-          if (errorMessage.toLowerCase().includes('email')) {
+        } else if (
+          status === 409 ||
+          errorMessage.toLowerCase().includes("already exists") ||
+          errorMessage.toLowerCase().includes("already registered") ||
+          errorMessage.toLowerCase().includes("duplicate")
+        ) {
+          errorTitle = "Account Already Exists";
+          if (errorMessage.toLowerCase().includes("email")) {
             errorMessage = SIGNUP_EMAIL_ALREADY_EXISTS_MSG;
-          } else if (errorMessage.toLowerCase().includes('username')) {
-            errorMessage = 'This username is already taken. Please choose a different username.';
+          } else if (errorMessage.toLowerCase().includes("username")) {
+            errorMessage =
+              "This username is already taken. Please choose a different username.";
           } else {
-            errorMessage = 'An account with this information already exists. Please sign in instead.';
+            errorMessage =
+              "An account with this information already exists. Please sign in instead.";
           }
         } else if (status === 422) {
-          errorTitle = 'Validation Error';
-          errorMessage = errorMessage || 'Please check that all fields are filled correctly.';
+          errorTitle = "Validation Error";
+          errorMessage =
+            errorMessage ||
+            "Please check that all fields are filled correctly.";
         } else if (status === 500) {
-          errorTitle = 'Server Error';
+          errorTitle = "Server Error";
           errorMessage = COMMON_ERRORS.INTERNAL_SERVER_ERROR.description;
         } else if (status === 503) {
-          errorTitle = 'Service Unavailable';
+          errorTitle = "Service Unavailable";
           errorMessage = COMMON_ERRORS.SERVICE_MAINTENANCE.description;
         }
       } else if (error?.message) {
@@ -265,18 +310,25 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         errorMessage = errorMsg;
 
         // Provide user-friendly messages for common error types
-        if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) {
-          errorTitle = 'Request Timeout';
-          errorMessage = 'The request took too long. Please check your connection and try again.';
-        } else if (errorMsg.includes('NetworkError') || errorMsg.includes('Failed to fetch')) {
-          errorTitle = 'Network Error';
-          errorMessage = 'Unable to connect to the server. Please check your internet connection and try again.';
-        } else if (errorMsg.includes('400')) {
-          errorTitle = 'Invalid Registration Data';
-          errorMessage = 'Please check your registration information and try again.';
-        } else if (errorMsg.includes('409')) {
-          errorTitle = 'Account Already Exists';
-          errorMessage = 'An account with this information already exists. Please sign in instead.';
+        if (errorMsg.includes("timeout") || errorMsg.includes("Timeout")) {
+          errorTitle = "Request Timeout";
+          errorMessage =
+            "The request took too long. Please check your connection and try again.";
+        } else if (
+          errorMsg.includes("NetworkError") ||
+          errorMsg.includes("Failed to fetch")
+        ) {
+          errorTitle = "Network Error";
+          errorMessage =
+            "Unable to connect to the server. Please check your internet connection and try again.";
+        } else if (errorMsg.includes("400")) {
+          errorTitle = "Invalid Registration Data";
+          errorMessage =
+            "Please check your registration information and try again.";
+        } else if (errorMsg.includes("409")) {
+          errorTitle = "Account Already Exists";
+          errorMessage =
+            "An account with this information already exists. Please sign in instead.";
         }
       }
 
@@ -285,21 +337,23 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
+  ) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [name]: value,
     }));
 
-    if (name === 'email') {
+    if (name === "email") {
       emailCheckRequestIdRef.current += 1;
       setIsCheckingEmail(false);
     }
 
     // Clear validation error for this field
     if (validationErrors[name]) {
-      setValidationErrors(prev => {
+      setValidationErrors((prev) => {
         const newErrors = { ...prev };
         delete newErrors[name];
         return newErrors;
@@ -347,7 +401,9 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               data-form-type="other"
             />
             {isCheckingEmail && !validationErrors.email && (
-              <FormHelperText color="gray.500">Checking if email exists…</FormHelperText>
+              <FormHelperText color="gray.500">
+                Checking if email exists…
+              </FormHelperText>
             )}
             {validationErrors.email && (
               <FormErrorMessage>{validationErrors.email}</FormErrorMessage>
@@ -358,7 +414,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             <FormLabel>Password</FormLabel>
             <InputGroup>
               <Input
-                type={showPassword ? 'text' : 'password'}
+                type={showPassword ? "text" : "password"}
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
@@ -372,7 +428,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               />
               <InputRightElement width="4.5rem">
                 <IconButton
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                   icon={showPassword ? <ViewIcon /> : <ViewOffIcon />}
                   h="1.75rem"
                   size="sm"
@@ -388,11 +444,14 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             <PasswordRequirements password={formData.password} compact />
           </FormControl>
 
-          <FormControl isRequired isInvalid={!!validationErrors.confirm_password}>
+          <FormControl
+            isRequired
+            isInvalid={!!validationErrors.confirm_password}
+          >
             <FormLabel>Confirm Password</FormLabel>
             <InputGroup>
               <Input
-                type={showConfirmPassword ? 'text' : 'password'}
+                type={showConfirmPassword ? "text" : "password"}
                 name="confirm_password"
                 value={formData.confirm_password}
                 onChange={handleChange}
@@ -406,7 +465,9 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               />
               <InputRightElement width="4.5rem">
                 <IconButton
-                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  aria-label={
+                    showConfirmPassword ? "Hide password" : "Show password"
+                  }
                   icon={showConfirmPassword ? <ViewIcon /> : <ViewOffIcon />}
                   h="1.75rem"
                   size="sm"
@@ -416,11 +477,29 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               </InputRightElement>
             </InputGroup>
             {validationErrors.confirm_password && (
-              <FormErrorMessage>{validationErrors.confirm_password}</FormErrorMessage>
+              <FormErrorMessage>
+                {validationErrors.confirm_password}
+              </FormErrorMessage>
             )}
           </FormControl>
 
           {/* Phone, timezone, language removed per requirements */}
+
+          <ConsentCheckbox
+            isChecked={consentAccepted}
+            onChange={(checked) => {
+              setConsentAccepted(checked);
+              if (checked) {
+                setValidationErrors((prev) => {
+                  if (!prev.consent) return prev;
+                  const next = { ...prev };
+                  delete next.consent;
+                  return next;
+                });
+              }
+            }}
+            error={validationErrors.consent}
+          />
 
           <Button
             type="submit"
@@ -433,22 +512,23 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               isLoading ||
               isCheckingEmail ||
               !passwordPasses(formData.password) ||
-              formData.password !== formData.confirm_password
+              formData.password !== formData.confirm_password ||
+              !consentAccepted
             }
           >
-            {isLoading ? <LoadingSpinner size="sm" /> : 'Sign Up'}
+            {isLoading ? <LoadingSpinner size="sm" /> : "Sign Up"}
           </Button>
         </VStack>
       </form>
 
       <Box mt={6} textAlign="center">
         <Text fontSize="sm" color="gray.600">
-          Already have an account?{' '}
+          Already have an account?{" "}
           <Link
             color="blue.500"
             fontWeight="medium"
             onClick={onSwitchToLogin}
-            _hover={{ textDecoration: 'underline' }}
+            _hover={{ textDecoration: "underline" }}
             cursor="pointer"
           >
             Sign in

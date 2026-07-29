@@ -1032,13 +1032,25 @@ export function isTenantLifecycleBlockingUsers(
 
 /**
  * Derive tenant-user display status for UI badges and action menus.
- * When ``tenantStatus`` is SUSPENDED/DEACTIVATED, all users show Suspended
- * (per multi-tenant cascade spec) even if per-user flags are stale.
+ *
+ * A user who never completed setup (no credentials → ``is_activated`` falsy and
+ * ``is_active`` false) is always Pending Activation, even while the tenant is
+ * SUSPENDED/DEACTIVATED. Suspended implies a previously active account was
+ * blocked, which is semantically wrong for an unactivated user; treating them
+ * as Suspended could also strand them if the tenant is reactivated. When the
+ * tenant blocks users, only previously active/activated users show Suspended.
  */
 export function resolveTenantUserDisplayStatus(
   user: TenantUserStatusSource,
   tenantStatus?: string | null
 ): TenantUserStatusValue {
+  // Never completed setup → Pending Activation, regardless of tenant lifecycle
+  // or a stale ``is_tenant_active`` left over from the old lock-everyone cascade.
+  if (!user.is_active && !user.is_activated) {
+    return TENANT.USER_STATUS.PENDING_ACTIVATION;
+  }
+
+  // Tenant lifecycle cascade: previously active/activated users show Suspended.
   if (isTenantLifecycleBlockingUsers(tenantStatus)) {
     return TENANT.USER_STATUS.SUSPENDED;
   }
@@ -1046,18 +1058,8 @@ export function resolveTenantUserDisplayStatus(
   if (user.is_active && (user.is_tenant_active ?? true)) {
     return TENANT.USER_STATUS.ACTIVE;
   }
-  if (!user.is_active) {
-    // Completed setup but now inactive → admin-suspended (per-user Suspend).
-    if (user.is_activated) {
-      return TENANT.USER_STATUS.SUSPENDED;
-    }
-    // Locked by the tenant lifecycle cascade (tenant SUSPENDED/DEACTIVATED).
-    if (user.is_tenant_active === false) {
-      return TENANT.USER_STATUS.SUSPENDED;
-    }
-    // Never completed setup (no credentials) → still Pending Activation.
-    return TENANT.USER_STATUS.PENDING_ACTIVATION;
-  }
+  // Inactive with credentials → admin-suspended (per-user Suspend) or locked by
+  // the tenant lifecycle cascade (``is_tenant_active`` false).
   return TENANT.USER_STATUS.SUSPENDED;
 }
 
@@ -1143,10 +1145,20 @@ export function getTenantStatusColorScheme(status?: string | null): string {
 
 /** Target statuses offered as row actions for the given tenant status. */
 export function getTenantStatusActionTargets(
-  currentStatus: string | null | undefined
+  currentStatus: string | null | undefined,
+  options?: { onboardingCompleted?: boolean }
 ): TenantStatusValue[] {
   const current = normalizeTenantStatus(currentStatus ?? "");
-  return [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+  const targets = [...(ALLOWED_TENANT_STATUS_TRANSITIONS[current] ?? [])];
+  // PENDING → Deactivate is a soft delete: never-verified tenants have no
+  // status actions (no Activate). ACTIVE → Deactivate keeps Activate.
+  if (
+    current === TENANT.STATUS.DEACTIVATED &&
+    options?.onboardingCompleted === false
+  ) {
+    return targets.filter((status) => status !== TENANT.STATUS.ACTIVE);
+  }
+  return targets;
 }
 
 /** Action button label when changing tenant status. */
@@ -1241,13 +1253,16 @@ export function userMayUseApiKeys(context: ApiKeyAccessContext): boolean {
 
 /**
  * Effective API key status for UI badges/filters.
- * DB ``is_active`` false = Revoked; otherwise blocked access = Inactive.
+ * Revoked: DB flag or tenant deactivated. Inactive: suspended/locked/expired.
  */
 export function resolveApiKeyDisplayStatus(
   key: ApiKeyStatusSource,
   context: ApiKeyAccessContext = {}
 ): ApiKeyDisplayStatusValue {
   if (key.is_active === false || key.is_revoked === true) {
+    return API_KEY.DISPLAY_STATUS.REVOKED;
+  }
+  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
     return API_KEY.DISPLAY_STATUS.REVOKED;
   }
   if (isApiKeyExpired(key.expires_at)) {
@@ -1275,12 +1290,17 @@ export function getApiKeyInactiveReason(context: ApiKeyAccessContext): string {
     return "Tenant access is suspended for your account.";
   }
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.SUSPENDED)) {
-    return "Tenant is suspended — API keys are not usable until the tenant is reactivated.";
-  }
-  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
-    return "Tenant is deactivated — API keys are not usable until the tenant is reactivated.";
+    return "Tenant is suspended — API keys are temporarily inactive and will resume automatically when the tenant is reactivated.";
   }
   return "API key access is currently blocked.";
+}
+
+/** Human-readable reason when status is Revoked due to tenant deactivation. */
+export function getApiKeyRevokedReason(context: ApiKeyAccessContext): string | null {
+  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
+    return "Tenant was deactivated — this API key is revoked. Create a new key after the tenant is reactivated.";
+  }
+  return null;
 }
 
 export function getApiKeyDisplayStatusColorScheme(
@@ -1389,6 +1409,26 @@ export type ModelTaskTypeValue = (typeof MODEL_TASK_TYPE_LIST)[number];
 export function formatModelTaskTypeLabel(taskType: string): string {
   return taskType.trim().toUpperCase();
 }
+
+/** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
+export const MODEL_API_KEY_REDACTED = "[REDACTED]";
+
+/** ULCA field length limits (AI4IDS-2478) — used for client-side create validation. */
+export const MODEL_FIELD_LIMITS = {
+  NAME_MIN: 5,
+  NAME_MAX: 100,
+  VERSION_MIN: 1,
+  VERSION_MAX: 20,
+  DESCRIPTION_MIN: 25,
+  DESCRIPTION_MAX: 1000,
+  REF_URL_MIN: 5,
+  REF_URL_MAX: 200,
+  LICENSE_URL_MAX: 500,
+  SUBMITTER_NAME_MIN: 3,
+  SUBMITTER_NAME_MAX: 50,
+  TEAM_NAME_MIN: 5,
+  TEAM_NAME_MAX: 50,
+} as const;
 
 /** Service publish state (services-management). */
 export const SERVICE_PUBLISH = {

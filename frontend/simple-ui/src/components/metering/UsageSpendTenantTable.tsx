@@ -109,7 +109,7 @@ function TenantUsageColumn({
         onTenantClick(row);
       }}
     >
-      <Text>{taskCount} task types</Text>
+      <Text>{taskCount} task type{taskCount === 1 ? "" : "s"}</Text>
       <ChevronRightIcon boxSize={3.5} />
     </HStack>
   );
@@ -154,9 +154,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
             const multiTiers = tiers.length > 1;
             const canExpand = !filterTaskType && multiTiers;
             const showBar =
-              taskCount > 0 &&
-              hasPopulatedQuotaUsage(row.usage) &&
-              (Boolean(filterTaskType) || (!multiTiers && taskCount === 1));
+              taskCount > 0 && hasPopulatedQuotaUsage(row.usage) && Boolean(filterTaskType);
 
             return (
               <React.Fragment key={row.tenantId}>

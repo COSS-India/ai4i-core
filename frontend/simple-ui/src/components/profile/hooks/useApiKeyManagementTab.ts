@@ -14,6 +14,7 @@ import {
   type ApiKeyAccessContext,
   type ApiKeyDisplayStatusValue,
   getApiKeyInactiveReason,
+  getApiKeyRevokedReason,
   isApiKeyEffectivelyActive,
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
@@ -80,6 +81,15 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         return "This API key has expired.";
       }
       return getApiKeyInactiveReason(apiKeyAccessContext);
+    },
+    [apiKeyAccessContext, resolveKeyDisplayStatus]
+  );
+
+  const getKeyRevokedReason = useCallback(
+    (key: APIKeyResponse): string | null => {
+      const status = resolveKeyDisplayStatus(key);
+      if (status !== API_KEY.DISPLAY_STATUS.REVOKED) return null;
+      return getApiKeyRevokedReason(apiKeyAccessContext);
     },
     [apiKeyAccessContext, resolveKeyDisplayStatus]
   );
@@ -309,6 +319,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     apiKeyAccessContext,
     resolveKeyDisplayStatus,
     getKeyInactiveReason,
+    getKeyRevokedReason,
     isKeyEffectivelyActive: (key: APIKeyResponse) =>
       isApiKeyEffectivelyActive(key, apiKeyAccessContext),
     isKeyRevocable: (key: APIKeyResponse) => key.is_active !== false && key.is_revoked !== true,

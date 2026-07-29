@@ -56,6 +56,11 @@ import {
   DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
   isDefaultTenant,
 } from "../../../utils/defaultTenant";
+import {
+  applyTenantPendingSoftDeleteFlags,
+  isPendingSoftDeletedTenant,
+  markPendingSoftDeletedTenant,
+} from "../../../utils/tenantPendingSoftDelete";
 
 const USER_EMAIL_PAGE_SIZE = 100;
 const DEFAULT_TENANT_USER_ROLE = "USER" as const;
@@ -280,11 +285,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           return;
         }
         const tenant = await tenantService.getViewTenant(tenantId);
-        setTenants(tenant ? [tenant] : []);
+        setTenants(
+          tenant
+            ? applyTenantPendingSoftDeleteFlags([tenant])
+            : [],
+        );
         return;
       }
       const res = await tenantService.listTenants();
-      const rows = res.tenants ?? [];
+      const rows = applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
       setTenants(rows);
       setKnownTenantEmails(collectTenantContactEmails(rows));
     } catch (err) {
@@ -578,9 +587,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     patchUserFormError("full_name", validateFullName(full_name));
   };
 
+  const handleUserFullNameBlur = (full_name: string) => {
+    patchUserFormError("full_name", validateFullName(full_name));
+  };
+
   const handleUserEmailChange = (email: string) => {
     setUserForm((prev) => ({ ...prev, email }));
     addUserEmailAvailability.handleChange(email);
+  };
+
+  const handleTenantEmailBlur = () => {
+    void createTenantEmailAvailability.verifyNow();
+  };
+
+  const handleUserEmailBlur = () => {
+    void addUserEmailAvailability.verifyNow();
   };
 
   const handleUserPhoneChange = (phone_number: string) => {
@@ -1111,16 +1132,30 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleResendTenantUserVerification = async (u: TenantUserView) => {
-    if (!u.email) return;
+    const tenantId = tenantDetailView?.tenant_id ?? user?.tenant_id;
+    if (!tenantId || !u.user_id) {
+      showToast({
+        type: "warning",
+        message: "Missing tenant or user ID to resend the setup link.",
+      });
+      return;
+    }
     try {
       setResendVerificationUserId(u.user_id);
-      await authService.resendVerification({ email: u.email });
+      // Resolve by user_id (unmasked) — do not use masked email or
+      // /auth/resend-verification (no-ops for passwordless tenant users).
+      const res = await tenantService.resendTenantUserSetupLink(
+        tenantId,
+        u.user_id,
+      );
       showToast({
         type: "success",
-        message: `A new verification link was sent to ${u.email}.`,
+        message:
+          res?.message ??
+          "A password setup link has been sent to the user's email.",
       });
     } catch (err) {
-      console.error("Failed to resend tenant user verification:", err);
+      console.error("Failed to resend tenant user setup link:", err);
       showError(err);
     } finally {
       setResendVerificationUserId(null);
@@ -1156,10 +1191,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsSubmittingStatus(true);
     try {
       if (statusUpdateTarget.type === "tenant") {
+        const wasPendingDeactivate =
+          isTenantStatus(
+            statusUpdateTarget.currentStatus,
+            TENANT.STATUS.PENDING,
+          ) && statusUpdateNewStatus === TENANT.STATUS.DEACTIVATED;
         await tenantService.updateTenantStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           status: statusUpdateNewStatus as TenantStatus,
         });
+        if (wasPendingDeactivate) {
+          markPendingSoftDeletedTenant(statusUpdateTarget.tenant_id);
+        }
         showToast({ type: "success", message: "Tenant status updated" });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
@@ -1384,6 +1427,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleTenantContactNameChange,
     handleTenantContactNameBlur,
     handleTenantEmailChange,
+    handleTenantEmailBlur,
     handleTenantPhoneChange,
     tenantEmailStatus: createTenantEmailAvailability.status,
     canSubmitTenantForm,
@@ -1402,7 +1446,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserFormTenantId,
     handleRegisterUser,
     handleUserFullNameChange,
+    handleUserFullNameBlur,
     handleUserEmailChange,
+    handleUserEmailBlur,
     handleUserPhoneChange,
     userEmailStatus: addUserEmailAvailability.status,
     canSubmitUserForm,
@@ -1449,6 +1495,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     resendVerificationUserId,
     handleResendTenantVerificationEmail,
     handleResendTenantUserVerification,
+    isPendingSoftDeletedTenant,
     // Edit user
     isEditUserModalOpen,
     editUserRow,

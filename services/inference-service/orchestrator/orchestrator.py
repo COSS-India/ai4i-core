@@ -91,7 +91,7 @@ class Orchestrator:
                 tier_id = request.headers.get("X-Tier-ID", "")
                 if tier_id:
                     allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
-                    if tier_id not in allowed_tiers:
+                    if allowed_tiers and tier_id not in allowed_tiers:
                         service_id = (
                             (payload.get("config") or {}).get("serviceId")
                             or payload.get("serviceId", "")
