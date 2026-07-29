@@ -69,6 +69,7 @@ export const UI_ERROR_MESSAGES = {
     'Rate limit exceeded. You can try up to 5 translations per hour. Please sign in to get access to all services.',
   TRY_IT_TRANSLATION_FAILED: 'Failed to perform translation. Please try again.',
   TRY_IT_LOGIN_REQUIRED: 'Access denied. Please login to access this service.',
+  CONSENT_REQUIRED: 'You must agree to the Terms of Service and Privacy Policy to continue.',
 };
 
 export function serviceUnavailable(serviceName: string, retryHint = 'in a few minutes'): ErrorEntry {
