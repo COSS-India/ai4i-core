@@ -291,8 +291,7 @@ function QuotaEditor({
   // "Add Quota" only makes sense when there's more than one model task type
   // to choose from, and only while there's an unused type left to add.
   const canAddQuota =
-    (taskTypeNames?.length ?? 0) > 1 && quotas.length < taskTypeNames.length;
-  console.log("canAddQuota", canAddQuota);
+    taskTypeNames.length > 1 && quotas.length < taskTypeNames.length;
 
   return (
     <VStack align="stretch" spacing={3}>
