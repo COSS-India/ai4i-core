@@ -108,7 +108,7 @@ class CacheService:
     def _service_key(cls, service_id: str) -> str:
         return f"{cls._SERVICE_KEY}:{service_id}"
 
-    async def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
+    def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         try:
             entry = CacheService._service_store.get(self._service_key(service_id))
             if entry is None:
@@ -122,7 +122,7 @@ class CacheService:
             logger.warning("Service cache read failed for %s: %s", service_id, exc)
             return None
 
-    async def set_service(self, service_id: str, data: Dict[str, Any]) -> None:
+    def set_service(self, service_id: str, data: Dict[str, Any]) -> None:
         try:
             CacheService._service_store[self._service_key(service_id)] = (
                 data,
@@ -131,7 +131,7 @@ class CacheService:
         except Exception as exc:
             logger.warning("Service cache write failed for %s: %s", service_id, exc)
 
-    async def invalidate_service(self, service_id: str) -> None:
+    def invalidate_service(self, service_id: str) -> None:
         try:
             CacheService._service_store.pop(self._service_key(service_id), None)
         except Exception as exc:
