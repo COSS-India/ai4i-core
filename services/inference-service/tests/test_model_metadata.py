@@ -63,7 +63,7 @@ async def test_normalize_mms_response_defaults_when_submitter_missing():
 
 
 async def test_process_attaches_model_metadata_block():
-    """process() must attach modelProvider/modelVersion/modelId/language,
+    """process() must attach modelProvider/modelVersion/language,
     resolved from service_info, onto whatever postprocess_output returns."""
     service_info = {
         "name": "agrinet-model",
@@ -94,7 +94,6 @@ async def test_process_attaches_model_metadata_block():
     assert response["model"] == {
         "modelProvider": "IndicTrans",
         "modelVersion": "1.0",
-        "modelId": "ade00312aa6b12da51485a25bdf383b6",
         "language": [{"sourceLanguage": "en", "targetLanguage": "hi"}],
     }
 
@@ -125,6 +124,5 @@ async def test_process_model_metadata_defaults_when_service_info_lacks_fields():
     assert response["model"] == {
         "modelProvider": None,
         "modelVersion": None,
-        "modelId": None,
         "language": [],
     }
