@@ -32,8 +32,9 @@ import {
   IoAppsOutline,
   IoChevronDownOutline,
   IoPulseOutline,
-  IoNotificationsOutline,
-  IoShieldCheckmarkOutline,
+  // AI4IDS-2604 / AI4IDS-2605: restore with Alerts / PII Guardrail nav items
+  // IoNotificationsOutline,
+  // IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
@@ -43,6 +44,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
+import { getUsageDashboardOverviewPath } from "../../utils/navigation";
 import { canAccessServicesManagement, canAccessUsageDashboard } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
@@ -155,18 +157,20 @@ const safeColorMap = {
     400: "#AB47BC",
     600: "#8E24AA",
   },
-  [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
-    50:  "#FFF8E1",
-    300: "#FFD54F",
-    400: "#FFCA28",
-    600: "#F9A825",
-  },
-  [TABS.piiManagement]: {
-    50:  "#E8EAF6",
-    300: "#9FA8DA",
-    400: "#7986CB",
-    600: "#5C6BC0",
-  },
+  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
+  //   50:  "#FFF8E1",
+  //   300: "#FFD54F",
+  //   400: "#FFCA28",
+  //   600: "#F9A825",
+  // },
+  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // [TABS.piiManagement]: {
+  //   50:  "#E8EAF6",
+  //   300: "#9FA8DA",
+  //   400: "#7986CB",
+  //   600: "#5C6BC0",
+  // },
   [TABS.tierManagement]: {
     50:  "#E3F2FD",
     300: "#90CAF9",
@@ -208,6 +212,17 @@ const topNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "black.500",
     requiresAuth: false,
+  },
+  // Usage Dashboard placed after Home — to restore previous order (after Logs),
+  // move this block back below Logs (see commented copy there) and remove this entry.
+  {
+    id: TABS.usageDashboard,
+    label: "Usage Dashboard",
+    path: `/${TABS.usageDashboard}`,
+    icon: IoStatsChartOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
   },
   {
     id: TABS.modelManagement,
@@ -254,15 +269,17 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
-  {
-    id: TABS.usageDashboard,
-    label: "Usage Dashboard",
-    path: `/${TABS.usageDashboard}`,
-    icon: IoStatsChartOutline,
-    iconSize: 10,
-    iconColor: "",
-    requiresAuth: true,
-  },
+  // Previous Usage Dashboard position (after Logs) — uncomment and remove the
+  // entry after Home above to restore the original sidebar order.
+  // {
+  //   id: TABS.usageDashboard,
+  //   label: "Usage Dashboard",
+  //   path: `/${TABS.usageDashboard}`,
+  //   icon: IoStatsChartOutline,
+  //   iconSize: 10,
+  //   iconColor: "",
+  //   requiresAuth: true,
+  // },
   {
     id: TABS.traces,
     label: "Traces Dashboard",
@@ -272,24 +289,26 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
-  {
-    id: TABS.alertsManagement,
-    label: "Alerts Management",
-    path: `/${TABS.alertsManagement}`,
-    icon: IoNotificationsOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
-  },
-  {
-    id: TABS.piiManagement,
-    label: "PII Guardrail",
-    path: `/${TABS.piiManagement}`,
-    icon: IoShieldCheckmarkOutline,
-    iconSize: 10,
-    iconColor: "",
-    requiresAuth: true,
-  },
+  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // {
+  //   id: TABS.alertsManagement,
+  //   label: "Alerts Management",
+  //   path: `/${TABS.alertsManagement}`,
+  //   icon: IoNotificationsOutline,
+  //   iconSize: 10,
+  //   iconColor: "", // Will be computed from safeColorMap
+  //   requiresAuth: true,
+  // },
+  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // {
+  //   id: TABS.piiManagement,
+  //   label: "PII Guardrail",
+  //   path: `/${TABS.piiManagement}`,
+  //   icon: IoShieldCheckmarkOutline,
+  //   iconSize: 10,
+  //   iconColor: "",
+  //   requiresAuth: true,
+  // },
   {
     id: TABS.tierManagement,
     label: "Tier Management",
@@ -451,10 +470,12 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
       return canAccessUsageDashboard(ctx.userRoles);
-    case TABS.alertsManagement:
-      return ctx.isAdmin;
-    case TABS.piiManagement:
-      return ctx.isAdmin || ctx.isTenantAdmin;
+    // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+    // case TABS.alertsManagement:
+    //   return ctx.isAdmin;
+    // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+    // case TABS.piiManagement:
+    //   return ctx.isAdmin || ctx.isTenantAdmin;
     case TABS.tierManagement:
       return ctx.isAdmin;
     default:
@@ -536,14 +557,14 @@ const Sidebar: React.FC = () => {
   }, [router]);
 
   const onTopNavClick = useCallback(
-    (e: React.MouseEvent, path: string, requiresAuth: boolean) => {
+    (e: React.MouseEvent, path: string, requiresAuth: boolean, itemId: string) => {
       e.preventDefault();
       if (isLoading) return;
-      if (path === "/") {
-        router.push("/");
+      if (requiresAuth && !checkSessionExpiry()) return;
+      if (itemId === TABS.usageDashboard) {
+        router.push(getUsageDashboardOverviewPath());
         return;
       }
-      if (requiresAuth && !checkSessionExpiry()) return;
       router.push(path);
     },
     [checkSessionExpiry, isLoading, router],
@@ -648,7 +669,7 @@ const Sidebar: React.FC = () => {
                 bg={isActive ? "gray.200" : "transparent"}
                 color={isActive ? "gray.800" : "gray.700"}
                 boxShadow={isActive ? "sm" : "none"}
-                onClick={(e) => onTopNavClick(e, item.path, requiresAuth)}
+                onClick={(e) => onTopNavClick(e, item.path, requiresAuth, item.id)}
                 _hover={{
                   bg: isActive ? "gray.200" : hoverBgColor,
                   transform: "translateY(-1px)",

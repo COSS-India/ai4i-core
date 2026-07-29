@@ -736,10 +736,14 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
         if self._api_keys is not None:
-            if body.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
-                # Stale Redis entries would still authorize after tenant lockout.
+            if body.status == TenantStatus.SUSPENDED:
+                # Keep is_active=True (Inactive): same key auto-resumes on reactivation.
                 await self._api_keys.evict_keys_for_tenant(tenant_id)
+            elif body.status == TenantStatus.DEACTIVATED:
+                # Permanent revoke (is_active=False): reactivation requires a new key.
+                await self._api_keys.revoke_keys_for_tenant(tenant_id)
             elif body.status == TenantStatus.ACTIVE:
+                # Repopulates Redis only for keys that are still is_active=True.
                 await self._api_keys.refresh_keys_cache_for_tenant(tenant_id)
         return tenant
 
