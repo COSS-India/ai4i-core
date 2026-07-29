@@ -28,7 +28,7 @@ class DatabaseEntry:
 DB_REGISTRY: dict[str, DatabaseEntry] = {}
 
 
-async def register_database(
+def register_database(
     name: str,
     db_url: str,
     pool_size: int = 20,
@@ -62,7 +62,7 @@ async def register_database(
 
 async def init_databases(db_cfg: DatabaseSettings) -> None:
     """Register the service database from settings. Called once at startup."""
-    await register_database(
+    register_database(
         name=db_cfg.PLATFORM_CORE_DB,
         db_url=db_cfg.get_database_url(db_cfg.PLATFORM_CORE_DB),
         pool_size=db_cfg.DB_POOL_SIZE,

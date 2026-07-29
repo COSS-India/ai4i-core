@@ -77,7 +77,7 @@ def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
     return True, checker.get_required_permission(method, uri.split("?", 1)[0])
 
 
-async def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> bool:
+def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> bool:
     """Authorize a caller's permission_ids against the endpoint's required perm.
 
     Allow when: gateway didn't signal an endpoint (direct call), OR the
@@ -100,7 +100,7 @@ def _extract_token(request: Request) -> str:
 # ── Per-token-type validators ─────────────────────────────────────────────
 
 
-async def _validate_anonymous(request: Request) -> Response:
+def _validate_anonymous(request: Request) -> Response:
     """No token: allow only when X-Original-* point at a public endpoint."""
     looked_up, required = _required_endpoint_permission(request)
     if looked_up and required is None:
@@ -128,7 +128,7 @@ async def _validate_api_key(
         )
 
     permission_ids = result.get("permissions") or result.get("permission_ids") or []
-    if not await _check_endpoint_permission(request, permission_ids):
+    if not _check_endpoint_permission(request, permission_ids):
         return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 
     user_id = result.get("user_id")
@@ -182,7 +182,7 @@ async def _validate_jwt(
     ):
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED", "message": "Token has been revoked."})
 
-    if not await _check_endpoint_permission(request, claims.permission_ids):
+    if not _check_endpoint_permission(request, claims.permission_ids):
         return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 
     if claims.user_id:
@@ -223,7 +223,7 @@ async def validate_token(
     """
     token = _extract_token(request)
     if not token:
-        return await _validate_anonymous(request)
+        return _validate_anonymous(request)
 
     cache_svc = CacheService(redis)
 

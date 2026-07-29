@@ -105,7 +105,7 @@ class ServiceService:
     # ── Reads ──
 
     async def get_service_detail(self, service_id: str) -> Dict[str, Any]:
-        cached = await self._cache.get_service(service_id)
+        cached = self._cache.get_service(service_id)
         if cached:
             return cached
 
@@ -127,7 +127,7 @@ class ServiceService:
         tier_name_map = await self._services.get_tier_names_by_ids(service.tier_ids or [])
         tier_names = [tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None
         data = service_detail_dict(service, model, tier_names=tier_names)
-        await self._cache.set_service(service.service_id, data)
+        self._cache.set_service(service.service_id, data)
         return data
 
     async def list_services(
@@ -266,7 +266,7 @@ class ServiceService:
         tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
         tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)
-        await self._cache.set_service(instance.service_id, data)
+        self._cache.set_service(instance.service_id, data)
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
         return service_id
 
@@ -389,14 +389,14 @@ class ServiceService:
             raise
 
         # Refresh cache (eager rebuild)
-        await self._cache.invalidate_service(instance.service_id)
+        self._cache.invalidate_service(instance.service_id)
         model = await self._models.get_by_id_version(
             instance.model_id, instance.model_version
         )
         if model is not None:
             tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
             tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
-            await self._cache.set_service(
+            self._cache.set_service(
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
 
@@ -415,7 +415,7 @@ class ServiceService:
             logger.exception("DB error deleting service")
             raise
 
-        await self._cache.invalidate_service(instance.service_id)
+        self._cache.invalidate_service(instance.service_id)
         logger.info("Deleted service %s", instance.service_id)
 
     # ── Internals ──
