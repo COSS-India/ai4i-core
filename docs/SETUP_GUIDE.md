@@ -1,6 +1,6 @@
 # Setup Guide
 
-This guide provides step-by-step instructions for setting up and running the AI4I Core platform locally.
+This guide provides step-by-step instructions for setting up and running the AI4I-Orchestrate platform locally.
 
 **Run model**: infrastructure (PostgreSQL, Redis, Kafka, observability stack) runs in Docker; the three application services (`auth-service`, `platform-core-service`, `inference-service`) run natively on the host via `python3 -m uvicorn` so you can iterate quickly and attach a debugger.
 

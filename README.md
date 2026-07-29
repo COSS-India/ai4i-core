@@ -1,4 +1,4 @@
-# AI4I-Core Microservices Platform
+# AI4I-Orchestrate Microservices Platform
 
 > **Open-source codebase** for building AI/ML microservices for Indic languages.
 > Not a hosted service — you deploy and manage it yourself.
