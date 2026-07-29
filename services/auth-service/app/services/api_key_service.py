@@ -35,6 +35,7 @@ from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
+from app.services.role_service import RoleService, _normalize_service_slug
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,9 @@ class APIKeyService:
         return bool(_HEX_KEY_RE.fullmatch(token))
 
     async def _resolve_permission_names(self, permission_names: list[str]) -> list[int]:
-        """Resolve stable permission names to DB IDs; raise ValidationError for unknown names."""
+        """Resolve stable permission names to DB IDs; raise ValidationError for unknown
+        names or for inference permissions whose task type is disabled (ENABLED_TASK_TYPES).
+        """
         unique_names = list(dict.fromkeys(permission_names or []))
         if not unique_names:
             return []
@@ -100,6 +103,26 @@ class APIKeyService:
                 code="INVALID_PERMISSION_NAMES",
                 errors=[f"Unknown permission: {name}" for name in missing],
             )
+
+        # Mirrors RoleService.list_enabled_inference_permissions: a permission
+        # named "<resource>.inference" is only grantable while its task type is
+        # enabled. Non-inference permissions (e.g. "model-management.read") are
+        # untouched — ENABLED_TASK_TYPES only governs inference task types.
+        enabled = RoleService._enabled_task_type_slugs()
+        if enabled is not None:
+            disabled = [
+                name
+                for name in unique_names
+                if name.endswith(".inference")
+                and _normalize_service_slug(name.rsplit(".", 1)[0]) not in enabled
+            ]
+            if disabled:
+                raise ValidationError(
+                    message="Requested permissions include disabled task types.",
+                    code="DISABLED_TASK_TYPE_PERMISSIONS",
+                    errors=[f"Task type not enabled: {name}" for name in disabled],
+                )
+
         return [name_to_id[name] for name in unique_names]
 
     async def permission_ids_to_names(
