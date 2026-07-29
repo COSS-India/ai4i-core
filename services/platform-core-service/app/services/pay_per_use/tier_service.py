@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.task_type_policy import is_task_type_enabled
 from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.repositories.pay_per_use.ppu_usage_repository import update_tier_cache
@@ -87,6 +88,11 @@ async def create_tier(body: TierCreate, session: AsyncSession, created_by: Optio
 
     quotas = []
     for q in body.quotas:
+        if not is_task_type_enabled(q.modelTaskType or ""):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Task type '{q.modelTaskType}' is not enabled in this deployment.",
+            )
         quota = PPUTierQuota(
             tier_id=tier.id,
             inference_name=q.modelTaskType,
@@ -131,6 +137,11 @@ async def _upsert_quotas(
     session: AsyncSession, tier: PPUTier, quotas: List, updated_by: Optional[str]
 ) -> None:
     for q in quotas:
+        if not is_task_type_enabled(q.modelTaskType or ""):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Task type '{q.modelTaskType}' is not enabled in this deployment.",
+            )
         q_result = await session.execute(
             select(PPUTierQuota).where(
                 PPUTierQuota.tier_id == tier.id,

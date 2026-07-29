@@ -13,6 +13,7 @@ from trace.request_span import (
     traced_span,
 )
 
+from config import settings
 from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
@@ -27,6 +28,15 @@ ALLOWED_TASK_TYPES = [
     "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION",
     "AUDIO_LANGUAGE_DETECTION", "SMR",
 ]
+
+# Inference service uses UPPER_UNDERSCORE; ENABLED_TASK_TYPES env var uses
+# lower-hyphen (same convention as platform-core). Bridge the two spellings.
+_TASK_TYPE_ALIASES = {"audio-language-detection": "audio-lang-detection"}
+
+
+def _normalize_task_type(name: str) -> str:
+    key = name.strip().lower().replace("_", "-")
+    return _TASK_TYPE_ALIASES.get(key, key)
 
 
 class Orchestrator:
@@ -100,10 +110,18 @@ class Orchestrator:
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
 
     def _validate_task_type(self, task_type: str) -> None:
-        """Raise ValueError if task_type is not a known task."""
+        """Raise ValueError if task_type is unknown or disabled for this deployment."""
         if task_type not in ALLOWED_TASK_TYPES:
             raise ValueError(
                 f"Unknown task_type: {task_type}. Allowed: {', '.join(ALLOWED_TASK_TYPES)}"
+            )
+        enabled = frozenset(
+            _normalize_task_type(s)
+            for s in settings.ENABLED_TASK_TYPES.split(",") if s.strip()
+        )
+        if _normalize_task_type(task_type) not in enabled:
+            raise ValueError(
+                f"Task type '{task_type.lower()}' is not enabled in this deployment."
             )
 
     def _get_task_service(self, service_info: Dict[str, Any]) -> BaseTaskService:
