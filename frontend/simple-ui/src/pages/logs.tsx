@@ -39,7 +39,8 @@ import {
   TelemetryTraceRecord,
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
-import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { listTenants } from "../services/tenantService";
 import {
   useAdminTableSurface,
@@ -97,6 +98,9 @@ const convertToISOFormat = (datetimeLocal: string): string => {
 const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
+  // Task-type filter options come from the enabled set (ENABLED_TASK_TYPES),
+  // not a hardcoded list, so disabled types don't appear here either.
+  const { taskTypeNames } = useInferenceTypes();
 
   const [taskType, setTaskType] = useState<string>("");
   const [level, setLevel] = useState<string>("");
@@ -690,7 +694,7 @@ const LogsPage: React.FC = () => {
                             formControlProps={{ w: { base: "full", sm: "160px" } }}
                           >
                             <option value="">All Task Types</option>
-                            {MODEL_TASK_TYPE_LIST.map((tt) => (
+                            {taskTypeNames.map((tt) => (
                               <option key={tt} value={tt}>
                                 {formatModelTaskTypeLabel(tt)}
                               </option>

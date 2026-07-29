@@ -42,6 +42,7 @@ import { TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getUsageDashboardOverviewPath } from "../../utils/navigation";
@@ -487,6 +488,7 @@ const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isLoading, user } = useAuth();
   const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
+  const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
@@ -528,6 +530,10 @@ const Sidebar: React.FC = () => {
   const serviceItems = useMemo(
     () =>
       baseNavItems.filter((item) => {
+        // Deployment gate (ENABLED_TASK_TYPES) — applies to every role.
+        if (inferenceTypesLoading) return false;
+        if (!enabledServiceIds.has(item.id)) return false;
+        // Guest allowlist — guests only.
         if (isGuestFromAccess || isGuest) {
           if (guestServicesLoading) return false;
           if (!allowedServiceIds?.has(item.id)) return false;
@@ -539,6 +545,8 @@ const Sidebar: React.FC = () => {
       guestServicesLoading,
       isGuest,
       isGuestFromAccess,
+      enabledServiceIds,
+      inferenceTypesLoading,
     ],
   );
 
