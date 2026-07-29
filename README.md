@@ -28,9 +28,7 @@
 
 ## 🎯 What This Repository Provides
 
-An open-source, **FastAPI**-based reference implementation for deploying multi-tenant
-**language-AI services** (translation, speech, OCR, NER, LLM) in your own infrastructure.
-
+An open-sourced and Digital Public Good (DPG) for Language AI services. It supports multi-lingual NLP models (NMT, ASR, TTS, OCR etc) and LLM with end to end observability, multi-tenancy, monitorinig, alerting and notification capabilities. This enable governments, ministries, national AI missions, and enterprises to operate AI as shared, governed infrastructure instead of isolated implementations by providing a common operational layer between AI model providers and AI-powered applications.
 ## 👥 Who This Project Is For
 
 This project is intended for anyone who wants to **deploy and operate multilingual
@@ -44,6 +42,21 @@ data and models run (for data-residency, cost, or customization reasons).
 It is **not** a hosted service, a managed SaaS, or a set of pre-trained models. You bring
 your own model servers (Triton or OpenAI-compatible backends) and deploy the platform
 yourself.
+
+### Stakeholders in the ecosystem
+
+1. **Adopter** (Platform Owner) - Sets up and operates the Language AI platform: installs AI4I-Orchestrate, defines governance policy, onboards customers and models, and runs the deployment as national  infrastructure. 
+2. **Tenant Organizations** - Departments, ministries, startups, or enterprises who build their own citizen- or customer-facing applications by leveraging the AI services offered by the Adopter's Language AI platform; they manage their own budgets and usage within the Adopter's policy. 
+3. **Model Providers** - Publish NLP and models, manage versions
+4. **End Users** - the citizens or customers who use the applications Tenant Organizations build (a portal, an app etc.,) They are unaware that AI4I-Orchestrate is the layer powering the AI services behind those applications. 
+
+
+### Who are adopters
+Any national, state, or institutional entity that takes AI4I-Orchestrate and runs it as their own governed AI layer 
+
+1. National AI Operators — national governments or Ministries or digital missions standing up shared, sovereign AI infrastructure to serve public services across ministries and citizen-facing platforms
+2. State AI Operators — state or regional governments running their own governed AI layer across departments, without depending on a central or external stack
+3. Any organization serving AI to multiple departments/teams/ consumers — Enterprises running AI across business units, GPU/cloud providers layering governance on top of raw compute, universities and research consortia serving multiple affiliated groups
 
 ## 🏗️ Architecture Overview
 
