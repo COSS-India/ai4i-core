@@ -76,14 +76,6 @@ class Settings(BaseSettings):
         "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"
     )
 
-    # Enabled task types for this deployment (comma-separated, lower-hyphen names).
-    # Requests for a task type absent from this list are rejected with HTTP 400.
-    ENABLED_TASK_TYPES: str = Field(
-        "nmt,asr,ocr,ner,tts,pii,language-detection,speaker-diarization,"
-        "language-diarization,transliteration,audio-lang-detection,smr,llm",
-        description="Comma-separated list of task types enabled for this deployment",
-    )
-
     # Security — user-supplied audio/image URI downloads (SSRF guard)
     ALLOW_PRIVATE_DOWNLOAD_HOSTS: bool = Field(
         False,
