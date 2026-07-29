@@ -35,8 +35,9 @@ class CoreSettings(BaseSettings):
 
     # ── Task-type enablement ──
     # Comma-separated allowlist of task types this deployment serves (yaml `name`
-    # form, e.g. "llm,nmt,asr"). platform-core is the ONLY reader; every other
-    # surface derives from it via the enabled set. Required — an unset or unknown
+    # form, e.g. "llm,nmt,asr"). platform-core and auth-service both read this
+    # var directly; all other surfaces derive from platform-core via the enabled set.
+    # Required — an unset or unknown
     # value fails boot (fail-fast). See docs/design/ENABLED_TASK_TYPES.md.
     enabled_task_types: str = Field(..., description="Comma-separated enabled task types")
 
