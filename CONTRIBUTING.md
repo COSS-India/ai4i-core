@@ -1,4 +1,4 @@
-# Contributing to AI4ICore Microservices Platform
+# Contributing to AI4I-Orchestrate Microservices Platform
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
 
