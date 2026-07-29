@@ -62,8 +62,6 @@ ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
 
 LLM_UPSTREAM_BASE_URL="$(read_env_var LLM_UPSTREAM_BASE_URL)"
 
-ENABLED_TASK_TYPES="$(read_env_var ENABLED_TASK_TYPES)"
-
 # ── 3. Build sed replacement expressions ─────────────────────────────────────
 SED_ARGS=()
 
@@ -90,7 +88,6 @@ add_sed_replacement "YOUR_REDIS_PASSWORD" "${REDIS_PASSWORD}"
 add_sed_replacement "ALEMBIC_DB_HOST" "${ALEMBIC_DB_HOST}"
 add_sed_replacement "ALEMBIC_DB_PORT" "${ALEMBIC_DB_PORT}"
 add_sed_replacement "YOUR_LLM_UPSTREAM_BASE_URL" "${LLM_UPSTREAM_BASE_URL}"
-add_sed_replacement "ENABLED_TASK_TYPES" "${ENABLED_TASK_TYPES}"
 
 # ── 3b. PII encryption key (auth-service) ────────────────────────────────────
 # Resolve in order: root .env override → existing auth-service/.env → generate.
