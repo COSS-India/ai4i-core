@@ -57,7 +57,12 @@ async def list_tiers(
             if (not model_task_type or q.inference_name == model_task_type)
             and is_task_type_enabled(q.inference_name)
         ]
-        if model_task_type and not quotas:
+        # Drop a tier whose filtered quota set is empty — either the requested
+        # model_task_type matched nothing, or all its quotas are disabled task
+        # types (would render as a blank row). A genuinely quota-less tier (no
+        # filter, no rows) stays visible as before. Rows are retained in the DB;
+        # re-enabling a type brings the tier back.
+        if not quotas and (model_task_type or tier.tier_quotas):
             continue
         out.append(_build_out(tier, quotas))
 
