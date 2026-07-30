@@ -460,6 +460,12 @@ async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: 
     opened inside the generator and kept alive until the stream ends, the same
     trick proxy_traced_stream() uses for the model/ai-inference spans.
     """
+    # Captured here, before proxy_traced_stream's own deferred generator and
+    # the one below, so all spans on this request share the same
+    # correlation_id regardless of whether the ContextVars are still readable
+    # once execution resumes inside a generator (see _bridge_llm_usage_to_request).
+    context_attrs = get_context_attributes()
+
     kind, status_code, result = await OpenAIProxyService().proxy_traced_stream(
         path=path, payload=payload, request=request,
     )
@@ -468,7 +474,7 @@ async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: 
         with traced_span("request", root=True, classify_status=True) as req_attrs:
             req_attrs["url"] = request.url.path
             req_attrs["method"] = request.method
-            req_attrs.update(get_context_attributes())
+            req_attrs.update(context_attrs)
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
         return JSONResponse(status_code=status_code, content=result)
@@ -477,7 +483,7 @@ async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: 
         with traced_span("request", root=True, classify_status=True) as req_attrs:
             req_attrs["url"] = request.url.path
             req_attrs["method"] = request.method
-            req_attrs.update(get_context_attributes())
+            req_attrs.update(context_attrs)
             async for chunk in result:
                 yield chunk
         # Token usage only arrives in the final SSE chunk, so this must run

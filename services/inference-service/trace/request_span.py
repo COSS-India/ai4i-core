@@ -130,13 +130,23 @@ def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> No
 
 
 @asynccontextmanager
-async def traced_inference(payload: dict, task_name: str, logger_: logging.Logger):
+async def traced_inference(
+    payload: dict,
+    task_name: str,
+    logger_: logging.Logger,
+    context_attrs: dict = None,
+):
     """
     The 'ai-inference' span around an inference call, built on traced_span.
 
     Yields a mutable attrs dict pre-seeded with input_type; the wrapped code
     fills in input_tokens / output_tokens / output_type as they become known.
     On failure token counts are zeroed and the error is logged with traceback.
+
+    context_attrs: pre-captured get_context_attributes() result, for callers on
+    a deferred/streaming path where the ContextVars may no longer be reliably
+    readable by the time this span actually opens (see proxy_traced_stream).
+    Buffered callers can omit it — the ContextVars are read fresh here as before.
 
     Single definition shared by the base run_inference and TTS's override —
     keep span attribute changes here only.
@@ -156,7 +166,7 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
         # the same context.trace_id as the sibling request/model spans.  Without
         # this the ai-inference span lands in OpenSearch under the raw OTel trace
         # ID (0x…) rather than the correlation ID, making it invisible in the UI.
-        attrs.update(get_context_attributes())
+        attrs.update(context_attrs if context_attrs is not None else get_context_attributes())
         attrs.update({
             "input_type": get_input_type(payload),
             "output_type": "unknown",

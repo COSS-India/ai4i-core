@@ -386,6 +386,13 @@ class OpenAIProxyService:
 
         payload = self._with_include_usage(payload)
 
+        # Captured here, before the deferred generator below, so the "model"
+        # and "ai-inference" spans carry the same correlation_id as the
+        # "request" span even if the ContextVars are no longer reliably
+        # readable once execution resumes inside gen() (same reasoning as
+        # _bridge_llm_usage_to_request's request.state handoff).
+        context_attrs = get_context_attributes()
+
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload)
         if kind == "error":
             return "error", status_code, result
@@ -395,11 +402,11 @@ class OpenAIProxyService:
                 model_attrs["task_type"] = "LLM"
                 model_attrs["model_name"] = model_name or "unknown"
                 model_attrs["model_version"] = "unknown"
-                model_attrs.update(get_context_attributes())
+                model_attrs.update(context_attrs)
                 model_attrs["service_id"] = service_id
                 set_llm_usage_model_name(model_attrs["model_name"])
 
-                async with traced_inference(payload, "LLM", logger) as infer_attrs:
+                async with traced_inference(payload, "LLM", logger, context_attrs=context_attrs) as infer_attrs:
                     # service_id and tenantId must be set explicitly: the PPU
                     # Kafka consumer reads only the ai-inference span for billing.
                     infer_attrs["service_id"] = service_id
