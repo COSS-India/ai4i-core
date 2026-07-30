@@ -515,6 +515,16 @@ async def _run_llm_chat_stream(
         # after the stream is fully drained (the model name is known earlier,
         # but is read here too for a single assignment point).
         _bridge_llm_usage_to_request(request)
+        # ObservabilityMiddleware's _wrap_llm_response reads billed_input/
+        # billed_output/model (set_billed_state/set_metric_labels), not the
+        # llm_usage_* fields above — without this, every streamed chat
+        # completion would silently emit zero token metrics.
+        set_billed_state(
+            request,
+            billed_input=request.state.llm_usage_input_tokens or 0,
+            billed_output=request.state.llm_usage_output_tokens or 0,
+        )
+        set_metric_labels(request, model=request.state.llm_usage_model_name or "")
 
     return StreamingResponse(
         gen(),
