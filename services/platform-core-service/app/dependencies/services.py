@@ -68,9 +68,10 @@ def get_prometheus_client(request: Request) -> PrometheusClient:
 def get_metering_service(
     client: PrometheusClient = Depends(get_prometheus_client),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
+    db: AsyncSession = Depends(get_db),
 ) -> "MeteringService":
     from app.services.metering_service import MeteringService
-    return MeteringService(client, auth_db)
+    return MeteringService(client, auth_db, ServiceRepository(db))
 
 
 def get_sync_service() -> "SyncService":

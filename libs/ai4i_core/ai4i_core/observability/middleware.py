@@ -228,6 +228,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration=duration,
                 tenant=tenant,
                 service_id=service_id,
+                model=(llm_model or "unknown") if service_type == "llm" else "",
             )
 
             # LLM: token counts come from the inference engine's response

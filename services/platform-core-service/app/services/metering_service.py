@@ -6,15 +6,18 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
+    LLM_CHAT_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
     build_base_selectors,
     sum_over_window,
+    sum_over_window_by,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,9 +26,15 @@ _METRIC = "telemetry_obsv_requests_total"
 
 
 class MeteringService:
-    def __init__(self, client: PrometheusClient, auth_db: Optional[AsyncSession] = None) -> None:
+    def __init__(
+        self,
+        client: PrometheusClient,
+        auth_db: Optional[AsyncSession] = None,
+        service_repo: Optional[ServiceRepository] = None,
+    ) -> None:
         self._client = client
         self._auth_db = auth_db
+        self._service_repo = service_repo
 
     # ── public methods ──────────────────────────────────────────────────────
 
@@ -407,6 +416,90 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
+    async def model_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
+        """Per-service LLM usage: requests, tokens, success %, grouped by
+        `service_id` — the tenant-facing service the client called (the
+        OpenAI `model` field as sent), NOT the `model` Prometheus label.
+
+        The `model` label (the real upstream model echoed back by the
+        inference engine) is intentionally not grouped or filtered on here:
+        one service maps to exactly one model, but many services can share
+        the same underlying model, so grouping by model would merge
+        distinct services' traffic and destroy tenant attribution. See
+        model-consumption-api-highlevel-design.md §1/§5. Each row's
+        `model_name` (informational only) comes from `mm_services.model_id`
+        via a batched DB lookup, not from Prometheus — the `model` label is
+        absent on failed requests and can differ between the buffered and
+        streaming response paths for the same service.
+
+        Fires 3 queries in one asyncio.gather: total requests, successful
+        requests, and tokens processed — each grouped by `service_id`.
+        """
+        base_sel = build_base_selectors(
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
+        )
+        success_sel = build_base_selectors(
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            extra=['status_code=~"2.."'],
+        )
+        tokens_parts = ['token_type="total"', 'tenant!="unknown"']
+        if tenant:
+            tokens_parts.append(f'tenant="{tenant}"')
+        tokens_sel = "{" + ",".join(tokens_parts) + "}"
+
+        total_q = sum_over_window_by(f"{_METRIC}{base_sel}", "service_id", time_range)
+        success_q = sum_over_window_by(f"{_METRIC}{success_sel}", "service_id", time_range)
+        tokens_q = sum_over_window_by(
+            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", "service_id", time_range
+        )
+
+        raw = await asyncio.gather(
+            self._client.query(total_q),
+            self._client.query(success_q),
+            self._client.query(tokens_q),
+            return_exceptions=True,
+        )
+
+        def _safe_list(r):
+            return r if not isinstance(r, Exception) else []
+
+        totals = self._label_dict(_safe_list(raw[0]), "service_id")
+        successes = self._label_dict(_safe_list(raw[1]), "service_id")
+        tokens = self._label_dict(_safe_list(raw[2]), "service_id")
+
+        # "" means the client sent no `model` field at all — not a real service.
+        service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
+
+        names_and_models: dict = {}
+        if self._service_repo is not None and service_ids:
+            try:
+                names_and_models = await self._service_repo.get_names_and_models_by_service_ids(
+                    list(service_ids)
+                )
+            except Exception:
+                logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
+
+        services = []
+        for service_id in service_ids:
+            total_v = totals.get(service_id, 0)
+            success_v = successes.get(service_id, 0)
+            name, model_name = names_and_models.get(service_id, (service_id, None))
+            services.append({
+                "service_id": service_id,
+                "name": name,
+                "model_name": model_name,
+                "requests": total_v,
+                "native_units": float(tokens.get(service_id, 0)),
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+            })
+
+        services.sort(key=lambda s: s["requests"], reverse=True)
+
+        return {
+            "services": services,
+            "filters": {"tenant": tenant, "time_range": time_range or "all"},
+        }
+
     async def tenant_ranking(
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
     ) -> dict:
@@ -572,6 +665,15 @@ class MeteringService:
                 raw = parts[2] if len(parts) >= 4 else ep
                 task = raw.replace("-", "_")
             out[task] = out.get(task, 0) + round(float(r["value"][1]))
+        return out
+
+    @staticmethod
+    def _label_dict(results: list, label: str) -> dict:
+        """Map a label's value -> rounded sum from a `sum by(<label>)` result vector."""
+        out: dict = {}
+        for r in results:
+            key = r["metric"].get(label, "")
+            out[key] = out.get(key, 0) + round(float(r["value"][1]))
         return out
 
     @staticmethod

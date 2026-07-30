@@ -28,7 +28,7 @@ class MetricsCollector:
         self.enterprise_requests_total = Counter(
             "telemetry_obsv_requests_total",
             "Total enterprise requests",
-            ["method", "endpoint", "status_code", "tenant", "service_id"],
+            ["method", "endpoint", "status_code", "tenant", "service_id", "model"],
             registry=self.registry,
         )
 
@@ -158,6 +158,7 @@ class MetricsCollector:
         duration: float,
         tenant: str = "unknown",
         service_id: str = "",
+        model: str = "",
     ):
         """Track a request — count + duration histogram."""
         self.enterprise_requests_total.labels(
@@ -166,6 +167,7 @@ class MetricsCollector:
             status_code=str(status_code),
             tenant=tenant,
             service_id=service_id,
+            model=model,
         ).inc()
 
         self.enterprise_request_duration.labels(

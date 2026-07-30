@@ -23,8 +23,13 @@ from app.schemas.metering import (
     Graph,
     GraphPoint,
     GraphSeries,
+    HighestFailureModel,
     HighestFailureService,
+    ModelConsumptionResponse,
+    ModelConsumptionSummary,
+    MostUsedModel,
     MostUsedService,
+    ServiceModelRow,
     OverviewResponse,
     PlatformAdoption,
     Scope,
@@ -599,6 +604,116 @@ async def get_service_consumption(
                 requests=s["requests"],
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
+                success_pct=s["success_pct"],
+                # No traffic → nothing succeeded AND nothing failed. Without this
+                # guard, success_pct=0 for a 0-request service makes 100-0=100%
+                # failure, which is wrong (it should be 0%).
+                failure_rate_pct=round(100 - s["success_pct"], 2) if s["requests"] else 0.0,
+            )
+            for s in services
+        ],
+        degraded=degraded,
+        generated_at=generated_at,
+    )
+
+    if not degraded:
+        await _cache_set(redis, cache_key, response.model_dump())
+
+    return response
+
+
+# ── Tab 4: Model Consumption ──────────────────────────────────────────────────
+
+
+@router.get("/model-consumption", response_model=ModelConsumptionResponse)
+async def get_model_consumption(
+    request: Request,
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
+    svc: MeteringService = Depends(get_metering_service),
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    _require_metering_access(request)
+
+    is_admin = _is_platform_admin(request)
+    caller_tid = _caller_tenant_id(request)
+    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+
+    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
+    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
+    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
+    # rather than widen scope (defense-in-depth; the gateway should never let this
+    # through, but the backstop guarantees it).
+    if not is_admin and scope_tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
+        )
+
+    cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cached = await _cache_get(redis, cache_key)
+    if cached:
+        return cached
+
+    degraded = False
+
+    breakdown_result, = await asyncio.gather(
+        svc.model_breakdown(tenant=scope_tenant, time_range=window),
+        return_exceptions=True,
+    )
+
+    def _ok(r):
+        if isinstance(r, Exception):
+            logger.warning("Metering query failed: %s", r)
+            nonlocal degraded
+            degraded = True
+            return None
+        return r
+
+    breakdown = _ok(breakdown_result)
+
+    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+
+    services = breakdown["services"] if breakdown else []
+    # Summary KPIs — computed over services with traffic (a 0-request service
+    # must not win "highest failure rate").
+    summary: Optional[ModelConsumptionSummary] = None
+    if breakdown is not None:
+        active = [s for s in services if s["requests"] > 0]
+        most_used = max(active, key=lambda s: s["requests"]) if active else None
+        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+        summary = ModelConsumptionSummary(
+            most_used=(
+                MostUsedModel(
+                    service_id=most_used["service_id"],
+                    name=most_used["name"],
+                    requests=most_used["requests"],
+                )
+                if most_used else None
+            ),
+            highest_failure_rate=(
+                HighestFailureModel(
+                    service_id=worst["service_id"],
+                    name=worst["name"],
+                    failure_rate_pct=round(100 - worst["success_pct"], 2),
+                )
+                if worst else None
+            ),
+        )
+
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    response = ModelConsumptionResponse(
+        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        summary=summary,
+        breakdown=[
+            ServiceModelRow(
+                service_id=s["service_id"],
+                name=s["name"],
+                model_name=s["model_name"],
+                requests=s["requests"],
+                native_units=s["native_units"],
+                native_unit_suffix="tokens",
                 success_pct=s["success_pct"],
                 # No traffic → nothing succeeded AND nothing failed. Without this
                 # guard, success_pct=0 for a 0-request service makes 100-0=100%

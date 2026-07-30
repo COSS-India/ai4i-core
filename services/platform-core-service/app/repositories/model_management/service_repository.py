@@ -141,6 +141,23 @@ class ServiceRepository:
         )
         return {row.id_str: row.name for row in result.all()}
 
+    async def get_names_and_models_by_service_ids(
+        self, service_ids: List[str]
+    ) -> Dict[str, Tuple[str, Optional[str]]]:
+        """Return {service_id: (name, model_id)} for the given service ids.
+
+        Excludes soft-deleted rows. Used by the model-consumption metering
+        endpoint to resolve a display name + underlying model for each
+        service_id grouped from Prometheus.
+        """
+        if not service_ids:
+            return {}
+        result = await self._db.execute(
+            select(Service.service_id, Service.name, Service.model_id)
+            .where(Service.service_id.in_(service_ids), Service.deleted_at.is_(None))
+        )
+        return {row.service_id: (row.name, row.model_id) for row in result.all()}
+
     # ── Writes ──
 
     async def add(self, service: Service) -> Service:
