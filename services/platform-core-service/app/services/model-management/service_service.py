@@ -27,7 +27,6 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from app.core.task_type_policy import enabled_task_type_names, is_task_type_enabled
 from app.models.model_management.service import Service
 from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
@@ -108,38 +107,27 @@ class ServiceService:
     async def get_service_detail(self, service_id: str) -> Dict[str, Any]:
         cached = self._cache.get_service(service_id)
         if cached:
-            data = cached
-        else:
-            service = await self._services.get_by_service_id(service_id)
-            if service is None:
-                try:
-                    service = await self._services.get_by_uuid(UUID(service_id))
-                except (ValueError, TypeError):
-                    service = None
-            if service is None:
-                raise EntityNotFoundError(f"Service '{service_id}'")
+            return cached
 
-            model = await self._models.get_by_id_version(service.model_id, service.model_version)
-            if model is None:
-                raise EntityNotFoundError(
-                    f"Model '{service.model_id}' v{service.model_version}"
-                )
-
-            tier_name_map = await self._services.get_tier_names_by_ids(service.tier_ids or [])
-            tier_names = [tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None
-            data = service_detail_dict(service, model, tier_names=tier_names)
-            self._cache.set_service(service.service_id, data)
-
-        # Enablement gate (ENABLED_TASK_TYPES): a disabled task type is not part of
-        # this deployment, so it resolves as "not available". This is the
-        # serviceability boundary inference-service inherits — it resolves every
-        # service through this endpoint, so a disabled type has no reachable backend.
-        # The MODEL's task type is authoritative (mm_services.task_type is often
-        # unset on older rows); the model card is embedded at data["model"].
-        model_task_type = ((data.get("model") or {}).get("task") or {}).get("type")
-        if not is_task_type_enabled(model_task_type or ""):
+        service = await self._services.get_by_service_id(service_id)
+        if service is None:
+            try:
+                service = await self._services.get_by_uuid(UUID(service_id))
+            except (ValueError, TypeError):
+                service = None
+        if service is None:
             raise EntityNotFoundError(f"Service '{service_id}'")
 
+        model = await self._models.get_by_id_version(service.model_id, service.model_version)
+        if model is None:
+            raise EntityNotFoundError(
+                f"Model '{service.model_id}' v{service.model_version}"
+            )
+
+        tier_name_map = await self._services.get_tier_names_by_ids(service.tier_ids or [])
+        tier_names = [tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None
+        data = service_detail_dict(service, model, tier_names=tier_names)
+        self._cache.set_service(service.service_id, data)
         return data
 
     async def list_services(
@@ -151,13 +139,10 @@ class ServiceService:
         offset: int = 0,
         limit: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        # Only enabled task types are visible (ENABLED_TASK_TYPES), for every role.
-        enabled = enabled_task_type_names()
         rows = await self._services.list_services(
             task_type=task_type,
             is_published=is_published,
             created_by=created_by,
-            enabled_task_types=enabled,
             offset=offset,
             limit=limit,
         )
@@ -177,7 +162,6 @@ class ServiceService:
                 task_type=task_type,
                 is_published=is_published,
                 created_by=created_by,
-                enabled_task_types=enabled,
             )
         else:
             total = len(items)
@@ -197,16 +181,6 @@ class ServiceService:
                     f"'{payload.modelVersion}' not found. Cannot create service."
                 ),
                 code="MODEL_NOT_FOUND",
-            )
-
-        # 1b. Reject publishing a service for a task type not enabled in this
-        # deployment (ENABLED_TASK_TYPES) — don't let operators register a service
-        # that could never be served. The model's task type is authoritative.
-        model_task_type = (model.task or {}).get("type")
-        if not is_task_type_enabled(model_task_type or ""):
-            raise ValidationError(
-                message=f"Task type '{model_task_type}' is not enabled in this deployment.",
-                code="TASK_TYPE_DISABLED",
             )
 
         # 2. Validate the endpoint (live probe + SSRF guard)
@@ -309,29 +283,21 @@ class ServiceService:
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
 
-        model = await self._models.get_by_id_version(instance.model_id, instance.model_version)
-        if model is None:
-            raise EntityNotFoundError(
-                f"Model '{instance.model_id}' v{instance.model_version}"
-            )
-
-        # Reject managing a service whose task type is disabled (ENABLED_TASK_TYPES);
-        # the model's task type is authoritative. Re-enabling is a config change.
-        model_task_type = (model.task or {}).get("type")
-        if not is_task_type_enabled(model_task_type or ""):
-            raise ValidationError(
-                message=f"Task type '{model_task_type}' is not enabled in this deployment.",
-                code="TASK_TYPE_DISABLED",
-            )
-
         # If endpoint changes, re-validate it against the model schema
         if payload.endpoint:
+            model = await self._models.get_by_id_version(
+                instance.model_id, instance.model_version
+            )
+            if model is None:
+                raise EntityNotFoundError(
+                    f"Model '{instance.model_id}' v{instance.model_version}"
+                )
             api_key = payload.api_key or instance.api_key
             await self._validate_endpoint_for_model(
                 endpoint=payload.endpoint,
                 api_key=api_key,
                 model_inference_endpoint=model.inference_endpoint or {},
-                task_type=model_task_type,
+                task_type=(model.task or {}).get("type"),
             )
 
         request_dict = payload.model_dump(exclude_unset=True)

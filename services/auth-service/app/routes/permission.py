@@ -31,9 +31,7 @@ async def list_inference_permissions(
     _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
     svc: RoleService = Depends(get_role_service),
 ):
-    # Only task types enabled in this deployment (ENABLED_TASK_TYPES) are offered
-    # in the API-key permission catalog; disabled types aren't serviceable.
-    permissions = await svc.list_enabled_inference_permissions()
+    permissions = await svc.list_inference_permissions()
     items = [
         InferencePermissionResponse(name=p.name, label=permission_display_label(p.name)).model_dump()
         for p in permissions

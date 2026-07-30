@@ -63,7 +63,6 @@ class PPUUsageRepository:
         billing_month: str,
         tier_id: str | None = None,
         tenant_id: str | None = None,
-        enabled_task_types: frozenset | None = None,
     ):
         """One row per tenant: the tier they were most recently active under
         this billing_month, derived entirely from ppu_quota_usage.
@@ -107,8 +106,6 @@ class PPUUsageRepository:
             .where(PPUQuotaUsage.billing_month == billing_month)
             .group_by(PPUQuotaUsage.tenant_id, PPUQuotaUsage.tier_id)
         )
-        if enabled_task_types is not None:
-            ranked_activity = ranked_activity.where(PPUQuotaUsage.inference_name.in_(list(enabled_task_types)))
         if tenant_id:
             ranked_activity = ranked_activity.where(PPUQuotaUsage.tenant_id == tenant_id)
         ranked = ranked_activity.subquery()
@@ -167,13 +164,12 @@ class PPUUsageRepository:
         result = await self._db.execute(stmt)
         return {row.tenant_id: row for row in result.all()}
 
-    async def get_tenant_tier_usage_breakdown(self, billing_month: str, tenant_ids: list[str], enabled_task_types: frozenset | None = None):
+    async def get_tenant_tier_usage_breakdown(self, billing_month: str, tenant_ids: list[str]):
         """Per (tenant, tier, inference_name) usage/cost for the billing month, across
         every tier the tenant held that month — not just their most-recently-active tier.
-        Filtered to enabled_task_types when provided. Callers that need a single task
-        type's numbers filter this result in Python so the full breakdown
-        (spend/budget/tierBreakdown) stays consistent regardless of which task type is
-        being drilled into.
+        Always unfiltered by task type: callers that need a single task type's numbers
+        filter this result in Python so the full breakdown (spend/budget/tierBreakdown)
+        stays consistent regardless of which task type is being drilled into.
         """
         if not tenant_ids:
             return []
@@ -196,8 +192,6 @@ class PPUUsageRepository:
                 PPUQuotaUsage.inference_name,
             )
         )
-        if enabled_task_types is not None:
-            stmt = stmt.where(PPUQuotaUsage.inference_name.in_(list(enabled_task_types)))
         result = await self._db.execute(stmt)
         return result.all()
 
@@ -232,7 +226,7 @@ class PPUUsageRepository:
         _tier_cache_loaded_at = now
         return dict(_tier_cache)
 
-    async def get_total_cost_for_month(self, billing_month: str, enabled_task_types: frozenset | None = None) -> Decimal:
+    async def get_total_cost_for_month(self, billing_month: str) -> Decimal:
         """Total cost_accum for billing_month, across every tenant that has
         usage that month. No tenant scoping beyond the billing_month filter
         is needed: "active tenant" is now simply "has a ppu_quota_usage row
@@ -244,8 +238,6 @@ class PPUUsageRepository:
         stmt = select(func.sum(PPUQuotaUsage.cost_accum)).where(
             PPUQuotaUsage.billing_month == billing_month
         )
-        if enabled_task_types is not None:
-            stmt = stmt.where(PPUQuotaUsage.inference_name.in_(list(enabled_task_types)))
         result = await self._db.execute(stmt)
         return result.scalar() or Decimal("0")
 

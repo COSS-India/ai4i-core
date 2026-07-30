@@ -49,7 +49,6 @@ def _strip_redacted_api_key_value(ep_dict: Dict[str, Any]) -> Dict[str, Any]:
 from fastapi.encoders import jsonable_encoder
 
 from app.core.config import settings
-from app.core.task_type_policy import enabled_task_type_names, is_task_type_enabled
 from app.core.exceptions import (
     AppError,
     EntityNotFoundError,
@@ -145,15 +144,12 @@ class ModelService:
         offset: int = 0,
         limit: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        # Only models of enabled task types are visible (ENABLED_TASK_TYPES).
-        enabled = enabled_task_type_names()
         rows = await self._models.list_models(
             task_type=task_type,
             include_deprecated=include_deprecated,
             version_status=version_status,
             model_name=model_name,
             created_by=created_by,
-            enabled_task_types=enabled,
             offset=offset,
             limit=limit,
         )
@@ -164,7 +160,6 @@ class ModelService:
                 version_status=version_status,
                 model_name=model_name,
                 created_by=created_by,
-                enabled_task_types=enabled,
             )
         else:
             total = len(items)
@@ -176,14 +171,6 @@ class ModelService:
         self, payload: ModelCreateRequest, *, created_by: Optional[str]
     ) -> str:
         """Persist a new model version and return its generated model_id."""
-        # Reject creating a model for a disabled task type
-        model_task_type = (payload.task.type if payload.task else None) or ""
-        if not is_task_type_enabled(model_task_type):
-            raise ValidationError(
-                message=f"Task type '{model_task_type}' is not enabled in this deployment.",
-                code="TASK_TYPE_DISABLED",
-            )
-
         # Duplicate check on (name, version)
         existing = await self._models.get_by_name_version(payload.name, payload.version)
         if existing is not None:
@@ -300,15 +287,6 @@ class ModelService:
                 "be modified because it is deprecated.",
                 code="DEPRECATED_MODEL_UPDATE_NOT_ALLOWED",
             )
-
-        # Reject updating to a disabled task type (only when task is being changed)
-        if payload.task is not None:
-            new_task_type = (payload.task.type if payload.task else None) or ""
-            if not is_task_type_enabled(new_task_type):
-                raise ValidationError(
-                    message=f"Task type '{new_task_type}' is not enabled in this deployment.",
-                    code="TASK_TYPE_DISABLED",
-                )
 
         # PATCH semantics
         request_dict = payload.model_dump(exclude_unset=True)

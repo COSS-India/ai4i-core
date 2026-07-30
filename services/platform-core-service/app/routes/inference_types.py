@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
+from ai4i_core.ppu import get_inference_types
 from app.core.responses import success_response
-from app.core.task_type_policy import get_enabled_inference_types
 from app.schemas.common import SuccessResponse
 from app.schemas.inference_types import InferenceTypesResponse
 
@@ -10,9 +10,9 @@ router = APIRouter(
     tags=["Inference Types"],
 )
 
+_INFERENCE_TYPES: list = get_inference_types()
+
 
 @router.get("", response_model=SuccessResponse[InferenceTypesResponse])
 async def list_inference_types():
-    # Only the task types enabled for this deployment (ENABLED_TASK_TYPES). This
-    # is the single list the frontend builds its catalog from.
-    return success_response({"inference_types": get_enabled_inference_types()})
+    return success_response({"inference_types": _INFERENCE_TYPES})

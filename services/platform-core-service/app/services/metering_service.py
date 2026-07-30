@@ -6,7 +6,6 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.task_type_policy import is_task_type_enabled
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
@@ -339,8 +338,6 @@ class MeteringService:
         native_tasks: list[str] = []
         native_coros = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
-            if not is_task_type_enabled(task):
-                continue
             native_metric = cfg.get("native_metric")
             if not native_metric:
                 continue
@@ -383,8 +380,6 @@ class MeteringService:
         # ── Assemble service rows ────────────────────────────────────────────
         services = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
-            if not is_task_type_enabled(task):
-                continue
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
 
@@ -471,10 +466,7 @@ class MeteringService:
         (same approach as service_breakdown) to avoid increase() extrapolation errors.
         When ``tenant`` is given, the matrix is scoped to that single tenant.
         """
-        active_services = [
-            s for s in (services or list(SERVICE_BREAKDOWN_CONFIG))
-            if is_task_type_enabled(s)
-        ]
+        active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant_sel = f',tenant="{tenant}"' if tenant else ''

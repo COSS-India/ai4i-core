@@ -7,7 +7,6 @@ their permission_ids from the in-process role_permission_cache.
 import logging
 from uuid import UUID
 
-from app.core.config import settings
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
 from app.models.role_name import RoleName, role_name_to_str
@@ -115,32 +114,6 @@ class RoleService:
         return await self._roles.list_inference_permissions(
             excluded_resources=self._expanded_excluded_resources_for_platform_inference(),
         )
-
-    @staticmethod
-    def _enabled_task_type_slugs() -> set[str] | None:
-        """Enabled task types from ENABLED_TASK_TYPES, or None if not configured.
-
-        None means "don't filter" — the full catalog is returned. A configured
-        value is normalized the same way resources are (`_normalize_service_slug`),
-        so any spelling matches the permission's resource slug.
-        """
-        raw = settings.enabled_task_types
-        if not raw:
-            return None
-        return {_normalize_service_slug(s) for s in raw.split(",") if s.strip()}
-
-    async def list_enabled_inference_permissions(self) -> list[Permission]:
-        """Inference permissions restricted to the deployment's enabled task types.
-
-        Backs GET /auth/inference/permissions so the API-key permission catalog
-        only offers task types that are actually serviceable (ENABLED_TASK_TYPES).
-        Falls back to the full list when ENABLED_TASK_TYPES is unset.
-        """
-        permissions = await self.list_inference_permissions()
-        enabled = self._enabled_task_type_slugs()
-        if enabled is None:
-            return permissions
-        return [p for p in permissions if _normalize_service_slug(p.resource) in enabled]
 
     async def assign_guest_inference_services(self, services: list[str]) -> list[str]:
         managed = await self.list_inference_permissions()

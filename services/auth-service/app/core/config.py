@@ -30,14 +30,6 @@ class AuthSettings(BaseSettings):
     environment: str = ENV_DEVELOPMENT
     debug: bool = False
 
-    # ── Task-type enablement ──
-    # Comma-separated allowlist of task types this deployment serves (yaml `name`
-    # form, e.g. "llm,nmt,asr"), mirroring platform-core's ENABLED_TASK_TYPES.
-    # Optional here: when unset the inference-permission catalog is returned in
-    # full (no filtering); when set, /auth/inference/permissions only lists
-    # permissions for enabled task types.
-    enabled_task_types: Optional[str] = None
-
     # ── Server ──
     host: str = "0.0.0.0"
     port: int = 8081

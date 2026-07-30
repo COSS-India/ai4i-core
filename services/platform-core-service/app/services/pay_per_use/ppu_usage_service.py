@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4i_core.ppu import get_inference_unit_map
 from app.core.exceptions import EntityNotFoundError
-from app.core.task_type_policy import enabled_task_type_names
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
 from app.utils.billing_month import shift_billing_month
 from app.schemas.pay_per_use.usage import (
@@ -307,10 +306,9 @@ class PPUUsageService:
         tier info only, NOT budget — callers that need budget_limit/available_balance
         must separately call get_tenant_budgets.
         """
-        enabled = enabled_task_type_names()
-        tier_rows = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id, enabled_task_types=enabled)
+        tier_rows = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id)
         tenant_ids = [row.tenant_id for row in tier_rows]
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids, enabled_task_types=enabled)
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
         return tier_rows, usage_rows
 
     async def get_summary(
@@ -376,7 +374,7 @@ class PPUUsageService:
         else:
             # Unfiltered: no tenant scoping needed, so skip tenant/tier resolution
             # entirely and get the same number from one lightweight aggregate query.
-            prev_total_spend = _to_decimal(await self._repo.get_total_cost_for_month(prev_month, enabled_task_type_names()))
+            prev_total_spend = _to_decimal(await self._repo.get_total_cost_for_month(prev_month))
         spend_change_percent = (
             round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
             if prev_total_spend > 0
@@ -428,14 +426,13 @@ class PPUUsageService:
         tenant list, via a cheap spend pre-aggregate (_tenant_spend_from_rows) computed
         straight from the already-fetched usage rows.
         """
-        enabled = enabled_task_type_names()
-        assignments = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id, enabled_task_types=enabled)
+        assignments = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id)
         total = len(assignments)
         if not assignments:
             return TenantHierarchicalListResponse(data=[], total=0)
 
         tenant_ids = [row.tenant_id for row in assignments]
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids, enabled_task_types=enabled)
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
 
         usage_by_tenant: dict[str, list] = {}
         for row in usage_rows:
@@ -513,9 +510,8 @@ class PPUUsageService:
         uses elsewhere) — falling back to "Unassigned" only when even that
         assignment doesn't exist.
         """
-        enabled = enabled_task_type_names()
         assignments = await self._repo.get_tenants_with_usage_tier(
-            billing_month, tenant_id=tenant_id, enabled_task_types=enabled
+            billing_month, tenant_id=tenant_id
         )
         if not assignments:
             # No usage this period is a valid tenant configuration (not an error) —
@@ -562,7 +558,7 @@ class PPUUsageService:
             )
 
         async def _fetch_tenant_data():
-            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id], enabled_task_types=enabled)
+            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
             tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
             budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
             tier_names = await self._repo.get_tier_names()
