@@ -27,6 +27,8 @@ logger = get_logger(__name__)
 def _get_otel_attributes(attrs: dict):
     tenant_id: str = str(attrs.get("tenantId") or "").strip()
     service_id: str = str(attrs.get("service_id") or "").strip()
+    # Both LLM and Triton spans write real counts to input_tokens/output_tokens
+    # (see trace/request_span.py and services/base/task_service.py).
     input_tokens: float = float(attrs.get("input_tokens") or 0)
     output_tokens: float = float(attrs.get("output_tokens") or 0)
     correlation_id: str = str(attrs.get("correlation_id") or "").strip()

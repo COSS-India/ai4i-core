@@ -17,6 +17,8 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
+from ai4i_core.observability import set_billed_state, set_metric_labels
+
 from models.common import GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
@@ -434,17 +436,22 @@ async def run_ocr_inference(
 def _bridge_llm_usage_to_request(request: Request) -> None:
     """
     Copy the LLM token counts and model name from the ai4i_core context vars
-    onto ``request.state``.
+    onto ``request.state`` via the set_billed_state/set_metric_labels contract
+    ObservabilityMiddleware reads.
 
     ContextVars set inside the app task are not visible in the
     BaseHTTPMiddleware task where ObservabilityMiddleware drains the response
     body, but ``request.state`` is backed by the shared ASGI scope, which does
     cross that boundary. This is the handoff that lets the middleware emit
-    token metrics without buffering (and re-parsing) the response.
+    token metrics without buffering (and re-parsing) the response — essential
+    for the SSE stream, where usage only exists after the final chunk.
     """
-    request.state.llm_usage_input_tokens = get_llm_usage_input_tokens()
-    request.state.llm_usage_output_tokens = get_llm_usage_output_tokens()
-    request.state.llm_usage_model_name = get_llm_usage_model_name()
+    set_billed_state(
+        request,
+        billed_input=get_llm_usage_input_tokens() or 0,
+        billed_output=get_llm_usage_output_tokens() or 0,
+    )
+    set_metric_labels(request, model=get_llm_usage_model_name() or "")
 
 
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
@@ -456,6 +463,10 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
+        # Same values llm_service.py already read from the vLLM `usage` block
+        # onto the ai-inference span (via ai4i_core.context) — bridged here so
+        # ObservabilityMiddleware reads one shared count instead of re-parsing
+        # this response body itself.
         _bridge_llm_usage_to_request(request)
 
         if status_code >= 400:
