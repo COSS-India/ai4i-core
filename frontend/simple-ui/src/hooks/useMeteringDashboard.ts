@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
+import { useInferenceTypes } from "./useInferenceTypes";
 import { listTenants } from "../services/tenantService";
 import type {
   MeteringResponseMeta,
@@ -47,6 +48,16 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const isAdopterView = roleViewConfig.defaultView === "adopter";
   const isTenantView = roleViewConfig.defaultView === "tenant";
+
+  // Frontend-owned enabled set (NEXT_PUBLIC_ENABLED_TASK_TYPES). We pass it to
+  // the metering `services=` filter so the backend returns only enabled task
+  // types — the backend itself is not restricted. null while the catalog is
+  // still loading, so we don't briefly filter everything out.
+  const { taskTypeNames } = useInferenceTypes();
+  const enabledServices = useMemo(
+    () => (taskTypeNames.length > 0 ? taskTypeNames : null),
+    [taskTypeNames],
+  );
 
   const availableSubTabs = isTenantView ? METERING.TENANT_SUB_TABS : METERING.SUB_TABS;
 
@@ -139,13 +150,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       METERING.QUERY.SCOPES.TENANT,
       timeWindow,
       topN,
-      // UNDO: tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
-      METERING.QUERY.HEATMAP_SERVICES_ALL,
+      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
       queryTenantId,
     ),
     queryFn: () =>
-      // UNDO: fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices, queryTenantId),
-      fetchMeteringTenantConsumption(timeWindow, topN, null, queryTenantId),
+      fetchMeteringTenantConsumption(timeWindow, topN, enabledServices, queryTenantId),
     enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
     placeholderData: keepPreviousData,
     ...meteringQueryDefaults,
