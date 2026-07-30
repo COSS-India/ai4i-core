@@ -11,8 +11,6 @@ import {
   serviceFailureRate,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
-import { useInferenceTypes } from "../../hooks/useInferenceTypes";
-import { toMeteringKey } from "../../utils/meteringTaskKey";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
@@ -30,18 +28,9 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   errorMessage,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
-  // Show only frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES).
-  // Empty set (catalog still loading) ⇒ leave unfiltered.
-  const { taskTypeNames } = useInferenceTypes();
-  const breakdown = useMemo(() => {
-    const rows = data?.service_breakdown ?? [];
-    // service_breakdown keys are metering-key form (underscore); map the enabled
-    // yaml names to match.
-    const enabled = new Set(taskTypeNames.map(toMeteringKey));
-    return enabled.size === 0
-      ? rows
-      : rows.filter((r) => enabled.has(r.service.trim().toLowerCase()));
-  }, [data?.service_breakdown, taskTypeNames]);
+  // Backend query-filters service_breakdown by the frontend-passed services=,
+  // so the rows come back already scoped — no client-side filter here.
+  const breakdown = data?.service_breakdown ?? [];
 
   const { slices } = useMemo(() => buildServiceBreakdownChart(breakdown), [breakdown]);
   const insights = useMemo(

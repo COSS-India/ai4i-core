@@ -188,20 +188,14 @@ export function useServicesManagement() {
             ? false
             : undefined;
 
+      // Backend query-filters by the frontend-enabled task types (task_types=),
+      // so the list comes back already scoped — no client-side filter here.
       const result = await fetchAllServicesMatchingFilters({
         taskType: filterTaskType || undefined,
+        taskTypes: taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined,
         isPublished: isPublishedFilter,
       });
-      // Show only services of frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES).
-      // Empty set (catalog still loading) ⇒ leave unfiltered.
-      const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
-      const items =
-        enabled.size === 0
-          ? result.items
-          : result.items.filter((s) =>
-              enabled.has((s.task_type ?? "").trim().toLowerCase()),
-            );
-      setServices(items);
+      setServices(result.items);
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
       showError(error);

@@ -47,27 +47,33 @@ export function useUsageAndSpendData({
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const isScoped = Boolean(scopedId);
 
+  // Frontend-enabled task types sent to the backend so it query-filters the
+  // response (NEXT_PUBLIC_ENABLED_TASK_TYPES via useInferenceTypes). undefined
+  // while the catalog is still loading ⇒ backend returns all (no filter).
+  const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const summaryQuery = useQuery({
-    queryKey: ["usage-summary", billingPeriod, refreshNonce],
-    queryFn: () => fetchUsageSummary({ billingPeriod }),
+    queryKey: ["usage-summary", billingPeriod, enabledParam, refreshNonce],
+    queryFn: () => fetchUsageSummary({ billingPeriod, taskTypes: enabledParam }),
     enabled: !isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
     retry: 1,
   });
 
   const previousSummaryQuery = useQuery({
-    queryKey: ["usage-summary", previousBillingPeriod, refreshNonce],
-    queryFn: () => fetchUsageSummary({ billingPeriod: previousBillingPeriod }),
+    queryKey: ["usage-summary", previousBillingPeriod, enabledParam, refreshNonce],
+    queryFn: () =>
+      fetchUsageSummary({ billingPeriod: previousBillingPeriod, taskTypes: enabledParam }),
     enabled: !isScoped && periodKey === "current",
     staleTime: USAGE_SPEND_STALE_MS,
     retry: 1,
   });
 
   const scopedQuery = useQuery({
-    queryKey: ["usage-tenant", scopedId, billingPeriod, refreshNonce],
+    queryKey: ["usage-tenant", scopedId, billingPeriod, enabledParam, refreshNonce],
     queryFn: () => {
       if (!scopedId) throw new Error("Tenant id is required");
-      return fetchTenantUsageById(scopedId, billingPeriod);
+      return fetchTenantUsageById(scopedId, billingPeriod, enabledParam);
     },
     enabled: isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
@@ -80,6 +86,7 @@ export function useUsageAndSpendData({
       billingPeriod,
       filterTierId,
       filterTaskType,
+      enabledParam,
       sortOrder,
       refreshNonce,
     ],
@@ -88,6 +95,7 @@ export function useUsageAndSpendData({
         billingPeriod,
         tierId: filterTierId || undefined,
         modelTaskType: filterTaskType || undefined,
+        taskTypes: enabledParam,
         sortOrder,
         limit: 100,
         offset: 0,
@@ -129,17 +137,9 @@ export function useUsageAndSpendData({
       };
     };
 
-    // Filter to the frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES).
-    // Empty set (catalog still loading) ⇒ leave unfiltered.
-    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
-    let next: UsageSummaryResponse =
-      enabled.size === 0
-        ? summary
-        : recompute(
-            summary.spendByModelTaskType.filter((i) =>
-              enabled.has(i.modelTaskType.trim().toLowerCase()),
-            ),
-          );
+    // Enabled-task-type filtering is done at the backend (taskTypes= query param),
+    // so no client-side enabled filter here — only the single-type drill-down below.
+    let next: UsageSummaryResponse = summary;
 
     if (filterTaskType) {
       next = recompute(
@@ -166,7 +166,6 @@ export function useUsageAndSpendData({
     scopedQuery.data,
     summaryQuery.data,
     filterTaskType,
-    taskTypeNames,
     tenantsQuery.data?.data,
     tenantsQuery.data?.total,
   ]);

@@ -397,6 +397,8 @@ export interface ServiceListParams {
   offset?: number;
   limit?: number;
   taskType?: string;
+  /** Comma-separated task types to include (frontend allowlist). */
+  taskTypes?: string;
   isPublished?: boolean;
   createdBy?: string;
 }

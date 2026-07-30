@@ -175,8 +175,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
+      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
     ),
-    queryFn: () => fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId),
+    queryFn: () =>
+      fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId, enabledServices),
     enabled: serviceQueryEnabled,
     ...meteringQueryDefaults,
   });

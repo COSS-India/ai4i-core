@@ -106,8 +106,12 @@ export async function fetchMeteringServiceConsumption(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
+  services?: string[] | null,
 ): Promise<ServiceConsumptionResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  if (services?.length) {
+    params.set("services", services.join(","));
+  }
   const { data } = await apiService.get<ServiceConsumptionResponse>(
     withQuery(apiEndpoints.metering.serviceConsumption, params),
     { responseSchema: serviceConsumptionResponseSchema },
