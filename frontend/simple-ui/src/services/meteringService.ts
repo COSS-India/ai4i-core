@@ -1,5 +1,4 @@
 import { METERING } from "../config/meteringConstants";
-import { appendTaskTypesToSearchParams } from "../utils/taskTypesQueryParam";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
@@ -70,7 +69,7 @@ function appendTaskTypesParam(
   params: URLSearchParams,
   taskTypes?: string[] | null,
 ): void {
-  appendTaskTypesToSearchParams(params, taskTypes);
+  if (taskTypes?.length) params.set("task_types", taskTypes.join(","));
 }
 
 /** GET /api/v1/metering/overview */
@@ -98,7 +97,7 @@ export async function fetchMeteringTenantConsumption(
 ): Promise<TenantConsumptionResponse> {
   const extra: Record<string, string> = { limit: String(limit) };
   const params = new URLSearchParams({ window: timeWindow, ...extra });
-  appendTaskTypesToSearchParams(params, taskTypes);
+  appendTaskTypesParam(params, taskTypes);
   if (tenantId?.trim()) {
     params.set("tenant_id", tenantId.trim());
   }

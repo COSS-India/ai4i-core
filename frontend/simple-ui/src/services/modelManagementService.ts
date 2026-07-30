@@ -1,7 +1,6 @@
 // Model Management service API client
 
 import { MODEL_VERSION } from '../config/constants';
-import { TASK_TYPES_QUERY_PARAM } from '../utils/taskTypesQueryParam';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -114,7 +113,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
     if (params.limit !== undefined) queryParams.limit = params.limit;
     if (params.taskType) queryParams.task_type = params.taskType;
-    if (params.taskTypes) queryParams[TASK_TYPES_QUERY_PARAM] = params.taskTypes;
+    if (params.taskTypes) queryParams.task_types = params.taskTypes;
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
