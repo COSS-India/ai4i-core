@@ -52,6 +52,7 @@ class ServiceRepository:
         self,
         *,
         task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
     ) -> int:
@@ -65,6 +66,8 @@ class ServiceRepository:
         ).where(Service.deleted_at.is_(None))
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
@@ -76,6 +79,7 @@ class ServiceRepository:
         self,
         *,
         task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
         offset: int = 0,
@@ -95,6 +99,8 @@ class ServiceRepository:
         )
         if task_type:
             stmt = stmt.where(Model.task["type"].astext == task_type)
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:

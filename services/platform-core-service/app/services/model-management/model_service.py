@@ -137,6 +137,7 @@ class ModelService:
         self,
         *,
         task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         include_deprecated: bool = True,
         version_status: Optional[str] = None,
         model_name: Optional[str] = None,
@@ -146,6 +147,7 @@ class ModelService:
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._models.list_models(
             task_type=task_type,
+            task_types=task_types,
             include_deprecated=include_deprecated,
             version_status=version_status,
             model_name=model_name,
@@ -157,6 +159,7 @@ class ModelService:
         if offset > 0 or limit is not None:
             total = await self._models.count_models(
                 task_type=task_type,
+                task_types=task_types,
                 version_status=version_status,
                 model_name=model_name,
                 created_by=created_by,

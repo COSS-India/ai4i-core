@@ -125,7 +125,10 @@ async def list_services(
     request: Request,
     response: Response,
     task_type: Optional[str] = Query(
-        None, description="Filter by task type."
+        None, description="Filter by a single task type."
+    ),
+    task_types: Optional[str] = Query(
+        None, description="Comma-separated task types to include (frontend allowlist)."
     ),
     is_published: Optional[bool] = Query(
         None,
@@ -148,8 +151,14 @@ async def list_services(
     svc: ServiceService = Depends(get_service_service),
 ):
     """List services with optional filters and offset/limit pagination."""
+    _task_types = (
+        [_resolve_task_type(t) for t in task_types.split(",") if t.strip()]
+        if task_types
+        else None
+    )
     items, total = await svc.list_services(
         task_type=_resolve_task_type(task_type),
+        task_types=_task_types,
         is_published=is_published,
         created_by=created_by,
         offset=offset,
