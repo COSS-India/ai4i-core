@@ -12,8 +12,25 @@ from app.models.pay_per_use.ppu_tier import PPUTier, PPUTierQuota
 from app.models.pay_per_use.ppu_tenant_tier_assignment import PPUTenantTierAssignment
 from app.repositories.pay_per_use.ppu_usage_repository import update_tier_cache
 from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierQuotaOut, TierUpdate
+from app.schemas.enums.model_management import resolve_task_type
+from app.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_task_types(task_types: Optional[str]) -> Optional[List[str]]:
+    if not task_types:
+        return None
+    resolved = []
+    for raw in task_types.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            resolved.append(resolve_task_type(raw))
+        except ValueError as exc:
+            raise ValidationError(str(exc))
+    return resolved or None
 
 
 def _build_out(tier: PPUTier, quotas: List[PPUTierQuota]) -> TierOut:
@@ -35,8 +52,9 @@ def _build_out(tier: PPUTier, quotas: List[PPUTierQuota]) -> TierOut:
 
 
 async def list_tiers(
-    session: AsyncSession, model_task_type: Optional[str] = None
+    session: AsyncSession, task_types: Optional[str] = None
 ) -> dict:
+    model_task_types = _resolve_task_types(task_types)
     stmt = (
         select(PPUTier)
         .where(PPUTier.is_active.is_(True))
@@ -47,8 +65,8 @@ async def list_tiers(
 
     out = []
     for tier in tiers:
-        quotas = [q for q in tier.tier_quotas if not model_task_type or q.inference_name == model_task_type]
-        if model_task_type and not quotas:
+        quotas = [q for q in tier.tier_quotas if not model_task_types or q.inference_name in model_task_types]
+        if model_task_types and not quotas:
             continue
         out.append(_build_out(tier, quotas))
 

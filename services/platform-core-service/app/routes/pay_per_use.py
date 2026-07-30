@@ -5,9 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db, get_db
-from app.core.exceptions import ValidationError
 from app.schemas.common import SuccessResponse
-from app.schemas.enums.model_management import resolve_task_type
 from app.schemas.pay_per_use.tenant_assignment import (
     ReviseBudgetRequest,
     ReviseBudgetResponse,
@@ -24,26 +22,15 @@ from app.core.config import settings
 router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
 
 
-def _resolve_model_task_type(model_task_type: Optional[str]) -> Optional[str]:
-    """Normalize and validate the modelTaskType filter against TaskTypeEnum."""
-    if not model_task_type:
-        return None
-    try:
-        return resolve_task_type(model_task_type)
-    except ValueError as exc:
-        raise ValidationError(str(exc))
-
-
 @router.get("/tiers")
 async def list_tiers(
-    taskTypes: Optional[str] = Query(
+    task_types: Optional[str] = Query(
         None,
-        description="Filter by model task type: nmt, llm, asr, tts, ocr, transliteration, ner, language-detection, speaker-diarization, audio-lang-detection, language-diarization",
+        description="Comma-separated model task type filter: nmt, llm, asr, tts, ocr, transliteration, ner, language-detection, speaker-diarization, audio-lang-detection, language-diarization",
     ),
     session: AsyncSession = Depends(get_db),
 ):
-    resolved = _resolve_model_task_type(taskTypes)
-    return await tier_service.list_tiers(session, model_task_type=resolved)
+    return await tier_service.list_tiers(session, task_types=task_types)
 
 
 @router.get("/tier", response_model=TierOut)
