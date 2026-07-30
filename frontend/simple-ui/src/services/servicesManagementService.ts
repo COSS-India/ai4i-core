@@ -1,6 +1,7 @@
 // Services Management service API client
 
 import { z } from "zod";
+import { TASK_TYPES_QUERY_PARAM } from "../utils/taskTypesQueryParam";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
@@ -98,8 +99,8 @@ export const listServicesPaginated = async (
     if (params.offset !== undefined && params.offset > 0)
       queryParams.offset = params.offset;
     if (params.limit !== undefined) queryParams.limit = params.limit;
-    if (params.taskTypes) queryParams.task_types = params.taskTypes;
-    if (params.taskType) queryParams.task_types = params.taskType;
+    if (params.taskType) queryParams.task_type = params.taskType;
+    if (params.taskTypes) queryParams[TASK_TYPES_QUERY_PARAM] = params.taskTypes;
     if (params.isPublished !== undefined)
       queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;

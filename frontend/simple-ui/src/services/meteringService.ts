@@ -1,4 +1,5 @@
 import { METERING } from "../config/meteringConstants";
+import { appendTaskTypesToSearchParams } from "../utils/taskTypesQueryParam";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
@@ -65,13 +66,22 @@ function buildMeteringParams(
   return params;
 }
 
+function appendTaskTypesParam(
+  params: URLSearchParams,
+  taskTypes?: string[] | null,
+): void {
+  appendTaskTypesToSearchParams(params, taskTypes);
+}
+
 /** GET /api/v1/metering/overview */
 export async function fetchMeteringOverview(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
+  taskTypes?: string[] | null,
 ): Promise<OverviewResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  appendTaskTypesParam(params, taskTypes);
   const { data } = await apiService.get<OverviewResponse>(
     withQuery(apiEndpoints.metering.overview, params),
     { responseSchema: overviewResponseSchema },
@@ -87,13 +97,11 @@ export async function fetchMeteringTenantConsumption(
   tenantId?: string | null,
 ): Promise<TenantConsumptionResponse> {
   const extra: Record<string, string> = { limit: String(limit) };
-  if (taskTypes?.length) {
-    extra.taskTypes = taskTypes.join(",");
-  }
-  if (tenantId?.trim()) {
-    extra.tenant_id = tenantId.trim();
-  }
   const params = new URLSearchParams({ window: timeWindow, ...extra });
+  appendTaskTypesToSearchParams(params, taskTypes);
+  if (tenantId?.trim()) {
+    params.set("tenant_id", tenantId.trim());
+  }
   const { data } = await apiService.get<TenantConsumptionResponse>(
     withQuery(apiEndpoints.metering.tenantConsumption, params),
     { responseSchema: tenantConsumptionResponseSchema },
@@ -109,9 +117,7 @@ export async function fetchMeteringServiceConsumption(
   taskTypes?: string[] | null,
 ): Promise<ServiceConsumptionResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
-  if (taskTypes?.length) {
-    params.set("taskTypes", taskTypes.join(","));
-  }
+  appendTaskTypesParam(params, taskTypes);
   const { data } = await apiService.get<ServiceConsumptionResponse>(
     withQuery(apiEndpoints.metering.serviceConsumption, params),
     { responseSchema: serviceConsumptionResponseSchema },

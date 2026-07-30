@@ -50,10 +50,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isAdopterView = roleViewConfig.defaultView === "adopter";
   const isTenantView = roleViewConfig.defaultView === "tenant";
 
-  // Frontend-owned enabled set (NEXT_PUBLIC_ENABLED_TASK_TYPES). We pass it to
-  // the metering `taskTypes=` filter so the backend returns only enabled task
-  // types — the backend itself is not restricted. null while the catalog is
-  // still loading, so we don't briefly filter everything out.
+  // Frontend-owned enabled set (NEXT_PUBLIC_ENABLED_TASK_TYPES). Passed as
+  // `task_types=` on metering APIs so the backend scopes metrics; UI renders
+  // the response as-is. null while the catalog is still loading.
   //
   // Metering keys use SERVICE_BREAKDOWN_CONFIG form (underscore, e.g.
   // "language_detection"), not the yaml name (hyphen) — map before sending.
@@ -141,8 +140,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
+      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
     ),
-    queryFn: () => fetchMeteringOverview(timeWindow, ctx, queryTenantId),
+    queryFn: () =>
+      fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices),
     enabled: isAdopterView || tenantOverviewEnabled,
     ...meteringQueryDefaults,
   });
@@ -155,13 +156,16 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       timeWindow,
       topN,
       // UNDO: tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
-      METERING.QUERY.HEATMAP_SERVICES_ALL,
+      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
       queryTenantId,
     ),
     queryFn: () =>
-      // UNDO: fetchMeteringTenantConsumption(timeWindow, topN, tenantHeatmapServices, queryTenantId),
-      // Pass null so BE returns whatever task types are enabled for this env.
-      fetchMeteringTenantConsumption(timeWindow, topN, null, queryTenantId),
+      fetchMeteringTenantConsumption(
+        timeWindow,
+        topN,
+        enabledServices,
+        queryTenantId,
+      ),
     enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
     placeholderData: keepPreviousData,
     ...meteringQueryDefaults,

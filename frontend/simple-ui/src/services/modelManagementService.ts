@@ -1,6 +1,7 @@
 // Model Management service API client
 
 import { MODEL_VERSION } from '../config/constants';
+import { TASK_TYPES_QUERY_PARAM } from '../utils/taskTypesQueryParam';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -86,7 +87,7 @@ const MAX_REGISTRY_FETCH_PAGES = 500;
  * Used by the registry UI so name search and table pagination stay consistent (frontend-only).
  */
 export const fetchAllModelsMatchingFilters = async (
-  params: Pick<ModelListParams, 'taskType' | 'versionStatus' | 'createdBy'> = {}
+  params: Pick<ModelListParams, 'taskType' | 'taskTypes' | 'versionStatus' | 'createdBy'> = {}
 ): Promise<PaginatedModels> => {
   const items: ModelDetails[] = [];
   let total = 0;
@@ -112,7 +113,8 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     const queryParams: Record<string, string | number> = {};
     if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
     if (params.limit !== undefined) queryParams.limit = params.limit;
-    if (params.taskType) queryParams.task_types = params.taskType;
+    if (params.taskType) queryParams.task_type = params.taskType;
+    if (params.taskTypes) queryParams[TASK_TYPES_QUERY_PARAM] = params.taskTypes;
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 

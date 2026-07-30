@@ -32,7 +32,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   errorMessage,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
-  // Backend query-filters service_breakdown by the frontend-passed services=,
+  // Backend query-filters service_breakdown via `task_types=` query param;
   // so the rows come back already scoped — no client-side filter here.
   const breakdown = data?.service_breakdown ?? [];
 
