@@ -19,9 +19,22 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
+  "id": 33,
   "links": [],
   "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 2000,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
     {
       "datasource": {
         "type": "prometheus",
@@ -39,7 +52,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "red",
@@ -52,10 +65,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
+        "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "id": 35,
       "options": {
@@ -75,18 +88,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\",\n      endpoint=~\"/.*inference.*|/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "Average Latency",
+          "legendFormat": "Median Latency",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Overall Latency (Seconds)",
+      "title": "Overall Latency (Median, Seconds)",
       "type": "stat"
     },
     {
@@ -107,7 +124,6 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -124,7 +140,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -140,7 +155,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "red",
@@ -153,10 +168,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
+        "h": 8,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "id": 8,
       "options": {
@@ -175,16 +190,33 @@
       "pluginVersion": "12.3.1",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\",\n      endpoint=~\"/.*inference.*|/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Median Latency",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Overall Latency Trend (Seconds)",
+      "title": "Overall Latency Trend (Median, Seconds)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 2001,
+      "panels": [],
+      "title": "Latency by Service",
+      "type": "row"
     },
     {
       "datasource": {
@@ -205,7 +237,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "orange",
@@ -223,9 +255,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
-        "y": 9
+        "y": 10
       },
       "id": 39,
       "options": {
@@ -243,105 +275,22 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/asr/inference\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "__auto",
+          "legendFormat": "Median Latency",
           "range": true,
           "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "ASR Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median time taken by TTS",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.3
-              },
-              {
-                "color": "red",
-                "value": 0.7
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 9
-      },
-      "id": 37,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "TTS Latency (Seconds)",
+      "title": "ASR Latency (Median, Seconds)",
       "type": "gauge"
     },
     {
@@ -363,7 +312,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "orange",
@@ -381,9 +330,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 9
+        "w": 6,
+        "x": 6,
+        "y": 10
       },
       "id": 38,
       "options": {
@@ -401,26 +350,97 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/nmt/inference\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "__auto",
+          "legendFormat": "Median Latency",
           "range": true,
           "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "Translation Latency (Seconds)",
+      "title": "Translation Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by LLM",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "id": 2005,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le, endpoint) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\",\n      endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "{{endpoint}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "LLM Latency (Median, Seconds)",
       "type": "gauge"
     },
     {
@@ -442,7 +462,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "orange",
@@ -460,9 +480,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 17
+        "w": 6,
+        "x": 18,
+        "y": 10
       },
       "id": 100,
       "options": {
@@ -480,184 +500,22 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", endpoint=\"/api/v1/ocr/inference\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "__auto",
+          "legendFormat": "Median Latency",
           "range": true,
           "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "OCR Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median time taken by Transliteration",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.5
-              },
-              {
-                "color": "red",
-                "value": 0.9
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 17
-      },
-      "id": 101,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Transliteration Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median time taken by Text Language Detection",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.3
-              },
-              {
-                "color": "red",
-                "value": 0.7
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 17
-      },
-      "id": 102,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Text Language Detection Latency (Seconds)",
+      "title": "OCR Latency (Median, Seconds)",
       "type": "gauge"
     },
     {
@@ -678,8 +536,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "orange",
@@ -697,9 +554,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
-        "y": 25
+        "y": 18
       },
       "id": 104,
       "options": {
@@ -717,27 +574,480 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", endpoint=\"/api/v1/ner/inference\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "__auto",
+          "legendFormat": "Median Latency",
           "range": true,
           "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "NER Latency (Seconds)",
+      "title": "NER Latency (Median, Seconds)",
       "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by Transliteration",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 18
+      },
+      "id": 101,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/transliteration/inference\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Median Latency",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Transliteration Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by TTS",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.3
+              },
+              {
+                "color": "red",
+                "value": 0.7
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 18
+      },
+      "id": 37,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/tts/inference\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Median Latency",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "TTS Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by Speaker Diarization",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 18
+      },
+      "id": 221,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", endpoint=\"/api/v1/speaker-diarization/inference\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Median Latency",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Speaker Diarization Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by Language Diarization",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 26
+      },
+      "id": 222,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", endpoint=\"/api/v1/language-diarization/inference\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Median Latency",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Language Diarization Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by Audio Language Detection",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 26
+      },
+      "id": 223,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", endpoint=\"/api/v1/audio-lang-detection/inference\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Median Latency",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Audio Language Detection Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median time taken by Text Language Detection",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.3
+              },
+              {
+                "color": "red",
+                "value": 0.7
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 26
+      },
+      "id": 102,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/language-detection/inference\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Median Latency",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Text Language Detection Latency (Median, Seconds)",
+      "type": "gauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 2002,
+      "panels": [],
+      "title": "Payload Size by Service",
+      "type": "row"
     },
     {
       "datasource": {
@@ -755,8 +1065,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -770,9 +1079,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 25
+        "w": 6,
+        "x": 0,
+        "y": 35
       },
       "id": 26,
       "options": {
@@ -792,96 +1101,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "ASR Payload Size (Minutes)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median number of characters processed by the TTS service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 25
-      },
-      "id": 24,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "sum(rate(telemetry_obsv_tts_characters_synthesized_sum{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))\n/\nsum(rate(telemetry_obsv_tts_characters_synthesized_count{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))",
-          "legendFormat": "Avg Chars/Request",
-          "range": true,
-          "refId": "A"
-        },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "telemetry_obsv_requests_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}",
-          "hide": true,
-          "instant": false,
-          "legendFormat": "__auto",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_asr_audio_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "TTS Payload Size (Characters)",
+      "title": "ASR Payload Size (Median, Minutes)",
       "type": "stat"
     },
     {
@@ -900,8 +1135,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -915,9 +1149,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 33
+        "w": 6,
+        "x": 6,
+        "y": 35
       },
       "id": 25,
       "options": {
@@ -937,30 +1171,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
-        {
-          "editorMode": "code",
-          "expr": "sum(rate(telemetry_obsv_nmt_characters_translated_sum{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))\n/\nsum(rate(telemetry_obsv_nmt_characters_translated_count{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))",
-          "legendFormat": "Avg Chars/Request",
-          "range": true,
-          "refId": "A"
-        },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "",
-          "hide": true,
-          "instant": false,
-          "legendFormat": "__auto",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_nmt_characters_translated_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "Translation Payload Size (Characters)",
+      "title": "Translation Payload Size (Median, Characters)",
       "type": "stat"
     },
     {
@@ -968,7 +1194,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Median number of characters processed by the Transliteration service.",
+      "description": "Median number of characters processed by the TTS service.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -979,8 +1205,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -994,11 +1219,11 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 33
+        "w": 6,
+        "x": 12,
+        "y": 35
       },
-      "id": 201,
+      "id": 24,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -1016,17 +1241,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_transliteration_characters_processed_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_tts_characters_synthesized_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Transliteration Payload Size (Characters)",
+      "title": "TTS Payload Size (Median, Characters)",
       "type": "stat"
     },
     {
@@ -1034,7 +1264,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Median number of characters processed by the Text Language Detection service.",
+      "description": "Median number of images processed by the OCR service.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1045,8 +1275,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1060,141 +1289,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 33
-      },
-      "id": 202,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_language_detection_characters_processed_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Text Language Detection Payload Size (Characters)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median number of tokens processed by the NER service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 41
-      },
-      "id": 204,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ner_tokens_processed_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "NER Payload Size (Tokens)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median number of images processed per request by the OCR service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 41
+        "w": 6,
+        "x": 18,
+        "y": 35
       },
       "id": 200,
       "options": {
@@ -1214,18 +1311,526 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_images_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
-          "legendFormat": "Images Processed (24h)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_ocr_images_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "OCR Payload Size (Images)",
+      "title": "OCR Payload Size (Median, Images)",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median number of tokens processed by the NER service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 43
+      },
+      "id": 204,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_ner_tokens_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "NER Payload Size (Median, Tokens)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median number of tokens processed by the LLM service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 43
+      },
+      "id": 2006,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le, endpoint) (\n    rate(telemetry_obsv_llm_tokens_processed_bucket{tenant=~\"$tenant\", token_type=\"prompt\", endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "{{endpoint}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "LLM Payload Size (Median, Tokens)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median number of characters processed by the Text Language Detection service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 43
+      },
+      "id": 202,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_language_detection_characters_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Text Language Detection Payload Size (Median, Characters)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median length of the input audio sent to the Speaker Diarization service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 43
+      },
+      "id": 224,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_speaker_diarization_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Speaker Diarization Payload Size (Median, Minutes)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median length of the input audio sent to the Language Diarization service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 51
+      },
+      "id": 225,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_language_diarization_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Language Diarization Payload Size (Median, Minutes)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median number of characters processed by the Transliteration service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 51
+      },
+      "id": 201,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_transliteration_characters_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Transliteration Payload Size (Median, Characters)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median length of the input audio sent to the Audio Language Detection(ALD) service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 59
+      },
+      "id": 226,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_audio_lang_detection_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "hide": false,
+          "legendFormat": "Avg Payload",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Audio Language Detection Payload Size (Median, Minutes)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "id": 2003,
+      "panels": [],
+      "title": "Overall Error Rate",
+      "type": "row"
     },
     {
       "datasource": {
@@ -1243,8 +1848,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1257,10 +1861,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 68
       },
       "id": 21,
       "options": {
@@ -1280,7 +1884,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
           "datasource": {
@@ -1288,29 +1892,28 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"})\r\n/\r\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"})\r\n* 100",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=~\"/.*inference.*|/api/v1/chat|/api/v1/chat/completions\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", endpoint=~\"/.*inference.*|/api/v1/chat|/api/v1/chat/completions\"}[$__range]))\n)",
           "hide": false,
-          "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "telemetry_obsv_errors_total{organization=~\"$organization\", tenant=~\"$tenant\"}",
-          "hide": true,
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "Overall Error Rate",
+      "title": "Overall Error Rate (%)",
       "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 2004,
+      "panels": [],
+      "title": "Errors by Service",
+      "type": "row"
     },
     {
       "datasource": {
@@ -1326,8 +1929,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1343,7 +1945,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 54
+        "y": 77
       },
       "id": 32,
       "options": {
@@ -1363,17 +1965,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"})\r\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/asr/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/asr/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "ASR Error Rate",
+      "title": "ASR Error Rate (%)",
       "type": "stat"
     },
     {
@@ -1404,7 +2011,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 54
+        "y": 77
       },
       "id": 27,
       "options": {
@@ -1438,20 +2045,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"}\r\n    )\r\n)",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/asr/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/asr/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "ASR Error Breakdown by Type",
+      "title": "ASR Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -1468,8 +2070,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1485,7 +2086,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 62
+        "y": 85
       },
       "id": 34,
       "options": {
@@ -1505,17 +2106,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"})\r\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/nmt/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/nmt/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Translation Error Rate",
+      "title": "Translation Error Rate (%)",
       "type": "stat"
     },
     {
@@ -1547,7 +2153,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 62
+        "y": 85
       },
       "id": 28,
       "options": {
@@ -1581,20 +2187,156 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\r\nsum by(status_code) (\r\n  telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"}\r\n)\r\n/\r\nscalar(\r\n  sum(\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"}\r\n  )\r\n)\r\n",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/nmt/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/nmt/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Translation Error Breakdown by Type",
+      "title": "Translation Error Breakdown by Status Code",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Average percentage of unsuccessful requests in the LLM service.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "noValue": "0%",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 93
+      },
+      "id": 2007,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.4.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "{{endpoint}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "LLM Error Rate (%)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Average distribution of LLM errors grouped by error type. ",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "noValue": "No Errors Reported",
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 93
+      },
+      "id": 2008,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": [
+            "percent"
+          ]
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "sort": "desc",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "LLM Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -1611,8 +2353,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1628,7 +2369,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 70
+        "y": 101
       },
       "id": 33,
       "options": {
@@ -1648,17 +2389,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"})\r\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/tts/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/tts/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "TTS Error Rate",
+      "title": "TTS Error Rate (%)",
       "type": "stat"
     },
     {
@@ -1689,7 +2435,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 70
+        "y": 101
       },
       "id": 11,
       "options": {
@@ -1723,20 +2469,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}\r\n    )\r\n)\r\n",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/tts/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/tts/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "TTS Error Breakdown by Type",
+      "title": "TTS Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -1753,8 +2494,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1770,7 +2510,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 109
       },
       "id": 208,
       "options": {
@@ -1790,17 +2530,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/ocr/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", endpoint=\"/api/v1/ocr/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "OCR Error Rate",
+      "title": "OCR Error Rate (%)",
       "type": "stat"
     },
     {
@@ -1832,7 +2577,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 109
       },
       "id": 216,
       "options": {
@@ -1866,20 +2611,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"}\n    )\n)",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/ocr/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/ocr/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "OCR Error Breakdown by Type",
+      "title": "OCR Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -1896,8 +2636,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1913,7 +2652,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 117
       },
       "id": 212,
       "options": {
@@ -1933,17 +2672,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/ner/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", endpoint=\"/api/v1/ner/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "NER Error Rate",
+      "title": "NER Error Rate (%)",
       "type": "stat"
     },
     {
@@ -1974,7 +2718,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 117
       },
       "id": 220,
       "options": {
@@ -2008,20 +2752,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"}\n    )\n)",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/ner/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/ner/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "NER Error Breakdown by Type",
+      "title": "NER Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -2038,8 +2777,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2055,7 +2793,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 94
+        "y": 125
       },
       "id": 209,
       "options": {
@@ -2075,17 +2813,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/transliteration/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/transliteration/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Transliteration Error Rate",
+      "title": "Transliteration Error Rate (%)",
       "type": "stat"
     },
     {
@@ -2116,7 +2859,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 94
+        "y": 125
       },
       "id": 217,
       "options": {
@@ -2150,20 +2893,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"}\n    )\n)",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/transliteration/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/transliteration/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Transliteration Error Breakdown by Type",
+      "title": "Transliteration Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -2180,8 +2918,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2197,7 +2934,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 102
+        "y": 133
       },
       "id": 210,
       "options": {
@@ -2217,17 +2954,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/language-detection/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", endpoint=\"/api/v1/language-detection/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Text Language Detection Error Rate",
+      "title": "Text Language Detection Error Rate (%)",
       "type": "stat"
     },
     {
@@ -2258,7 +3000,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 102
+        "y": 133
       },
       "id": 218,
       "options": {
@@ -2292,432 +3034,16 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"}\n    )\n)",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/language-detection/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", service=\"inference-service\", endpoint=\"/api/v1/language-detection/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Text Language Detection Error Breakdown by Type",
+      "title": "Text Language Detection Error Breakdown by Status Code",
       "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median time taken by Speaker Diarization",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.4
-              },
-              {
-                "color": "red",
-                "value": 0.9
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 110
-      },
-      "id": 221,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"}[$__range])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Speaker Diarization Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median time taken by Language Diarization",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.4
-              },
-              {
-                "color": "red",
-                "value": 0.9
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 110
-      },
-      "id": 222,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"}[$__range])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Language Diarization Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median time taken by Audio Language Detection",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.4
-              },
-              {
-                "color": "red",
-                "value": 0.9
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 110
-      },
-      "id": 223,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"}[$__range])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Audio Language Detection Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median length of the input audio sent to the Speaker Diarization service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "m"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 118
-      },
-      "id": 224,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Speaker Diarization Payload Size (Minutes)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median length of the input audio sent to the Language Diarization service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "m"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 118
-      },
-      "id": 225,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Language Diarization Payload Size (Minutes)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Median length of the input audio sent to the Audio Language Detection(ALD) service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "m"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 118
-      },
-      "id": 226,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Audio Language Detection Payload Size (Minutes)",
-      "type": "stat"
     },
     {
       "datasource": {
@@ -2733,8 +3059,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2750,7 +3075,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 126
+        "y": 141
       },
       "id": 227,
       "options": {
@@ -2770,17 +3095,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 *\n(\nsum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"})\n  /\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/speaker-diarization/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", endpoint=\"/api/v1/speaker-diarization/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Speaker Diarization Error Rate",
+      "title": "Speaker Diarization Error Rate (%)",
       "type": "stat"
     },
     {
@@ -2811,7 +3141,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 126
+        "y": 141
       },
       "id": 228,
       "options": {
@@ -2845,20 +3175,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"}\n  )\n)\n",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/speaker-diarization/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/speaker-diarization/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Speaker Diarization Error Breakdown by Type",
+      "title": "Speaker Diarization Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -2875,8 +3200,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -2892,7 +3216,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 134
+        "y": 149
       },
       "id": 229,
       "options": {
@@ -2912,17 +3236,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 *\n(\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/language-diarization/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", endpoint=\"/api/v1/language-diarization/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Language Diarization Error Rate",
+      "title": "Language Diarization Error Rate (%)",
       "type": "stat"
     },
     {
@@ -2953,7 +3282,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 134
+        "y": 149
       },
       "id": 230,
       "options": {
@@ -2987,20 +3316,15 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"}\n  )\n)\n",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/language-diarization/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/language-diarization/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Language Diarization Error Breakdown by Type",
+      "title": "Language Diarization Error Breakdown by Status Code",
       "type": "piechart"
     },
     {
@@ -3017,8 +3341,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "green"
               },
               {
                 "color": "red",
@@ -3034,7 +3357,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 142
+        "y": 157
       },
       "id": 231,
       "options": {
@@ -3054,17 +3377,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.1",
+      "pluginVersion": "10.4.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "100 *\n(\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"})\n)",
-          "legendFormat": "__auto",
+          "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/audio-lang-detection/inference\"}[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", endpoint=\"/api/v1/audio-lang-detection/inference\"}[$__range]))\n)",
+          "hide": false,
+          "legendFormat": "Error Rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Audio Language Detection Error Rate",
+      "title": "Audio Language Detection Error Rate (%)",
       "type": "stat"
     },
     {
@@ -3095,7 +3423,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 142
+        "y": 157
       },
       "id": 232,
       "options": {
@@ -3129,26 +3457,20 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"}\n  )\n)\n",
-          "fullMetaSearch": false,
+          "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/audio-lang-detection/inference\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", status_code!~\"200|201\", endpoint=\"/api/v1/audio-lang-detection/inference\"}[$__range]))\n)",
           "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
           "legendFormat": "{{status_code}}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Audio Language Detection Error Breakdown by Type",
+      "title": "Audio Language Detection Error Breakdown by Status Code",
       "type": "piechart"
     }
   ],
-  "preload": false,
   "refresh": "30s",
-  "schemaVersion": 42,
+  "schemaVersion": 39,
   "tags": [
     "ai4icore",
     "devops",
@@ -3160,49 +3482,29 @@
       {
         "allValue": ".*",
         "current": {
-          "text": "All",
+          "selected": true,
+          "text": [
+            "All"
+          ],
           "value": [
             "$__all"
           ]
         },
-        "includeAll": true,
-        "multi": true,
-        "name": "organization",
-        "options": [],
-        "query": "label_values(telemetry_obsv_requests_total, organization)",
-        "refresh": 1,
-        "type": "query"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": [
-            "$__all"
-          ]
+        "datasource": {
+          "type": "prometheus",
+          "uid": "PBFA97CFB590B2093"
         },
-        "includeAll": true,
-        "multi": true,
-        "name": "app",
-        "options": [],
-        "query": "label_values(telemetry_obsv_requests_total{organization=~\"$organization\"}, app)",
-        "refresh": 1,
-        "type": "query"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": [
-            "$__all"
-          ]
-        },
+        "definition": "label_values(telemetry_obsv_requests_total, tenant)",
+        "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "tenant",
         "options": [],
-        "query": "label_values(telemetry_obsv_requests_total{organization=~\"$organization\", app=~\"$app\"}, tenant)",
+        "query": "label_values(telemetry_obsv_requests_total, tenant)",
         "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
         "type": "query"
       }
     ]
@@ -3213,7 +3515,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "AI4ICore DevOps Operations Dashboard-v6",
-  "uid": "ai4icore-devops-operational-dashboard-v6",
-  "version": 2
+  "title": "AI4ICore DevOps Operations Dashboard-v8",
+  "uid": "ai4icore-devops-operational-dashboard-v8",
+  "version": 1,
+  "weekStart": ""
 }

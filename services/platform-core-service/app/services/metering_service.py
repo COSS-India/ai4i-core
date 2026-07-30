@@ -327,100 +327,20 @@ class MeteringService:
 
         window = TIME_RANGES.get(time_range or "all")
 
-        def _by_ep(selector: str) -> str:
-            metric = f"{_METRIC}{selector}"
-            if not window:
-                return f"sum by({PROMETHEUS_API_PATH_LABEL}) ({metric})"
-            return (
-                f"sum by({PROMETHEUS_API_PATH_LABEL}) ("
-                f"({metric} unless {metric} offset {window})"
-                f" or (increase({metric}[{window}]) > 0)"
-                f")"
-            )
-
-        # ── Fixed-index queries ──────────────────────────────────────────────
         fixed_queries = [
-            self._client.query(_by_ep(base_sel)),     # 0 total
-            self._client.query(_by_ep(success_sel)),  # 1 success
+            self._client.query(self._service_breakdown_by_ep_promql(base_sel, window)),     # 0 total
+            self._client.query(self._service_breakdown_by_ep_promql(success_sel, window)),  # 1 success
         ]
-
-        # ── Per-service native-unit scalar queries ───────────────────────────
-        # Only for tasks that have a real Prometheus Histogram _sum metric.
-        native_tasks: list[str] = []
-        native_coros = []
-        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
-            # Only the task types the caller (frontend) requested — skips the
-            # native-unit query entirely for the rest (query-level reduction).
-            if service_filter is not None and task not in service_filter:
-                continue
-            native_metric = cfg.get("native_metric")
-            if not native_metric:
-                continue
-            extra = cfg.get("native_extra_labels") or []
-            parts = [f'tenant="{tenant}"'] if tenant else []
-            parts.extend(extra)
-            sel = "{" + ",".join(parts) + "}" if parts else ""
-            # Use increase()-based counting (via sum_over_window), NOT a raw
-            # `sum(now) - sum(offset)` delta. The histogram _sum is a counter that
-            # resets on pod restart; a raw delta goes negative across a restart and
-            # gets dropped by the `v > 0` guard, so native units flicker in and out
-            # ("sometimes shows, sometimes not"). increase() is reset-aware and also
-            # handles brand-new series — matching how request counts are computed.
-            q = sum_over_window(f"{native_metric}{sel}", time_range)
-            native_tasks.append(task)
-            native_coros.append(self._client.scalar(q))
+        native_tasks, native_coros = self._native_unit_queries(tenant, time_range, service_filter)
 
         raw = await asyncio.gather(*fixed_queries, *native_coros, return_exceptions=True)
 
-        def _safe_list(r):
-            return r if not isinstance(r, Exception) else []
-
-        def _safe_float(r):
-            return r if not isinstance(r, Exception) else None
-
-        # Unpack fixed results
-        totals = self._endpoint_dict(_safe_list(raw[0]))
-        successes = self._endpoint_dict(_safe_list(raw[1]))
-
-        # Unpack native results (start after fixed queries). A 0.0 result means
-        # either no usage occurred or the metric doesn't exist yet (the
-        # `or vector(0)` fallback fires) — both cases legitimately report 0.
-        native_offset = len(fixed_queries)
-        natives: dict = {}
-        for i, task in enumerate(native_tasks):
-            v = _safe_float(raw[native_offset + i])
-            if v is not None:
-                natives[task] = round(v)
-
-        # ── Assemble service rows ────────────────────────────────────────────
-        services = []
-        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
-            if service_filter is not None and task not in service_filter:
-                continue
-            total_v = totals.get(task, 0)
-            success_v = successes.get(task, 0)
-
-            if cfg.get("use_success_as_native"):
-                native_v = success_v
-            else:
-                raw_native = natives.get(task, 0)
-                if cfg.get("divide_by_60"):
-                    native_v = round(raw_native / 60, 2)
-                else:
-                    native_v = raw_native
-
-            services.append({
-                "service": cfg["display_name"],
-                "requests": total_v,
-                "native_units": native_v,
-                "native_unit_suffix": cfg["native_unit_suffix"],
-                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
-            })
-
-        services.sort(key=lambda s: s["requests"], reverse=True)
+        totals = self._endpoint_dict(self._safe(raw[0], []))
+        successes = self._endpoint_dict(self._safe(raw[1], []))
+        natives = self._unpack_native_units(native_tasks, raw, native_offset=len(fixed_queries))
 
         return {
-            "services": services,
+            "services": self._service_breakdown_rows(totals, successes, natives, service_filter),
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
@@ -569,6 +489,105 @@ class MeteringService:
         }
 
     # ── private helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _safe(result, default):
+        """Return `result` unless the gather() call raised — then `default`."""
+        return default if isinstance(result, Exception) else result
+
+    @staticmethod
+    def _service_breakdown_by_ep_promql(selector: str, window: Optional[str]) -> str:
+        """PromQL for one service_breakdown selector, grouped by endpoint.
+
+        Without a window: a plain instantaneous sum. With one: an
+        offset-diff that's reset-aware, falling back to increase() for
+        brand-new series — same reasoning as the native-unit queries below.
+        """
+        metric = f"{_METRIC}{selector}"
+        if not window:
+            return f"sum by({PROMETHEUS_API_PATH_LABEL}) ({metric})"
+        return (
+            f"sum by({PROMETHEUS_API_PATH_LABEL}) ("
+            f"({metric} unless {metric} offset {window})"
+            f" or (increase({metric}[{window}]) > 0)"
+            f")"
+        )
+
+    def _native_unit_queries(
+        self, tenant: Optional[str], time_range: Optional[str],
+        service_filter: Optional[list[str]] = None,
+    ) -> tuple[list[str], list]:
+        """Per-service native-unit scalar query coroutines — one per task
+        that has a real Prometheus Histogram _sum metric (SERVICE_BREAKDOWN_CONFIG).
+
+        service_filter (the frontend's enabled-task-type allowlist), when
+        given, skips the native-unit query entirely for excluded tasks —
+        a query-level reduction, not just a display-level one."""
+        native_tasks: list[str] = []
+        native_coros = []
+        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if service_filter is not None and task not in service_filter:
+                continue
+            native_metric = cfg.get("native_metric")
+            if not native_metric:
+                continue
+            extra = cfg.get("native_extra_labels") or []
+            parts = [f'tenant="{tenant}"'] if tenant else []
+            parts.extend(extra)
+            sel = "{" + ",".join(parts) + "}" if parts else ""
+            # Use increase()-based counting (via sum_over_window), NOT a raw
+            # `sum(now) - sum(offset)` delta. The histogram _sum is a counter that
+            # resets on pod restart; a raw delta goes negative across a restart and
+            # gets dropped by the `v > 0` guard, so native units flicker in and out
+            # ("sometimes shows, sometimes not"). increase() is reset-aware and also
+            # handles brand-new series — matching how request counts are computed.
+            q = sum_over_window(f"{native_metric}{sel}", time_range)
+            native_tasks.append(task)
+            native_coros.append(self._client.scalar(q))
+        return native_tasks, native_coros
+
+    @staticmethod
+    def _unpack_native_units(native_tasks: list[str], raw: list, native_offset: int) -> dict:
+        """Map task key → rounded native-unit value from the gather() results.
+
+        A 0.0 result means either no usage occurred or the metric doesn't
+        exist yet (the `or vector(0)` fallback fires) — both legitimately report 0.
+        """
+        natives: dict = {}
+        for i, task in enumerate(native_tasks):
+            v = MeteringService._safe(raw[native_offset + i], None)
+            if v is not None:
+                # Audio-minutes metrics keep 2-decimal precision (a 60-second
+                # rounding step would erase sub-minute usage); everything else
+                # (characters/tokens/images) rounds to a whole unit.
+                cfg = SERVICE_BREAKDOWN_CONFIG[task]
+                natives[task] = round(v, 2) if cfg.get("round_2dp") else round(v)
+        return natives
+
+    @staticmethod
+    def _service_breakdown_rows(
+        totals: dict, successes: dict, natives: dict,
+        service_filter: Optional[list[str]] = None,
+    ) -> list:
+        """Assemble + sort the per-service rows from the three unpacked dicts.
+
+        service_filter (the frontend's enabled-task-type allowlist), when
+        given, excludes rows for tasks not in it."""
+        services = []
+        for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if service_filter is not None and task not in service_filter:
+                continue
+            total_v = totals.get(task, 0)
+            success_v = successes.get(task, 0)
+            services.append({
+                "service": cfg["display_name"],
+                "requests": total_v,
+                "native_units": natives.get(task, 0),
+                "native_unit_suffix": cfg["native_unit_suffix"],
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+            })
+        services.sort(key=lambda s: s["requests"], reverse=True)
+        return services
 
     @staticmethod
     def _endpoint_dict(results: list) -> dict:
