@@ -14,6 +14,7 @@ from app.utils.metering_promql_builder import (
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
     build_base_selectors,
+    build_task_type_selector,
     sum_over_window,
 )
 
@@ -35,10 +36,14 @@ class MeteringService:
         tenant: Optional[str],
         service_id: Optional[str],
         time_range: Optional[str],
+        task_types: Optional[list[str]] = None,
     ) -> dict:
-        label_str = build_base_selectors(inference_only, tenant, service_id)
+        task_sel = build_task_type_selector(task_types)
+        extra = [task_sel] if task_sel else None
+        success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
+        label_str = build_base_selectors(inference_only, tenant, service_id, extra=extra)
         success_label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=['status_code=~"2.."']
+            inference_only, tenant, service_id, extra=success_extra
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
@@ -255,8 +260,11 @@ class MeteringService:
                 "auth_db_available": False,
             }
 
-    async def usage_concentration(self, limit: int, time_range: Optional[str]) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+    async def usage_concentration(
+        self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
+    ) -> dict:
+        task_sel = build_task_type_selector(task_types)
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
 

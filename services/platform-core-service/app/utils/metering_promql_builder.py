@@ -51,6 +51,9 @@ SERVICE_BREAKDOWN_ENDPOINT_REGEX = r"/api/v1/(.+/inference|chat(/completions)?)"
 ENDPOINT_TO_TASK: dict = {
     "/api/v1/chat": "llm",
     "/api/v1/chat/completions": "llm",
+    # inference-service abbreviates this route to "audio-lang-detection" —
+    # doesn't match the "audio_language_detection" config key via hyphenation.
+    "/api/v1/audio-lang-detection/inference": "audio_language_detection",
 }
 
 # Bucket size for the Request Volume range chart — chosen so each window renders a
@@ -66,6 +69,34 @@ WINDOW_STEP: dict = {
     "7d":  "1d",
     "30d": "7d",
 }
+
+
+def build_task_type_selector(task_types: list[str] | None) -> str | None:
+    """Build an extra label-selector fragment restricting queries to specific task types.
+
+    Reverses ENDPOINT_TO_TASK for tasks with a non-standard endpoint (e.g. "llm" ->
+    /api/v1/chat, /api/v1/chat/completions) and falls back to the standard
+    /api/v1/{task}/inference pattern (hyphenated, matching SERVICE_BREAKDOWN_CONFIG's
+    underscore-separated keys) for everything else. An unrecognized task type simply
+    yields a pattern that matches no endpoint (lenient — no validation error), matching
+    this API's existing lenient task_types= parsing.
+
+    Returns None when task_types is falsy, so callers can skip the selector entirely.
+    """
+    if not task_types:
+        return None
+    patterns: list[str] = []
+    for task in task_types:
+        # No re.escape(): these are fixed, config-controlled endpoint strings (not
+        # user input), and PromQL's regex dialect rejects Python's `\-` escape for
+        # hyphens with a parse error, so escaping would break e.g. audio-lang-detection.
+        literal_endpoints = [ep for ep, t in ENDPOINT_TO_TASK.items() if t == task]
+        if literal_endpoints:
+            patterns.extend(literal_endpoints)
+        else:
+            patterns.append(f"/api/v1/{task.replace('_', '-')}/inference")
+    regex = "|".join(patterns)
+    return f'{PROMETHEUS_API_PATH_LABEL}=~"{regex}"'
 
 
 def apply_time_range(metric_expr: str, time_range: str | None) -> str:
