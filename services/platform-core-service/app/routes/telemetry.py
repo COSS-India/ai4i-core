@@ -77,7 +77,7 @@ def _get_opensearch_client(request: Request) -> OpenSearchTraceClient:
 @router.get("/traces/search", response_model=SearchTracesResponse)
 async def search_traces_opensearch(
     request: Request,
-    task_type: Optional[str] = Query(None, description="Filter by task type (NMT, ASR, OCR, etc.)"),
+    task_types: Optional[str] = Query(None, description="Comma-separated task type filter (e.g. nmt,llm,asr)"),
     status_filter: Optional[str] = Query(None, description="Filter by status (success, failure, etc.)"),
     tenant_id: Optional[str] = Query(None, description="Filter by tenant_id (ADMIN only for other tenants)"),
     start_date: Optional[str] = Query(None, description="Start date in ISO format"),
@@ -118,8 +118,17 @@ async def search_traces_opensearch(
         if tenant_filter:
             filter_clauses.append({"match_phrase": {"attributes.tenantId": tenant_filter}})
 
-        if task_type:
-            filter_clauses.append({"match_phrase": {"attributes.task_type": task_type}})
+        if task_types:
+            types_list = [t.strip() for t in task_types.split(",") if t.strip()]
+            if len(types_list) == 1:
+                filter_clauses.append({"match_phrase": {"attributes.task_type": types_list[0]}})
+            elif types_list:
+                filter_clauses.append({
+                    "bool": {
+                        "should": [{"match_phrase": {"attributes.task_type": t}} for t in types_list],
+                        "minimum_should_match": 1,
+                    }
+                })
 
         if status_filter:
             filter_clauses.append({"match_phrase": {"attributes.status": status_filter}})
@@ -138,7 +147,7 @@ async def search_traces_opensearch(
         else:
             filter_query = {"match_all": {}}
 
-        logger.info(f"Searching traces - task_type={task_type}, status={status_filter}, tenant={tenant_filter}")
+        logger.info(f"Searching traces - task_types={task_types}, status={status_filter}, tenant={tenant_filter}")
 
         # Step 2: page the matching traces at the TRACE level, newest-first.
         # Collapsing on trace_id makes each result row one trace (not one span), so
