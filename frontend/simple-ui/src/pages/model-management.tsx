@@ -119,7 +119,15 @@ const ModelManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
-  const { taskTypeNames } = useInferenceTypes();
+  const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
+  const didInitTaskTypeFilter = useRef(false);
+  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
+  useEffect(() => {
+    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
+    didInitTaskTypeFilter.current = true;
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setTaskTypeFilterReady(true);
+  }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
@@ -179,7 +187,10 @@ const ModelManagementPage: React.FC = () => {
     }
   }, [filterTaskType, filterVersionStatus]);
 
-  useEffect(() => { fetchModels(); }, [fetchModels]);
+  useEffect(() => {
+    if (!taskTypeFilterReady) return;
+    fetchModels();
+  }, [fetchModels, taskTypeFilterReady]);
 
   // Fetch services: deprecate is only disabled when the model has at least one published service
   useEffect(() => {
@@ -216,11 +227,11 @@ const ModelManagementPage: React.FC = () => {
     });
   }, [models, searchQuery, sortBy, nameSortDirection]);
 
-  const hasActiveFilters = filterVersionStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+  const hasActiveFilters = filterVersionStatus !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterVersionStatus("");
-    setFilterTaskType("");
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
   };
 
   const getTaskColor = (taskType: string) => {
@@ -1094,7 +1105,6 @@ const ModelManagementPage: React.FC = () => {
                                 onChange={setFilterTaskType}
                                 formControlProps={{ w: { base: "full", sm: "160px" } }}
                               >
-                                <option value="">All</option>
                                 {taskTypeNames?.map((t) => (
                                   <option key={t} value={t}>
                                     {formatModelTaskTypeLabel(t)}
@@ -1128,19 +1138,6 @@ const ModelManagementPage: React.FC = () => {
                                     _hover={{ opacity: 0.8 }}
                                   >
                                     Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
-                                  </Badge>
-                                )}
-                                {filterTaskType && (
-                                  <Badge
-                                    colorScheme="gray"
-                                    fontSize="xs"
-                                    px={2}
-                                    py={1}
-                                    cursor="pointer"
-                                    onClick={() => setFilterTaskType("")}
-                                    _hover={{ opacity: 0.8 }}
-                                  >
-                                    Task: {formatModelTaskTypeLabel(filterTaskType)} ×
                                   </Badge>
                                 )}
                               </HStack>

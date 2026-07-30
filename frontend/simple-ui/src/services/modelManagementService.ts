@@ -112,7 +112,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     const queryParams: Record<string, string | number> = {};
     if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
     if (params.limit !== undefined) queryParams.limit = params.limit;
-    if (params.taskType) queryParams.task_type = params.taskType;
+    if (params.taskType) queryParams.task_types = params.taskType;
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
@@ -229,7 +229,7 @@ export const listServices = async (
   try {
     const url = apiEndpoints.platform.services.base;
     const params: Record<string, string> = {};
-    if (taskType) params.task_type = taskType;
+    if (taskType) params.task_types = taskType;
     if (publishedOnly === true) params.is_published = 'true';
     const response = await apiService.get(url, {
       params,

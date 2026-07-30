@@ -796,7 +796,6 @@ const TierManagement: React.FC = () => {
               formControlProps={{ w: { base: "full", sm: "210px" }, mb: 0 }}
               selectProps={{ size: "sm" }}
             >
-              <option value="">Filter by Model Task Type - All</option>
               {taskTypeNames.map((t) => (
                 <option key={t} value={t}>
                   {formatModelTaskTypeLabel(t)}

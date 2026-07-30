@@ -83,7 +83,6 @@ export default function ApiKeyManagementTab({
   }, [mgmt.filteredApiKeys, keyNameSortDirection]);
 
   const hasActiveFilters =
-    mgmt.filterPermission !== "all" ||
     mgmt.filterActive !== "all" ||
     mgmt.keyNameSearch.trim() !== "";
 
@@ -287,7 +286,6 @@ export default function ApiKeyManagementTab({
                   onChange={mgmt.setFilterPermission}
                   formControlProps={{ w: { base: "full", md: "320px" } }}
                 >
-                  <option value="all">All Permissions</option>
                   {mgmt.permissionFilterOptions.map((perm) => (
                     <option key={perm.name} value={perm.name}>
                       {perm.label}
