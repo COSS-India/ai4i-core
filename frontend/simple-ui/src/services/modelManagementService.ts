@@ -1,6 +1,7 @@
 // Model Management service API client
 
 import { MODEL_VERSION } from '../config/constants';
+import { TASK_TYPES_QUERY_PARAM } from '../utils/taskTypesQueryParam';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -114,7 +115,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     if (params.limit !== undefined) queryParams.limit = params.limit;
     // drill-down selected -> it's already in the allowlist, so it IS the intersection
     const taskTypesParam = params.taskType ?? params.taskTypes;
-    if (taskTypesParam) queryParams.task_types = taskTypesParam;
+    if (taskTypesParam) queryParams[TASK_TYPES_QUERY_PARAM] = taskTypesParam;
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 

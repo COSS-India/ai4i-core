@@ -1,4 +1,5 @@
 import { METERING } from "../config/meteringConstants";
+import { appendTaskTypesToSearchParams } from "../utils/taskTypesQueryParam";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
@@ -69,7 +70,7 @@ function appendTaskTypesParam(
   params: URLSearchParams,
   taskTypes?: string[] | null,
 ): void {
-  if (taskTypes?.length) params.set("task_types", taskTypes.join(","));
+  appendTaskTypesToSearchParams(params, taskTypes);
 }
 
 /** GET /api/v1/metering/overview */

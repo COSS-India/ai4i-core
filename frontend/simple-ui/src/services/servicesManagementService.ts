@@ -1,6 +1,7 @@
 // Services Management service API client
 
 import { z } from "zod";
+import { TASK_TYPES_QUERY_PARAM } from "../utils/taskTypesQueryParam";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
@@ -100,7 +101,7 @@ export const listServicesPaginated = async (
     if (params.limit !== undefined) queryParams.limit = params.limit;
     // drill-down selected -> it's already in the allowlist, so it IS the intersection
     const taskTypesParam = params.taskType ?? params.taskTypes;
-    if (taskTypesParam) queryParams.task_types = taskTypesParam;
+    if (taskTypesParam) queryParams[TASK_TYPES_QUERY_PARAM] = taskTypesParam;
     if (params.isPublished !== undefined)
       queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
