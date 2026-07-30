@@ -133,7 +133,6 @@ class ServiceService:
     async def list_services(
         self,
         *,
-        task_type: Optional[str] = None,
         task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
@@ -141,7 +140,6 @@ class ServiceService:
         limit: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._services.list_services(
-            task_type=task_type,
             task_types=task_types,
             is_published=is_published,
             created_by=created_by,
@@ -161,7 +159,6 @@ class ServiceService:
         ]
         if offset > 0 or limit is not None:
             total = await self._services.count_services(
-                task_type=task_type,
                 task_types=task_types,
                 is_published=is_published,
                 created_by=created_by,

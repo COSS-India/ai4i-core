@@ -51,7 +51,6 @@ class ServiceRepository:
     async def count_services(
         self,
         *,
-        task_type: Optional[str] = None,
         task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
@@ -64,8 +63,6 @@ class ServiceRepository:
                 Model.version == Service.model_version,
             ),
         ).where(Service.deleted_at.is_(None))
-        if task_type:
-            stmt = stmt.where(Model.task["type"].astext == task_type)
         if task_types:
             stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if is_published is not None:
@@ -78,7 +75,6 @@ class ServiceRepository:
     async def list_services(
         self,
         *,
-        task_type: Optional[str] = None,
         task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
@@ -97,8 +93,6 @@ class ServiceRepository:
             )
             .where(Service.deleted_at.is_(None))
         )
-        if task_type:
-            stmt = stmt.where(Model.task["type"].astext == task_type)
         if task_types:
             stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if is_published is not None:

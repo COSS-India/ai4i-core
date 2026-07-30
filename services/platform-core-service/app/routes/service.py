@@ -112,7 +112,7 @@ async def list_try_it_services(
             code="TRY_IT_UNSUPPORTED",
         )
     items, total = await svc.list_services(
-        task_type=TaskTypeEnum.nmt.value, is_published=True
+        task_types=[TaskTypeEnum.nmt.value], is_published=True
     )
     # This endpoint has no auth at all (see api_permissions.json: try-it is
     # public) — always filtered, never the admin/full view.
@@ -151,14 +151,13 @@ async def list_services(
     svc: ServiceService = Depends(get_service_service),
 ):
     """List services with optional filters and offset/limit pagination."""
-    _task_types = (
-        [_resolve_task_type(t) for t in task_types.split(",") if t.strip()]
-        if task_types
-        else None
-    )
+    # Merge the single task_type= (backward-compat) and the task_types= list into
+    # one list — the service/repo take a single task_types filter.
+    _task_types = [_resolve_task_type(t) for t in task_types.split(",") if t.strip()] if task_types else []
+    if task_type:
+        _task_types.insert(0, _resolve_task_type(task_type))
     items, total = await svc.list_services(
-        task_type=_resolve_task_type(task_type),
-        task_types=_task_types,
+        task_types=_task_types or None,
         is_published=is_published,
         created_by=created_by,
         offset=offset,

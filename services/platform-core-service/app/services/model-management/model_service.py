@@ -136,7 +136,6 @@ class ModelService:
     async def list_models(
         self,
         *,
-        task_type: Optional[str] = None,
         task_types: Optional[List[str]] = None,
         include_deprecated: bool = True,
         version_status: Optional[str] = None,
@@ -146,7 +145,6 @@ class ModelService:
         limit: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._models.list_models(
-            task_type=task_type,
             task_types=task_types,
             include_deprecated=include_deprecated,
             version_status=version_status,
@@ -158,7 +156,6 @@ class ModelService:
         items = [model_to_dict(m) for m in rows]
         if offset > 0 or limit is not None:
             total = await self._models.count_models(
-                task_type=task_type,
                 task_types=task_types,
                 version_status=version_status,
                 model_name=model_name,
