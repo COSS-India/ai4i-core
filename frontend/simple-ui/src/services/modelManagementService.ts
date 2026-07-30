@@ -1,7 +1,6 @@
 // Model Management service API client
 
 import { MODEL_VERSION } from '../config/constants';
-import { TASK_TYPES_QUERY_PARAM } from '../utils/taskTypesQueryParam';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {

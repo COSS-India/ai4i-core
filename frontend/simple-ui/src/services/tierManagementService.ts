@@ -1,6 +1,5 @@
 import apiClient from "./api";
 import { apiEndpoints } from "./apiEndpoints";
-import { TASK_TYPES_QUERY_PARAM } from "../utils/taskTypesQueryParam";
 import type {
   Tier,
   TiersListResponse,
@@ -19,7 +18,7 @@ export async function fetchTiers(
   modelTaskType?: string,
 ): Promise<TiersListResponse> {
   const params: Record<string, string> = {};
-  if (modelTaskType) params[TASK_TYPES_QUERY_PARAM] = modelTaskType;
+  if (modelTaskType) params.task_types = modelTaskType;
   const response = await apiClient.get(apiEndpoints.tiers.list, { params });
   return response.data;
 }

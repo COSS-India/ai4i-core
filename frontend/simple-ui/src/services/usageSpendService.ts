@@ -1,6 +1,5 @@
 import apiClient from "./api";
 import { apiEndpoints } from "./apiEndpoints";
-import { TASK_TYPES_QUERY_PARAM } from "../utils/taskTypesQueryParam";
 import type {
   UsageSummaryResponse,
   TenantUsageListResponse,
@@ -21,7 +20,7 @@ export async function fetchUsageSummary(
 ): Promise<UsageSummaryResponse> {
   const query: Record<string, string> = {};
   if (params?.billingPeriod) query.billing_period = params.billingPeriod;
-  if (params?.taskTypes) query[TASK_TYPES_QUERY_PARAM] = params.taskTypes;
+  if (params?.taskTypes) query.task_types = params.taskTypes;
   const response = await apiClient.get(apiEndpoints.usage.summary, {
     params: query,
   });
@@ -35,7 +34,7 @@ export async function fetchTenantUsageList(
   if (params?.billingPeriod) query.billing_period = params.billingPeriod;
   if (params?.tierId) query.tier_id = params.tierId;
   if (params?.modelTaskType) query.modelTaskType = params.modelTaskType;
-  if (params?.taskTypes) query[TASK_TYPES_QUERY_PARAM] = params.taskTypes;
+  if (params?.taskTypes) query.task_types = params.taskTypes;
   if (params?.sortOrder) query.sortOrder = params.sortOrder;
   if (params?.limit != null) query.limit = params.limit;
   if (params?.offset != null) query.offset = params.offset;
@@ -50,7 +49,7 @@ export async function fetchTenantUsageById(
 ): Promise<TenantUsageDetail> {
   const query: Record<string, string> = { tenant_id: tenantId };
   if (billingPeriod) query.billing_period = billingPeriod;
-  if (taskTypes) query[TASK_TYPES_QUERY_PARAM] = taskTypes;
+  if (taskTypes) query.task_types = taskTypes;
   const response = await apiClient.get(apiEndpoints.usage.tenant, {
     params: query,
   });
