@@ -297,31 +297,39 @@ class PPUUsageService:
     def __init__(self, repo: PPUUsageRepository) -> None:
         self._repo = repo
 
-    async def _tenant_assignments_and_usage(self, billing_month: str, tier_id: str | None):
+    async def _tenant_assignments_and_usage(
+        self, billing_month: str, tier_id: str | None, task_types: list[str] | None = None
+    ):
         """Tenants with at least one ppu_quota_usage row this billing_month, scoped to
         tier_id if given (their most-recently-active tier that month), plus their usage
         rows for that month — the same tenant-selection rule used by
         get_tenant_list/get_tenant_detail, so a tier + billing_period filter combination
         gives consistent results across all three endpoints. Note: these rows carry
         tier info only, NOT budget — callers that need budget_limit/available_balance
-        must separately call get_tenant_budgets.
+        must separately call get_tenant_budgets. ``task_types`` (from the caller) filters
+        both queries to those task types at the SQL level.
         """
-        tier_rows = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id)
+        tier_rows = await self._repo.get_tenants_with_usage_tier(
+            billing_month, tier_id, task_types=task_types
+        )
         tenant_ids = [row.tenant_id for row in tier_rows]
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
+            billing_month, tenant_ids, task_types=task_types
+        )
         return tier_rows, usage_rows
 
     async def get_summary(
         self,
         billing_month: str,
         tier_id: str | None = None,
+        task_types: list[str] | None = None,
     ) -> UsageSummaryResponse:
-        """model_task_type is intentionally NOT a filter here — the total-spend card and
-        the spend-by-task-type chart always show every task type; only tier_id narrows
-        which tenants are counted. (A task-type filter only affects the tenant table's
-        per-row usage figure, on usage-tenants.)
+        """``task_types`` (from the frontend) filters the spend to those task types at
+        the query level; tier_id narrows which tenants are counted.
         """
-        assignments, usage_rows = await self._tenant_assignments_and_usage(billing_month, tier_id)
+        assignments, usage_rows = await self._tenant_assignments_and_usage(
+            billing_month, tier_id, task_types
+        )
 
         by_task_type: dict[str, dict] = {}
         cost_by_tenant: dict[str, Decimal] = {}
@@ -367,14 +375,18 @@ class PPUUsageService:
             # tier_id scopes by tenant ("who was most recently on this tier that month"),
             # not by usage row, so it needs the full tenant-resolution pipeline to stay
             # consistent with the current month's figure above.
-            _, prev_usage_rows = await self._tenant_assignments_and_usage(prev_month, tier_id)
+            _, prev_usage_rows = await self._tenant_assignments_and_usage(
+                prev_month, tier_id, task_types
+            )
             prev_total_spend = sum(
                 (_to_decimal(row.total_cost) for row in prev_usage_rows), Decimal("0")
             )
         else:
-            # Unfiltered: no tenant scoping needed, so skip tenant/tier resolution
-            # entirely and get the same number from one lightweight aggregate query.
-            prev_total_spend = _to_decimal(await self._repo.get_total_cost_for_month(prev_month))
+            # No tenant scoping needed, so skip tenant/tier resolution entirely and get
+            # the same number from one lightweight aggregate query (task-type filtered).
+            prev_total_spend = _to_decimal(
+                await self._repo.get_total_cost_for_month(prev_month, task_types)
+            )
         spend_change_percent = (
             round((total_spend - prev_total_spend) / prev_total_spend * 100, 1)
             if prev_total_spend > 0
@@ -400,6 +412,7 @@ class PPUUsageService:
         sort_order: str = "desc",
         limit: int = 100,
         offset: int = 0,
+        task_types: list[str] | None = None,
     ) -> TenantHierarchicalListResponse:
         """Hierarchical tenant usage: tenant -> tier(s) held during billing_month -> task types.
 
@@ -426,13 +439,17 @@ class PPUUsageService:
         tenant list, via a cheap spend pre-aggregate (_tenant_spend_from_rows) computed
         straight from the already-fetched usage rows.
         """
-        assignments = await self._repo.get_tenants_with_usage_tier(billing_month, tier_id)
+        assignments = await self._repo.get_tenants_with_usage_tier(
+            billing_month, tier_id, task_types=task_types
+        )
         total = len(assignments)
         if not assignments:
             return TenantHierarchicalListResponse(data=[], total=0)
 
         tenant_ids = [row.tenant_id for row in assignments]
-        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, tenant_ids)
+        usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
+            billing_month, tenant_ids, task_types=task_types
+        )
 
         usage_by_tenant: dict[str, list] = {}
         for row in usage_rows:
@@ -490,6 +507,7 @@ class PPUUsageService:
         tenant_id: str,
         billing_month: str,
         auth_db: Optional[AsyncSession],
+        task_types: list[str] | None = None,
     ) -> TenantHierarchicalItem:
         """Same hierarchical shape as get_tenant_list, scoped to a single tenant — the
         tenant's `tier` reflects whichever tier they were most recently active under
@@ -511,7 +529,7 @@ class PPUUsageService:
         assignment doesn't exist.
         """
         assignments = await self._repo.get_tenants_with_usage_tier(
-            billing_month, tenant_id=tenant_id
+            billing_month, tenant_id=tenant_id, task_types=task_types
         )
         if not assignments:
             # No usage this period is a valid tenant configuration (not an error) —
@@ -558,7 +576,9 @@ class PPUUsageService:
             )
 
         async def _fetch_tenant_data():
-            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(billing_month, [tenant_id])
+            usage_rows = await self._repo.get_tenant_tier_usage_breakdown(
+                billing_month, [tenant_id], task_types=task_types
+            )
             tier_first_seen = await self._repo.get_tier_first_seen([tenant_id])
             budgets = await self._repo.get_tenant_budgets(billing_month, [tenant_id])
             tier_names = await self._repo.get_tier_names()

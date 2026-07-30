@@ -39,7 +39,7 @@ class ServicePolicy(BaseSchema):
 
 
 SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
-SERVICE_ID_MAX_LEN = 255
+SERVICE_ID_MAX_LEN = 500
 
 
 def validate_service_id(v: str) -> str:

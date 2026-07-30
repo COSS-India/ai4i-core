@@ -5,20 +5,30 @@ Handles request tracking, path-based service detection, and Prometheus metric
 emission. Tenant is read from the gateway-injected ``X-Tenant-Id`` header
 (set by ``auth-service /validate``) — this middleware does NOT decode JWTs and
 does NOT open OpenTelemetry spans.
+
+Unit counts (characters/audio-minutes/images/tokens), language labels, and
+service_id are NOT re-derived here — this middleware never reads or parses
+the request body at all. Every value is computed exactly once by the request
+handler (task_service.py / llm_service.py, via trace/span_attributes.py) —
+the same values already used to bill the request and attached to the
+ai-inference OTel span. Orchestrator.route_inference (Triton) and the LLM
+chat route mirror them onto ``request.state``: ``billed_input`` /
+``billed_output`` are the billed quantities (via ``set_billed_state``);
+``source_lang`` / ``target_lang`` / ``model`` / ``service_id`` are metric
+labels, not billing data (languages + model via ``set_metric_labels``,
+service_id set at resolution time). This middleware only reads them, so
+Prometheus can never disagree with what was actually billed, and the request
+body is never parsed a second time. OCR bills and is tracked purely by image
+count (``billed_input`` via ``track_ocr_characters``) — there is no separate
+size-based metric.
 """
 import asyncio
-import base64
-import io
-import json
 import logging
-import re
 import time
-import wave
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 
 from .config import PluginConfig
 from .metrics import MetricsCollector
@@ -26,20 +36,57 @@ from .metrics import MetricsCollector
 logger = logging.getLogger(__name__)
 
 
-# Service types whose request bodies carry payload-size metrics worth
-# extracting. Membership check is O(1). LLM is handled separately because its
-# token counts come from the response (vLLM `usage` block), not the request.
-_BODY_METRIC_SERVICES = frozenset({
-    "tts", "translation", "asr", "ocr", "transliteration",
-    "language_detection", "audio_lang_detection",
-    "speaker_diarization", "language_diarization", "ner",
-})
+def set_billed_state(
+    request: Request,
+    *,
+    billed_input: float,
+    billed_output: float = 0,
+) -> None:
+    """Record the billed quantities on ``request.state`` for
+    ObservabilityMiddleware to read, so it never re-parses the request body.
 
-# Body parsing is gated on the request path — only inference endpoints carry
-# the structured payloads we extract from. Matches `/inference` as a path
-# segment (followed by `/` or end-of-path), so it picks up both the unified
-# `/api/v1/inference` endpoint and dedicated `…/nmt/inference` style paths.
-_INFERENCE_PATH_RE = re.compile(r"/inference(?:/|$)")
+    This is the WRITE side of the request.state contract the middleware reads
+    (see this module's docstring). Every inference handler must call it once,
+    after the billed count is known, instead of setting the ``billed_*``
+    attributes by hand — that keeps the attribute names in one place so a new
+    inference path can't silently diverge from what the middleware looks for.
+    ``billed_input`` / ``billed_output`` are the same counts on the
+    ai-inference span (billing's source of truth) — the ``billed_`` prefix
+    marks them as the quantities that actually get billed, so the metric
+    equals the bill.
+
+    Metric LABELS (``source_lang`` / ``target_lang`` / ``model``) are not
+    billing data and are NOT set here — set them with ``set_metric_labels``.
+    ``service_id`` is likewise separate: handlers set it right after service
+    resolution (before inference runs) so it survives an inference failure,
+    whereas the billed count only exists on success.
+    """
+    st = request.state
+    st.billed_input = billed_input
+    st.billed_output = billed_output
+
+
+def set_metric_labels(
+    request: Request,
+    *,
+    source_lang: str = "",
+    target_lang: str = "",
+    model: str = "",
+) -> None:
+    """Record Prometheus metric LABELS on ``request.state`` (not billing data).
+
+    ``source_lang`` / ``target_lang`` drive the per-language dashboard
+    breakdown for NMT/TTS/ASR/transliteration; ``model`` is the ``model``
+    label on the LLM token metric. None of these are billed quantities —
+    they're dimensions on the metrics. They ride request.state only so the
+    middleware doesn't re-read the body to label its metrics; a service that
+    lacks a given dimension simply never sets it (the middleware defaults it
+    to "").
+    """
+    st = request.state
+    st.source_lang = source_lang
+    st.target_lang = target_lang
+    st.model = model
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -63,42 +110,35 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         method = request.method
         service_type = self._detect_service_type(path)
 
-        # Only read the body for POSTs to inference endpoints — that's the
-        # only place a body carries payload-size metrics worth extracting.
-        body_bytes: Optional[bytes] = None
-        if method == "POST" and _INFERENCE_PATH_RE.search(path):
-            try:
-                body_bytes = await request.body()
-            except Exception:
-                body_bytes = None
-                if self.config.debug:
-                    logger.debug("Failed to read request body for metrics", exc_info=True)
-
         if self.config.debug:
             logger.debug(f"Request: {method} {path} -> service_type={service_type}")
 
         # Run the actual handler. All observability work happens AFTER the
-        # response is in hand so we never block the user.
+        # response is in hand so we never block the user. No response-body
+        # buffering needed anymore — billed_* already carries what we'd have
+        # re-parsed the response for.
         response = await call_next(request)
-        duration = time.time() - start_time
 
-        # LLM (chat / chat-completions): the route always returns a plain
-        # JSONResponse, but Starlette's BaseHTTPMiddleware wraps it so the
-        # body is only readable by draining `body_iterator` (which destroys
-        # the original). Buffer once, rebuild the response, and pull the
-        # `usage` block (prompt/completion/total tokens + the model name).
-        llm_prompt_tokens = 0
-        llm_completion_tokens = 0
-        llm_total_tokens = 0
-        llm_model = ""
+        # LLM (chat / chat-completions): for a streaming (SSE) response the
+        # billed token counts only land on request.state AFTER the app's own
+        # generator finishes (the final SSE chunk carries the usage block), so
+        # reading state here would be too early. Defer metric emission until
+        # the body is fully drained by wrapping the response iterator — chunks
+        # are forwarded untouched, so the stream stays live (never buffered).
+        # The same wrapper is correct for the non-stream JSON shape too
+        # (single chunk, state already populated), keeping one code path.
         if service_type == "llm":
-            response, response_body_bytes = await self._buffer_response(response)
-            (
-                llm_prompt_tokens,
-                llm_completion_tokens,
-                llm_total_tokens,
-                llm_model,
-            ) = self._extract_llm_usage_from_body(response_body_bytes)
+            response.body_iterator = self._wrap_llm_response(
+                response.body_iterator,
+                request=request,
+                path=path,
+                method=method,
+                status_code=response.status_code,
+                start_time=start_time,
+            )
+            return response
+
+        duration = time.time() - start_time
 
         # tenant_id comes from the gateway-injected X-Tenant-Id header (set by
         # auth-service /validate after verifying the bearer token; the gateway
@@ -111,11 +151,21 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # orchestrator for Triton services. Falls back to empty string.
         service_id = getattr(request.state, "service_id", "") or ""
 
-        # Fire-and-forget: parse the body and emit metrics WITHOUT blocking
-        # the response. Holding the task in self._pending_tasks keeps it
-        # alive — asyncio.create_task only keeps a weak reference.
-        task = asyncio.create_task(self._record_metrics(
-            body_bytes=body_bytes,
+        # The billed count — set by orchestrator.route_inference (Triton) or
+        # the LLM chat route, from the same computation used for billing and
+        # the OpenSearch trace. None means the handler never set it (e.g. a
+        # non-inference path, or an error before billing ran).
+        billed_input = getattr(request.state, "billed_input", None)
+        billed_output = getattr(request.state, "billed_output", None)
+        # Metric labels (not billed quantities) — set alongside the billed
+        # count from the same single parse, so a label can never disagree
+        # with what a second body parse would have produced.
+        source_lang = getattr(request.state, "source_lang", "") or ""
+        target_lang = getattr(request.state, "target_lang", "") or ""
+        model = getattr(request.state, "model", "") or ""
+
+        # Fire-and-forget: emit metrics WITHOUT blocking the response.
+        self._schedule_metrics(
             path=path,
             method=method,
             service_type=service_type,
@@ -123,15 +173,63 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             service_id=service_id,
             status_code=response.status_code,
             duration=duration,
-            llm_prompt_tokens=llm_prompt_tokens,
-            llm_completion_tokens=llm_completion_tokens,
-            llm_total_tokens=llm_total_tokens,
-            llm_model=llm_model,
-        ))
+            billed_input=billed_input,
+            billed_output=billed_output,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            model=model,
+        )
+
+        return response
+
+    def _schedule_metrics(self, **kwargs: Any) -> None:
+        """Fire-and-forget ``_record_metrics`` WITHOUT blocking the response.
+
+        Holding the task in ``self._pending_tasks`` keeps it alive —
+        ``asyncio.create_task`` only keeps a weak reference.
+        """
+        task = asyncio.create_task(self._record_metrics(**kwargs))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
 
-        return response
+    async def _wrap_llm_response(
+        self,
+        body_iterator: AsyncIterator[Any],
+        *,
+        request: Request,
+        path: str,
+        method: str,
+        status_code: int,
+        start_time: float,
+    ) -> AsyncIterator[Any]:
+        """Forward LLM response chunks untouched, then emit metrics once the
+        body is fully drained — see the comment in dispatch().
+
+        The route's own generator sets the billed token counts on
+        ``request.state`` (via ``set_billed_state``) after its last chunk, and
+        Starlette only finishes this iterator after that generator completes,
+        so the post-loop reads below always see the final state — for both the
+        single-chunk JSON shape and the multi-chunk SSE stream.
+        """
+        try:
+            async for chunk in body_iterator:
+                yield chunk
+        finally:
+            duration = time.time() - start_time
+            tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
+            service_id = getattr(request.state, "service_id", "") or ""
+            self._schedule_metrics(
+                path=path,
+                method=method,
+                service_type="llm",
+                tenant=tenant_label,
+                service_id=service_id,
+                status_code=status_code,
+                duration=duration,
+                billed_input=getattr(request.state, "billed_input", None),
+                billed_output=getattr(request.state, "billed_output", None),
+                model=getattr(request.state, "model", "") or "",
+            )
 
     # ------------------------------------------------------------------
     # Path-based service detection.
@@ -181,7 +279,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     # ------------------------------------------------------------------
     async def _record_metrics(
         self,
-        body_bytes: Optional[bytes],
         path: str,
         method: str,
         service_type: str,
@@ -189,38 +286,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_id: str,
         status_code: int,
         duration: float,
-        llm_prompt_tokens: int = 0,
-        llm_completion_tokens: int = 0,
-        llm_total_tokens: int = 0,
-        llm_model: str = "",
+        billed_input: Optional[float] = None,
+        billed_output: Optional[float] = None,
+        source_lang: str = "",
+        target_lang: str = "",
+        model: str = "",
     ) -> None:
-        """Parse request body once and emit Prometheus metrics out-of-band."""
+        """Emit Prometheus metrics out-of-band, using the already-billed count.
+
+        Every value comes from request.state (set once by the route handler /
+        orchestrator — see dispatch()); the request body is never read here.
+        """
         try:
-            # Parse the body ONCE; reuse the dict for every extractor.
-            request_data: Optional[Dict[str, Any]] = None
-            if body_bytes:
-                try:
-                    request_data = json.loads(body_bytes.decode("utf-8"))
-                except Exception:
-                    if self.config.debug:
-                        logger.debug("Failed to parse inference body", exc_info=True)
-                    request_data = None
-
-            # Both `service_id` and `serviceId` appear in inference payloads.
-            # Only override the request-state value when the payload provides
-            # a non-empty one. (LLM endpoints already got service_id=model
-            # from the caller — do not re-override from the request body.)
-            if isinstance(request_data, dict) and service_type != "llm":
-                cfg = request_data.get("config")
-                if isinstance(cfg, dict):
-                    payload_service_id = str(
-                        cfg.get("service_id") or cfg.get("serviceId") or ""
-                    ).strip()
-                    if payload_service_id:
-                        service_id = payload_service_id
-
             # Request count + duration fire for every request, regardless of
-            # whether we extracted a payload metric.
+            # whether a billed unit was recorded.
             self.metrics_collector.track_request(
                 method=method,
                 endpoint=path,
@@ -228,316 +307,112 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration=duration,
                 tenant=tenant,
                 service_id=service_id,
-                model=(llm_model or "unknown") if service_type == "llm" else "",
             )
 
-            # LLM: token counts come from the inference engine's response
-            # `usage` block (extracted in dispatch). Skipped for streaming
-            # responses (no usage block).
-            if service_type == "llm" and (
-                llm_prompt_tokens or llm_completion_tokens or llm_total_tokens
-            ):
-                self.metrics_collector.track_llm_tokens(
-                    model=llm_model or "unknown",
-                    prompt_tokens=llm_prompt_tokens,
-                    completion_tokens=llm_completion_tokens,
-                    total_tokens=llm_total_tokens,
-                    tenant=tenant,
-                    service_id=service_id,
-                    endpoint=path,
-                )
+            # Non-2xx or no billed_* set (e.g. a non-inference path, or the
+            # handler zeroed counts on failure — see trace/request_span.py
+            # ``_zero_tokens``) — skip rather than emit a misleading 0.
+            if status_code >= 400 or billed_input is None:
                 return
 
-            if isinstance(request_data, dict) and service_type in _BODY_METRIC_SERVICES:
+            if service_type == "llm":
+                if billed_input or billed_output:
+                    self.metrics_collector.track_llm_tokens(
+                        model=model or "unknown",
+                        prompt_tokens=billed_input,
+                        completion_tokens=billed_output or 0,
+                        total_tokens=billed_input + (billed_output or 0),
+                        tenant=tenant,
+                        service_id=service_id,
+                        endpoint=path,
+                    )
+                return
+
+            if billed_input > 0:
                 self._track_payload_metrics(
-                    request_data=request_data,
                     service_type=service_type,
+                    billed_input=billed_input,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
                     tenant=tenant,
                     service_id=service_id,
                 )
+
         except Exception:
             if self.config.debug:
                 logger.debug("Background metrics recording failed", exc_info=True)
 
     def _track_payload_metrics(
         self,
-        request_data: Dict[str, Any],
         service_type: str,
+        billed_input: float,
+        source_lang: str,
+        target_lang: str,
         tenant: str,
         service_id: str,
     ) -> None:
-        """Dispatch to per-service payload extractors using the already-parsed body."""
-        source_lang, target_lang = self._extract_languages(request_data)
+        """Dispatch billed_input (the single count already used for billing
+        and the OpenSearch trace — see trace/span_attributes.py) to the
+        matching Prometheus metric for this service_type.
+
+        billed_input's unit depends on service_type's inference_types.yaml
+        entry: characters (tts/translation/transliteration/language_detection/
+        ner), audio minutes (asr/audio_lang_detection/*_diarization — passed
+        straight through, no unit conversion), or images (ocr).
+        """
         try:
             if service_type == "tts":
-                chars = self._extract_input_characters(request_data)
-                if chars > 0:
-                    self.metrics_collector.track_tts_characters(
-                        language=source_lang,
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_tts_characters(
+                    language=source_lang, characters=billed_input,
+                    tenant=tenant, service_id=service_id,
+                )
             elif service_type == "translation":
-                chars = self._extract_input_characters(request_data)
-                if chars > 0:
-                    self.metrics_collector.track_nmt_characters(
-                        source_lang=source_lang,
-                        target_lang=target_lang,
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_nmt_characters(
+                    source_lang=source_lang, target_lang=target_lang,
+                    characters=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "asr":
-                seconds = self._extract_asr_audio_length(request_data)
-                if seconds > 0:
-                    self.metrics_collector.track_asr_audio_length(
-                        language=source_lang,
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_asr_audio_length(
+                    language=source_lang, audio_minutes=billed_input,
+                    tenant=tenant, service_id=service_id,
+                )
             elif service_type == "ocr":
-                chars = self._extract_ocr_characters(request_data)
-                if chars > 0:
-                    self.metrics_collector.track_ocr_characters(
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
-                kb = self._extract_ocr_image_size_kb(request_data)
-                if kb > 0:
-                    self.metrics_collector.track_ocr_image_size(
-                        image_size_kb=kb,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                # billed_input is an image COUNT (inference_types.yaml unit:
+                # images), not a character estimate — track_ocr_characters is
+                # repurposed to carry the real billed unit instead of the
+                # byte-size heuristic it used to compute independently.
+                self.metrics_collector.track_ocr_characters(
+                    characters=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "transliteration":
-                chars = self._extract_input_characters(request_data)
-                if chars > 0:
-                    self.metrics_collector.track_transliteration_characters(
-                        source_lang=source_lang,
-                        target_lang=target_lang,
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_transliteration_characters(
+                    source_lang=source_lang, target_lang=target_lang,
+                    characters=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "language_detection":
-                chars = self._extract_input_characters(request_data)
-                if chars > 0:
-                    self.metrics_collector.track_language_detection_characters(
-                        characters=chars,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_language_detection_characters(
+                    characters=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "audio_lang_detection":
-                seconds = self._extract_asr_audio_length(request_data)
-                if seconds > 0:
-                    self.metrics_collector.track_audio_lang_detection_length(
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_audio_lang_detection_length(
+                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "speaker_diarization":
-                seconds = self._extract_asr_audio_length(request_data)
-                if seconds > 0:
-                    self.metrics_collector.track_speaker_diarization_length(
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_speaker_diarization_length(
+                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "language_diarization":
-                seconds = self._extract_asr_audio_length(request_data)
-                if seconds > 0:
-                    self.metrics_collector.track_language_diarization_length(
-                        audio_seconds=seconds,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                self.metrics_collector.track_language_diarization_length(
+                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
+                )
             elif service_type == "ner":
-                tokens = self._extract_ner_tokens(request_data)
-                if tokens > 0:
-                    self.metrics_collector.track_ner_tokens(
-                        tokens=tokens,
-                        tenant=tenant,
-                        service_id=service_id,
-                    )
+                # billed_input is a CHARACTER count (inference_types.yaml
+                # unit: characters), not a word count — track_ner_tokens
+                # previously computed len(source.split()) independently;
+                # it now carries the same character count billing uses.
+                self.metrics_collector.track_ner_tokens(
+                    tokens=billed_input, tenant=tenant, service_id=service_id,
+                )
         except Exception:
             if self.config.debug:
-                logger.debug("Per-service metric extraction failed", exc_info=True)
-
-    # ------------------------------------------------------------------
-    # Pure extractors — operate on the already-parsed request_data dict.
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _extract_languages(request_data: Dict[str, Any]) -> Tuple[str, str]:
-        """Return (source_language, target_language) from ``config.language``.
-
-        Empty strings when absent — Prometheus accepts "" label values, and
-        we explicitly want no hardcoded defaults like ``en``/``hi``.
-        """
-        cfg = request_data.get("config")
-        if not isinstance(cfg, dict):
-            return "", ""
-        lang = cfg.get("language")
-        if not isinstance(lang, dict):
-            return "", ""
-        src = str(lang.get("sourceLanguage") or "").strip()
-        tgt = str(lang.get("targetLanguage") or "").strip()
-        return src, tgt
-
-    @staticmethod
-    def _extract_input_characters(request_data: Dict[str, Any]) -> int:
-        """Sum lengths of ``source`` strings under ``input[]`` (or ``inputData.input[]``)."""
-        items = request_data.get("input")
-        if items is None:
-            inp = request_data.get("inputData")
-            if isinstance(inp, dict):
-                items = inp.get("input")
-        if not isinstance(items, list):
-            return 0
-        return sum(
-            len(item["source"])
-            for item in items
-            if isinstance(item, dict) and isinstance(item.get("source"), str)
-        )
-
-    @staticmethod
-    def _extract_ner_tokens(request_data: Dict[str, Any]) -> int:
-        """Word count across ``input[*].source``."""
-        items = request_data.get("input")
-        if not isinstance(items, list):
-            return 0
-        total = 0
-        for item in items:
-            if isinstance(item, dict):
-                src = item.get("source")
-                if isinstance(src, str):
-                    total += len(src.split())
-        return total
-
-    def _extract_asr_audio_length(self, request_data: Dict[str, Any]) -> float:
-        """Audio length in seconds from base64-encoded ``audio[*].audioContent``.
-
-        Tolerates both ``audio[]`` (direct) and ``inputData.audio[]`` shapes.
-        ``audioUri`` payloads are intentionally skipped — fetching would block
-        the event loop.
-        """
-        audio_list = request_data.get("audio")
-        if audio_list is None:
-            inp = request_data.get("inputData")
-            if isinstance(inp, dict):
-                audio_list = inp.get("audio")
-        if not isinstance(audio_list, list):
-            return 0.0
-        total = 0.0
-        for item in audio_list:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("audioContent")
-            if isinstance(content, str):
-                total += self._calculate_audio_length_from_base64(content)
-            elif "audioUri" in item and self.config.debug:
-                logger.debug("audioUri detected — skipping (would block event loop)")
-        return total
-
-    def _extract_ocr_characters(self, request_data: Dict[str, Any]) -> int:
-        """Conservative estimate of extracted characters from ``image[*].imageContent``.
-
-        Heuristic: ~0.5% of the base64-encoded length becomes extracted text.
-        """
-        images = request_data.get("image")
-        if not isinstance(images, list):
-            return 0
-        total = 0
-        for item in images:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("imageContent")
-            if isinstance(content, str):
-                total += len(content) // 200
-            elif "imageUri" in item and self.config.debug:
-                logger.debug("OCR imageUri detected — skipping download")
-        return total
-
-    @staticmethod
-    def _extract_ocr_image_size_kb(request_data: Dict[str, Any]) -> float:
-        """Image payload size in KB, corrected for base64 inflation.
-
-        base64 inflates the underlying bytes by ~4/3, so the decoded payload
-        is roughly ``len(content) * 3 / 4`` bytes. Using the raw base64 length
-        over-reports by ~33%.
-        """
-        images = request_data.get("image")
-        if not isinstance(images, list):
-            return 0.0
-        total_kb = 0.0
-        for item in images:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("imageContent")
-            if isinstance(content, str):
-                total_kb += (len(content) * 3 / 4) / 1024
-        return total_kb
-
-    @staticmethod
-    def _calculate_audio_length_from_base64(base64_audio: str) -> float:
-        """Audio length in seconds from base64-encoded audio."""
-        try:
-            audio_data = base64.b64decode(base64_audio)
-            with wave.open(io.BytesIO(audio_data), "rb") as wav_file:
-                return wav_file.getnframes() / float(wav_file.getframerate())
-        except Exception:
-            # Fallback: estimate from raw size (16-bit @ 16kHz ≈ 32 KB/s).
-            try:
-                return len(base64.b64decode(base64_audio)) / 32000
-            except Exception:
-                return 0.0
-
-    # ------------------------------------------------------------------
-    # LLM response handling — buffer the JSON body and pull `usage`.
-    # ------------------------------------------------------------------
-    async def _buffer_response(self, response) -> Tuple[Response, bytes]:
-        """Drain ``response.body_iterator`` and return a fresh Response.
-
-        The Starlette body iterator can only be consumed once; reading it to
-        inspect ``usage`` makes the original response unusable, so we rebuild
-        a new Response that carries the same bytes back to the client.
-        """
-        chunks = []
-        async for chunk in response.body_iterator:
-            chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
-        body = b"".join(chunks)
-        # Drop Content-Length — Response recomputes it from the buffered body.
-        headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
-        new_response = Response(
-            content=body,
-            status_code=response.status_code,
-            headers=headers,
-            media_type=response.media_type,
-        )
-        return new_response, body
-
-    def _extract_llm_usage_from_body(
-        self, body_bytes: bytes
-    ) -> Tuple[int, int, int, str]:
-        """Return (prompt_tokens, completion_tokens, total_tokens, model).
-
-        Reads an OpenAI / vLLM-shaped JSON response. Zeros + empty model on
-        any parse failure — the request still gets counted, only the token
-        histogram is skipped.
-        """
-        try:
-            if not body_bytes:
-                return 0, 0, 0, ""
-            data = json.loads(body_bytes)
-            usage = data.get("usage") or {}
-            prompt = int(usage.get("prompt_tokens") or 0)
-            completion = int(usage.get("completion_tokens") or 0)
-            total = int(usage.get("total_tokens") or (prompt + completion))
-            model = str(data.get("model") or "")
-            return prompt, completion, total, model
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            if self.config.debug:
-                logger.debug(f"LLM usage extraction failed: {e}")
-            return 0, 0, 0, ""
+                logger.debug("Per-service metric emission failed", exc_info=True)

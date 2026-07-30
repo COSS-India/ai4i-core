@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import { METERING, type MeteringSubTab } from "../config/meteringConstants";
 import { useInferenceTypes } from "./useInferenceTypes";
+import { toMeteringKey } from "../utils/meteringTaskKey";
 import { listTenants } from "../services/tenantService";
 import type {
   MeteringResponseMeta,
@@ -50,12 +51,15 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isTenantView = roleViewConfig.defaultView === "tenant";
 
   // Frontend-owned enabled set (NEXT_PUBLIC_ENABLED_TASK_TYPES). We pass it to
-  // the metering `services=` filter so the backend returns only enabled task
+  // the metering `taskTypes=` filter so the backend returns only enabled task
   // types — the backend itself is not restricted. null while the catalog is
   // still loading, so we don't briefly filter everything out.
+  //
+  // Metering keys use SERVICE_BREAKDOWN_CONFIG form (underscore, e.g.
+  // "language_detection"), not the yaml name (hyphen) — map before sending.
   const { taskTypeNames } = useInferenceTypes();
   const enabledServices = useMemo(
-    () => (taskTypeNames.length > 0 ? taskTypeNames : null),
+    () => (taskTypeNames.length > 0 ? taskTypeNames.map(toMeteringKey) : null),
     [taskTypeNames],
   );
 
@@ -171,8 +175,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
+      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
     ),
-    queryFn: () => fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId),
+    queryFn: () =>
+      fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId, enabledServices),
     enabled: serviceQueryEnabled,
     ...meteringQueryDefaults,
   });

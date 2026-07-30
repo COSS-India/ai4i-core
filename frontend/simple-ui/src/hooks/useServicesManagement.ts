@@ -101,7 +101,15 @@ export function useServicesManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
-  const { taskTypeNames, unitByTaskType } = useInferenceTypes();
+  const { taskTypeNames, unitByTaskType, isLoading: isLoadingTaskTypes } = useInferenceTypes();
+  const didInitTaskTypeFilter = useRef(false);
+  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
+  useEffect(() => {
+    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
+    didInitTaskTypeFilter.current = true;
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setTaskTypeFilterReady(true);
+  }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
     "asc",
@@ -147,11 +155,11 @@ export function useServicesManagement() {
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
   const hasActiveFilters =
-    filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+    filterStatus !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
-    setFilterTaskType("");
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
   };
 
   const router = useRouter();
@@ -178,6 +186,10 @@ export function useServicesManagement() {
     useState<ModelDetails | null>(null);
 
   // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
+  // Primitive dep (joined string), not the array — an unstable array ref would
+  // re-create fetchServices every render and re-fire the fetch effect below.
+  const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const fetchServices = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setIsLoading(true);
     try {
@@ -188,8 +200,11 @@ export function useServicesManagement() {
             ? false
             : undefined;
 
+      // Backend query-filters by the frontend-enabled task types (task_types=),
+      // so the list comes back already scoped — no client-side filter here.
       const result = await fetchAllServicesMatchingFilters({
         taskType: filterTaskType || undefined,
+        taskTypes: enabledTaskTypesParam,
         isPublished: isPublishedFilter,
       });
       setServices(result.items);
@@ -200,7 +215,7 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus]);
+  }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
 
   /**
    * Keep registry + detail UI in sync after publish/unpublish.
@@ -241,8 +256,9 @@ export function useServicesManagement() {
   );
 
   useEffect(() => {
+    if (!taskTypeFilterReady) return;
     fetchServices();
-  }, [fetchServices]);
+  }, [fetchServices, taskTypeFilterReady]);
 
   // Fetch all existing serviceIds (unfiltered) for duplicate detection in the create form
   const loadExistingServiceIds = useCallback(async () => {

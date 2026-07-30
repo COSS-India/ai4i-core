@@ -67,7 +67,11 @@ async def list_models(
     response: Response,
     task_type: Optional[str] = Query(
         None,
-        description="Filter by task type (asr, nmt, tts, etc.).",
+        description="Filter by a single task type (asr, nmt, tts, etc.).",
+    ),
+    task_types: Optional[str] = Query(
+        None,
+        description="Comma-separated task types to include (frontend allowlist).",
     ),
     include_deprecated: bool = Query(
         True,
@@ -102,8 +106,20 @@ async def list_models(
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
     if version_status is not None and version_status not in valid_version_statuses:
         raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
+    # Merge the single task_type= (backward-compat, strictly validated) and the
+    # task_types= allowlist into one list — the service/repo take a single
+    # task_types filter. The allowlist is parsed leniently: names outside
+    # TaskTypeEnum (e.g. catalog entries with no registered models) are skipped
+    # rather than failing the whole request — they can't match any row anyway.
+    _task_types = []
+    if task_types:
+        valid = {m.value for m in TaskTypeEnum}
+        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
+    _single = _resolve_task_type(task_type)
+    if _single:
+        _task_types.insert(0, _single)
     items, total = await svc.list_models(
-        task_type=_resolve_task_type(task_type),
+        task_types=_task_types or None,
         include_deprecated=include_deprecated,
         version_status=version_status,
         model_name=model_name,

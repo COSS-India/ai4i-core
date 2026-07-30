@@ -11,12 +11,16 @@ Usage::
 
 from .config import PluginConfig
 from .metrics import MetricsCollector
-from .middleware import ObservabilityMiddleware
+from .middleware import ObservabilityMiddleware, set_billed_state, set_metric_labels
 from .plugin import setup_observability
+from .utils import get_llm_usage
 
 __all__ = [
     "setup_observability",
     "MetricsCollector",
     "PluginConfig",
     "ObservabilityMiddleware",
+    "get_llm_usage",
+    "set_billed_state",
+    "set_metric_labels",
 ]

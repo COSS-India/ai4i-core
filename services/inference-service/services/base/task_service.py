@@ -5,7 +5,6 @@ Base class defining the contract and shared pipeline for all inference task serv
 import json
 import logging
 from dataclasses import dataclass, field
-from tarfile import HeaderError
 from typing import Any, Dict, List, Optional
 
 # ── Persistent Triton HTTP client (Fix 5) ────────────────────────────────────
@@ -278,7 +277,7 @@ class BaseTaskService:
         """
         # Lazy import — trace setup happens at app init, after this module loads.
         from trace.request_span import traced_inference
-        from trace.span_attributes import count_input_tokens, count_output_tokens, get_output_type
+        from trace.span_attributes import count_input_tokens, count_output_tokens, get_unit_type
 
         model_name = serviceInfo.get('name', '')
         triton_endpoint = serviceInfo.get('endpoint', '')
@@ -304,6 +303,36 @@ class BaseTaskService:
         ) or self.TRITON_CALL_MODE
         groups = [[item] for item in input_items] if call_mode == "per_item" else [input_items]
 
+        # unit_type comes from inference_types.yaml (per task_type), not from
+        # guessing modality off response field names — see get_unit_type.
+        # payload["task_type"] (e.g. "NMT"), NOT self.task_name (the Python
+        # class name, e.g. "NMTTaskService") — the latter never matches the
+        # yaml's `name:` keys and silently resolves to "unknown" for every
+        # service, which zeroes out both count_input_tokens/count_output_tokens.
+        unit_type = get_unit_type(payload.get("task_type", ""))
+
+        # Billed input, summed across groups (per_item call_mode makes more
+        # than one). Exposed as an instance attr — not a run_inference return
+        # value — so Orchestrator.route_inference can read it straight off the
+        # task_service instance after process() returns, without threading
+        # `request` down into this method. This is the count
+        # ObservabilityMiddleware reads via request.state instead of
+        # re-deriving its own from the raw request body. Output is NOT mirrored
+        # here: non-LLM billing is input-only (the Kafka consumer reads the
+        # span, and bills input only), and the non-LLM Prometheus metrics
+        # track input units only — so an output instance attr would be dead.
+        self.billed_input = 0
+
+        # Language labels — metric labels, not billed quantities, hence no
+        # "billed_" prefix (unlike billed_input above). Read once from the
+        # already-parsed config_data and exposed as instance attrs for
+        # Orchestrator.route_inference to mirror onto request.state, so
+        # ObservabilityMiddleware doesn't need its own request.body() +
+        # json.loads() of the same payload just to label metrics.
+        language = config_data.get("language") if isinstance(config_data, dict) else None
+        self.source_lang = str((language or {}).get("sourceLanguage") or "").strip()
+        self.target_lang = str((language or {}).get("targetLanguage") or "").strip()
+
         response_data = []
         for group in groups:
             triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
@@ -315,9 +344,19 @@ class BaseTaskService:
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
+                # input_type/output_type (payload-shape guessing) are seeded by
+                # traced_inference for the LLM path only — Triton uses unit_type instead.
+                span_ctx.pop("input_type", None)
+                span_ctx.pop("output_type", None)
+                span_ctx["unit_type"] = unit_type
                 # Must count only this group's items, not the full input_items list —
                 # otherwise per_item call_mode bills the whole request once per item.
-                span_ctx["input_tokens"] = count_input_tokens(group, span_ctx["input_type"])
+                # Written to input_tokens (not a Triton-specific "input" key) so the
+                # PPU Kafka consumer's attrs.get("input_tokens") always sees the real
+                # count — traced_inference seeds input_tokens=0 on every span, so a
+                # differently-named key would silently leave that 0 in place.
+                span_ctx["input_tokens"] = count_input_tokens(group, unit_type)
+                self.billed_input += span_ctx["input_tokens"]
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
@@ -326,12 +365,13 @@ class BaseTaskService:
                 )
                 group_response_data = await self.convert_triton_output_to_task_format(raw_triton_output)
                 response_data.extend(group_response_data)
-                span_ctx["output_type"] = get_output_type(group_response_data)
                 # Recorded on the span for observability/trace inspection, but
                 # PPU billing for non-LLM services is input-only by design — the
                 # Kafka consumer (payperuse_consumer/handler.py) ignores this
-                # field for every inference_name except llm.
-                span_ctx["output_tokens"] = count_output_tokens(group_response_data, span_ctx["output_type"])
+                # field for every inference_name except llm. Not accumulated
+                # onto an instance attr: nothing downstream reads a non-LLM
+                # output count (Prometheus tracks input units only).
+                span_ctx["output_tokens"] = count_output_tokens(group_response_data, unit_type)
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,

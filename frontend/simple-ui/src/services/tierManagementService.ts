@@ -18,7 +18,7 @@ export async function fetchTiers(
   modelTaskType?: string,
 ): Promise<TiersListResponse> {
   const params: Record<string, string> = {};
-  if (modelTaskType) params.modelTaskType = modelTaskType;
+  if (modelTaskType) params.task_types = modelTaskType;
   const response = await apiClient.get(apiEndpoints.tiers.list, { params });
   return response.data;
 }
