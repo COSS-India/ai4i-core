@@ -7,31 +7,29 @@ Integrates orchestration, factory, and telemetry.
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from fastapi import (
-    APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
-)
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
-
 from ai4i_core.context import (
     get_llm_usage_input_tokens,
     get_llm_usage_model_name,
     get_llm_usage_output_tokens,
 )
-from orchestrator import Orchestrator
+from fastapi import (
+    APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
+)
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+
 from models.common import GenericInferenceResponse
+from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
 
-
 _CHAT_EXAMPLE = {
     "model": "llm-service-1",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": False,
 }
-
 
 # Module-level singleton: a fresh Orchestrator per request would rebuild the
 # InferenceServerResolver each time, so its in-memory service cache never got
@@ -432,6 +430,7 @@ async def run_ocr_inference(
     """Dedicated endpoint for OCR inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="OCR")
 
+
 def _bridge_llm_usage_to_request(request: Request) -> None:
     """
     Copy the LLM token counts and model name from the ai4i_core context vars
@@ -448,7 +447,28 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
     request.state.llm_usage_model_name = get_llm_usage_model_name()
 
 
-async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: str) -> Response:
+async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
+    with traced_span("request", root=True, classify_status=True) as req_attrs:
+        req_attrs["url"] = request.url.path
+        req_attrs["method"] = request.method
+        req_attrs.update(get_context_attributes())
+
+        status_code, body = await OpenAIProxyService().proxy_traced(
+            path=path, payload=payload, request=request,
+        )
+        _bridge_llm_usage_to_request(request)
+
+        if status_code >= 400:
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = status_code
+
+    return JSONResponse(status_code=status_code, content=body)
+
+
+async def _run_llm_chat_stream(
+    request: Request,
+    payload: Dict[str, Any],
+    path: str) -> StreamingResponse | JSONResponse:
     """
     Streaming counterpart to _run_llm_chat. The upstream connection (and its
     status code) is resolved eagerly so a misconfiguration, entitlement
@@ -495,7 +515,7 @@ async def _run_llm_chat_stream(request: Request, payload: Dict[str, Any], path: 
     )
 
 
-async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> Response:
+async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse | StreamingResponse:
     """
     Shared handler for LLM chat routes. Owns only the request span — MMS
     resolution, tier gate, model + ai_inference spans are managed inside
@@ -512,27 +532,14 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     # and we treat that as the service ID (used for MMS resolution and PPU
     # billing). Reading the same field proxy_traced resolves/bills on keeps
     # metrics tagging from ever diverging from what's billed downstream.
+
+    is_stream_enabled = True if (isinstance(payload, dict) and payload.get("stream")) else False
     service_id = payload.get("model", "")
     request.state.service_id = service_id
-
-    if isinstance(payload, dict) and payload.get("stream"):
+    if is_stream_enabled:
         return await _run_llm_chat_stream(request, payload, path)
+    return await _run_llm_chat_consolidated(request, payload, path)
 
-    with traced_span("request", root=True, classify_status=True) as req_attrs:
-        req_attrs["url"] = request.url.path
-        req_attrs["method"] = request.method
-        req_attrs.update(get_context_attributes())
-
-        status_code, body = await OpenAIProxyService().proxy_traced(
-            path=path, payload=payload, request=request,
-        )
-        _bridge_llm_usage_to_request(request)
-
-        if status_code >= 400:
-            req_attrs["status"] = "failure"
-            req_attrs["status_code"] = status_code
-
-    return JSONResponse(status_code=status_code, content=body)
 
 @router.post(
     "/chat/completions",
@@ -556,6 +563,7 @@ async def chat(
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OpenAI-compatible audio endpoints — pure multipart passthrough.
@@ -778,4 +786,5 @@ async def health_check() -> Dict[str, str]:
 )
 async def list_available_tasks() -> Dict[str, list]:
     """List all available inference task types."""
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION",
+                      "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
