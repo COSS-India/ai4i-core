@@ -351,8 +351,12 @@ class BaseTaskService:
                 span_ctx["unit_type"] = unit_type
                 # Must count only this group's items, not the full input_items list —
                 # otherwise per_item call_mode bills the whole request once per item.
-                span_ctx["input"] = count_input_tokens(group, unit_type)
-                self.billed_input += span_ctx["input"]
+                # Written to input_tokens (not a Triton-specific "input" key) so the
+                # PPU Kafka consumer's attrs.get("input_tokens") always sees the real
+                # count — traced_inference seeds input_tokens=0 on every span, so a
+                # differently-named key would silently leave that 0 in place.
+                span_ctx["input_tokens"] = count_input_tokens(group, unit_type)
+                self.billed_input += span_ctx["input_tokens"]
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint=triton_endpoint,
                     triton_inputs=triton_inputs,
@@ -367,7 +371,7 @@ class BaseTaskService:
                 # field for every inference_name except llm. Not accumulated
                 # onto an instance attr: nothing downstream reads a non-LLM
                 # output count (Prometheus tracks input units only).
-                span_ctx["output"] = count_output_tokens(group_response_data, unit_type)
+                span_ctx["output_tokens"] = count_output_tokens(group_response_data, unit_type)
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
