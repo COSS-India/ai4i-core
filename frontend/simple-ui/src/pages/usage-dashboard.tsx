@@ -75,9 +75,10 @@ const UsageDashboardPage: React.FC = () => {
     <>
       <Head>
         <title>Usage Dashboard - AI4Inclusion Console</title>
+        {/* AI4IDS-2588: UNDO — content="Monitor service consumption, tenant activity, and platform throughput" */}
         <meta
           name="description"
-          content="Monitor service consumption, tenant activity, and platform throughput"
+          content="Monitor model usage, tenant activity, and platform throughput"
         />
       </Head>
 
