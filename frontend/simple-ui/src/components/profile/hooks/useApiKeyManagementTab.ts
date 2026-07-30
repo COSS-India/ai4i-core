@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
@@ -43,7 +43,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [filterPermission, setFilterPermission] = useState("");
+  const [filterPermission, setFilterPermission] = useState("all");
   const [filterActive, setFilterActive] = useState<string>(API_KEY.FILTER_STATUS.ALL);
   const [keyNameSearch, setKeyNameSearch] = useState("");
   const [selectedKeyForUpdate, setSelectedKeyForUpdate] = useState<AdminAPIKeyWithUserResponse | null>(null);
@@ -226,9 +226,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   };
 
   const handleResetFilters = () => {
-    if (permissionFilterOptions.length > 0) {
-      setFilterPermission(permissionFilterOptions[0].name);
-    }
+    setFilterPermission("all");
     setFilterActive("all");
     setKeyNameSearch("");
   };
@@ -259,7 +257,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
           if (search && !(key.key_name ?? "").toLowerCase().includes(search)) {
             return false;
           }
-          if (filterPermission) {
+          if (filterPermission !== "all") {
             if (!(key.permissions ?? []).includes(filterPermission)) return false;
           }
           if (filterActive !== API_KEY.FILTER_STATUS.ALL) {
@@ -288,16 +286,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       })
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [permissions, taskTypeNames, inferenceTypes]);
-
-  // Default the permission filter to the first available option once the
-  // catalog loads, instead of an "all" sentinel — only runs once so it never
-  // overrides a filter the user has already changed.
-  const didInitFilterPermission = useRef(false);
-  useEffect(() => {
-    if (didInitFilterPermission.current || permissionFilterOptions.length === 0) return;
-    didInitFilterPermission.current = true;
-    setFilterPermission(permissionFilterOptions[0].name);
-  }, [permissionFilterOptions]);
 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
