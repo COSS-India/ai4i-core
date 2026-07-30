@@ -12,6 +12,7 @@ import {
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
+import { toMeteringKey } from "../../utils/meteringTaskKey";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
@@ -34,7 +35,9 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   const { taskTypeNames } = useInferenceTypes();
   const breakdown = useMemo(() => {
     const rows = data?.service_breakdown ?? [];
-    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+    // service_breakdown keys are metering-key form (underscore); map the enabled
+    // yaml names to match.
+    const enabled = new Set(taskTypeNames.map(toMeteringKey));
     return enabled.size === 0
       ? rows
       : rows.filter((r) => enabled.has(r.service.trim().toLowerCase()));
