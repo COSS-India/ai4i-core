@@ -83,12 +83,12 @@ export async function fetchMeteringOverview(
 export async function fetchMeteringTenantConsumption(
   timeWindow: MeteringWindow,
   limit: MeteringTopN,
-  services?: string[] | null,
+  taskTypes?: string[] | null,
   tenantId?: string | null,
 ): Promise<TenantConsumptionResponse> {
   const extra: Record<string, string> = { limit: String(limit) };
-  if (services?.length) {
-    extra.services = services.join(",");
+  if (taskTypes?.length) {
+    extra.taskTypes = taskTypes.join(",");
   }
   if (tenantId?.trim()) {
     extra.tenant_id = tenantId.trim();
@@ -106,11 +106,11 @@ export async function fetchMeteringServiceConsumption(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
-  services?: string[] | null,
+  taskTypes?: string[] | null,
 ): Promise<ServiceConsumptionResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
-  if (services?.length) {
-    params.set("services", services.join(","));
+  if (taskTypes?.length) {
+    params.set("taskTypes", taskTypes.join(","));
   }
   const { data } = await apiService.get<ServiceConsumptionResponse>(
     withQuery(apiEndpoints.metering.serviceConsumption, params),
