@@ -78,14 +78,14 @@ async def get_usage_summary(
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
-    taskTypes: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
+    task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(request)
     tier_id = _validate_tier_id(tier_id)
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_summary(month, tier_id, _parse_task_types(taskTypes))
+    return await svc.get_summary(month, tier_id, _parse_task_types(task_types))
 
 
 @router.get("/usage-tenants", response_model=TenantHierarchicalListResponse)
@@ -97,7 +97,7 @@ async def get_tenant_usage_list(
     ] = None,
     tier_id: Optional[str] = Query(None, description="Filter by tier ID."),
     modelTaskType: Optional[str] = Query(None, description="Filter by model task type (e.g. LLM, ASR, NMT)."),
-    taskTypes: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
+    task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     sortOrder: Annotated[str, Query(pattern="^(asc|desc)$", description="Sort tenants by spend ascending or descending.")] = "desc",
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of tenants to return."),
     offset: int = Query(0, ge=0, description="Number of tenants to skip (for pagination)."),
@@ -110,7 +110,7 @@ async def get_tenant_usage_list(
     svc = PPUUsageService(PPUUsageRepository(db))
     return await svc.get_tenant_list(
         month, tier_id, modelTaskType.lower() if modelTaskType else None, auth_db,
-        sortOrder, limit, offset, task_types=_parse_task_types(taskTypes),
+        sortOrder, limit, offset, task_types=_parse_task_types(task_types),
     )
 
 
@@ -122,7 +122,7 @@ async def get_tenant_usage_detail(
         Optional[str],
         Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Billing month in YYYY-MM format. Defaults to current month."),
     ] = None,
-    taskTypes: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
+    task_types: Optional[str] = Query(None, description="Comma-separated task types to include (frontend allowlist)."),
     db: AsyncSession = Depends(get_db),
     auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
 ):
@@ -140,4 +140,4 @@ async def get_tenant_usage_detail(
 
     month = billing_period or datetime.now(timezone.utc).strftime("%Y-%m")
     svc = PPUUsageService(PPUUsageRepository(db))
-    return await svc.get_tenant_detail(tenant_id, month, auth_db, task_types=_parse_task_types(taskTypes))
+    return await svc.get_tenant_detail(tenant_id, month, auth_db, task_types=_parse_task_types(task_types))
