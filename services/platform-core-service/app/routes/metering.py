@@ -405,10 +405,10 @@ async def get_tenant_consumption(
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Scope to a single tenant (admin only)"),
-    services: Optional[str] = Query(
+    taskTypes: Optional[str] = Query(
         None,
         pattern=r"^[a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*$",
-        description="Comma-separated service keys for the heatmap columns (default: all)",
+        description="Comma-separated task types for the heatmap columns (default: all)",
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
@@ -425,10 +425,10 @@ async def get_tenant_consumption(
     # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
     scope_tenant = _validate_scope_tenant(tenant_id or None)
 
-    service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
+    service_filter = [s.strip() for s in taskTypes.split(",") if s.strip()] if taskTypes else None
 
     cache_key = (
-        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{taskTypes or 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -522,7 +522,7 @@ async def get_service_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
-    services: Optional[str] = Query(
+    taskTypes: Optional[str] = Query(
         None, description="Comma-separated task types to include (frontend allowlist)."
     ),
     svc: MeteringService = Depends(get_metering_service),
@@ -533,7 +533,7 @@ async def get_service_consumption(
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
     scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
-    service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
+    service_filter = [s.strip() for s in taskTypes.split(",") if s.strip()] if taskTypes else None
 
     # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
     # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
@@ -546,7 +546,7 @@ async def get_service_consumption(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
-    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{services or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{taskTypes or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
