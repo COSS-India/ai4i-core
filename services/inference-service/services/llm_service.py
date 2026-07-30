@@ -229,14 +229,14 @@ class OpenAIProxyService:
         model_name = (service_info.get("adapter_config") or {}).get("model_name", "")
         if model_name:
             data["model"] = model_name
-        # model = data.get("model", "")
+        model = data.get("model", "")
 
-        # with traced_span("model") as model_attrs:
-        #     model_attrs["task_type"] = "LLM"
-        #     model_attrs["model_name"] = model or "unknown"
-        #     model_attrs["model_version"] = "unknown"
-        #     model_attrs.update(get_context_attributes())
-        #     model_attrs["service_id"] = service_id
+        with traced_span("model") as model_attrs:
+            model_attrs["task_type"] = "LLM"
+            model_attrs["model_name"] = model or "unknown"
+            model_attrs["model_version"] = "unknown"
+            model_attrs.update(get_context_attributes())
+            model_attrs["service_id"] = service_id
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
         try:
