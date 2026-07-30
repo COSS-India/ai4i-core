@@ -178,6 +178,10 @@ export function useServicesManagement() {
     useState<ModelDetails | null>(null);
 
   // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
+  // Primitive dep (joined string), not the array — an unstable array ref would
+  // re-create fetchServices every render and re-fire the fetch effect below.
+  const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const fetchServices = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setIsLoading(true);
     try {
@@ -192,7 +196,7 @@ export function useServicesManagement() {
       // so the list comes back already scoped — no client-side filter here.
       const result = await fetchAllServicesMatchingFilters({
         taskType: filterTaskType || undefined,
-        taskTypes: taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined,
+        taskTypes: enabledTaskTypesParam,
         isPublished: isPublishedFilter,
       });
       setServices(result.items);
@@ -203,7 +207,7 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus, taskTypeNames]);
+  }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
 
   /**
    * Keep registry + detail UI in sync after publish/unpublish.

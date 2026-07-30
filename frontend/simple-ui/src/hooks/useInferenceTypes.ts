@@ -27,6 +27,9 @@ const toServiceId = (name: string): string => {
   return NAME_TO_SERVICE_ID[n] ?? n;
 };
 
+// Module-level empty fallback so the loading/error state keeps a stable ref.
+const NO_TYPES: InferenceTypeItem[] = [];
+
 export function useInferenceTypes() {
   const query = useQuery({
     queryKey: [INFERENCE_TYPES_QUERY_KEY],
@@ -35,23 +38,24 @@ export function useInferenceTypes() {
     retry: 1,
   });
 
-  const inferenceTypes: InferenceTypeItem[] = query.data ?? [];
+  // Stable fallback ref: `?? []` would mint a new array every render while the
+  // query is loading/errored, cascading new refs through the memos below and
+  // re-firing any effect that depends on them (e.g. the services-registry fetch).
+  const inferenceTypes: InferenceTypeItem[] = query.data ?? NO_TYPES;
 
-  // Full catalog names + units come from the API (unfiltered on the backend).
-  const allNames: string[] = inferenceTypes.map((t) => t.name);
+  // Units come from the API catalog (unfiltered on the backend).
   const unitByTaskType: Record<string, string> = Object.fromEntries(
     inferenceTypes.map((t) => [t.name, t.unit]),
   );
 
   // Enabled = the frontend allowlist (NEXT_PUBLIC_ENABLED_TASK_TYPES) intersected
   // with the real catalog; unset ⇒ the whole catalog. UI-only gating.
-  const taskTypeNames: string[] = useMemo(
-    () =>
-      ENV_ENABLED.length > 0
-        ? allNames.filter((n) => ENV_ENABLED.includes(n.trim().toLowerCase()))
-        : allNames,
-    [inferenceTypes],
-  );
+  const taskTypeNames: string[] = useMemo(() => {
+    const allNames = inferenceTypes.map((t) => t.name);
+    return ENV_ENABLED.length > 0
+      ? allNames.filter((n) => ENV_ENABLED.includes(n.trim().toLowerCase()))
+      : allNames;
+  }, [inferenceTypes]);
 
   // Enabled ServiceIds — the single source for gating the UI catalog
   // (home cards, sidebar nav, logs filter, tier/model selectors).
