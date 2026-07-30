@@ -37,6 +37,7 @@ class Scope(BaseModel):
     tenant_id: Optional[str] = None
     organisation: Optional[str] = None
     window: str
+    task_types: Optional[list[str]] = None
 
 
 class ServiceRow(BaseModel):
