@@ -79,15 +79,16 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # OCR tracking (Histogram for percentile calculations). Despite the
-        # metric name, this carries an image COUNT, not a character count —
-        # billed_input's unit for OCR is images (inference_types.yaml) — kept
-        # under its original name to avoid a dashboard-breaking rename.
-        self.enterprise_ocr_characters_processed = Histogram(
-            "telemetry_obsv_ocr_characters_processed",
+        # OCR tracking (Histogram for percentile calculations). Renamed from
+        # telemetry_obsv_ocr_characters_processed — this carries an image
+        # COUNT, not a character count (billed_input's unit for OCR is images,
+        # per inference_types.yaml); the old name silently meant something
+        # different pre-rename, so any external dashboard/alert needs updating.
+        self.enterprise_ocr_images_processed = Histogram(
+            "telemetry_obsv_ocr_images_processed",
             "OCR images processed per request",
             ["tenant", "service_id"],
-            buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
+            buckets=(1, 2, 3, 5, 10, 20, 50, 100, float("inf")),
             registry=self.registry,
         )
 
@@ -233,8 +234,8 @@ class MetricsCollector:
     def track_ocr_characters(
         self, characters: int, tenant: str = "unknown", service_id: str = ""
     ):
-        """Track OCR images processed (see enterprise_ocr_characters_processed)."""
-        self.enterprise_ocr_characters_processed.labels(
+        """Track OCR images processed (see enterprise_ocr_images_processed)."""
+        self.enterprise_ocr_images_processed.labels(
             tenant=tenant, service_id=service_id
         ).observe(characters)
 

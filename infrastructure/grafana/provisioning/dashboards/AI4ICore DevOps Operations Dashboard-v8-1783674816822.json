@@ -1319,7 +1319,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_ocr_characters_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_ocr_images_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Avg Payload",
           "range": true,

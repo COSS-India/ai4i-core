@@ -1218,7 +1218,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_characters_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_images_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
           "legendFormat": "Images Processed (24h)",
           "range": true,
           "refId": "A"

@@ -116,7 +116,7 @@ class TestServiceBreakdownConfig:
         # dashboard equals billing even when a request carries >1 image —
         # request-success count would under-count in that case.
         assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_metric"] == (
-            "telemetry_obsv_ocr_characters_processed_sum"
+            "telemetry_obsv_ocr_images_processed_sum"
         )
         assert SERVICE_BREAKDOWN_CONFIG["ocr"]["metering_unit"] == "Images processed"
         assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_unit_suffix"] == "images"
@@ -315,7 +315,7 @@ class TestServiceBreakdown:
 
         async def fake_scalar(promql):
             # OCR's native metric now carries the billed image count.
-            if "telemetry_obsv_ocr_characters_processed_sum" in promql:
+            if "telemetry_obsv_ocr_images_processed_sum" in promql:
                 return 512.0
             return 0.0
 

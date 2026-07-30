@@ -161,10 +161,7 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "display_name": "OCR",
         "metering_unit": "Images processed",
         "native_unit_suffix": "images",
-        # Metric name says "characters" for historical reasons, but it
-        # carries an image COUNT — inference_types.yaml's billed unit for
-        # OCR is images, not characters or KB.
-        "native_metric": "telemetry_obsv_ocr_characters_processed_sum",
+        "native_metric": "telemetry_obsv_ocr_images_processed_sum",
         "native_extra_labels": None,
     },
     "transliteration": {
