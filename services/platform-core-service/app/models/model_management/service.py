@@ -48,7 +48,7 @@ class Service(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    service_id = Column(String(500), nullable=False, index=True)
+    service_id = Column(String(255), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     service_description = Column(Text, nullable=True)
     hardware_description = Column(Text, nullable=True)
