@@ -26,9 +26,11 @@ COPY package.json next.config.js tsconfig.json ./
 # is invisible to the browser bundle.
 ARG NEXT_PUBLIC_API_URL=""
 ARG NEXT_PUBLIC_TELEMETRY_SERVICE_URL=""
-# UI-only task-type allowlist (comma-separated yaml names, e.g. "llm").
-# Empty ⇒ the full catalog is shown.
-ARG NEXT_PUBLIC_ENABLED_TASK_TYPES=""
+# UI-only task-type allowlist (comma-separated yaml names). Defaults to llm —
+# override per deployment with --build-arg NEXT_PUBLIC_ENABLED_TASK_TYPES=...
+# (empty value ⇒ the full catalog is shown). NOTE: this is a build-time value;
+# a runtime env/configMap entry has no effect.
+ARG NEXT_PUBLIC_ENABLED_TASK_TYPES="llm"
 
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_TELEMETRY_SERVICE_URL=${NEXT_PUBLIC_TELEMETRY_SERVICE_URL}
