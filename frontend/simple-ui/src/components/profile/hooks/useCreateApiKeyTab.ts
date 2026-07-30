@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { showError } from "../../../utils/errorHandler";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
+import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
 
 export interface UseCreateApiKeyTabOptions {
   onApiKeyCreated?: () => void;
@@ -11,8 +12,21 @@ export interface UseCreateApiKeyTabOptions {
 export function useCreateApiKeyTab({
   onApiKeyCreated,
 }: UseCreateApiKeyTabOptions) {
-  const [permissions, setPermissions] = useState<Permission[]>([]);
+  const { taskTypeNames, inferenceTypes } = useInferenceTypes();
+  const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
+
+  const permissions = useMemo(() => {
+    if (taskTypeNames.length === 0) return allPermissions;
+    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+    const knownTaskTypes = new Set(
+      inferenceTypes.map((t) => t.name.trim().toLowerCase()),
+    );
+    return allPermissions.filter((p) => {
+      const prefix = p.name.split(".")[0]?.toLowerCase() ?? "";
+      return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
+    });
+  }, [allPermissions, taskTypeNames, inferenceTypes]);
   const [apiKeyForm, setApiKeyForm] = useState<{
     key_name: string;
     expires_days: number | "";
@@ -29,8 +43,8 @@ export function useCreateApiKeyTab({
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
     try {
-      const allPermissions = await authService.getAllPermissions();
-      setPermissions(Array.isArray(allPermissions) ? allPermissions : []);
+      const fetchedPermissions = await authService.getAllPermissions();
+      setAllPermissions(Array.isArray(fetchedPermissions) ? fetchedPermissions : []);
     } catch (error) {
       showError(error);
     } finally {

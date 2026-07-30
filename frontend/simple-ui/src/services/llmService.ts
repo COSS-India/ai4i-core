@@ -39,7 +39,7 @@ const buildTranslationPrompt = (
 
 /**
  * List all available LLM services from
- * GET /api/v1/services?task_type=llm&is_published=true
+ * GET /api/v1/services?task_types=llm&is_published=true
  */
 export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
   try {
