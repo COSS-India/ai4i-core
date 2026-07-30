@@ -229,14 +229,17 @@ class OpenAIProxyService:
         model_name = (service_info.get("adapter_config") or {}).get("model_name", "")
         if model_name:
             data["model"] = model_name
-        model = data.get("model", "")
+        # model = data.get("model", "")
 
-        with traced_span("model") as model_attrs:
-            model_attrs["task_type"] = "LLM"
-            model_attrs["model_name"] = model or "unknown"
-            model_attrs["model_version"] = "unknown"
-            model_attrs.update(get_context_attributes())
-            model_attrs["service_id"] = service_id
+        # Model span disabled for the audio passthrough routes — see AI4IDS-2639.
+        # Triton request/model spans are unaffected, so Kafka export continues;
+        # only these routes lose model attribution and timing.
+        # with traced_span("model") as model_attrs:
+        #     model_attrs["task_type"] = "LLM"
+        #     model_attrs["model_name"] = model or "unknown"
+        #     model_attrs["model_version"] = "unknown"
+        #     model_attrs.update(get_context_attributes())
+        #     model_attrs["service_id"] = service_id
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
         try:
