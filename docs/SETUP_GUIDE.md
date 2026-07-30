@@ -367,6 +367,21 @@ curl -s -X PATCH http://localhost:8095/api/v1/services \
 
 **Expected:** `{"success": true, ... "message": "Service '\''<serviceId>'\'' updated successfully."}`. This route makes a live probe request to the endpoint you pass and rejects the update if the model server doesn't respond correctly — a `400`/validation error here usually means the model server isn't reachable yet at that URL; start it and retry. No `Authorization` header is required for this call in this native setup; `X-User-Id` is optional and only recorded as the audit `updated_by` value.
 
+**Updating multiple services at once:** if you have several endpoints to set, send a `"services"` array instead of a single `serviceId`/`endpoint` pair, and every entry updates in one call:
+
+```bash
+curl -s -X PATCH http://localhost:8095/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "services": [
+      {"serviceId": "<serviceId-1>", "endpoint": "http://localhost:8000"},
+      {"serviceId": "<serviceId-2>", "endpoint": "http://localhost:8001"}
+    ]
+  }'
+```
+
+Each entry is validated the same way as the single-service call (live probe against the model server); if any entry fails, none of the endpoints in the batch are updated.
+
 ## Step 11: Access the Platform
 
 Once all services are running, use the table below to find URLs and ports.

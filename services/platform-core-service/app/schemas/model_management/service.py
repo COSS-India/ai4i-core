@@ -211,6 +211,25 @@ class ServiceUpdateRequest(BaseSchema):
         return self
 
 
+class ServiceEndpointUpdateItem(BaseSchema):
+    """A single {serviceId, endpoint} pair, used by the bulk endpoint-update
+    request below."""
+
+    serviceId: str
+    endpoint: str
+
+
+class ServiceBulkEndpointUpdateRequest(BaseSchema):
+    """Request body for PATCH /services when updating multiple services'
+    endpoints in a single call: {"services": [{"serviceId", "endpoint"}, ...]}.
+
+    Distinguished from ServiceUpdateRequest by the top-level "services" key,
+    so both shapes can be accepted on the same route without ambiguity.
+    """
+
+    services: List[ServiceEndpointUpdateItem] = Field(..., min_length=1)
+
+
 # ── Response ──
 
 
