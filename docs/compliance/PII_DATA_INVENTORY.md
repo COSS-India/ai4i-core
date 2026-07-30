@@ -1,8 +1,8 @@
-# PII Data Inventory — AI4I Core Platform
+# PII Data Inventory — AI4I-Orchestrate Platform
 
 | | |
 |---|---|
-| **Document purpose** | Inventory of all Personally Identifiable Information (PII) collected, stored, or processed by the AI4I Core platform, for DPG certification review and privacy compliance. |
+| **Document purpose** | Inventory of all Personally Identifiable Information (PII) collected, stored, or processed by the AI4I-Orchestrate platform, for DPG certification review and privacy compliance. |
 
 ---
 
