@@ -36,49 +36,58 @@ def get_input_type(payload: Dict[str, Any]) -> str:
         return "unknown"
 
 
-def get_output_type(response_data: List[Dict[str, Any]]) -> str:
-    """
-    Detect output modality type from Triton response data.
+# orchestrator.ALLOWED_TASK_TYPES values (as sent in payload["task_type"])
+# spell multi-word task types with underscores; inference_types.yaml's
+# `name:` keys use hyphens — get_unit_type normalizes that away below. This
+# table is only for genuine WORDING differences that no amount of separator
+# normalization fixes (audio_language_detection's yaml name abbreviates
+# "language" to "lang").
+_TASK_TYPE_TO_YAML_NAME_OVERRIDES = {
+    "audio-language-detection": "audio-lang-detection",
+}
 
-    Inspects response structure to determine modality.
-    Returns: "text", "audio", "image", or "unknown"
+
+def get_unit_type(task_type: str) -> str:
+    """
+    Billing unit for a Triton task type, sourced from inference_types.yaml
+    via ai4i_core.ppu.get_inference_unit_map (e.g. "asr" -> "audio_minutes",
+    "tts" -> "characters", "ocr" -> "images").
+
+    ``task_type`` must be the orchestrator's task type (e.g. payload
+    ["task_type"], "NMT"/"ASR"/...) — NOT a class name like
+    "NMTTaskService" (self.task_name), which never matches the yaml's
+    `name:` keys and would silently resolve to "unknown" for every service.
+
+    Driving unit_type from the YAML's per-task-type config (rather than
+    guessing modality from response field names, as get_output_type used to)
+    avoids silently returning "unknown" for services whose adapter_config
+    uses a non-standard output field name (e.g. speaker-diarization's
+    "diarization_json").
+
+    Matching is separator-insensitive (payload's "language_detection" vs.
+    yaml's "language-detection") so new task types line up automatically
+    without needing a table entry — only a genuine wording difference (see
+    _TASK_TYPE_TO_YAML_NAME_OVERRIDES) needs one.
+
+    Returns "unknown" if task_type isn't in the map, or on any lookup error.
     """
     try:
-        if not response_data or not isinstance(response_data, list):
-            return "unknown"
-
-        first_item = response_data[0] if response_data else {}
-        if not isinstance(first_item, dict):
-            return "unknown"
-
-        # Check for common output field names by modality
-        keys = set(first_item.keys())
-
-        # Text: target, output, transcription, translation, result, text
-        if keys & {"target", "output", "transcription", "translation", "result", "text"}:
-            return "text"
-
-        # Audio: audio_content, audio, samples, waveform
-        if keys & {"audio_content", "audio", "samples", "waveform"}:
-            return "audio"
-
-        # Image: image, image_content, image_base64, encoding
-        if keys & {"image", "image_content", "image_base64", "encoding"}:
-            return "image"
-
-        return "unknown"
+        from ai4i_core.ppu import get_inference_unit_map
+        normalized = task_type.lower().replace("_", "-")
+        normalized = _TASK_TYPE_TO_YAML_NAME_OVERRIDES.get(normalized, normalized)
+        return get_inference_unit_map().get(normalized, "unknown")
     except Exception as e:
-        logger.warning(f"Error detecting output type: {e}")
+        logger.warning(f"Error resolving unit type for task_type={task_type}: {e}")
         return "unknown"
 
 
-def count_input_tokens(input_items: List[Any], input_type: str) -> float:
+def count_input_tokens(input_items: List[Any], unit_type: str) -> float:
     """
-    Billed input units, computed per modality (see inference_types.yaml).
+    Billed input units, computed per unit_type (see inference_types.yaml).
 
-    Text: character count (len(text)) — matches the "characters" billing unit
-    Audio: real duration in minutes, fractional (see _count_audio_tokens)
-    Image: count of images in the request (see _count_image_tokens)
+    characters: character count (len(text))
+    audio_minutes: real duration in minutes, fractional (see _count_audio_tokens)
+    images: count of images in the request (see _count_image_tokens)
 
     Returns: billed unit count, or 0 on error
     """
@@ -86,11 +95,11 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> float:
         if not input_items:
             return 0
 
-        if input_type == "text":
+        if unit_type == "characters":
             return _count_text_tokens(input_items)
-        elif input_type == "audio":
+        elif unit_type == "audio_minutes":
             return _count_audio_tokens(input_items)
-        elif input_type == "image":
+        elif unit_type == "images":
             return _count_image_tokens(input_items)
 
         return 0
@@ -99,26 +108,28 @@ def count_input_tokens(input_items: List[Any], input_type: str) -> float:
         return 0
 
 
-def count_output_tokens(response_data: List[Dict[str, Any]], output_type: str) -> int:
+def count_output_tokens(response_data: List[Dict[str, Any]], unit_type: str) -> int:
     """
-    Estimate token count for output based on modality.
+    Estimate output unit count for observability, computed per unit_type
+    (see inference_types.yaml). Not used for billing — non-LLM PPU billing
+    is input-only by design (see payperuse_consumer/handler.py).
 
-    Text: character count of output text
-    Audio: estimate from output samples
-    Image: heuristic from encoded size
-
-    Returns: estimated token count, or 0 on error
+    Returns: estimated unit count, or 0 on error
     """
     try:
         if not response_data or not isinstance(response_data, list):
             return 0
 
-        if output_type == "text":
+        if unit_type == "characters":
             return _count_output_text_tokens(response_data)
-        elif output_type == "audio":
+        elif unit_type == "audio_minutes":
             return _count_output_audio_tokens(response_data)
-        elif output_type == "image":
-            return _count_output_image_tokens(response_data)
+        elif unit_type == "images":
+            # OCR (the only image-unit service, inference_types.yaml unit:
+            # images) never outputs images — its output is extracted TEXT
+            # (the mapper renames Surya's full_text to output[].source), so
+            # output is counted the same way NER/NMT output is: characters.
+            return _count_output_text_tokens(response_data)
 
         return 0
     except Exception as e:
@@ -230,7 +241,13 @@ def _count_image_tokens(input_items: List[Any]) -> int:
 
 
 def _count_output_text_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """Count tokens from text output by character count (see _count_text_tokens)."""
+    """Count tokens from text output by character count (see _count_text_tokens).
+
+    ``text`` covers OCR here too: OCR's adapter_config maps its output tensor
+    to ``text`` (maps_to) at this point in the pipeline — the response_key
+    rename to ``output[].source`` happens later, in postprocess_output's
+    shape_output_items, which runs after this count is already taken.
+    """
     total = 0
     for item in response_data:
         if isinstance(item, dict):
@@ -255,21 +272,6 @@ def _count_output_audio_tokens(response_data: List[Dict[str, Any]]) -> int:
             audio_content = item.get("audio_content") or item.get("audio") or ""
             if audio_content:
                 tokens = max(len(str(audio_content)) // 100, 1)
-                total += tokens
-
-    return total
-
-
-def _count_output_image_tokens(response_data: List[Dict[str, Any]]) -> int:
-    """
-    Estimate tokens from image output by content size.
-    """
-    total = 0
-    for item in response_data:
-        if isinstance(item, dict):
-            image_content = item.get("image_content") or item.get("image") or ""
-            if image_content:
-                tokens = max(len(str(image_content)) // 1000, 1)
                 total += tokens
 
     return total

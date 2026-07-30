@@ -12,6 +12,8 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from ai4i_core.observability import set_billed_state, set_metric_labels
+
 from orchestrator import Orchestrator
 from models.common import GenericInferenceResponse
 from services.llm_service import OpenAIProxyService
@@ -451,6 +453,21 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
+
+        # Same values llm_service.py already read from the vLLM `usage`
+        # block onto the ai-inference span — mirrored here so
+        # ObservabilityMiddleware reads one shared count instead of
+        # re-parsing this response body itself. The model name is a metric
+        # label (the `model` label on the LLM token histogram), not a billed
+        # quantity, so it goes through set_metric_labels.
+        if isinstance(body, dict):
+            usage = body.get("usage") or {}
+            set_billed_state(
+                request,
+                billed_input=usage.get("prompt_tokens", 0),
+                billed_output=usage.get("completion_tokens", 0),
+            )
+            set_metric_labels(request, model=body.get("model", ""))
 
         if status_code >= 400:
             req_attrs["status"] = "failure"

@@ -88,20 +88,39 @@ class TestApplyTimeRange:
 
 
 class TestServiceBreakdownConfig:
-    def test_asr_divide_by_60(self):
-        assert SERVICE_BREAKDOWN_CONFIG["asr"]["divide_by_60"] is True
+    def test_asr_native_metric_is_minutes(self):
+        # The ASR histogram now reports audio minutes directly (inference_types.yaml
+        # unit: audio_minutes) — no seconds->minutes division needed anymore.
+        assert SERVICE_BREAKDOWN_CONFIG["asr"]["native_metric"] == (
+            "telemetry_obsv_asr_audio_minutes_processed_sum"
+        )
+        assert SERVICE_BREAKDOWN_CONFIG["asr"]["round_2dp"] is True
         assert SERVICE_BREAKDOWN_CONFIG["asr"]["native_unit_suffix"] == "min"
 
-    def test_speaker_diarization_divide_by_60(self):
-        assert SERVICE_BREAKDOWN_CONFIG["speaker_diarization"]["divide_by_60"] is True
+    def test_speaker_diarization_native_metric_is_minutes(self):
+        assert SERVICE_BREAKDOWN_CONFIG["speaker_diarization"]["native_metric"] == (
+            "telemetry_obsv_speaker_diarization_minutes_processed_sum"
+        )
+        assert SERVICE_BREAKDOWN_CONFIG["speaker_diarization"]["round_2dp"] is True
 
-    def test_audio_language_detection_divide_by_60(self):
-        assert SERVICE_BREAKDOWN_CONFIG["audio_language_detection"]["divide_by_60"] is True
+    def test_audio_language_detection_native_metric_is_minutes(self):
+        assert SERVICE_BREAKDOWN_CONFIG["audio_language_detection"]["native_metric"] == (
+            "telemetry_obsv_audio_lang_detection_minutes_processed_sum"
+        )
+        assert SERVICE_BREAKDOWN_CONFIG["audio_language_detection"]["round_2dp"] is True
 
-    def test_ocr_use_success_as_native(self):
-        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["use_success_as_native"] is True
-        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_metric"] is None
+    def test_ocr_native_metric_is_image_count(self):
+        # OCR bills by image count (inference_types.yaml unit: images). The
+        # native metric is the histogram that now carries that exact billed
+        # count (track_ocr_characters(characters=billed_input)), so the
+        # dashboard equals billing even when a request carries >1 image —
+        # request-success count would under-count in that case.
+        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_metric"] == (
+            "telemetry_obsv_ocr_images_processed_sum"
+        )
         assert SERVICE_BREAKDOWN_CONFIG["ocr"]["metering_unit"] == "Images processed"
+        assert SERVICE_BREAKDOWN_CONFIG["ocr"]["native_unit_suffix"] == "images"
+        assert "use_success_as_native" not in SERVICE_BREAKDOWN_CONFIG["ocr"]
 
     def test_llm_has_token_type_filter(self):
         assert 'token_type="total"' in SERVICE_BREAKDOWN_CONFIG["llm"]["native_extra_labels"]
@@ -261,7 +280,7 @@ class TestServiceBreakdown:
     def _make_endpoint_result(self, endpoint: str, value: float):
         return [{"metric": {PROMETHEUS_API_PATH_LABEL: endpoint}, "value": [0, str(value)]}]
 
-    async def test_asr_native_units_divided_by_60(self):
+    async def test_asr_native_units_reported_in_minutes(self):
         client = MagicMock()
 
         async def fake_query(promql):
@@ -270,9 +289,9 @@ class TestServiceBreakdown:
             return []
 
         async def fake_scalar(promql):
-            # native metric query for ASR
-            if "asr_audio_seconds" in promql:
-                return 3600.0  # 3600 seconds
+            # native metric query for ASR — histogram already reports minutes
+            if "asr_audio_minutes" in promql:
+                return 60.5
             return 0.0
 
         client.query = AsyncMock(side_effect=fake_query)
@@ -281,10 +300,10 @@ class TestServiceBreakdown:
 
         result = await svc.service_breakdown(tenant=None, time_range="24h")
         asr_row = next(s for s in result["services"] if s["service"] == "ASR")
-        # 3600 seconds / 60 = 60 minutes
-        assert asr_row["native_units"] == 60.0
+        # No division — the histogram's unit is already minutes; 2dp precision preserved.
+        assert asr_row["native_units"] == 60.5
 
-    async def test_ocr_uses_success_count_as_native(self):
+    async def test_ocr_native_units_from_image_count_histogram(self):
         client = MagicMock()
 
         async def fake_query(promql):
@@ -294,14 +313,22 @@ class TestServiceBreakdown:
                 return self._make_endpoint_result("/api/v1/ocr/inference", 300)
             return []
 
+        async def fake_scalar(promql):
+            # OCR's native metric now carries the billed image count.
+            if "telemetry_obsv_ocr_images_processed_sum" in promql:
+                return 512.0
+            return 0.0
+
         client.query = AsyncMock(side_effect=fake_query)
-        client.scalar = AsyncMock(return_value=0.0)
+        client.scalar = AsyncMock(side_effect=fake_scalar)
         svc = MeteringService(client=client)
 
         result = await svc.service_breakdown(tenant=None, time_range="24h")
         ocr_row = next(s for s in result["services"] if s["service"] == "OCR")
-        # native_units should be the success count, not a histogram value
-        assert ocr_row["native_units"] == 250
+        # native_units is the billed image count (histogram sum), NOT the
+        # request-success count — the two differ when a request has >1 image.
+        assert ocr_row["native_units"] == 512
+        assert ocr_row["native_unit_suffix"] == "images"
 
     async def test_native_units_zero_not_null_when_no_usage(self):
         client = MagicMock()
