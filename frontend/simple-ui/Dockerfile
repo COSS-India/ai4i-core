@@ -21,11 +21,18 @@ COPY public/ ./public/
 COPY package.json next.config.js tsconfig.json ./
 
 # Non-sensitive URL config — not credentials, safe to pass as ARG/ENV.
+# NEXT_PUBLIC_* is inlined into the JS bundle at `next build`, so these MUST be
+# supplied as --build-arg at image build time — a runtime env/configMap value
+# is invisible to the browser bundle.
 ARG NEXT_PUBLIC_API_URL=""
 ARG NEXT_PUBLIC_TELEMETRY_SERVICE_URL=""
+# UI-only task-type allowlist (comma-separated yaml names, e.g. "llm").
+# Empty ⇒ the full catalog is shown.
+ARG NEXT_PUBLIC_ENABLED_TASK_TYPES=""
 
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_TELEMETRY_SERVICE_URL=${NEXT_PUBLIC_TELEMETRY_SERVICE_URL}
+ENV NEXT_PUBLIC_ENABLED_TASK_TYPES=${NEXT_PUBLIC_ENABLED_TASK_TYPES}
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
