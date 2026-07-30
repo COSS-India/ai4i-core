@@ -106,11 +106,18 @@ async def list_models(
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
     if version_status is not None and version_status not in valid_version_statuses:
         raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
-    # Merge the single task_type= (backward-compat) and the task_types= list into
-    # one list — the service/repo take a single task_types filter.
-    _task_types = [_resolve_task_type(t) for t in task_types.split(",") if t.strip()] if task_types else []
-    if task_type:
-        _task_types.insert(0, _resolve_task_type(task_type))
+    # Merge the single task_type= (backward-compat, strictly validated) and the
+    # task_types= allowlist into one list — the service/repo take a single
+    # task_types filter. The allowlist is parsed leniently: names outside
+    # TaskTypeEnum (e.g. catalog entries with no registered models) are skipped
+    # rather than failing the whole request — they can't match any row anyway.
+    _task_types = []
+    if task_types:
+        valid = {m.value for m in TaskTypeEnum}
+        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
+    _single = _resolve_task_type(task_type)
+    if _single:
+        _task_types.insert(0, _single)
     items, total = await svc.list_models(
         task_types=_task_types or None,
         include_deprecated=include_deprecated,
