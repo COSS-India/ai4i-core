@@ -36,13 +36,13 @@ def _resolve_model_task_type(model_task_type: Optional[str]) -> Optional[str]:
 
 @router.get("/tiers")
 async def list_tiers(
-    modelTaskType: Optional[str] = Query(
+    taskTypes: Optional[str] = Query(
         None,
         description="Filter by model task type: nmt, llm, asr, tts, ocr, transliteration, ner, language-detection, speaker-diarization, audio-lang-detection, language-diarization",
     ),
     session: AsyncSession = Depends(get_db),
 ):
-    resolved = _resolve_model_task_type(modelTaskType)
+    resolved = _resolve_model_task_type(taskTypes)
     return await tier_service.list_tiers(session, model_task_type=resolved)
 
 
