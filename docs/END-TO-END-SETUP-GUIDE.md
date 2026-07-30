@@ -520,26 +520,40 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 
 Skip this for any service whose `TRITON_ENDPOINT_*` var you already set in [B1](#b1-create-root-env) — it was seeded with the endpoint filled in. Use this for any service whose var was never added to root `.env` in the first place, one you bring online later, or to fix an endpoint that changed.
 
-Look up the `serviceId` first, then patch its endpoint — the update call is keyed by `serviceId`, not by name.
+Look up the `serviceId` first, then patch its endpoint — the update call is keyed by `serviceId`, not by name. `PATCH /api/v1/services` takes a `"services"` array — pass one entry to update a single service, or several to update them all in one call.
 
 ```bash
 curl -s "http://localhost:8095/api/v1/services?task_type=asr" | python3 -m json.tool
 ```
 
-Grab the `serviceId` of the service you want from the response, then:
+Grab the `serviceId` of the service(s) you want from the response, then:
 
 ```bash
 curl -s -X PATCH http://localhost:8095/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "serviceId": "<serviceId-from-above>",
-    "endpoint": "http://localhost:5000"
+    "services": [
+      {"serviceId": "<serviceId-from-above>", "endpoint": "http://localhost:5000"}
+    ]
   }'
 ```
 
-**Expected:** `{"success":true, ... "message":"Service '<serviceId>' updated successfully."}`
+To set several endpoints in one call, just add more entries:
 
-This call probes the endpoint live before accepting it, so start the model server first — a `400` here almost always means it isn't reachable yet at that URL. No `Authorization` header is needed for this native, non-gateway setup.
+```bash
+curl -s -X PATCH http://localhost:8095/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "services": [
+      {"serviceId": "<serviceId-1>", "endpoint": "http://localhost:5000"},
+      {"serviceId": "<serviceId-2>", "endpoint": "http://localhost:8000"}
+    ]
+  }'
+```
+
+**Expected:** `{"success":true, "data":{"serviceIds":["<serviceId-1>", ...]}, ... "message":"N service endpoint(s) updated successfully."}`
+
+This call probes each endpoint live before accepting it, so start the model server(s) first — a `400` here almost always means one isn't reachable yet at that URL. The call is all-or-nothing — if one entry fails (unreachable endpoint, `localhost`/private IP blocked by the SSRF guard, unknown `serviceId`), none of the endpoints in the request are updated. No `Authorization` header is needed for this native, non-gateway setup.
 
 ---
 

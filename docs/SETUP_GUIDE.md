@@ -344,30 +344,29 @@ Step 5's seed migration creates a service row for **every** model (NMT, ASR, OCR
 
 **If you skipped that (or need to add a service you didn't have a URL for yet), follow this step** — a seeded service with a blank `endpoint` will fail on inference calls until it's filled in. Once you have a model server (e.g. a Triton container) running and reachable, point the seeded service at it via the API.
 
-The update call is keyed by `serviceId`, so look it up first, then patch the endpoint.
+The update call is keyed by `serviceId`, so look it up first, then patch the endpoint. `PATCH /api/v1/services` takes a `"services"` array — pass one entry to update a single service, or several to update them all in one call.
 
-**Step 1 — `GET` the service's `serviceId`:**
+**Step 1 — `GET` the service(s)' `serviceId`:**
 
 ```bash
 curl -s "http://localhost:8095/api/v1/services?task_type=nmt" | python3 -m json.tool
 ```
 
-Note the `serviceId` field for the service you want.
+Note the `serviceId` field(s) for the service(s) you want.
 
-**Step 2 — `PATCH` the endpoint using that `serviceId`:**
+**Step 2 — `PATCH` the endpoint(s) using those `serviceId`s:**
 
 ```bash
 curl -s -X PATCH http://localhost:8095/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "serviceId": "<serviceId-from-step-1>",
-    "endpoint": "http://localhost:8000"
+    "services": [
+      {"serviceId": "<serviceId-from-step-1>", "endpoint": "http://localhost:8000"}
+    ]
   }'
 ```
 
-**Expected:** `{"success": true, ... "message": "Service '\''<serviceId>'\'' updated successfully."}`. This route makes a live probe request to the endpoint you pass and rejects the update if the model server doesn't respond correctly — a `400`/validation error here usually means the model server isn't reachable yet at that URL; start it and retry. No `Authorization` header is required for this call in this native setup; `X-User-Id` is optional and only recorded as the audit `updated_by` value.
-
-**Updating multiple services at once:** if you have several endpoints to set, send a `"services"` array instead of a single `serviceId`/`endpoint` pair, and every entry updates in one call:
+To update several services at once, just add more entries to the array:
 
 ```bash
 curl -s -X PATCH http://localhost:8095/api/v1/services \
@@ -380,7 +379,7 @@ curl -s -X PATCH http://localhost:8095/api/v1/services \
   }'
 ```
 
-Each entry is validated the same way as the single-service call (live probe against the model server); if any entry fails, none of the endpoints in the batch are updated.
+**Expected:** `{"success": true, "data": {"serviceIds": ["<serviceId-1>", ...]}, "meta": {"message": "N service endpoint(s) updated successfully."}}`. Each entry is validated the same way — URL format, SSRF guard (rejects `localhost`/private/loopback hosts), and a live probe against the model server — a `400`/validation error usually means the model server isn't reachable yet at that URL; start it and retry. **The call is all-or-nothing:** if any entry fails, none of the endpoints in the request are updated — fix or drop the failing entry and retry. No `Authorization` header is required for this call in this native setup; `X-User-Id` is optional and only recorded as the audit `updated_by` value.
 
 ## Step 11: Access the Platform
 
@@ -483,6 +482,14 @@ If login still fails:
 **Cause:** The seeded service's `endpoint` field is blank — seed migrations don't set `TRITON_ENDPOINT_*` variables in this guide, so every service starts with no endpoint configured.
 
 **Fix:** See [Step 10: Configure Inference Service Endpoints](#step-10-configure-inference-service-endpoints-required-if-not-set-before-migrations) — set the endpoint via `PATCH /api/v1/services` once the corresponding model server is running, or set the matching `TRITON_ENDPOINT_*` variable in the root `.env` (see [Step 2](#step-2-create-the-root-environment-file)) before your next fresh migration.
+
+### Bulk endpoint update returns ENDPOINT_VALIDATION_ERROR / SSRF error
+
+**Symptom:** A bulk `PATCH /api/v1/services` call (the `"services": [...]` array form) fails with a `400` and `"code": "ENDPOINT_VALIDATION_ERROR"`, and none of the entries in the batch were updated.
+
+**Cause:** The bulk update is all-or-nothing — every entry in the array is validated (URL format, SSRF guard, live probe) before anything is written. One bad entry (e.g. an endpoint pointing at `localhost`/a private IP, or a model server that isn't actually reachable yet) fails the whole batch, not just that entry.
+
+**Fix:** Check the `"details"` field in the error response to identify which endpoint failed and why, then either fix that entry's URL/reachability or remove it from the `"services"` array, and resubmit.
 
 ### Port conflicts
 
