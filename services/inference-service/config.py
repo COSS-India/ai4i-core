@@ -91,8 +91,10 @@ class Settings(BaseSettings):
     # on services without a broker. Flip to true in services/inference-service/.env
     # when running `--profile logging` or `--profile streaming`.
     KAFKA_ENABLED: bool = Field(False, description="Ship OTel trace spans to Kafka")
+    # Matches env.template (host-mapped port). Inside a container this must be
+    # overridden with the in-network address (kafka:29092).
     KAFKA_SERVER: str = Field(
-        "localhost:9092", description="Kafka bootstrap servers for trace export"
+        "localhost:9093", description="Kafka bootstrap servers for trace export"
     )
     KAFKA_TOPIC_OTEL_TRACE: str = Field(
         "kafka-topic-otel-trace", description="Kafka topic for OTel trace spans"

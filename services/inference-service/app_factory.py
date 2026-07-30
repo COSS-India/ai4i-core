@@ -11,7 +11,7 @@ from ai4i_core.observability.middleware import ObservabilityMiddleware
 from ai4i_core.logging import RequestMiddleware
 from routes import router
 from config import settings
-# from trace.setup import setup_tracing
+from trace.setup import setup_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +42,18 @@ class _ChatAwareObservabilityMiddleware(ObservabilityMiddleware):
 _TEST_PATH = f"{settings.API_PREFIX}/test"
 _PUBLIC_PATHS.add(_TEST_PATH)
 
-# @asynccontextmanager
-# async def _lifespan(app: FastAPI):
-#     """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
-#     logger.info("✓ Inference service started")
-#     yield
-#     from opentelemetry import trace
-#     provider = trace.get_tracer_provider()
-#     if hasattr(provider, "shutdown"):
-#         provider.shutdown()  # flushes the Kafka span exporter
-#     from services.base.task_service import close_triton_client
-#     await close_triton_client()
-#     logger.info("✓ Inference service shutting down")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle: flush tracing spans on graceful shutdown."""
+    logger.info("✓ Inference service started")
+    yield
+    from opentelemetry import trace
+    provider = trace.get_tracer_provider()
+    if hasattr(provider, "shutdown"):
+        provider.shutdown()  # flushes the Kafka span exporter
+    from services.base.task_service import close_triton_client
+    await close_triton_client()
+    logger.info("✓ Inference service shutting down")
 
 def _setup_middleware(app: FastAPI) -> None:
     """Configure observability, request-context, and CORS middleware."""
@@ -172,7 +172,7 @@ def create_inference_app() -> FastAPI:
         Configured FastAPI application ready to serve inference requests
     """
     # Initialize tracing FIRST so the tracer provider exists before any spans
-    # setup_tracing()
+    setup_tracing()
 
     app = FastAPI(
         title="AI4I Inference Service",
@@ -183,7 +183,7 @@ def create_inference_app() -> FastAPI:
         docs_url="/docs" if settings.ENABLE_DOCS else None,
         redoc_url="/redoc" if settings.ENABLE_DOCS else None,
         openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,
-        # lifespan=_lifespan,
+        lifespan=_lifespan,
     )
 
     _setup_openapi_security(app)

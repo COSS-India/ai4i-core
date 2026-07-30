@@ -6,6 +6,13 @@ Handles task routing, service resolution, and request/model span tracing.
 from typing import Any, Dict, Optional
 from fastapi import Request
 import logging
+
+from trace.request_span import (
+    get_context_attributes,
+    get_endpoint_path,
+    traced_span,
+)
+
 from services.base.task_service import BaseTaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
@@ -59,36 +66,36 @@ class Orchestrator:
             RuntimeError: If service resolution or inference fails
         """
         # Root span (parentID=null); traced_span owns timing + status.
-        # with traced_span("request", root=True, classify_status=True) as attrs:
-        #     attrs["url"] = str(request.url.path) if request else get_endpoint_path()
-        #     attrs["method"] = request.method if request else ""
-        #     attrs.update(get_context_attributes())
+        with traced_span("request", root=True, classify_status=True) as attrs:
+            attrs["url"] = str(request.url.path) if request else get_endpoint_path()
+            attrs["method"] = request.method if request else ""
+            attrs.update(get_context_attributes())
 
-        task_type = payload.get("task_type", "").upper()
-        self._validate_task_type(task_type)
+            task_type = payload.get("task_type", "").upper()
+            self._validate_task_type(task_type)
 
-        # Resolve service and model BEFORE creating task service
-        service_info = await self._resolve_service_and_model(payload)
+            # Resolve service and model BEFORE creating task service
+            service_info = await self._resolve_service_and_model(payload)
 
-        # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
-        if request:
-            tier_id = request.headers.get("X-Tier-ID", "")
-            if tier_id:
-                allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
-                if tier_id not in allowed_tiers:
-                    service_id = (
-                        (payload.get("config") or {}).get("serviceId")
-                        or payload.get("serviceId", "")
-                    )
-                    raise PermissionError(
-                        f"Service '{service_id}' is not available for your quota"
-                    )
+            # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
+            if request:
+                tier_id = request.headers.get("X-Tier-ID", "")
+                if tier_id:
+                    allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
+                    if tier_id not in allowed_tiers:
+                        service_id = (
+                            (payload.get("config") or {}).get("serviceId")
+                            or payload.get("serviceId", "")
+                        )
+                        raise PermissionError(
+                            f"Service '{service_id}' is not available for your quota"
+                        )
 
-        # Instantiate and run the task service with the raw payload
-        task_service = self._get_task_service(service_info)
-        task_response = await task_service.process(payload, service_info)
+            # Instantiate and run the task service with the raw payload
+            task_service = self._get_task_service(service_info)
+            task_response = await task_service.process(payload, service_info)
 
-        return task_response.dict() if hasattr(task_response, 'dict') else task_response
+            return task_response.dict() if hasattr(task_response, 'dict') else task_response
 
     def _validate_task_type(self, task_type: str) -> None:
         """Raise ValueError if task_type is not a known task."""
@@ -148,59 +155,60 @@ class Orchestrator:
         # resolve_ms wraps the same scope as the model span so the request-span
         # breakdown (resolve_ms) reconciles 1:1 with the model span total_time_ms.
         # mms_http_ms (set inside the resolver) is its sub-metric.
-        # from trace.phase_timer import timed_phase
-        # with traced_span("model") as attrs, timed_phase("resolve_ms"):
-        #     attrs["task_type"] = payload.get("task_type", "").upper()
-        #     attrs.update(get_context_attributes())
+        from trace.phase_timer import timed_phase
 
-        # Extract serviceId: check config block first, then top-level
-        config_block = payload.get("config") or {}
-        serviceId = (
-            config_block.get("serviceId") if isinstance(config_block, dict) else None
-        ) or payload.get("serviceId")
+        with traced_span("model") as attrs, timed_phase("resolve_ms"):
+            attrs["task_type"] = payload.get("task_type", "").upper()
+            attrs.update(get_context_attributes())
 
-        if not serviceId:
-            # Fall back to SMR or a safe default
-            serviceId = await self.inference_server_resolver.resolve_smr_service(payload)
-            self.logger.warning(
-                f"No serviceId in payload, SMR resolved to: {serviceId}"
+            # Extract serviceId: check config block first, then top-level
+            config_block = payload.get("config") or {}
+            serviceId = (
+                config_block.get("serviceId") if isinstance(config_block, dict) else None
+            ) or payload.get("serviceId")
+
+            if not serviceId:
+                # Fall back to SMR or a safe default
+                serviceId = await self.inference_server_resolver.resolve_smr_service(payload)
+                self.logger.warning(
+                    f"No serviceId in payload, SMR resolved to: {serviceId}"
+                )
+
+            attrs["service_id"] = serviceId
+            self.logger.debug(f"Resolving service: {serviceId}")
+            try:
+                service_info = await self.inference_server_resolver.resolve_service(serviceId)
+            except Exception as e:
+                # No str(e) AND no exc_info=True — both leak the URL.
+                # str(e) of httpx-class errors embeds the request URL;
+                # exc_info=True bakes the full traceback (including the
+                # chained exception's __str__) into the formatted log
+                # record, which ships to OpenSearch via fluent-bit and
+                # surfaces in the Logs Dashboard.
+                # The `from e` chain still preserves the exception for
+                # ad-hoc server-side inspection (debug session, post-mortem
+                # via container shell) without writing it to stdout.
+                self.logger.error(
+                    "Failed to resolve service '%s': %s",
+                    serviceId, type(e).__name__,
+                )
+                raise RuntimeError(
+                    f"Orchestrator: Failed to resolve service '{serviceId}'"
+                ) from e
+
+            if not service_info.get("is_published", False):
+                raise LookupError(
+                    f"Service '{serviceId}' is not published and cannot be used for inference"
+                )
+
+            adapter_cfg = service_info.get("adapter_config") or {}
+            attrs["model_name"] = service_info.get("name", "")
+            attrs["model_version"] = (
+                service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
             )
-
-        # attrs["service_id"] = serviceId
-        self.logger.debug(f"Resolving service: {serviceId}")
-        try:
-            service_info = await self.inference_server_resolver.resolve_service(serviceId)
-        except Exception as e:
-            # No str(e) AND no exc_info=True — both leak the URL.
-            # str(e) of httpx-class errors embeds the request URL;
-            # exc_info=True bakes the full traceback (including the
-            # chained exception's __str__) into the formatted log
-            # record, which ships to OpenSearch via fluent-bit and
-            # surfaces in the Logs Dashboard.
-            # The `from e` chain still preserves the exception for
-            # ad-hoc server-side inspection (debug session, post-mortem
-            # via container shell) without writing it to stdout.
-            self.logger.error(
-                "Failed to resolve service '%s': %s",
-                serviceId, type(e).__name__,
-            )
-            raise RuntimeError(
-                f"Orchestrator: Failed to resolve service '{serviceId}'"
-            ) from e
-
-        if not service_info.get("is_published", False):
-            raise LookupError(
-                f"Service '{serviceId}' is not published and cannot be used for inference"
-            )
-
-        # adapter_cfg = service_info.get("adapter_config") or {}
-        # attrs["model_name"] = service_info.get("name", "")
-        # attrs["model_version"] = (
-        #     service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
-        # )
-        # resolve_service()'s returned dict never carries the id it was
-        # resolved from — stash it here so run_inference can copy it onto
-        # the ai-inference span (the PPU Kafka consumer bills on service_id
-        # read from that span only, mirroring the LLM proxy's approach).
-        service_info["serviceId"] = serviceId
-        return service_info
+            # resolve_service()'s returned dict never carries the id it was
+            # resolved from — stash it here so run_inference can copy it onto
+            # the ai-inference span (the PPU Kafka consumer bills on service_id
+            # read from that span only, mirroring the LLM proxy's approach).
+            service_info["serviceId"] = serviceId
+            return service_info
