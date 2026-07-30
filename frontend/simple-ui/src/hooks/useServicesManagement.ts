@@ -192,7 +192,16 @@ export function useServicesManagement() {
         taskType: filterTaskType || undefined,
         isPublished: isPublishedFilter,
       });
-      setServices(result.items);
+      // Show only services of frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES).
+      // Empty set (catalog still loading) ⇒ leave unfiltered.
+      const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+      const items =
+        enabled.size === 0
+          ? result.items
+          : result.items.filter((s) =>
+              enabled.has((s.task_type ?? "").trim().toLowerCase()),
+            );
+      setServices(items);
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
       showError(error);
@@ -200,7 +209,7 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus]);
+  }, [filterTaskType, filterStatus, taskTypeNames]);
 
   /**
    * Keep registry + detail UI in sync after publish/unpublish.

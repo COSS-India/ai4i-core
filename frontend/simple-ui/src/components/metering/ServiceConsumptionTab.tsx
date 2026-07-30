@@ -11,6 +11,7 @@ import {
   serviceFailureRate,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
@@ -28,7 +29,16 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   errorMessage,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
-  const breakdown = data?.service_breakdown ?? [];
+  // Show only frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES).
+  // Empty set (catalog still loading) ⇒ leave unfiltered.
+  const { taskTypeNames } = useInferenceTypes();
+  const breakdown = useMemo(() => {
+    const rows = data?.service_breakdown ?? [];
+    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+    return enabled.size === 0
+      ? rows
+      : rows.filter((r) => enabled.has(r.service.trim().toLowerCase()));
+  }, [data?.service_breakdown, taskTypeNames]);
 
   const { slices } = useMemo(() => buildServiceBreakdownChart(breakdown), [breakdown]);
   const insights = useMemo(

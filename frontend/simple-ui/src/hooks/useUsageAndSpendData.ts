@@ -15,7 +15,6 @@ import {
   type BillingPeriodKey,
 } from "../utils/usageSpendHelpers";
 import type {
-  SpendByTaskType,
   TenantUsageItem,
   UsageSummaryResponse,
 } from "../types/usageSpend";
@@ -115,20 +114,39 @@ export function useUsageAndSpendData({
     const summary = summaryQuery.data;
     if (!summary) return undefined;
 
-    let next: UsageSummaryResponse = summary;
-    if (filterTaskType) {
-      const spendByModelTaskType = summary.spendByModelTaskType.filter(
-        (i) => i.modelTaskType.trim().toLowerCase() === filterTaskType.trim().toLowerCase(),
-      );
-      const totalSpend = spendByModelTaskType.reduce((s, i) => s + i.spend, 0);
-      next = {
+    // Recompute totalSpend + shares over a filtered row set.
+    const recompute = (
+      rows: typeof summary.spendByModelTaskType,
+    ): UsageSummaryResponse => {
+      const totalSpend = rows.reduce((s, i) => s + i.spend, 0);
+      return {
         ...summary,
         totalSpend,
-        spendByModelTaskType: spendByModelTaskType.map((i) => ({
+        spendByModelTaskType: rows.map((i) => ({
           ...i,
           percentage: totalSpend > 0 ? Number(((i.spend / totalSpend) * 100).toFixed(1)) : 0,
         })),
       };
+    };
+
+    // Filter to the frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES).
+    // Empty set (catalog still loading) ⇒ leave unfiltered.
+    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+    let next: UsageSummaryResponse =
+      enabled.size === 0
+        ? summary
+        : recompute(
+            summary.spendByModelTaskType.filter((i) =>
+              enabled.has(i.modelTaskType.trim().toLowerCase()),
+            ),
+          );
+
+    if (filterTaskType) {
+      next = recompute(
+        next.spendByModelTaskType.filter(
+          (i) => i.modelTaskType.trim().toLowerCase() === filterTaskType.trim().toLowerCase(),
+        ),
+      );
     }
 
     if (next.activeTenants == null || next.budgetExceededTenants == null) {
@@ -148,6 +166,7 @@ export function useUsageAndSpendData({
     scopedQuery.data,
     summaryQuery.data,
     filterTaskType,
+    taskTypeNames,
     tenantsQuery.data?.data,
     tenantsQuery.data?.total,
   ]);
@@ -177,25 +196,21 @@ export function useUsageAndSpendData({
     ],
   );
 
+  // Only the frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES via
+  // useInferenceTypes). Data-derived types are NOT added, so disabled types with
+  // historical spend don't appear in the dropdown.
   const taskTypeOptions = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
-    const add = (t: string) => {
+    for (const t of taskTypeNames) {
       const n = t.trim();
       if (n && !seen.has(n)) {
         seen.add(n);
         out.push(n);
       }
-    };
-    taskTypeNames.forEach(add);
-    (summaryQuery.data?.spendByModelTaskType ?? []).forEach((i: SpendByTaskType) =>
-      add(i.modelTaskType),
-    );
-    (scopedQuery.data?.tierBreakdown ?? []).forEach((tier) =>
-      (tier.taskTypes ?? []).forEach((t) => add(t.taskType)),
-    );
+    }
     return out;
-  }, [taskTypeNames, summaryQuery.data?.spendByModelTaskType, scopedQuery.data?.tierBreakdown]);
+  }, [taskTypeNames]);
 
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 
