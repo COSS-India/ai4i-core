@@ -300,7 +300,10 @@ class MeteringService:
             "promql": promql,
         }
 
-    async def service_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
+    async def service_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        service_filter: Optional[list[str]] = None,
+    ) -> dict:
         """Per-service stats: requests, native units, success %, failed, vs prev period.
 
         Fires all Prometheus queries in a single asyncio.gather:
@@ -338,6 +341,10 @@ class MeteringService:
         native_tasks: list[str] = []
         native_coros = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            # Only the task types the caller (frontend) requested — skips the
+            # native-unit query entirely for the rest (query-level reduction).
+            if service_filter is not None and task not in service_filter:
+                continue
             native_metric = cfg.get("native_metric")
             if not native_metric:
                 continue
@@ -380,6 +387,8 @@ class MeteringService:
         # ── Assemble service rows ────────────────────────────────────────────
         services = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if service_filter is not None and task not in service_filter:
+                continue
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
 
