@@ -401,35 +401,39 @@ class ServiceService:
                 instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
             )
 
-    async def update_service_endpoints(
-        self, items: List[ServiceEndpointUpdateItem], *, updated_by: Optional[str]
-    ) -> List[str]:
-        """Bulk-update only the `endpoint` field of multiple services in a
-        single transaction (the array counterpart of update_service's
-        endpoint-only PATCH). All items are validated before anything is
-        written, and the whole batch commits or rolls back together.
-        """
-        instances: List[Service] = []
-        for item in items:
-            instance = await self._services.get_by_service_id(item.serviceId)
-            if instance is None:
-                raise EntityNotFoundError(f"Service '{item.serviceId}'")
+    async def _validate_endpoint_update_item(
+        self, item: ServiceEndpointUpdateItem
+    ) -> Service:
+        """Look up the target service and live-validate its new endpoint.
+        Raises EntityNotFoundError / EndpointValidationFailedError."""
+        instance = await self._services.get_by_service_id(item.serviceId)
+        if instance is None:
+            raise EntityNotFoundError(f"Service '{item.serviceId}'")
 
-            model = await self._models.get_by_id_version(
-                instance.model_id, instance.model_version
+        model = await self._models.get_by_id_version(
+            instance.model_id, instance.model_version
+        )
+        if model is None:
+            raise EntityNotFoundError(
+                f"Model '{instance.model_id}' v{instance.model_version}"
             )
-            if model is None:
-                raise EntityNotFoundError(
-                    f"Model '{instance.model_id}' v{instance.model_version}"
-                )
-            await self._validate_endpoint_for_model(
-                endpoint=item.endpoint,
-                api_key=instance.api_key,
-                model_inference_endpoint=model.inference_endpoint or {},
-                task_type=(model.task or {}).get("type"),
-            )
-            instances.append(instance)
+        await self._validate_endpoint_for_model(
+            endpoint=item.endpoint,
+            api_key=instance.api_key,
+            model_inference_endpoint=model.inference_endpoint or {},
+            task_type=(model.task or {}).get("type"),
+        )
+        return instance
 
+    async def _commit_endpoint_updates(
+        self,
+        instances: List[Service],
+        items: List[ServiceEndpointUpdateItem],
+        *,
+        updated_by: Optional[str],
+    ) -> None:
+        """Apply {endpoint, updated_by} to each instance and commit as one
+        transaction, rolling back the whole batch on any failure."""
         try:
             for instance, item in zip(instances, items):
                 update_data: Dict[str, Any] = {"endpoint": item.endpoint}
@@ -442,18 +446,33 @@ class ServiceService:
             logger.exception("DB error bulk-updating service endpoints")
             raise
 
-        for instance in instances:
-            self._cache.invalidate_service(instance.service_id)
-            model = await self._models.get_by_id_version(
-                instance.model_id, instance.model_version
-            )
-            if model is not None:
-                tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
-                tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
-                self._cache.set_service(
-                    instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
-                )
+    async def _refresh_endpoint_cache(self, instance: Service) -> None:
+        self._cache.invalidate_service(instance.service_id)
+        model = await self._models.get_by_id_version(
+            instance.model_id, instance.model_version
+        )
+        if model is None:
+            return
+        tier_name_map = await self._services.get_tier_names_by_ids(instance.tier_ids or [])
+        tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
+        self._cache.set_service(
+            instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
+        )
 
+    async def update_service_endpoints(
+        self, items: List[ServiceEndpointUpdateItem], *, updated_by: Optional[str]
+    ) -> List[str]:
+        """Bulk-update only the `endpoint` field of multiple services in a
+        single transaction (the array counterpart of update_service's
+        endpoint-only PATCH). All items are validated before anything is
+        written, and the whole batch commits or rolls back together.
+        """
+        instances = [
+            await self._validate_endpoint_update_item(item) for item in items
+        ]
+        await self._commit_endpoint_updates(instances, items, updated_by=updated_by)
+        for instance in instances:
+            await self._refresh_endpoint_cache(instance)
         return [instance.service_id for instance in instances]
 
     async def delete_service(self, id_str: str) -> None:

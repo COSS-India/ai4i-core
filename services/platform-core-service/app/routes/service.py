@@ -4,7 +4,7 @@ Service management API endpoints.
 
 import logging
 import re
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
@@ -200,7 +200,7 @@ async def create_service(
 @router.patch("")
 async def update_service(
     request: Request,
-    payload: Union[ServiceUpdateRequest, ServiceBulkEndpointUpdateRequest],
+    payload: ServiceUpdateRequest | ServiceBulkEndpointUpdateRequest,
     svc: ServiceService = Depends(get_service_service),
 ):
     """Update an existing service, or update multiple services' endpoints in
