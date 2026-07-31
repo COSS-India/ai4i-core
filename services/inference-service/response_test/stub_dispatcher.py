@@ -238,7 +238,15 @@ def get_llm_stub_response(payload):
     if not settings.TRITON_STUB_MODE:
         return None
     idx = _classify(len(_extract_chat_prompt(payload)))
-    return copy.deepcopy(_LLM_STUBS[idx])
+    body = copy.deepcopy(_LLM_STUBS[idx])
+    # Echo back the model we were handed, the way vLLM does. By the time
+    # forward() runs, proxy_traced has already replaced the client's service ID
+    # with the real upstream model name from adapter_config, and the caller
+    # reads body["model"] straight onto the model span and the Prometheus
+    # label. Returning the fixture's literal "stub" would mislabel both.
+    if isinstance(payload, dict) and payload.get("model"):
+        body["model"] = payload["model"]
+    return body
 
 
 # Size-bucketed OpenAI speech-to-text stubs for the /audio/* multipart routes.

@@ -59,6 +59,21 @@ class OpenAIProxyService:
         Body is parsed as JSON when possible, otherwise returned as
         ``{"raw": <text>}``.
         """
+        # Load-test stub mode: short-circuit the upstream POST only. Returns
+        # None unless TRITON_STUB_MODE is on, so this is inert in normal
+        # operation.
+        #
+        # This is the innermost seam, mirroring
+        # BaseTaskService._call_triton_inference. It must stay here rather than
+        # at the top of proxy_traced: the model and ai-inference spans are
+        # opened above this call, and the PPU Kafka consumer bills off the
+        # ai-inference span. Short-circuiting any higher emits neither span and
+        # silently drops billing for every stubbed LLM request.
+        from response_test.stub_dispatcher import get_llm_stub_response
+        stub = get_llm_stub_response(payload)
+        if stub is not None:
+            return 200, stub
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 upstream_url,
@@ -89,16 +104,6 @@ class OpenAIProxyService:
           4. Inject the real upstream model name into payload for vLLM
           5. Emit model + ai-inference spans wrapping the actual forward
         """
-        # Load-test stub mode: short-circuit before MMS resolution and the
-        # upstream forward. Returns None unless TRITON_STUB_MODE is on, so this
-        # is inert in normal operation. The stub carries a real `usage` block
-        # and `model` field, so the caller's set_billed_state/set_metric_labels
-        # keep working unchanged.
-        from response_test.stub_dispatcher import get_llm_stub_response
-        stub = get_llm_stub_response(payload)
-        if stub is not None:
-            return 200, stub
-
         # LLM follows the OpenAI spec: the client sends the model name in
         # `model`, which we treat as the service ID for MMS resolution and PPU
         # billing. The real upstream model is injected from adapter_config in
@@ -200,16 +205,6 @@ class OpenAIProxyService:
         data = dict(data or {})
         service_id = data.get("model", "") or ""
 
-        # Load-test stub mode: short-circuit before MMS resolution and the
-        # upstream forward, mirroring proxy_traced. Returns None unless
-        # TRITON_STUB_MODE is on, so this is inert in normal operation. The
-        # body type tracks response_format, which is what _proxy_audio_upload
-        # keys JSONResponse vs PlainTextResponse off.
-        from response_test.stub_dispatcher import get_audio_stub_response
-        stub = get_audio_stub_response(files, data)
-        if stub is not None:
-            return 200, stub
-
         # Resolve service from MMS (result is TTL-cached).
         try:
             url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
@@ -243,6 +238,17 @@ class OpenAIProxyService:
             model_attrs["model_version"] = "unknown"
             model_attrs.update(get_context_attributes())
             model_attrs["service_id"] = service_id
+
+        # Load-test stub mode: short-circuit the upstream POST only. Returns
+        # None unless TRITON_STUB_MODE is on, so this is inert in normal
+        # operation. Placed after the model span above, not at the top of this
+        # method, so the span is still emitted for stubbed audio requests.
+        # The body type tracks response_format, which is what
+        # _proxy_audio_upload keys JSONResponse vs PlainTextResponse off.
+        from response_test.stub_dispatcher import get_audio_stub_response
+        stub = get_audio_stub_response(files, data)
+        if stub is not None:
+            return 200, stub
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
         try:
