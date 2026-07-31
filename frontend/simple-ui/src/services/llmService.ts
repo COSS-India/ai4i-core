@@ -1,10 +1,12 @@
 // LLM service API client with typed methods
 
-import { LLM_SUPPORTED_LANGUAGES } from '../config/constants';
+import { LLM_SUPPORTED_LANGUAGES, UI_ERROR_MESSAGES } from '../config/constants';
 import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
 import { listServices } from './modelManagementService';
+import { listTryItServices, trackTryItRequest } from './tryItService';
+import { getAnonymousSessionId, isAnonymousUser } from '../utils/anonymousSession';
 
 /** Model name that needs agrinet-specific chat/completions fields. */
 export const AGRINET_MODEL = 'agrinet-model';
@@ -37,103 +39,229 @@ const buildTranslationPrompt = (
   return `Translate from ${source} to ${target}. Output only the translation. Text: ${text}`;
 };
 
+const getTryItHeaders = () => ({
+  'X-Anonymous-Session-Id': getAnonymousSessionId(),
+  'X-Try-It': 'true',
+});
+
+function mapServiceToLLMDetails(service: Record<string, any>): LLMServiceDetailsResponse {
+  const supportedLanguages: string[] = [];
+  if (Array.isArray(service.languages)) {
+    service.languages.forEach((lang: unknown) => {
+      if (typeof lang === 'string') {
+        supportedLanguages.push(lang);
+      } else if (lang && typeof lang === 'object') {
+        const langObj = lang as {
+          code?: string;
+          language?: string;
+          sourceLanguage?: string;
+          targetLanguage?: string;
+        };
+        const langCode =
+          langObj.code ||
+          langObj.language ||
+          langObj.sourceLanguage ||
+          langObj.targetLanguage;
+        if (langCode) supportedLanguages.push(langCode);
+      }
+    });
+  }
+
+  let endpoint = service.endpoint || '';
+  if (endpoint) {
+    endpoint = endpoint.replace(/^https?:\/\//, '');
+  }
+
+  const serviceId = service.serviceId || service.service_id || '';
+
+  return {
+    service_id: serviceId,
+    model_id: service.modelId || service.model_id || '',
+    model_version: service.modelVersion || service.model_version || '',
+    name: service.name || serviceId,
+    serviceDescription:
+      service.serviceDescription ||
+      service.description ||
+      'No description available',
+    endpoint,
+    supported_languages:
+      supportedLanguages.length > 0
+        ? Array.from(new Set(supportedLanguages))
+        : LLM_SUPPORTED_LANGUAGES.map((l) => l.code),
+  };
+}
+
+function dedupeByServiceId(
+  services: LLMServiceDetailsResponse[]
+): LLMServiceDetailsResponse[] {
+  return services.filter(
+    (service, index, self) =>
+      service.service_id &&
+      self.findIndex((s) => s.service_id === service.service_id) === index
+  );
+}
+
+function buildChatPayload(
+  serviceId: string,
+  content: string,
+  modelName?: string
+): Record<string, unknown> {
+  const isAgrinet = modelName === AGRINET_MODEL;
+  if (isAgrinet) {
+    return {
+      model: serviceId,
+      messages: [{ role: 'user', content }],
+      max_tokens: 200,
+      chat_template_kwargs: { enable_thinking: false },
+    };
+  }
+  return {
+    model: serviceId,
+    messages: [{ role: 'user', content }],
+    stream: false,
+  };
+}
+
+function parseChatCompletionResponse(
+  responseData: { choices?: Array<{ message?: { content?: string } }> },
+  sourceText: string,
+  responseTime: number
+): { data: LLMInferenceResponse; responseTime: number } {
+  const translated = responseData.choices?.[0]?.message?.content?.trim() ?? '';
+  return {
+    data: { output: [{ source: sourceText, target: translated }] },
+    responseTime,
+  };
+}
+
 /**
- * List all available LLM services from
- * GET /api/v1/services?task_types=llm&is_published=true
+ * AI4IDS-2688: Anonymous try-it list — published LLM services (FE limits to one).
+ * GET /services/try-it-service-list?task_types=llm
  */
-export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
+async function listAnonymousLLMServices(): Promise<LLMServiceDetailsResponse[]> {
+  try {
+    const raw = await listTryItServices('llm');
+    return dedupeByServiceId(raw.map((s) => mapServiceToLLMDetails(s)));
+  } catch (error) {
+    console.error('Failed to fetch try-it LLM services:', error);
+    throw new Error('Failed to fetch LLM services for try-it');
+  }
+}
+
+async function listAuthenticatedLLMServices(): Promise<LLMServiceDetailsResponse[]> {
   try {
     const services = await listServices('llm', true);
-
-    const transformed = services.map((service) => {
-      const supportedLanguages: string[] = [];
-      if (Array.isArray(service.languages)) {
-        service.languages.forEach((lang: unknown) => {
-          if (typeof lang === 'string') {
-            supportedLanguages.push(lang);
-          } else if (lang && typeof lang === 'object') {
-            const langObj = lang as {
-              code?: string;
-              language?: string;
-              sourceLanguage?: string;
-              targetLanguage?: string;
-            };
-            const langCode =
-              langObj.code ||
-              langObj.language ||
-              langObj.sourceLanguage ||
-              langObj.targetLanguage;
-            if (langCode) supportedLanguages.push(langCode);
-          }
-        });
-      }
-
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace(/^https?:\/\//, '');
-      }
-
-      const serviceId = service.serviceId || service.service_id || '';
-
-      return {
-        service_id: serviceId,
-        model_id: service.modelId || service.model_id || '',
-        model_version: service.modelVersion || service.model_version || '',
-        name: service.name || serviceId,
-        serviceDescription:
-          service.serviceDescription ||
-          service.description ||
-          'No description available',
-        endpoint,
-        supported_languages:
-          supportedLanguages.length > 0
-            ? Array.from(new Set(supportedLanguages))
-            : LLM_SUPPORTED_LANGUAGES.map((l) => l.code),
-      };
-    });
-
-    return transformed.filter(
-      (service, index, self) =>
-        service.service_id &&
-        self.findIndex((s) => s.service_id === service.service_id) === index
-    );
+    return dedupeByServiceId(services.map((s) => mapServiceToLLMDetails(s)));
   } catch (error) {
     console.error('Failed to fetch LLM services:', error);
     throw new Error('Failed to fetch LLM services');
   }
+}
+
+/**
+ * List available LLM services from the registry.
+ * Anonymous: try-it service list (AI4IDS-2688).
+ * Authenticated: published LLM services.
+ */
+export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
+  if (isAnonymousUser()) {
+    return listAnonymousLLMServices();
+  }
+  return listAuthenticatedLLMServices();
 };
 
 /**
- * Translate via POST /api/v1/chat/completions (OpenAI-compatible).
- * Sends the registry `serviceId` as the `model` field (not the model name).
+ * Anonymous LLM try-it via POST /api/v1/llm/try-it (OpenAI-compatible body).
+ */
+export const performTryItLLMChat = async (
+  text: string,
+  config: LLMInferenceRequest['config']
+): Promise<{ data: LLMInferenceResponse; responseTime: number }> => {
+  const serviceId = config.serviceId?.trim();
+  if (!serviceId) {
+    throw new Error('Please select an LLM service.');
+  }
+
+  const content = buildTranslationPrompt(
+    text,
+    config.inputLanguage ?? '',
+    config.outputLanguage ?? ''
+  );
+  const modelName =
+    typeof config.modelName === 'string' ? config.modelName : undefined;
+  const payload = buildChatPayload(serviceId, content, modelName);
+
+  try {
+    const response = await apiService.post(
+      apiEndpoints.llm.tryIt,
+      payload,
+      {
+        headers: getTryItHeaders(),
+        responseSchema: chatCompletionResponseSchema,
+        suppressErrorAlert: true,
+      }
+    );
+
+    trackTryItRequest();
+
+    const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
+    return parseChatCompletionResponse(response.data, text, responseTime);
+  } catch (error: any) {
+    console.error('Try-It LLM chat error:', error);
+
+    if (error?.response?.status === 403 || error?.response?.status === 429) {
+      const rawMessage: string =
+        (typeof error?.response?.data?.detail === 'string' ? error?.response?.data?.detail : '') ||
+        error?.response?.data?.detail?.message ||
+        error?.response?.data?.error_msg ||
+        error?.response?.data?.message ||
+        '';
+
+      if (
+        rawMessage.toLowerCase().includes('login') ||
+        rawMessage.toLowerCase().includes('rate') ||
+        error?.response?.status === 429
+      ) {
+        throw new Error(UI_ERROR_MESSAGES.TRY_IT_RATE_LIMIT);
+      }
+
+      throw new Error(UI_ERROR_MESSAGES.TRY_IT_LOGIN_REQUIRED);
+    }
+
+    if (error?.message) {
+      throw error;
+    }
+    throw new Error(UI_ERROR_MESSAGES.TRY_IT_TRANSLATION_FAILED);
+  }
+};
+
+/**
+ * Translate via chat completions.
+ * Anonymous → POST /api/v1/llm/try-it
+ * Authenticated → POST /api/v1/chat/completions
  */
 export const performLLMChat = async (
   text: string,
   config: LLMInferenceRequest['config']
 ): Promise<{ data: LLMInferenceResponse; responseTime: number }> => {
+  if (isAnonymousUser()) {
+    return performTryItLLMChat(text, config);
+  }
+
   try {
     const serviceId = config.serviceId?.trim();
     if (!serviceId) {
       throw new Error('Please select an LLM service.');
     }
 
-    const inputLanguage = config.inputLanguage ?? '';
-    const outputLanguage = config.outputLanguage ?? '';
-    const content = buildTranslationPrompt(text, inputLanguage, outputLanguage);
-
-    const isAgrinet = config.modelName === AGRINET_MODEL;
-    const payload = isAgrinet
-      ? {
-          model: serviceId,
-          messages: [{ role: 'user', content }],
-          max_tokens: 200,
-          chat_template_kwargs: { enable_thinking: false },
-        }
-      : {
-          model: serviceId,
-          messages: [{ role: 'user', content }],
-          stream: false,
-        };
+    const content = buildTranslationPrompt(
+      text,
+      config.inputLanguage ?? '',
+      config.outputLanguage ?? ''
+    );
+    const modelName =
+    typeof config.modelName === 'string' ? config.modelName : undefined;
+  const payload = buildChatPayload(serviceId, content, modelName);
 
     const response = await apiService.post(
       apiEndpoints.llm.chat,
@@ -142,14 +270,7 @@ export const performLLMChat = async (
     );
 
     const responseTime = Number.parseInt(response.headers['request-duration'] || '0', 10);
-    const translated =
-      response.data.choices?.[0]?.message?.content?.trim() ?? '';
-
-    const data: LLMInferenceResponse = {
-      output: [{ source: text, target: translated }],
-    };
-
-    return { data, responseTime };
+    return parseChatCompletionResponse(response.data, text, responseTime);
   } catch (error) {
     console.error('LLM chat error:', error);
     throw error;

@@ -152,6 +152,9 @@ export const MAX_TEXT_LENGTH = 512;
 /** Guest users may make this many inference requests per service per hour. */
 export const GUEST_REQUESTS_PER_HOUR_PER_SERVICE = 10;
 
+/** Sidebar section label (was "Services"). */
+export const MODEL_TASK_TYPE_NAV_LABEL = "Model task type";
+
 // Minimum recording duration in seconds
 export const MIN_RECORDING_DURATION = 1;
 

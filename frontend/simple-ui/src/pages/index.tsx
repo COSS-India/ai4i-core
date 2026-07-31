@@ -17,11 +17,10 @@ import {
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import React from "react";
+import React, { useMemo } from "react";
 import { showToast } from "../utils/toast";
 import { FaMicrophone } from "react-icons/fa";
 import {
-  IoGitMergeOutline,
   IoLanguageOutline,
   IoSparklesOutline,
   IoVolumeHighOutline,
@@ -147,6 +146,9 @@ const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 40
   return shade === 50 ? "#F7FAFC" : shade === 300 ? "#CBD5E1" : shade === 400 ? "#A0AEC0" : "#1A202C";
 };
 
+/** AI4IDS-2688: anonymous users may try LLM without signing in. */
+const ANONYMOUS_ALLOWED_SERVICE_IDS = new Set<ServiceId>(["llm"]);
+
 const HomePage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
@@ -155,41 +157,54 @@ const HomePage: React.FC = () => {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
-  const handleServiceClick = async (path: string, serviceName: string) => {
+  const handleServiceClick = async (path: string) => {
     if (isLoading) return;
-
-    // Navigate to the service (no auth check needed here, handled by button logic)
     router.push(path);
   };
 
-  const services = [
-    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green" },
-    { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange" },
-    { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue" },
-    { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink" },
-    { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple" },
-    { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo" },
-    { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan" },
-    { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal" },
-    { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red" },
-    { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow" },
-    { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray" },
-    { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose" },
-  ]
-    .filter((service) => {
-      // Deployment gate (ENABLED_TASK_TYPES) — applies to every user, admins included.
-      if (inferenceTypesLoading) return false;
-      if (!enabledServiceIds.has(service.id)) return false;
-      // Guest allowlist — guests only.
-      if (!isGuest) return true;
-      if (guestServicesLoading) return false;
-      return allowedServiceIds?.has(service.id) ?? false;
-    })
-    .map((s) => ({
-      ...s,
-      title: getServiceTitle(s.id),
-      description: getServiceDescription(s.id),
-    }));
+  const services = useMemo(
+    () =>
+      [
+        { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green" },
+        { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange" },
+        { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue" },
+        { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink" },
+        { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple" },
+        { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo" },
+        { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan" },
+        { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal" },
+        { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red" },
+        { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow" },
+        { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray" },
+        { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose" },
+      ]
+        .filter((service) => {
+          // Guest allowlist — guests only.
+          if (isGuest) {
+            if (guestServicesLoading) return false;
+            if (!(allowedServiceIds?.has(service.id) ?? false)) return false;
+          }
+
+          // Deployment gate (ENABLED_TASK_TYPES). Env allowlist is available
+          // immediately via useInferenceTypes even before the catalog loads /
+          // for anonymous users who cannot call inference-types.
+          if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
+          if (!enabledServiceIds.has(service.id)) return false;
+          return true;
+        })
+        .map((s) => ({
+          ...s,
+          title: getServiceTitle(s.id),
+          description: getServiceDescription(s.id),
+        })),
+    [
+      allowedServiceIds,
+      enabledServiceIds,
+      guestServicesLoading,
+      inferenceTypesLoading,
+      isGuest,
+    ],
+  );
 
 
   return (
@@ -198,7 +213,7 @@ const HomePage: React.FC = () => {
         <title>AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Speech to Speech microservices with a modern web interface"
+          content="Test LLM models with a modern web interface"
         />
       </Head>
 
@@ -210,11 +225,13 @@ const HomePage: React.FC = () => {
               AI Accessibility Studio
             </Heading>
             <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto" userSelect="none" cursor="default">
-              Test and explore NLP and LLM models
+              {enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
+                ? "Test and explore Large Language Models"
+                : "Test and explore NLP and LLM models"}
             </Text>
           </Box>
 
-          {/* Anonymous User Info Alert */}
+          {/* Anonymous User Info Alert — AI4IDS-2688 */}
           {!isLoading && !isAuthenticated && (
             <Alert
               status="info"
@@ -226,8 +243,9 @@ const HomePage: React.FC = () => {
             >
               <AlertIcon />
               <AlertDescription fontSize="sm">
-                Try <strong>Neural Machine Translation</strong> without signing in! Please login to access other services{" "}
-
+                Try <strong>Large Language Model (LLM)</strong> without signing in!
+                Anonymous access includes one available LLM service with rate limits.
+                Sign in or continue as Guest for broader access.
               </AlertDescription>
             </Alert>
           )}
@@ -242,8 +260,10 @@ const HomePage: React.FC = () => {
             justifyItems="center"
           >
             {services.map((service) => {
-              // Check if service is disabled for anonymous users
-              const isDisabledForAnonymous = !isAuthenticated && service.id !== "nmt" && !isLoading;
+              const isDisabledForAnonymous =
+                !isAuthenticated &&
+                !ANONYMOUS_ALLOWED_SERVICE_IDS.has(service.id) &&
+                !isLoading;
 
               return (
               <Card
@@ -364,7 +384,6 @@ const HomePage: React.FC = () => {
                     onClick={(e) => {
                       e.preventDefault();
                       if (isDisabledForAnonymous) {
-                        // Show toast and redirect to signup
                         showToast({
                           type: "warning",
                           message: "Please login to access other services.",
@@ -376,7 +395,7 @@ const HomePage: React.FC = () => {
                           );
                         }, 500);
                       } else {
-                        handleServiceClick(service.path, service.title);
+                        handleServiceClick(service.path);
                       }
                     }}
                     transition="all 0.2s"
