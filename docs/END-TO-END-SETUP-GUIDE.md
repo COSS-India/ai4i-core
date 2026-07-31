@@ -523,7 +523,7 @@ Skip this for any service whose `TRITON_ENDPOINT_*` var you already set in [B1](
 Look up the `serviceId` first, then patch its endpoint — the update call is keyed by `serviceId`, not by name. `PATCH /api/v1/services` takes a `"services"` array — pass one entry to update a single service, or several to update them all in one call.
 
 ```bash
-curl -s "http://localhost:8095/api/v1/services?task_type=asr" | python3 -m json.tool
+curl -s "http://localhost:8095/api/v1/services" | python3 -m json.tool
 ```
 
 Grab the `serviceId` of the service(s) you want from the response, then:

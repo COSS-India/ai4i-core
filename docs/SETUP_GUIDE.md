@@ -349,7 +349,7 @@ The update call is keyed by `serviceId`, so look it up first, then patch the end
 **Step 1 — `GET` the service(s)' `serviceId`:**
 
 ```bash
-curl -s "http://localhost:8095/api/v1/services?task_type=nmt" | python3 -m json.tool
+curl -s "http://localhost:8095/api/v1/services" | python3 -m json.tool
 ```
 
 Note the `serviceId` field(s) for the service(s) you want.
