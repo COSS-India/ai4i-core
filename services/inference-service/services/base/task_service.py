@@ -401,6 +401,15 @@ class BaseTaskService:
         Raises:
             RuntimeError: If Triton call fails
         """
+        # Load-test stub mode: short-circuit before the HTTP call. Returns None
+        # unless TRITON_STUB_MODE is on, so this is inert in normal operation.
+        # Placed here rather than higher up so everything around the model call
+        # (payload build, token counts, spans, billing) still runs on the stub.
+        from response_test.stub_dispatcher import get_stub_response
+        stub = get_stub_response(self.task_name, triton_inputs)
+        if stub is not None:
+            return stub
+
         from config import settings
 
         try:
