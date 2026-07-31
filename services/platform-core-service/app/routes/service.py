@@ -84,25 +84,29 @@ def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in item.items() if k in _NON_ADMIN_SERVICE_FIELDS}
 
 
+_TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
+
+
 @router.get(
     "/try-it-service-list",
     summary="List Try-It Services",
 )
 async def list_try_it_services(
-    task_type: str = Query(
+    task_types: str = Query(
         ...,
-        description="Task type. Currently supports 'nmt'.",
+        description="Comma-separated task types",
     ),
     svc: ServiceService = Depends(get_service_service),
 ):
     """List published services available for public trial."""
-    if not task_type or task_type.lower() != TaskTypeEnum.nmt.value:
+    _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in _TRY_IT_SUPPORTED_TASK_TYPES]
+    if not _task_types:
         raise ValidationError(
             message="Try-it is not available for this task type.",
             code="TRY_IT_UNSUPPORTED",
         )
     items, total = await svc.list_services(
-        task_types=[TaskTypeEnum.nmt.value], is_published=True
+        task_types=_task_types, is_published=True
     )
     # This endpoint has no auth at all (see api_permissions.json: try-it is
     # public) — always filtered, never the admin/full view.
