@@ -26,16 +26,6 @@ router = APIRouter(
 )
 
 
-def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
-    if not task_type or task_type.lower() == "none":
-        return None
-    try:
-        return TaskTypeEnum(task_type).value
-    except ValueError:
-        valid = [e.value for e in TaskTypeEnum]
-        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
-
-
 # ── RBAC-aware response filtering (AI4IDS-1816) ──────────────────────────────
 #
 # service.read (permission id 51) is deliberately granted to every role,
@@ -124,11 +114,9 @@ async def list_try_it_services(
 async def list_services(
     request: Request,
     response: Response,
-    task_type: Optional[str] = Query(
-        None, description="Filter by a single task type."
-    ),
     task_types: Optional[str] = Query(
-        None, description="Comma-separated task types to include (frontend allowlist)."
+        None,
+        description="Comma-separated task types to include. A single value is a one-element list.",
     ),
     is_published: Optional[bool] = Query(
         None,
@@ -151,18 +139,15 @@ async def list_services(
     svc: ServiceService = Depends(get_service_service),
 ):
     """List services with optional filters and offset/limit pagination."""
-    # Merge the single task_type= (backward-compat, strictly validated) and the
-    # task_types= allowlist into one list — the service/repo take a single
-    # task_types filter. The allowlist is parsed leniently: names outside
-    # TaskTypeEnum (e.g. catalog entries with no registered models) are skipped
-    # rather than failing the whole request — they can't match any row anyway.
+    # ONE task-type filter param: a drill-down is just a one-element list, so a
+    # separate single param would only recreate union/precedence ambiguity.
+    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # registered models) are skipped rather than failing the whole request —
+    # they can't match any row anyway.
     _task_types = []
     if task_types:
         valid = {m.value for m in TaskTypeEnum}
         _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
-    _single = _resolve_task_type(task_type)
-    if _single:
-        _task_types.insert(0, _single)
     items, total = await svc.list_services(
         task_types=_task_types or None,
         is_published=is_published,
