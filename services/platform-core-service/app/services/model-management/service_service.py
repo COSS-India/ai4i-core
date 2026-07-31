@@ -208,8 +208,6 @@ class ServiceService:
 
         # 6. Persist
         service_id = payload.serviceId
-        is_published = bool(payload.isPublished)
-        now = datetime.now(timezone.utc) if is_published else None
         unit_rate = (
             payload.costPerUnit / payload.unitSize
             if payload.costPerUnit is not None and payload.unitSize is not None
@@ -232,8 +230,6 @@ class ServiceService:
             api_key=payload.api_key,
             health_status=jsonable_encoder(payload.healthStatus) if payload.healthStatus else {},
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
-            is_published=is_published,
-            published_at=now,
             task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
