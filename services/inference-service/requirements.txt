@@ -4,12 +4,6 @@
 # To upgrade: bump the pin, rebuild, run the test suite.
 
 # ── Shared platform library (consolidated) ──
-# 1.0.13, not 1.0.9: routes/inference.py and orchestrator/orchestrator.py import
-# set_billed_state and set_metric_labels, which were added to libs/ai4i_core in
-# AI4IDS-2532 but are absent from the published 1.0.9, 1.0.10 and 1.0.11. A
-# container built against 1.0.9 crashloops on ImportError at startup. 1.0.13 is
-# byte-identical to this repo's libs/ai4i_core (only the unpackaged HOWTO.md
-# differs), so it matches the source the service is developed and tested against.
 ai4i-core==1.0.13
 
 # FastAPI and ASGI server
