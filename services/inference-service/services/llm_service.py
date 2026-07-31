@@ -89,6 +89,16 @@ class OpenAIProxyService:
           4. Inject the real upstream model name into payload for vLLM
           5. Emit model + ai-inference spans wrapping the actual forward
         """
+        # Load-test stub mode: short-circuit before MMS resolution and the
+        # upstream forward. Returns None unless TRITON_STUB_MODE is on, so this
+        # is inert in normal operation. The stub carries a real `usage` block
+        # and `model` field, so the caller's set_billed_state/set_metric_labels
+        # keep working unchanged.
+        from response_test.stub_dispatcher import get_llm_stub_response
+        stub = get_llm_stub_response(payload)
+        if stub is not None:
+            return 200, stub
+
         # LLM follows the OpenAI spec: the client sends the model name in
         # `model`, which we treat as the service ID for MMS resolution and PPU
         # billing. The real upstream model is injected from adapter_config in
