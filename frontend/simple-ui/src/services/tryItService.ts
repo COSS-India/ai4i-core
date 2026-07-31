@@ -23,12 +23,12 @@ export interface TryItRequest {
 }
 
 /**
- * Fetch services for try-it (anonymous) users by task type.
- * Uses the centralized try-it service-list endpoint with no auth.
+ * Fetch services for try-it (anonymous) users by task type(s).
+ * Uses GET /services/try-it-service-list?task_types=...
  */
 export const listTryItServices = async (taskType: string): Promise<Service[]> => {
   const response = await apiService.get(apiEndpoints.platform.services.tryItList, {
-    params: { task_type: taskType },
+    params: { task_types: taskType },
     headers: getTryItHeaders(),
     responseSchema: tryItServiceListSchema,
   });

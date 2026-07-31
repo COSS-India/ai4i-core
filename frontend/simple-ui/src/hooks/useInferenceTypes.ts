@@ -38,21 +38,28 @@ export function useInferenceTypes() {
   // re-firing any effect that depends on them (e.g. the services-registry fetch).
   const inferenceTypes: InferenceTypeItem[] = query.data ?? NO_TYPES;
 
-  // Units come from the API catalog (unfiltered on the backend).
-  const unitByTaskType: Record<string, string> = Object.fromEntries(
-    inferenceTypes.map((t) => [t.name, t.unit]),
-  );
-
   // Deployment allowlist from runtime server config (ENABLED_TASK_TYPES /
-  // ConfigMap), intersected with the catalog. Unset ⇒ whole catalog.
+  // ConfigMap), intersected with the catalog. Unset/empty ⇒ whole catalog.
+  // While the catalog is still loading, surface the env allowlist so metering
+  // / Service Management do not briefly query an unfiltered set.
   const enabledTaskTypesRaw = getRuntimeConfig().enabledTaskTypes;
   const taskTypeNames: string[] = useMemo(() => {
     const envEnabled = getEnabledTaskTypes();
     const allNames = inferenceTypes.map((t) => t.name);
-    return envEnabled.length > 0
-      ? allNames.filter((n) => envEnabled.includes(n.trim().toLowerCase()))
-      : allNames;
+    if (envEnabled.length === 0) return allNames;
+    if (allNames.length === 0) return envEnabled;
+    return allNames.filter((n) => envEnabled.includes(n.trim().toLowerCase()));
   }, [inferenceTypes, enabledTaskTypesRaw]);
+
+  // Units only for enabled task types (from /inference-types catalog).
+  const unitByTaskType: Record<string, string> = useMemo(() => {
+    const enabled = new Set(taskTypeNames.map((n) => n.trim().toLowerCase()));
+    return Object.fromEntries(
+      inferenceTypes
+        .filter((t) => enabled.has(t.name.trim().toLowerCase()))
+        .map((t) => [t.name, t.unit]),
+    );
+  }, [inferenceTypes, taskTypeNames]);
 
   // Enabled ServiceIds — the single source for gating the UI catalog
   // (home cards, sidebar nav, logs filter, tier/model selectors).

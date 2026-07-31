@@ -85,16 +85,19 @@ type EndpointContext = {
   requiresJWT: boolean;
 };
 
-/** Paths that must work without a JWT (anonymous NMT try-it). */
+/** Paths that must work without a JWT (anonymous try-it). */
 const isTryItPublicPath = (pathNoQuery: string): boolean => {
   const tryItList = apiEndpoints.platform.services.tryItList.toLowerCase();
-  const tryItExecute = apiEndpoints.platform.tryIt.execute.toLowerCase();
+  const nmtTryIt = (apiEndpoints.platform.tryIt.nmt ?? apiEndpoints.platform.tryIt.execute).toLowerCase();
+  const llmTryIt = (apiEndpoints.llm.tryIt ?? apiEndpoints.platform.tryIt.llm).toLowerCase();
   return (
     pathNoQuery === tryItList ||
     pathNoQuery.endsWith("/try-it-service-list") ||
     pathNoQuery.includes("/model-management/services/try-it-service-list") ||
-    pathNoQuery === tryItExecute ||
-    pathNoQuery.startsWith(`${tryItExecute}/`)
+    pathNoQuery === nmtTryIt ||
+    pathNoQuery.startsWith(`${nmtTryIt}/`) ||
+    pathNoQuery === llmTryIt ||
+    pathNoQuery.startsWith(`${llmTryIt}/`)
   );
 };
 

@@ -155,6 +155,7 @@ export const GUEST_REQUESTS_PER_HOUR_PER_SERVICE = 10;
 /**
  * AI4IDS-2584 / AI4IDS-2688: Home Page + Navigation show only the LLM model task type.
  * Set to `false` to restore the full NLP/Pipeline catalog in Home/Nav.
+ * Service Management / Usage Dashboard allowlists come from ENABLED_TASK_TYPES.
  */
 export const LLM_ONLY_HOME_AND_NAV = true;
 

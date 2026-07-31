@@ -91,7 +91,10 @@ export const apiEndpoints = {
       tryItList: `${API_V1}/services/try-it-service-list`,
     },
     tryIt: {
+      /** @deprecated Prefer nmt.tryIt / llm.tryIt — kept for NMT callers */
       execute: `${API_V1}/nmt/try-it`,
+      nmt: `${API_V1}/nmt/try-it`,
+      llm: `${API_V1}/llm/try-it`,
     },
     inferenceTypes: `${API_V1}/inference-types`,
   },
@@ -149,6 +152,8 @@ export const apiEndpoints = {
   llm: {
     chat: `${API_V1}/chat/completions`,
     inference: `${API_V1}/llm/inference`,
+    /** Anonymous try-it (OpenAI-compatible body; no JWT). */
+    tryIt: `${API_V1}/llm/try-it`,
     models: `${API_V1}/llm/models`,
     health: `${API_V1}/llm/health`,
   },
