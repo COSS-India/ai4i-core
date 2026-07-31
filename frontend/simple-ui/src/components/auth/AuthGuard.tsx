@@ -12,9 +12,9 @@ interface AuthGuardProps {
 }
 
 // Routes that require authentication
-// Note: /nmt is excluded to allow anonymous "try-it" access
+// Note: /llm is excluded to allow anonymous "try-it" access (AI4IDS-2688)
 const protectedRoutes = new Set([
-  '/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management',
+  '/asr', '/tts', '/pipeline', '/pipeline-builder', '/model-management',
   '/services-management', '/tenant-management', '/api-key-management', '/profile',
   '/logs', '/usage-dashboard', '/traces',
   // AI4IDS-2604 / AI4IDS-2605: restore '/alerts-management', '/pii-management' when re-enabling UI
@@ -29,7 +29,8 @@ const adminOnlyRoutes = new Set<string>([/* '/alerts-management' */]);
 const usageDashboardRoutes = new Set(['/usage-dashboard']);
 
 // Routes that allow anonymous access with limited functionality
-const tryItRoutes = new Set(['/nmt']);
+// AI4IDS-2688: LLM try-it for anonymous users (replaces NMT as primary try-it surface)
+const tryItRoutes = new Set(['/llm', '/nmt']);
 
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const router = useRouter();

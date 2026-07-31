@@ -23,17 +23,24 @@ export interface TryItRequest {
 }
 
 /**
- * Fetch NMT services for try-it (anonymous) users.
+ * Fetch services for try-it (anonymous) users by task type.
  * Uses the centralized try-it service-list endpoint with no auth.
- * @returns Promise with raw list of services from the API
  */
-export const listTryItNMTServices = async (): Promise<Service[]> => {
+export const listTryItServices = async (taskType: string): Promise<Service[]> => {
   const response = await apiService.get(apiEndpoints.platform.services.tryItList, {
-    params: { task_type: 'nmt' },
+    params: { task_type: taskType },
     headers: getTryItHeaders(),
     responseSchema: tryItServiceListSchema,
   });
   return response.data;
+};
+
+/**
+ * Fetch NMT services for try-it (anonymous) users.
+ * @returns Promise with raw list of services from the API
+ */
+export const listTryItNMTServices = async (): Promise<Service[]> => {
+  return listTryItServices('nmt');
 };
 
 /**

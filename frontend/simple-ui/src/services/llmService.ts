@@ -5,6 +5,8 @@ import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
 import { listServices } from './modelManagementService';
+import { listTryItServices } from './tryItService';
+import { isAnonymousUser } from '../utils/anonymousSession';
 
 /** Model name that needs agrinet-specific chat/completions fields. */
 export const AGRINET_MODEL = 'agrinet-model';
@@ -37,70 +39,96 @@ const buildTranslationPrompt = (
   return `Translate from ${source} to ${target}. Output only the translation. Text: ${text}`;
 };
 
+function mapServiceToLLMDetails(service: Record<string, any>): LLMServiceDetailsResponse {
+  const supportedLanguages: string[] = [];
+  if (Array.isArray(service.languages)) {
+    service.languages.forEach((lang: unknown) => {
+      if (typeof lang === 'string') {
+        supportedLanguages.push(lang);
+      } else if (lang && typeof lang === 'object') {
+        const langObj = lang as {
+          code?: string;
+          language?: string;
+          sourceLanguage?: string;
+          targetLanguage?: string;
+        };
+        const langCode =
+          langObj.code ||
+          langObj.language ||
+          langObj.sourceLanguage ||
+          langObj.targetLanguage;
+        if (langCode) supportedLanguages.push(langCode);
+      }
+    });
+  }
+
+  let endpoint = service.endpoint || '';
+  if (endpoint) {
+    endpoint = endpoint.replace(/^https?:\/\//, '');
+  }
+
+  const serviceId = service.serviceId || service.service_id || '';
+
+  return {
+    service_id: serviceId,
+    model_id: service.modelId || service.model_id || '',
+    model_version: service.modelVersion || service.model_version || '',
+    name: service.name || serviceId,
+    serviceDescription:
+      service.serviceDescription ||
+      service.description ||
+      'No description available',
+    endpoint,
+    supported_languages:
+      supportedLanguages.length > 0
+        ? Array.from(new Set(supportedLanguages))
+        : LLM_SUPPORTED_LANGUAGES.map((l) => l.code),
+  };
+}
+
+function dedupeByServiceId(
+  services: LLMServiceDetailsResponse[]
+): LLMServiceDetailsResponse[] {
+  return services.filter(
+    (service, index, self) =>
+      service.service_id &&
+      self.findIndex((s) => s.service_id === service.service_id) === index
+  );
+}
+
 /**
- * List all available LLM services from
- * GET /api/v1/services?task_types=llm&is_published=true
+ * AI4IDS-2688: Anonymous try-it list — published LLM services (FE limits to one).
  */
-export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
+async function listAnonymousLLMServices(): Promise<LLMServiceDetailsResponse[]> {
+  try {
+    const raw = await listTryItServices('llm');
+    return dedupeByServiceId(raw.map((s) => mapServiceToLLMDetails(s)));
+  } catch (error) {
+    console.error('Failed to fetch try-it LLM services:', error);
+    throw new Error('Failed to fetch LLM services for try-it');
+  }
+}
+
+async function listAuthenticatedLLMServices(): Promise<LLMServiceDetailsResponse[]> {
   try {
     const services = await listServices('llm', true);
-
-    const transformed = services.map((service) => {
-      const supportedLanguages: string[] = [];
-      if (Array.isArray(service.languages)) {
-        service.languages.forEach((lang: unknown) => {
-          if (typeof lang === 'string') {
-            supportedLanguages.push(lang);
-          } else if (lang && typeof lang === 'object') {
-            const langObj = lang as {
-              code?: string;
-              language?: string;
-              sourceLanguage?: string;
-              targetLanguage?: string;
-            };
-            const langCode =
-              langObj.code ||
-              langObj.language ||
-              langObj.sourceLanguage ||
-              langObj.targetLanguage;
-            if (langCode) supportedLanguages.push(langCode);
-          }
-        });
-      }
-
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace(/^https?:\/\//, '');
-      }
-
-      const serviceId = service.serviceId || service.service_id || '';
-
-      return {
-        service_id: serviceId,
-        model_id: service.modelId || service.model_id || '',
-        model_version: service.modelVersion || service.model_version || '',
-        name: service.name || serviceId,
-        serviceDescription:
-          service.serviceDescription ||
-          service.description ||
-          'No description available',
-        endpoint,
-        supported_languages:
-          supportedLanguages.length > 0
-            ? Array.from(new Set(supportedLanguages))
-            : LLM_SUPPORTED_LANGUAGES.map((l) => l.code),
-      };
-    });
-
-    return transformed.filter(
-      (service, index, self) =>
-        service.service_id &&
-        self.findIndex((s) => s.service_id === service.service_id) === index
-    );
+    return dedupeByServiceId(services.map((s) => mapServiceToLLMDetails(s)));
   } catch (error) {
     console.error('Failed to fetch LLM services:', error);
     throw new Error('Failed to fetch LLM services');
   }
+}
+
+/**
+ * List available LLM services from the registry.
+ * Anonymous: try-it service list (AI4IDS-2688).
+ * Authenticated: published LLM services.
+ */
+export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
+  if (isAnonymousUser()) {
+    return listAnonymousLLMServices();
+  }
+  return listAuthenticatedLLMServices();
 };
 
 /**

@@ -1,19 +1,39 @@
 // LLM service testing page — reusable service page architecture
+// AI4IDS-2688: role-based LLM service visibility (Logged-in / Guest / Anonymous)
 
-import React, { useMemo, useState } from "react";
+import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+  Box,
+  Button,
+} from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/router";
+import React, { useEffect, useMemo, useState } from "react";
 import { FaLanguage } from "react-icons/fa";
 import LLMResults from "../components/llm/LLMResults";
 import {
+  GuestUsageLimitBanner,
   mapToServiceOptions,
   RequestContainer,
   ResponseContainer,
   ServicePageLayout,
 } from "../components/service-page";
-import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
+import {
+  ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR,
+  LLM_SUPPORTED_LANGUAGES,
+} from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
+import { useAuth } from "../hooks/useAuth";
+import { useGuestServices } from "../hooks/useGuestServices";
 import { useLLM } from "../hooks/useLLM";
 import { listLLMServices } from "../services/llmService";
+import {
+  getRemainingTryItRequests,
+  shouldWarnAboutRateLimit,
+} from "../services/tryItService";
 
 const pageDefaults = getServicePageDefaults("llm");
 const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
@@ -22,21 +42,56 @@ const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
 }));
 
 const LLMPage: React.FC = () => {
+  const router = useRouter();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isGuest } = useGuestServices();
   const [serviceId, setServiceId] = useState<string>("");
+  const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
+  const [remainingRequests, setRemainingRequests] = useState(
+    ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR
+  );
+
+  const isAnonymous = !authLoading && !isAuthenticated;
 
   const {
     data: services = [],
     isLoading: isLoadingServices,
     isError: servicesError,
   } = useQuery({
-    queryKey: ["llm-services"],
+    queryKey: ["llm-services", isAuthenticated, isGuest],
     queryFn: listLLMServices,
+    enabled: !authLoading,
     staleTime: 5 * 60 * 1000,
   });
 
+  // AI4IDS-2688: Anonymous → one service; Guest / Logged-in → full registry list
+  const visibleServices = useMemo(() => {
+    if (isAnonymous) {
+      return services.slice(0, 1);
+    }
+    return services;
+  }, [isAnonymous, services]);
+
+  useEffect(() => {
+    if (visibleServices.length === 0) {
+      setServiceId("");
+      return;
+    }
+    const stillValid = visibleServices.some((s) => s.service_id === serviceId);
+    if (!stillValid) {
+      setServiceId(visibleServices[0].service_id);
+    }
+  }, [visibleServices, serviceId]);
+
+  useEffect(() => {
+    if (!isAnonymous) return;
+    setShowRateLimitWarning(shouldWarnAboutRateLimit());
+    setRemainingRequests(getRemainingTryItRequests());
+  }, [isAnonymous, authLoading]);
+
   const selectedService = useMemo(
-    () => services.find((s) => s.service_id === serviceId),
-    [services, serviceId]
+    () => visibleServices.find((s) => s.service_id === serviceId),
+    [visibleServices, serviceId]
   );
   const modelName = selectedService?.name ?? "";
   const selectedServiceId = selectedService?.service_id ?? "";
@@ -60,10 +115,19 @@ const LLMPage: React.FC = () => {
     swapLanguages,
   } = useLLM(selectedServiceId, modelName);
 
+  useEffect(() => {
+    if (!isAnonymous || !fetched) return;
+    setRemainingRequests(getRemainingTryItRequests());
+    setShowRateLimitWarning(shouldWarnAboutRateLimit());
+  }, [isAnonymous, fetched]);
+
   const llmServiceOptions = useMemo(
-    () => mapToServiceOptions(services),
-    [services]
+    () => mapToServiceOptions(visibleServices),
+    [visibleServices]
   );
+
+  const anonymousRateLimitReached =
+    isAnonymous && remainingRequests <= 0;
 
   const MAX_LLM_INPUT_LENGTH = pageDefaults.maxTextLength ?? 512;
   const canTranslate =
@@ -73,13 +137,81 @@ const LLMPage: React.FC = () => {
     !!outputLanguage?.trim() &&
     inputLanguage !== outputLanguage &&
     !!inputText?.trim() &&
-    inputText.length <= MAX_LLM_INPUT_LENGTH;
+    inputText.length <= MAX_LLM_INPUT_LENGTH &&
+    !anonymousRateLimitReached;
+
+  const lockServiceDropdown = isAnonymous && visibleServices.length <= 1;
+
+  const anonymousBanner = isAnonymous && (
+    <Alert
+      status={
+        anonymousRateLimitReached ? "error" : showRateLimitWarning ? "warning" : "info"
+      }
+      variant="left-accent"
+      borderRadius="md"
+      w="full"
+      maxW="1200px"
+      mx="auto"
+    >
+      <AlertIcon />
+      <Box flex="1">
+        <AlertTitle fontSize="md">
+          {anonymousRateLimitReached
+            ? "Rate Limit Reached"
+            : showRateLimitWarning
+              ? "Rate Limit Warning"
+              : "Try Large Language Model"}
+        </AlertTitle>
+        <AlertDescription fontSize="sm">
+          {anonymousRateLimitReached ? (
+            <>
+              You have used all{" "}
+              <strong>{ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR} requests</strong> for this
+              hour. Sign in for full access, or try again later.
+            </>
+          ) : showRateLimitWarning ? (
+            <>
+              You have approximately{" "}
+              <strong>
+                {remainingRequests} request{remainingRequests !== 1 ? "s" : ""}
+              </strong>{" "}
+              remaining. Sign in for unrestricted LLM access.
+            </>
+          ) : (
+            <>
+              You&apos;re using LLM without an account. One published LLM service is
+              available, with up to{" "}
+              <strong>{ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR} requests per hour</strong>.
+              Sign in or continue as Guest for all registry services.
+            </>
+          )}
+        </AlertDescription>
+      </Box>
+      {!anonymousRateLimitReached && (
+        <Button
+          size="sm"
+          colorScheme="orange"
+          variant="outline"
+          onClick={() => router.push("/auth")}
+        >
+          Sign In
+        </Button>
+      )}
+    </Alert>
+  );
+
+  const pageBanner = isAnonymous
+    ? anonymousBanner
+    : isGuest
+      ? <GuestUsageLimitBanner />
+      : undefined;
 
   return (
     <ServicePageLayout
       serviceId="llm"
       headingSize="lg"
       headDescription="Test Large Language Model for text processing, translation, and generation"
+      banner={pageBanner}
       requestPanel={
         <RequestContainer
           serviceDropdown={{
@@ -88,7 +220,7 @@ const LLMPage: React.FC = () => {
             onChange: setServiceId,
             options: llmServiceOptions,
             loading: isLoadingServices,
-            disabled: fetching,
+            disabled: fetching || lockServiceDropdown,
             error: servicesError
               ? "Failed to load services. Please refresh the page."
               : null,
@@ -102,14 +234,14 @@ const LLMPage: React.FC = () => {
             sourceOptions: languageOptions,
             targetOptions: languageOptions,
             onSwap: swapLanguages,
-            disabled: fetching || !serviceId,
+            disabled: fetching || !serviceId || anonymousRateLimitReached,
           }}
           inputType="text"
           textInput={{
             value: inputText,
             onChange: setInputText,
             maxLength: MAX_LLM_INPUT_LENGTH,
-            disabled: fetching || !serviceId,
+            disabled: fetching || !serviceId || anonymousRateLimitReached,
             placeholder: pageDefaults.textPlaceholder,
           }}
           helperText={pageDefaults.helperText}
