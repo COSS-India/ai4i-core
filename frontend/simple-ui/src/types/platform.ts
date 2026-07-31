@@ -262,6 +262,8 @@ export interface ModelListParams {
   offset?: number;
   limit?: number;
   taskType?: string;
+  /** Comma-separated yaml task types → `task_types=` query param */
+  taskTypes?: string;
   versionStatus?: string;
   createdBy?: string;
 }

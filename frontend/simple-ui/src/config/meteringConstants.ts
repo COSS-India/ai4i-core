@@ -87,12 +87,14 @@ export const METERING = {
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
-    { id: "service", label: "Service Consumption" },
+    // AI4IDS-2588: UNDO — label: "Service Consumption"
+    { id: "service", label: "Model Usage" },
     { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "service", label: "Service Consumption" },
+    // AI4IDS-2588: UNDO — label: "Service Consumption"
+    { id: "service", label: "Model Usage" },
     { id: "usage-spend", label: "Usage and Spend" },
   ] as const,
   ROLE_VIEWS: {
@@ -187,12 +189,6 @@ export const METERING = {
     HEATMAP_TEXT_HIGH: "#FFFFFF",
   },
   HEATMAP: {
-    /**
-     * Only these service keys are rendered in the tenant×service heatmap.
-     * UNDO: remove ALLOWED_SERVICE_KEYS (and its filter in TenantServiceHeatmapSection)
-     * and restore the "Select services" dropdown to show all SERVICES again.
-     */
-    ALLOWED_SERVICE_KEYS: ["llm"] as const,
     SERVICES: [
       { key: "nmt", shortLabel: "NMT", displayName: "NMT" },
       { key: "asr", shortLabel: "ASR", displayName: "ASR" },
@@ -238,7 +234,8 @@ export const METERING = {
   EMPTY: {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: "No tenant consumption data available.",
-    SERVICE_CONSUMPTION: "No service consumption data available.",
+    // AI4IDS-2588: UNDO — "No service consumption data available."
+    SERVICE_CONSUMPTION: "No model usage data available.",
     CHART: "No data available for the selected time window.",
   },
   REFRESH: {
@@ -287,17 +284,29 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
+    // AI4IDS-2588: Model Usage tab (was Service consumption). UNDO — restore
+    // TITLE/SUBTITLE/BREAKDOWN_*/DONUT_*/MOST_USED/TABLE_SERVICE strings below.
     SERVICE: {
-      TITLE: "Service consumption",
+      // TITLE: "Service consumption",
+      TITLE: "Model task type consumption",
       SUBTITLE:
         "Platform-wide request distribution · reflects selected time window",
-      BREAKDOWN_TITLE: "Service breakdown",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
+      // BREAKDOWN_TITLE: "Service breakdown",
+      BREAKDOWN_TITLE: "Model task type breakdown",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
       DONUT_PRIMARY: "All",
-      DONUT_SECONDARY: "Services",
-      MOST_USED: "Most used service",
+      // DONUT_SECONDARY: "Services",
+      DONUT_SECONDARY: "Model task types",
+      // MOST_USED: "Most used service",
+      MOST_USED: "Most used model",
       HIGHEST_FAILURE: "Highest failure rate",
       REQUESTS_SUFFIX: "requests",
+      // TABLE_SERVICE: "Service",
+      TABLE_SERVICE: "Model",
+      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_NATIVE: "Native consumption",
+      TABLE_SUCCESS: "Success rate %",
+      TABLE_FAILURE: "Failure rate %",
     },
     RANKED_SHARE: {
       HEADER_LEFT: "Request volume & share",
@@ -320,10 +329,7 @@ export const METERING = {
   } as const,
 } as const;
 
-// UNDO: use SERVICES keys when restoring the multi-service heatmap:
-// export type MeteringHeatmapServiceKey =
-//   (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 export type MeteringHeatmapServiceKey =
-  (typeof METERING.HEATMAP.ALLOWED_SERVICE_KEYS)[number];
+  (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 
 export type MeteringSubTab = (typeof METERING.SUB_TABS)[number]["id"];

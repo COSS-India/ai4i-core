@@ -106,8 +106,8 @@ export function useUsageAndSpendData({
   });
 
   const tiersQuery = useQuery({
-    queryKey: ["tiers", refreshNonce],
-    queryFn: () => fetchTiers(),
+    queryKey: ["tiers", enabledParam, refreshNonce],
+    queryFn: () => fetchTiers(enabledParam),
     staleTime: 5 * USAGE_SPEND_STALE_MS,
     retry: 1,
   });
@@ -137,7 +137,7 @@ export function useUsageAndSpendData({
       };
     };
 
-    // Enabled-task-type filtering is done at the backend (taskTypes= query param),
+    // Enabled-task-type filtering is done at the backend (`task_types=` query param),
     // so no client-side enabled filter here — only the single-type drill-down below.
     let next: UsageSummaryResponse = summary;
 

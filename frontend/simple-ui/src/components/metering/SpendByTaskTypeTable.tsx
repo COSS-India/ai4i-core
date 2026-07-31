@@ -7,14 +7,9 @@ import {
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
-import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
-
-function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
-  if ("percentage" in t && typeof t.percentage === "number") return t.percentage;
-  const limit = t.quotaLimit ?? 0;
-  if (limit <= 0) return 0;
-  return (t.consumed / limit) * 100;
-}
+// AI4IDS-2602: UNDO — restore UsageCell when re-enabling USAGE column
+// import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
+import { TaskTypeLabel, TierBadge } from "./UsageSpendCells";
 
 type SpendRow =
   | { kind: "tier"; tier: TenantTierBreakdown }
@@ -74,16 +69,17 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
       <Table size="sm" variant="simple">
         <Thead bg="gray.50">
           <Tr>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="26%">
+            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="40%">
               MODEL TASK TYPE
             </Th>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="38%">
+            {/* AI4IDS-2602: Usage column removed from drill-down — UNDO restore USAGE Th + cells */}
+            {/* <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="38%">
               USAGE
-            </Th>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="20%">
+            </Th> */}
+            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="35%">
               SPEND
             </Th>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="16%">
+            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="25%">
               SHARE
             </Th>
           </Tr>
@@ -93,7 +89,8 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
             if (row.kind === "tier") {
               return (
                 <Tr key={`tier-${row.tier.tierId}`}>
-                  <Td colSpan={4} bg="gray.50" py={2}>
+                  {/* AI4IDS-2602: UNDO — colSpan={4} when Usage column is restored */}
+                  <Td colSpan={3} bg="gray.50" py={2}>
                     <HStack spacing={2}>
                       <TierBadge label={row.tier.tierName} />
                       <Text fontSize="10.5px" fontWeight="bold" color="gray.600">
@@ -117,6 +114,7 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
                     fontWeight="semibold"
                   />
                 </Td>
+                {/* AI4IDS-2602: UNDO — restore UsageCell column
                 <Td>
                   <UsageCell
                     consumed={t.consumed}
@@ -126,6 +124,7 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
                     unit={t.unit}
                   />
                 </Td>
+                */}
                 <Td fontSize="sm">{formatSpendMoney(t.spend, currency)}</Td>
                 <Td fontSize="12.5px" color="gray.500">
                   {share}%
@@ -137,9 +136,11 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
             <Td fontWeight="bold" fontSize="sm">
               Total
             </Td>
+            {/* AI4IDS-2602: UNDO — restore empty Usage total cell
             <Td color="gray.500" fontWeight="normal" fontSize="12px">
               —
             </Td>
+            */}
             <Td fontWeight="bold" fontSize="sm">
               {formatSpendMoney(visibleSpend, currency)}
             </Td>

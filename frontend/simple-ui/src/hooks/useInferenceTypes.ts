@@ -7,10 +7,10 @@ import {
 
 const INFERENCE_TYPES_QUERY_KEY = "inferenceTypes";
 
-// Frontend-owned allowlist of task types this deployment exposes in the UI.
-// Comma-separated yaml names, e.g. "llm,nmt,asr". This is a UI-only filter —
-// the backend is NOT restricted and still serves every task type; this just
-// decides what the frontend shows and calls. Unset/empty ⇒ show the full catalog.
+// Frontend-owned allowlist of task types this deployment exposes (comma-separated
+// yaml names, e.g. "llm" or "llm,nmt"). Intersected with the inference-types
+// catalog for UI gating and sent to platform APIs as `task_types=` so responses
+// are scoped server-side. Unset/empty ⇒ full catalog and unfiltered API calls.
 const ENV_ENABLED: string[] = (process.env.NEXT_PUBLIC_ENABLED_TASK_TYPES ?? "")
   .split(",")
   .map((s) => s.trim().toLowerCase())

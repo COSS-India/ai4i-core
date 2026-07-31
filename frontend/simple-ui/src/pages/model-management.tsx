@@ -120,6 +120,8 @@ const ModelManagementPage: React.FC = () => {
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const didInitTaskTypeFilter = useRef(false);
   const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
   useEffect(() => {
@@ -175,6 +177,7 @@ const ModelManagementPage: React.FC = () => {
     try {
       const result = await fetchAllModelsMatchingFilters({
         taskType: filterTaskType || undefined,
+        taskTypes: enabledTaskTypesParam,
         versionStatus: filterVersionStatus || undefined,
       });
       setModels(result.items as unknown as Model[]);
@@ -185,7 +188,7 @@ const ModelManagementPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [filterTaskType, filterVersionStatus]);
+  }, [filterTaskType, filterVersionStatus, enabledTaskTypesParam]);
 
   useEffect(() => {
     if (!taskTypeFilterReady) return;

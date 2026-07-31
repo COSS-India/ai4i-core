@@ -1,10 +1,13 @@
-import { Box, HStack, SimpleGrid, Tbody, Td, Text, Th, Thead, Tr, VStack } from "@chakra-ui/react";
+import { Box, HStack, Tbody, Td, Text, Th, Thead, Tr, VStack } from "@chakra-ui/react";
+// AI4IDS-2588: UNDO — restore SimpleGrid + KpiCard when re-enabling insight KPIs
+// import { Box, HStack, SimpleGrid, Tbody, Td, Text, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { ServiceConsumptionResponse } from "../../types/metering";
 import {
   buildServiceBreakdownChart,
-  deriveServiceInsights,
+  // AI4IDS-2588: UNDO — restore deriveServiceInsights
+  // deriveServiceInsights,
   formatCompactNumber,
   formatNativeConsumption,
   getWindowLabel,
@@ -14,7 +17,8 @@ import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
-import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
+// AI4IDS-2588: UNDO — import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
+import MeteringSectionCard from "./MeteringSectionCard";
 
 interface ServiceConsumptionTabProps {
   data?: ServiceConsumptionResponse;
@@ -28,15 +32,16 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   errorMessage,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
-  // Backend query-filters service_breakdown by the frontend-passed services=,
+  // Backend query-filters service_breakdown via `task_types=` query param;
   // so the rows come back already scoped — no client-side filter here.
   const breakdown = data?.service_breakdown ?? [];
 
   const { slices } = useMemo(() => buildServiceBreakdownChart(breakdown), [breakdown]);
-  const insights = useMemo(
-    () => deriveServiceInsights(data?.summary, breakdown),
-    [data?.summary, breakdown],
-  );
+  // AI4IDS-2588: UNDO — restore Most used / Highest failure KPI cards
+  // const insights = useMemo(
+  //   () => deriveServiceInsights(data?.summary, breakdown),
+  //   [data?.summary, breakdown],
+  // );
 
   return (
     <MeteringAsyncState
@@ -47,6 +52,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
+          {/* AI4IDS-2588: UNDO — restore insight KPI cards
           {insights ? (
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               <KpiCard
@@ -75,6 +81,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
               />
             </SimpleGrid>
           ) : null}
+          */}
 
           <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
             <MeteringDonutChart
@@ -97,11 +104,22 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">Service</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Total requests</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Native consumption</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Success rate %</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Failure rate %</Th>
+                  {/* AI4IDS-2588: UNDO — "Service" */}
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">
+                    {section.TABLE_SERVICE}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_TOTAL_REQUESTS}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_NATIVE}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_SUCCESS}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_FAILURE}
+                  </Th>
                 </Tr>
               </Thead>
               <Tbody>
