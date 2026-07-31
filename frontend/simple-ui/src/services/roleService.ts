@@ -3,7 +3,7 @@
  */
 import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
-import { API_BASE_URL, apiService } from './api';
+import { getApiBaseUrl, apiService } from './api';
 import { ApiValidationError } from './dto/apiValidationError';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import { roleActionMessageSchema, roleSchema, userRoleSchema } from './dto/schemas/roles';
@@ -26,10 +26,8 @@ export interface UserRole {
 }
 
 class RoleService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.rolesBase}`;
+  private get baseUrl(): string {
+    return `${getApiBaseUrl()}${apiEndpoints.auth.rolesBase}`;
   }
 
   private async request<S extends ZodTypeAny>(

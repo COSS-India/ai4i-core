@@ -13,18 +13,11 @@ import {
 import { responseIndicatesTenantSuspendedOrInactive } from "../utils/tenantInactiveApiErrors";
 import { apiEndpoints, API_URL_PATH_MARKERS } from "./apiEndpoints";
 import BaseApiService from "./baseApiService";
+import { getApiBaseUrl } from "../config/runtimeConfig";
 
-// API Base URL from environment.
-// For production this should be set to the browser-facing API gateway URL
-// (for example, https://dev.ai4inclusion.org or a dedicated API domain).
-// Default to localhost:9000 for local development (docker-compose-local.yml) if not set.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
-
-// Debug: Log the API base URL in development
-if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
-  console.log("API Base URL:", API_BASE_URL);
-  console.log("NEXT_PUBLIC_API_URL from env:", process.env.NEXT_PUBLIC_API_URL);
-}
+// API base URL comes from runtime server config (ConfigMap / process env via
+// /api/config + _app.getInitialProps) — not NEXT_PUBLIC_* build-time inlining.
+export { getApiBaseUrl };
 
 export { apiEndpoints };
 
@@ -50,12 +43,18 @@ const normalizeHeaders = (
   return axios.AxiosHeaders.from(headers).toJSON() as ApiRequestHeaders;
 };
 
-// Create shared Axios instance
+// Create shared Axios instance. baseURL is synced from runtime config in _app
+// (syncApiClientBaseUrl) once ConfigMap/env values are available.
 const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: "",
   timeout: 300000, // 5 minutes (300 seconds)
   headers: resolveRequestHeaders(),
 });
+
+/** Apply API_URL from runtime config onto the shared axios client. */
+export function syncApiClientBaseUrl(): void {
+  apiClient.defaults.baseURL = getApiBaseUrl() || undefined;
+}
 
 // Get JWT token (decrypted from storage)
 export const getJwtToken = (): string | null => {
@@ -565,5 +564,5 @@ apiClient.interceptors.response.use(
 // Export API client and endpoints
 const apiService = new BaseApiService(apiClient);
 
-export { apiClient, apiService, API_BASE_URL };
+export { apiClient, apiService };
 export default apiClient;

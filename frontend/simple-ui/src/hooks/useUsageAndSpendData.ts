@@ -48,7 +48,7 @@ export function useUsageAndSpendData({
   const isScoped = Boolean(scopedId);
 
   // Frontend-enabled task types sent to the backend so it query-filters the
-  // response (NEXT_PUBLIC_ENABLED_TASK_TYPES via useInferenceTypes). undefined
+  // response (ENABLED_TASK_TYPES via useInferenceTypes). undefined
   // while the catalog is still loading ⇒ backend returns all (no filter).
   const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
@@ -195,7 +195,7 @@ export function useUsageAndSpendData({
     ],
   );
 
-  // Only the frontend-enabled task types (NEXT_PUBLIC_ENABLED_TASK_TYPES via
+  // Only the frontend-enabled task types (ENABLED_TASK_TYPES via
   // useInferenceTypes). Data-derived types are NOT added, so disabled types with
   // historical spend don't appear in the dropdown.
   const taskTypeOptions = useMemo(() => {

@@ -4,17 +4,12 @@ import {
   fetchInferenceTypes,
   type InferenceTypeItem,
 } from "../services/inferenceTypesService";
+import {
+  getEnabledTaskTypes,
+  getRuntimeConfig,
+} from "../config/runtimeConfig";
 
 const INFERENCE_TYPES_QUERY_KEY = "inferenceTypes";
-
-// Frontend-owned allowlist of task types this deployment exposes (comma-separated
-// yaml names, e.g. "llm" or "llm,nmt"). Intersected with the inference-types
-// catalog for UI gating and sent to platform APIs as `task_types=` so responses
-// are scoped server-side. Unset/empty ⇒ full catalog and unfiltered API calls.
-const ENV_ENABLED: string[] = (process.env.NEXT_PUBLIC_ENABLED_TASK_TYPES ?? "")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
 
 // Task-type `name` (yaml form) → frontend `ServiceId`. Identity for all but audio
 // language detection, where the yaml name and the ServiceId differ.
@@ -48,14 +43,16 @@ export function useInferenceTypes() {
     inferenceTypes.map((t) => [t.name, t.unit]),
   );
 
-  // Enabled = the frontend allowlist (NEXT_PUBLIC_ENABLED_TASK_TYPES) intersected
-  // with the real catalog; unset ⇒ the whole catalog. UI-only gating.
+  // Deployment allowlist from runtime server config (ENABLED_TASK_TYPES /
+  // ConfigMap), intersected with the catalog. Unset ⇒ whole catalog.
+  const enabledTaskTypesRaw = getRuntimeConfig().enabledTaskTypes;
   const taskTypeNames: string[] = useMemo(() => {
+    const envEnabled = getEnabledTaskTypes();
     const allNames = inferenceTypes.map((t) => t.name);
-    return ENV_ENABLED.length > 0
-      ? allNames.filter((n) => ENV_ENABLED.includes(n.trim().toLowerCase()))
+    return envEnabled.length > 0
+      ? allNames.filter((n) => envEnabled.includes(n.trim().toLowerCase()))
       : allNames;
-  }, [inferenceTypes]);
+  }, [inferenceTypes, enabledTaskTypesRaw]);
 
   // Enabled ServiceIds — the single source for gating the UI catalog
   // (home cards, sidebar nav, logs filter, tier/model selectors).
