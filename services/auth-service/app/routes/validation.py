@@ -33,27 +33,25 @@ from app.services.cache_service import CacheService
 
 
 @lru_cache(maxsize=1)
-def _service_by_endpoint() -> dict[str, dict]:
-    """endpoint_pattern → inference-type entry, built once from the bundled YAML."""
-    return {entry["endpoint_pattern"]: entry for entry in get_inference_types()}
+def _service_by_path() -> dict[str, dict]:
+    """Concrete request path → inference-type entry, built once from the yaml.
+
+    The gateway serves a fixed, known path set, so resolution is a single
+    exact lookup — no prefix scanning. Every path an entry serves comes from
+    the yaml itself: endpoint_pattern plus any endpoint_aliases. Unknown paths
+    (unified /api/v1/inference, try-it, audio passthrough) resolve to None.
+    """
+    table: dict[str, dict] = {}
+    for entry in get_inference_types():
+        table[entry["endpoint_pattern"]] = entry
+        for alias in entry.get("endpoint_aliases", []):
+            table[alias] = entry
+    return table
 
 
 def _resolve_service(uri: str) -> dict | None:
-    """Map X-Original-URI to its inference type via dict lookups.
-
-    Patterns are path prefixes on segment boundaries (e.g. /api/v1/chat must
-    match /api/v1/chat/completions), so the path is truncated one segment at a
-    time — O(path depth) dict hits instead of a startswith scan over every
-    pattern, and /api/v1/chatty can no longer false-match /api/v1/chat.
-    """
-    table = _service_by_endpoint()
-    path = uri.split("?", 1)[0].rstrip("/")
-    while path:
-        entry = table.get(path)
-        if entry is not None:
-            return entry
-        path = path.rsplit("/", 1)[0]
-    return None
+    """Map X-Original-URI to its inference type — one dict lookup."""
+    return _service_by_path().get(uri.split("?", 1)[0].rstrip("/"))
 
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
