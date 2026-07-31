@@ -133,28 +133,48 @@ async def _validate_api_key(
 
     user_id = result.get("user_id")
     tenant_id = result.get("tenant_id")
+
+    # ── PPU enforcement — decided HERE, not in APISIX ──────────────────────
+    # APISIX only forward-auths (and rate-limits); a 429 from this endpoint
+    # flows through the gateway to the client unchanged. The exhaustion flags
+    # are written onto the API-key record by the billing consumer.
+    exhausted_services = sorted(
+        k[len("quota-"):]
+        for k, v in result.items()
+        if k.startswith("quota-") and v == "1"
+    )
+    quota_header = {"X-Quota-Exhausted-Services": ",".join(exhausted_services)}
+
+    if result.get("budget-exhausted") == "1":
+        return JSONResponse(
+            status_code=429,
+            content={
+                "valid": False,
+                "error": "BUDGET_EXHAUSTED",
+                "message": "Tenant budget is exhausted for the current billing period.",
+            },
+            headers=quota_header,
+        )
+
+    service = _resolve_service(request.headers.get("X-Original-URI", ""))
+    if service and service["name"] in exhausted_services:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "valid": False,
+                "error": "QUOTA_EXCEEDED",
+                "message": f"Quota exhausted for service '{service['name']}' in the current billing period.",
+                "service": service["name"],
+            },
+            headers=quota_header,
+        )
+
     if user_id:
         response.headers["X-User-ID"] = str(user_id)
     response.headers["X-User-Plan"] = USER_PLAN_APIKEY
     response.headers["X-Tier-ID"] = result.get("tier_id") or ""
-
-    response.headers["X-Budget-Exhausted"] = "true" if result.get("budget-exhausted") == "1" else "false"
-
-    service = _resolve_service(request.headers.get("X-Original-URI", ""))
-    if service and service["unit"] == "requests":
-        exhausted_services = sorted(
-            k[len("quota-"):]
-            for k, v in result.items()
-            if k.startswith("quota-") and v == "1"
-        )
-        response.headers["X-Quota-Exhausted"] = "true" if exhausted_services else "false"
-        if exhausted_services:
-            response.headers["X-Quota-Exhausted-Services"] = ",".join(exhausted_services)
-    elif service:
-        exhausted = result.get(f"quota-{service['name']}") == "1"
-        response.headers["X-Quota-Exhausted"] = "true" if exhausted else "false"
-        if exhausted:
-            response.headers["X-Quota-Exhausted-Services"] = service["name"]
+    # Informational — always set, unconditionally (empty when nothing is exhausted).
+    response.headers["X-Quota-Exhausted-Services"] = ",".join(exhausted_services)
 
     response.headers["X-Auth-Type"] = "api_key"
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
