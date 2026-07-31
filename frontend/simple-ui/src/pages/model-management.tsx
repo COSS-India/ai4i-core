@@ -272,12 +272,12 @@ const ModelManagementPage: React.FC = () => {
   const handleDownloadSample = () => {
     const sampleModel = {
       version: "v1",
-      name: "example/sample-asr-model",
+      name: "test-llm-2",
       description:
-        "A sample ASR model for demonstration purposes. Description must be at least 25 characters.",
+        "A sample LLM model for demonstration purposes. Description must be at least 25 characters.",
       refUrl: "https://github.com/example/example-model",
       task: {
-        type: "asr",
+        type: "llm",
       },
       languages: [
         {
@@ -292,7 +292,10 @@ const ModelManagementPage: React.FC = () => {
       licenseUrl: "https://opensource.org/licenses/MIT",
       domain: ["general"],
       inferenceEndPoint: {
-        callbackUrl: "https://inference.example.com/v2/models/sample-asr/infer",
+        callbackUrl: "https://inference.example.com/v2/models/sample-llm/infer",
+        adapterConfig: {
+          model_name: "google/gemma-4-31B-it",
+        },
         inferenceApiKey: {
           name: "Authorization",
           value: "<your-api-key>",
@@ -300,27 +303,24 @@ const ModelManagementPage: React.FC = () => {
         isMultilingualEnabled: false,
         isSyncApi: true,
         schema: {
-          taskType: "asr",
-          modelProcessingType: {
-            type: "batch",
-          },
           request: {
-            input: [{ audio: "base64_encoded_audio_string" }],
-            config: {
-              language: {
-                sourceLanguage: "hi",
+            model: "google/gemma-5-E4B-it",
+            messages: [
+              {
+                role: "user",
+                content: "Hello",
               },
-            },
+            ],
           },
-          response: {
-            output: [{ transcript: "string" }],
-          },
+          response: {},
+          model_name: null,
+          modelProcessingType: null,
         },
       },
       trainingDataset: {
         description:
-          "Sample training dataset description for the example ASR model registration.",
-        datasetId: "example-asr-corpus-v1",
+          "Sample training dataset description for the example LLM model registration.",
+        datasetId: "example-LLM-corpus-v1",
       },
       benchmarks: [
         {
