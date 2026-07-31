@@ -43,6 +43,11 @@ THROUGHPUT_BUCKET_CONFIG: dict = {
 # Anchored in Prometheus =~ so /api/v1/chat(/completions)? matches both label forms.
 INFERENCE_ENDPOINT_REGEX = r"(.*/inference|/api/v1/chat(/completions)?)"
 
+# LLM chat paths only — narrower than INFERENCE_ENDPOINT_REGEX, which also
+# matches non-LLM /inference endpoints. Used by the model-consumption tab,
+# which is LLM-only.
+LLM_CHAT_ENDPOINT_REGEX = r"/api/v1/chat(/completions)?"
+
 # Regex for service-breakdown queries — same coverage as INFERENCE_ENDPOINT_REGEX.
 SERVICE_BREAKDOWN_ENDPOINT_REGEX = r"/api/v1/(.+/inference|chat(/completions)?)"
 
@@ -136,6 +141,25 @@ def sum_over_window(metric_expr: str, time_range: str | None) -> str:
         return f"sum({metric_expr})"
     return (
         f"sum("
+        f"({metric_expr} unless {metric_expr} offset {window})"
+        f" or (increase({metric_expr}[{window}]) > 0)"
+        f")"
+    )
+
+
+def sum_over_window_by(metric_expr: str, by_label: str, time_range: str | None) -> str:
+    """Same reset-aware hybrid as sum_over_window(), grouped by ``by_label``.
+
+    Used to break a counter down per label value (e.g. per model) instead of
+    collapsing it to a single total.
+    """
+    window = TIME_RANGES.get(time_range or "all") or (
+        time_range if time_range and time_range != "all" else None
+    )
+    if not window:
+        return f"sum by({by_label}) ({metric_expr})"
+    return (
+        f"sum by({by_label}) ("
         f"({metric_expr} unless {metric_expr} offset {window})"
         f" or (increase({metric_expr}[{window}]) > 0)"
         f")"
@@ -250,15 +274,18 @@ def build_base_selectors(
     tenant: str | None = None,
     service_id: str | None = None,
     extra: list[str] | None = None,
+    endpoint_regex: str | None = None,
 ) -> str:
     """Build a PromQL label selector string for telemetry_obsv_requests_total.
 
     Returns a brace-enclosed string like '{exported_endpoint=~"...",tenant="foo"}'
-    or an empty string when no filters apply.
+    or an empty string when no filters apply. ``endpoint_regex`` overrides the
+    default INFERENCE_ENDPOINT_REGEX (e.g. to scope to LLM-only endpoints);
+    ignored when ``inference_only`` is False.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
-        selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{INFERENCE_ENDPOINT_REGEX}"')
+        selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{endpoint_regex or INFERENCE_ENDPOINT_REGEX}"')
     if tenant:
         selectors.append(f'tenant="{tenant}"')
     if service_id:

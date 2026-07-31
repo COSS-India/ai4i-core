@@ -111,6 +111,35 @@ class ServiceSummary(BaseModel):
     highest_failure_rate: Optional[HighestFailureService] = None
 
 
+class ServiceModelRow(BaseModel):
+    service_id: str                     # raw value the client sent in the OpenAI `model` field; the grouping key
+    name: str                           # mm_services.name, falls back to service_id when unresolved
+    model_name: Optional[str] = None    # mm_services.model_id — the actual model behind the service; informational only
+    requests: int
+    native_units: float = 0.0
+    native_unit_suffix: str = "tokens"
+    success_pct: float
+    failure_rate_pct: float = 0.0   # 100 - success_pct
+
+
+class MostUsedModel(BaseModel):
+    service_id: Optional[str] = None
+    name: Optional[str] = None
+    requests: int = 0
+
+
+class HighestFailureModel(BaseModel):
+    service_id: Optional[str] = None
+    name: Optional[str] = None
+    failure_rate_pct: float = 0.0
+
+
+class ModelConsumptionSummary(BaseModel):
+    """Model Consumption KPI cards (computed over services with traffic)."""
+    most_used: Optional[MostUsedModel] = None
+    highest_failure_rate: Optional[HighestFailureModel] = None
+
+
 # ── Tab responses ────────────────────────────────────────────────────────────
 
 class OverviewResponse(BaseModel):
@@ -136,5 +165,13 @@ class ServiceConsumptionResponse(BaseModel):
     scope: Scope
     summary: Optional[ServiceSummary] = None
     service_breakdown: list[ServiceRow]
+    degraded: bool = False
+    generated_at: str
+
+
+class ModelConsumptionResponse(BaseModel):
+    scope: Scope
+    summary: Optional[ModelConsumptionSummary] = None
+    breakdown: list[ServiceModelRow]
     degraded: bool = False
     generated_at: str
