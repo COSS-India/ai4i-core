@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     # Triton configuration
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
 
+    # Load-test stub mode. When true, the Triton call in BaseTaskService and the
+    # upstream forward in OpenAIProxyService are replaced by canned responses
+    # from response_test/, so a load test measures orchestrator overhead with no
+    # model in the loop. Everything else (validation, preprocessing, spans,
+    # billing counts, metrics) still runs against the stub output. Off by
+    # default: with it off the service behaves exactly as it does without this
+    # setting present.
+    TRITON_STUB_MODE: bool = Field(
+        False, description="Serve canned stub responses instead of calling Triton or the LLM upstream"
+    )
+
     # OpenAI-compatible LLM proxy configuration
     # Endpoint resolution is handled via MMS (model management service) using
     # the serviceId from the request payload — no static endpoint config needed.
