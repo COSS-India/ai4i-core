@@ -228,6 +228,28 @@ async def run_nmt_try_it(
 
 
 @router.post(
+    "/llm/try-it",
+    response_model=GenericInferenceResponse,
+    response_model_exclude={"config"},
+    summary="LLM Try-It Endpoint (anonymous)",
+    description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
+                "({ service_name, serviceId?, payload: LLMPayload }) or a plain LLM "
+                "payload directly (for when APISIX has already unwrapped the envelope).",
+)
+async def run_llm_try_it(
+    request: Request,
+    body: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    inner: Dict[str, Any] = body.get("payload") or body
+    # LLM payloads use "model" as the service identifier (OpenAI-compatible convention)
+    service_id = inner.get("model") or body.get("serviceId")
+    if service_id and not inner.get("serviceId"):
+        inner = {**inner, "serviceId": service_id}
+    return await _run_inference(request, inner, orchestrator, default_task_type="LLM")
+
+
+@router.post(
     "/ner/inference",
     response_model=None,
     summary="NER Inference Endpoint",
