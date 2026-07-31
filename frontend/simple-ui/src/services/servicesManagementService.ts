@@ -100,7 +100,7 @@ export const listServicesPaginated = async (
     if (params.limit !== undefined) queryParams.limit = params.limit;
     // drill-down selected -> it's already in the allowlist, so it IS the intersection
     const taskTypesParam = params.taskType ?? params.taskTypes;
-    if (taskTypesParam) queryParams[TASK_TYPES_QUERY_PARAM] = taskTypesParam;
+    if (taskTypesParam) queryParams.task_types = taskTypesParam;
     if (params.isPublished !== undefined)
       queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
