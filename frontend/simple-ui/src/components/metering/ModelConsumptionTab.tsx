@@ -1,14 +1,24 @@
-import { Box, HStack, SimpleGrid, Tbody, Td, Text, Th, Thead, Tr, VStack } from "@chakra-ui/react";
+import {
+  Box,
+  HStack,
+  SimpleGrid,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tr,
+  VStack,
+} from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { ServiceConsumptionResponse } from "../../types/metering";
+import type { ModelConsumptionResponse } from "../../types/metering";
 import {
-  buildServiceBreakdownChart,
-  deriveServiceInsights,
+  buildModelBreakdownChart,
+  deriveModelInsights,
   formatCompactNumber,
   formatNativeConsumption,
   getWindowLabel,
-  serviceFailureRate,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
@@ -16,25 +26,23 @@ import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 
-interface ServiceConsumptionTabProps {
-  data?: ServiceConsumptionResponse;
+interface ModelConsumptionTabProps {
+  data?: ModelConsumptionResponse;
   isLoading?: boolean;
   errorMessage?: string | null;
 }
 
-const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
+const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   data,
   isLoading,
   errorMessage,
 }) => {
-  const section = METERING.SECTIONS.SERVICE;
-  // Backend query-filters service_breakdown via `task_types=` query param;
-  // so the rows come back already scoped — no client-side filter here.
-  const breakdown = data?.service_breakdown ?? [];
+  const section = METERING.SECTIONS.MODEL;
+  const breakdown = data?.breakdown ?? [];
 
-  const { slices } = useMemo(() => buildServiceBreakdownChart(breakdown), [breakdown]);
+  const { slices } = useMemo(() => buildModelBreakdownChart(breakdown), [breakdown]);
   const insights = useMemo(
-    () => deriveServiceInsights(data?.summary, breakdown),
+    () => deriveModelInsights(data?.summary, breakdown),
     [data?.summary, breakdown],
   );
 
@@ -43,7 +51,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
       isLoading={isLoading}
       isEmpty={!data}
       errorMessage={errorMessage}
-      emptyMessage={METERING.EMPTY.SERVICE_CONSUMPTION}
+      emptyMessage={METERING.EMPTY.MODEL_CONSUMPTION}
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
@@ -54,10 +62,10 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                 value={
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="green.400" />
-                    <Text as="span">{insights.mostUsed.service}</Text>
+                    <Text as="span">{insights.mostUsedName}</Text>
                   </HStack>
                 }
-                helper={`${formatCompactNumber(insights.mostUsed.requests, "indian")} ${section.REQUESTS_SUFFIX}`}
+                helper={`${formatCompactNumber(insights.mostUsedRequests, "indian")} ${section.REQUESTS_SUFFIX}`}
                 valueColor="gray.800"
               />
               <KpiCard
@@ -66,7 +74,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                   <HStack spacing={2}>
                     <Box w={2} h={2} borderRadius="full" bg="pink.300" />
                     <Text as="span" color="orange.600">
-                      {insights.highestFailureService}
+                      {insights.highestFailureName}
                     </Text>
                   </HStack>
                 }
@@ -100,6 +108,9 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500">
                     {section.TABLE_SERVICE}
                   </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">
+                    {section.TABLE_MODEL}
+                  </Th>
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
                     {section.TABLE_TOTAL_REQUESTS}
                   </Th>
@@ -116,12 +127,15 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
               </Thead>
               <Tbody>
                 {breakdown.map((row, i) => (
-                  <Tr key={row.service}>
+                  <Tr key={`${row.service_id}-${row.model_name ?? i}`}>
                     <Td>
                       <HStack spacing={2}>
-                        <Box w={1} h={5} borderRadius="sm" bg={meteringServiceColor(row.service, i)} />
-                        <Text fontWeight="medium" fontSize="sm">{row.service}</Text>
+                        <Box w={1} h={5} borderRadius="sm" bg={meteringServiceColor(row.name, i)} />
+                        <Text fontWeight="medium" fontSize="sm">{row.name}</Text>
                       </HStack>
+                    </Td>
+                    <Td fontSize="sm" color="gray.600">
+                      {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
                     </Td>
                     <Td isNumeric fontSize="sm">{formatCompactNumber(row.requests, "indian")}</Td>
                     <Td isNumeric fontSize="sm" color="gray.600">
@@ -131,7 +145,7 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
                       {row.success_pct.toFixed(2)}%
                     </Td>
                     <Td isNumeric fontSize="sm" color="red.500" fontWeight="medium">
-                      {serviceFailureRate(row).toFixed(2)}%
+                      {row.failure_rate_pct.toFixed(2)}%
                     </Td>
                   </Tr>
                 ))}
@@ -144,4 +158,4 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   );
 };
 
-export default ServiceConsumptionTab;
+export default ModelConsumptionTab;

@@ -27,6 +27,7 @@ export const METERING = {
       OVERVIEW: "overview",
       TENANT: "tenant",
       SERVICE: "service",
+      MODEL: "model",
     },
     HEATMAP_SERVICES_ALL: "all",
     SCROLL_ROOT_MARGIN: "100px",
@@ -44,6 +45,7 @@ export const METERING = {
     OVERVIEW: "overview",
     TENANT: "tenant",
     SERVICE: "service",
+    MODEL: "model",
     USAGE_SPEND: "usage-spend",
   } as const,
   KPI: {
@@ -87,15 +89,16 @@ export const METERING = {
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
-    // AI4IDS-2588: UNDO — label: "Service Consumption"
-    { id: "service", label: "Model Usage" },
-    { id: "usage-spend", label: "Usage and Spend" },
+    { id: "service", label: "Service Usage" },
+    // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
+    { id: "model", label: "Model Usage" },
+    { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
-    // AI4IDS-2588: UNDO — label: "Service Consumption"
-    { id: "service", label: "Model Usage" },
-    { id: "usage-spend", label: "Usage and Spend" },
+    { id: "service", label: "Service Usage" },
+    { id: "model", label: "Model Usage" },
+    { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -234,8 +237,8 @@ export const METERING = {
   EMPTY: {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: "No tenant consumption data available.",
-    // AI4IDS-2588: UNDO — "No service consumption data available."
-    SERVICE_CONSUMPTION: "No model usage data available.",
+    SERVICE_CONSUMPTION: "No service consumption data available.",
+    MODEL_CONSUMPTION: "No model consumption data available.",
     CHART: "No data available for the selected time window.",
   },
   REFRESH: {
@@ -284,25 +287,37 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
-    // AI4IDS-2588: Model Usage tab (was Service consumption). UNDO — restore
-    // TITLE/SUBTITLE/BREAKDOWN_*/DONUT_*/MOST_USED/TABLE_SERVICE strings below.
-    SERVICE: {
-      // TITLE: "Service consumption",
-      TITLE: "Model task type consumption",
+    // AI4IDS-2588: Model Consumption tab — per-service LLM usage from /model-consumption
+    MODEL: {
+      TITLE: "Model consumption",
       SUBTITLE:
-        "Platform-wide request distribution · reflects selected time window",
-      // BREAKDOWN_TITLE: "Service breakdown",
-      BREAKDOWN_TITLE: "Model task type breakdown",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
+        "Per-service LLM request distribution · reflects selected time window",
+      BREAKDOWN_TITLE: "Model breakdown",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across LLM services ·",
       DONUT_PRIMARY: "All",
-      // DONUT_SECONDARY: "Services",
-      DONUT_SECONDARY: "Model task types",
-      // MOST_USED: "Most used service",
+      DONUT_SECONDARY: "Models",
       MOST_USED: "Most used model",
       HIGHEST_FAILURE: "Highest failure rate",
       REQUESTS_SUFFIX: "requests",
-      // TABLE_SERVICE: "Service",
-      TABLE_SERVICE: "Model",
+      TABLE_SERVICE: "Service",
+      TABLE_MODEL: "Model",
+      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_NATIVE: "Native consumption",
+      TABLE_SUCCESS: "Success rate %",
+      TABLE_FAILURE: "Failure rate %",
+    },
+    SERVICE: {
+      TITLE: "Service consumption",
+      SUBTITLE:
+        "Platform-wide request distribution · reflects selected time window",
+      BREAKDOWN_TITLE: "Service breakdown",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
+      DONUT_PRIMARY: "All",
+      DONUT_SECONDARY: "Services",
+      MOST_USED: "Most used service",
+      HIGHEST_FAILURE: "Highest failure rate",
+      REQUESTS_SUFFIX: "requests",
+      TABLE_SERVICE: "Service",
       TABLE_TOTAL_REQUESTS: "Total requests",
       TABLE_NATIVE: "Native consumption",
       TABLE_SUCCESS: "Success rate %",

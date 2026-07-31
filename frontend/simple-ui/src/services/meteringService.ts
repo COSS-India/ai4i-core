@@ -2,6 +2,7 @@ import { METERING } from "../config/meteringConstants";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
+  modelConsumptionResponseSchema,
   overviewResponseSchema,
   serviceConsumptionResponseSchema,
   tenantConsumptionResponseSchema,
@@ -9,6 +10,7 @@ import {
 import type {
   MeteringTopN,
   MeteringWindow,
+  ModelConsumptionResponse,
   OverviewResponse,
   ServiceConsumptionResponse,
   TenantConsumptionResponse,
@@ -120,6 +122,20 @@ export async function fetchMeteringServiceConsumption(
   const { data } = await apiService.get<ServiceConsumptionResponse>(
     withQuery(apiEndpoints.metering.serviceConsumption, params),
     { responseSchema: serviceConsumptionResponseSchema },
+  );
+  return data;
+}
+
+/** GET /api/v1/metering/model-consumption — LLM-only; no task_types param. */
+export async function fetchMeteringModelConsumption(
+  timeWindow: MeteringWindow,
+  ctx: MeteringContext,
+  tenantId?: string | null,
+): Promise<ModelConsumptionResponse> {
+  const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  const { data } = await apiService.get<ModelConsumptionResponse>(
+    withQuery(apiEndpoints.metering.modelConsumption, params),
+    { responseSchema: modelConsumptionResponseSchema },
   );
   return data;
 }
