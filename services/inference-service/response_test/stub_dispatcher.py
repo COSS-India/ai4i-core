@@ -76,6 +76,13 @@ from .responses.llm_responses import (
     MEDIUM_LLM_RESPONSE,
     LARGE_LLM_RESPONSE,
 )
+from .responses.audio_transcription_responses import (
+    SMALL_AUDIO_BYTES,
+    MEDIUM_AUDIO_BYTES,
+    SMALL_TRANSCRIPTION_RESPONSES,
+    MEDIUM_TRANSCRIPTION_RESPONSES,
+    LARGE_TRANSCRIPTION_RESPONSES,
+)
 
 # Maps service class name → (small_stub, medium_stub, large_stub)
 _STUBS = {
@@ -232,3 +239,58 @@ def get_llm_stub_response(payload):
         return None
     idx = _classify(len(_extract_chat_prompt(payload)))
     return copy.deepcopy(_LLM_STUBS[idx])
+
+
+# Size-bucketed OpenAI speech-to-text stubs for the /audio/* multipart routes.
+# Separate from _LLM_STUBS because the body is a transcription, not a chat
+# completion, and its shape depends on the response_format form field.
+_AUDIO_STUBS = (
+    SMALL_TRANSCRIPTION_RESPONSES,
+    MEDIUM_TRANSCRIPTION_RESPONSES,
+    LARGE_TRANSCRIPTION_RESPONSES,
+)
+
+# Formats the /audio/* routes advertise. Anything else falls back to json,
+# matching the route default rather than returning a shape the caller cannot
+# interpret.
+_DEFAULT_AUDIO_FORMAT = "json"
+
+
+def _upload_byte_len(files):
+    """Byte length of the uploaded file in an httpx `files` dict.
+
+    Values are (filename, bytes, content_type) tuples; the raw bytes are the
+    only meaningful size proxy for audio.
+    """
+    for value in (files or {}).values():
+        if isinstance(value, (tuple, list)) and len(value) >= 2:
+            payload = value[1]
+            if isinstance(payload, (bytes, bytearray)):
+                return len(payload)
+    return 0
+
+
+def _classify_audio(byte_len):
+    if byte_len < SMALL_AUDIO_BYTES:
+        return 0  # SMALL
+    if byte_len < MEDIUM_AUDIO_BYTES:
+        return 1  # MEDIUM
+    return 2      # LARGE
+
+
+def get_audio_stub_response(files, data):
+    """
+    Return a deep copy of the size-matched speech-to-text stub for the
+    /audio/* multipart path, or None when stub mode is off.
+
+    The body type follows the response_format form field: a dict for json /
+    verbose_json, a str for text / srt / vtt. _proxy_audio_upload picks
+    JSONResponse vs PlainTextResponse off that type, so returning the wrong
+    one would change the response content type.
+    """
+    if not settings.TRITON_STUB_MODE:
+        return None
+    bucket = _AUDIO_STUBS[_classify_audio(_upload_byte_len(files))]
+    response_format = str((data or {}).get("response_format") or _DEFAULT_AUDIO_FORMAT).lower()
+    body = bucket.get(response_format, bucket[_DEFAULT_AUDIO_FORMAT])
+    return copy.deepcopy(body)

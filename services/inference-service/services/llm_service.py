@@ -200,6 +200,16 @@ class OpenAIProxyService:
         data = dict(data or {})
         service_id = data.get("model", "") or ""
 
+        # Load-test stub mode: short-circuit before MMS resolution and the
+        # upstream forward, mirroring proxy_traced. Returns None unless
+        # TRITON_STUB_MODE is on, so this is inert in normal operation. The
+        # body type tracks response_format, which is what _proxy_audio_upload
+        # keys JSONResponse vs PlainTextResponse off.
+        from response_test.stub_dispatcher import get_audio_stub_response
+        stub = get_audio_stub_response(files, data)
+        if stub is not None:
+            return 200, stub
+
         # Resolve service from MMS (result is TTL-cached).
         try:
             url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
