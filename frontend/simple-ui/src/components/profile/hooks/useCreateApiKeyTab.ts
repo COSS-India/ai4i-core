@@ -98,7 +98,39 @@ export function useCreateApiKeyTab({
       setApiKeyForm({ key_name: "", expires_days: 30 });
       setSelectedPermissions([]);
     } catch (error) {
-      showError(error);
+      const detail = (
+        error as {
+          response?: {
+            data?: { detail?: unknown; code?: string; message?: string };
+          };
+        }
+      )?.response?.data;
+      const nested =
+        typeof detail?.detail === "object" && detail?.detail !== null
+          ? (detail.detail as { code?: string; message?: string })
+          : null;
+      const code = nested?.code ?? detail?.code;
+      const rawMessage =
+        nested?.message ??
+        (typeof detail?.detail === "string" ? detail.detail : undefined) ??
+        detail?.message ??
+        "";
+
+      // Align with tier-assignment UX: clarify that keys require a valid
+      // tenant↔tier mapping (with services), not a vague "tier not assigned".
+      if (
+        code === "NO_ACTIVE_TIER" ||
+        /no active tier assignment/i.test(String(rawMessage)) ||
+        /tier not assigned/i.test(String(rawMessage))
+      ) {
+        showToast({
+          type: "error",
+          message:
+            "API key cannot be created: no tier is assigned to this tenant. Assign a tier that has at least one service mapped, then try again.",
+        });
+      } else {
+        showError(error);
+      }
     } finally {
       setIsCreating(false);
     }
