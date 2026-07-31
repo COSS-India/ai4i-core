@@ -81,7 +81,12 @@ class MeteringService:
 
         total_v = round(_float(raw[0]))
         success_v = round(_float(raw[1]))
-        avg_rps_v = round(_float(raw[2]), 2)
+        # 4dp, not 2 — a real but sparse rate (e.g. 112 requests over a 24h
+        # window ≈ 0.0013 req/s) rounds to a misleading 0.0 at 2dp even
+        # though traffic did occur. The frontend's formatMeteringRps()
+        # already renders up to 4dp for values < 1; this just gives it
+        # something non-zero to show.
+        avg_rps_v = round(_float(raw[2]), 4)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
         raw_failed = total_v - success_v
         if raw_failed < 0:
@@ -112,7 +117,7 @@ class MeteringService:
             prev_total_v = prev_total
             prev_failed_v = prev_failed
             prev_success_v = prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 2)
+            prev_avg_rps_v = round(prev_avg_rps, 4)
             # Previous success rate is undefined without prior traffic → report 0.
             prev_success_rate_v = (
                 round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
