@@ -39,9 +39,11 @@ from app.core.exceptions import EntityNotFoundError
 from app.schemas.model_management.service import ServiceEndpointUpdateItem
 
 # model-management directory is hyphenated; plain imports cannot resolve it.
-ServiceService = importlib.import_module(
+_service_service_module = importlib.import_module(
     "app.services.model-management.service_service"
-).ServiceService
+)
+ServiceService = _service_service_module.ServiceService
+EndpointValidationFailedError = _service_service_module.EndpointValidationFailedError
 
 
 def _make_service_orm(service_id: str) -> MagicMock:
@@ -123,3 +125,112 @@ class TestUpdateServiceEndpointsBulk:
 
         with pytest.raises(PydanticValidationError):
             ServiceBulkEndpointUpdateRequest(serviceId="svc-a", endpoint="http://host-a:8000")
+
+    @pytest.mark.asyncio
+    async def test_bulk_update_probe_failure_on_second_item_writes_nothing(self) -> None:
+        """A validation failure on any item (probe or lookup) happens before
+        the write phase, so nothing is applied and there is nothing to roll
+        back — the batch is all-or-nothing at the validation stage too."""
+        instances = {
+            "svc-a": _make_service_orm("svc-a"),
+            "svc-b": _make_service_orm("svc-b"),
+        }
+        svc = _make_svc(instances)
+        svc._validate_endpoint_for_model = AsyncMock(
+            side_effect=[
+                None,
+                EndpointValidationFailedError("svc-b unreachable", ["unreachable"]),
+            ]
+        )
+        items = [
+            ServiceEndpointUpdateItem(serviceId="svc-a", endpoint="http://host-a:8000"),
+            ServiceEndpointUpdateItem(serviceId="svc-b", endpoint="http://host-b:8000"),
+        ]
+
+        with pytest.raises(EndpointValidationFailedError):
+            await svc.update_service_endpoints(items, updated_by="user-1")
+
+        svc._services.apply_updates.assert_not_called()
+        svc._services.commit.assert_not_called()
+        svc._services.rollback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bulk_update_commit_failure_rolls_back_batch(self) -> None:
+        """All items pass validation and apply_updates, but commit() itself
+        fails — the whole batch must roll back, not just the last item."""
+        instances = {
+            "svc-a": _make_service_orm("svc-a"),
+            "svc-b": _make_service_orm("svc-b"),
+        }
+        svc = _make_svc(instances)
+        svc._services.commit = AsyncMock(side_effect=RuntimeError("db connection lost"))
+        items = [
+            ServiceEndpointUpdateItem(serviceId="svc-a", endpoint="http://host-a:8000"),
+            ServiceEndpointUpdateItem(serviceId="svc-b", endpoint="http://host-b:8000"),
+        ]
+
+        with pytest.raises(RuntimeError):
+            await svc.update_service_endpoints(items, updated_by="user-1")
+
+        assert svc._services.apply_updates.await_count == 2
+        svc._services.rollback.assert_awaited_once()
+
+
+import importlib.util
+
+# app/routes/__init__.py eagerly imports every route module plus
+# ai4i_core.bootstrap.versioning, which this suite's conftest doesn't stub —
+# load service.py directly by file path instead (mirrors test_service_rbac_filtering.py).
+_route_spec = importlib.util.spec_from_file_location(
+    "app.routes.service", "app/routes/service.py"
+)
+_service_route_mod = importlib.util.module_from_spec(_route_spec)
+sys.modules["app.routes.service"] = _service_route_mod
+_route_spec.loader.exec_module(_service_route_mod)
+
+update_service = _service_route_mod.update_service
+
+
+class TestUpdateServiceRouteDispatch:
+    """PATCH /services must keep routing a plain single-object body to
+    ServiceService.update_service, unaffected by the new bulk branch."""
+
+    @pytest.mark.asyncio
+    async def test_single_object_payload_reaches_update_service(self) -> None:
+        from app.schemas.model_management.service import ServiceUpdateRequest
+
+        request = MagicMock()
+        request.headers.get.return_value = "user-1"
+        payload = ServiceUpdateRequest(serviceId="svc-a", isPublished=True)
+
+        svc = MagicMock()
+        svc.update_service = AsyncMock(return_value=None)
+        svc.update_service_endpoints = AsyncMock()
+
+        await update_service(request, payload, svc=svc)
+
+        svc.update_service.assert_awaited_once_with(payload, updated_by="user-1")
+        svc.update_service_endpoints.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bulk_payload_reaches_update_service_endpoints(self) -> None:
+        from app.schemas.model_management.service import (
+            ServiceBulkEndpointUpdateRequest,
+        )
+
+        request = MagicMock()
+        request.headers.get.return_value = "user-1"
+        payload = ServiceBulkEndpointUpdateRequest(
+            services=[{"serviceId": "svc-a", "endpoint": "http://host-a:8000"}]
+        )
+
+        svc = MagicMock()
+        svc.update_service = AsyncMock()
+        svc.update_service_endpoints = AsyncMock(return_value=["svc-a"])
+
+        await update_service(request, payload, svc=svc)
+
+        svc.update_service_endpoints.assert_awaited_once_with(
+            payload.services, updated_by="user-1"
+        )
+        svc.update_service.assert_not_called()

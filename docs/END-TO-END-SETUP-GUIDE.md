@@ -533,7 +533,7 @@ curl -s -X PATCH http://localhost:8095/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "services": [
-      {"serviceId": "<serviceId-from-above>", "endpoint": "http://localhost:5000"}
+      {"serviceId": "<serviceId-from-above>", "endpoint": "http://<model-server-host>:5000"}
     ]
   }'
 ```
@@ -545,15 +545,15 @@ curl -s -X PATCH http://localhost:8095/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "services": [
-      {"serviceId": "<serviceId-1>", "endpoint": "http://localhost:5000"},
-      {"serviceId": "<serviceId-2>", "endpoint": "http://localhost:8000"}
+      {"serviceId": "<serviceId-1>", "endpoint": "http://<model-server-host>:5000"},
+      {"serviceId": "<serviceId-2>", "endpoint": "http://<model-server-host>:8000"}
     ]
   }'
 ```
 
 **Expected:** `{"success":true, "data":{"serviceIds":["<serviceId-1>", ...]}, ... "message":"N service endpoint(s) updated successfully."}`
 
-This call probes each endpoint live before accepting it, so start the model server(s) first — a `400` here almost always means one isn't reachable yet at that URL. The call is all-or-nothing — if one entry fails (unreachable endpoint, `localhost`/private IP blocked by the SSRF guard, unknown `serviceId`), none of the endpoints in the request are updated. No `Authorization` header is needed for this native, non-gateway setup.
+`<model-server-host>` must be a real, non-loopback, routable address (e.g. the host's LAN IP or a resolvable DNS name) — the SSRF guard unconditionally rejects `localhost`/loopback and private IPs, with no opt-out, so those values will always fail here even if the model server is actually listening there. This call also probes each endpoint live before accepting it, so start the model server(s) first — a `400` here almost always means one isn't reachable yet at that address. The call is all-or-nothing — if one entry fails (unreachable endpoint, loopback/private IP blocked by the SSRF guard, unknown `serviceId`), none of the endpoints in the request are updated. No `Authorization` header is needed for this native, non-gateway setup.
 
 ---
 

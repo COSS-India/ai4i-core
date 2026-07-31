@@ -361,7 +361,7 @@ curl -s -X PATCH http://localhost:8095/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "services": [
-      {"serviceId": "<serviceId-from-step-1>", "endpoint": "http://localhost:8000"}
+      {"serviceId": "<serviceId-from-step-1>", "endpoint": "http://<model-server-host>:8000"}
     ]
   }'
 ```
@@ -373,13 +373,13 @@ curl -s -X PATCH http://localhost:8095/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "services": [
-      {"serviceId": "<serviceId-1>", "endpoint": "http://localhost:8000"},
-      {"serviceId": "<serviceId-2>", "endpoint": "http://localhost:8001"}
+      {"serviceId": "<serviceId-1>", "endpoint": "http://<model-server-host>:8000"},
+      {"serviceId": "<serviceId-2>", "endpoint": "http://<model-server-host>:8001"}
     ]
   }'
 ```
 
-**Expected:** `{"success": true, "data": {"serviceIds": ["<serviceId-1>", ...]}, "meta": {"message": "N service endpoint(s) updated successfully."}}`. Each entry is validated the same way — URL format, SSRF guard (rejects `localhost`/private/loopback hosts), and a live probe against the model server — a `400`/validation error usually means the model server isn't reachable yet at that URL; start it and retry. **The call is all-or-nothing:** if any entry fails, none of the endpoints in the request are updated — fix or drop the failing entry and retry. No `Authorization` header is required for this call in this native setup; `X-User-Id` is optional and only recorded as the audit `updated_by` value.
+**Expected:** `{"success": true, "data": {"serviceIds": ["<serviceId-1>", ...]}, "meta": {"message": "N service endpoint(s) updated successfully."}}`. `<model-server-host>` must be a real, non-loopback, routable address — the SSRF guard unconditionally rejects `localhost`/private/loopback hosts, with no opt-out, so those values fail here regardless of what's actually listening there. Each entry is validated the same way — URL format, SSRF guard, and a live probe against the model server — a `400`/validation error usually means the model server isn't reachable yet at that address; start it and retry. **The call is all-or-nothing:** if any entry fails, none of the endpoints in the request are updated — fix or drop the failing entry and retry. No `Authorization` header is required for this call in this native setup; `X-User-Id` is optional and only recorded as the audit `updated_by` value.
 
 ## Step 11: Access the Platform
 
