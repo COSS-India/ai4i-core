@@ -61,7 +61,6 @@ const IDENTITY_HEADERS = [
   "x-user-id",
   "x-tenant-id",
   "x-permission-ids",
-  "x-user-plan",
 ] as const;
 
 function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
@@ -90,7 +89,6 @@ interface UserHeaders {
   "X-User-ID": string;
   "X-Tenant-ID": string;
   "X-Permission-IDs": string;
-  "X-User-Plan": string;
 }
 
 type AuthResult =
@@ -133,7 +131,6 @@ async function callAuthValidate(
         "X-User-ID": res.headers.get("x-user-id") ?? "",
         "X-Tenant-ID": res.headers.get("x-tenant-id") ?? "",
         "X-Permission-IDs": res.headers.get("x-permission-ids") ?? "",
-        "X-User-Plan": res.headers.get("x-user-plan") ?? "",
       },
     };
   } catch {
