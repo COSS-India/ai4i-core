@@ -1,6 +1,11 @@
 """Unit tests for the LLM chat proxy stub (load-test parity with Triton stubs)."""
 
+import httpx
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from config import settings
 from response_test.responses.audio_transcription_responses import (
@@ -17,6 +22,39 @@ from response_test.stub_dispatcher import (
 def stub_mode(monkeypatch):
     """Turn stub mode on for the duration of a test."""
     monkeypatch.setattr(settings, "TRITON_STUB_MODE", True)
+
+
+# What a resolved, published LLM service looks like coming back from MMS.
+_SERVICE_INFO = {
+    "is_published": True,
+    "endpoint": "http://vllm.invalid",
+    "adapter_config": {"model_name": "gemma-3-27b"},
+    "tier_ids": [],
+}
+
+
+@pytest.fixture(scope="module")
+def span_exporter():
+    """Capture finished spans.
+
+    The tracer provider can only be set once per process, so this is
+    module-scoped and cleared per test rather than rebuilt.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    try:
+        trace.set_tracer_provider(provider)
+    except Exception:  # already set by another module in the same run
+        pass
+    return exporter
+
+
+@pytest.fixture(autouse=True)
+def _clear_spans(request):
+    """Start every test with an empty exporter when one is in play."""
+    if "span_exporter" in request.fixturenames:
+        request.getfixturevalue("span_exporter").clear()
 
 
 def _prompt_of_length(n: int) -> dict:
@@ -82,24 +120,73 @@ def test_handles_missing_or_nonstring_messages(stub_mode):
 
 
 @pytest.mark.asyncio
-async def test_proxy_traced_short_circuits_before_mms_and_upstream(stub_mode, monkeypatch):
-    """Neither MMS resolution nor the upstream forward may run in stub mode."""
+async def test_proxy_traced_stubs_the_upstream_but_still_resolves(stub_mode, monkeypatch):
+    """The stub replaces the upstream POST only, not the whole method.
+
+    MMS resolution is expected to run: the stub sits at the innermost seam so
+    the model and ai-inference spans above it are still opened. Short-circuiting
+    higher up skips both spans and silently drops PPU billing.
+    """
     from services.llm_service import OpenAIProxyService
 
     service = OpenAIProxyService()
+    resolved = {}
 
-    async def _fail(*args, **kwargs):
-        raise AssertionError("stub mode must not reach MMS or the upstream")
+    async def _resolve(service_id, path):
+        resolved["service_id"] = service_id
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
 
-    monkeypatch.setattr(service, "resolve_upstream_url", _fail)
-    monkeypatch.setattr(service, "forward", _fail)
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
 
     status, body = await service.proxy_traced(
         path="/v1/chat/completions", payload=_prompt_of_length(10)
     )
 
+    assert resolved["service_id"] == "stub"
     assert status == 200
     assert body["object"] == "chat.completion"
+
+
+@pytest.mark.asyncio
+async def test_stubbed_chat_emits_model_and_ai_inference_spans(stub_mode, monkeypatch, span_exporter):
+    """Regression guard: the PPU Kafka consumer bills off the ai-inference span.
+
+    A stub that short-circuits above these spans still returns 200, so the only
+    symptom is silently missing spans and zero billing. That is what this pins.
+    """
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
+    service = OpenAIProxyService()
+
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
+
+    with traced_span("request", root=True, classify_status=True):
+        await service.proxy_traced(
+            path="/v1/chat/completions", payload=_prompt_of_length(10)
+        )
+
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
+
+    assert "model" in spans
+    assert "ai-inference" in spans
+    # Billing reads these off the ai-inference span; zero here means no revenue.
+    assert spans["ai-inference"]["input_tokens"] > 0
+    assert spans["ai-inference"]["output_tokens"] > 0
+    assert spans["ai-inference"]["service_id"] == "stub"
+    # The model label must be the upstream model, not the fixture's literal.
+    assert spans["model"]["model_name"] == "gemma-3-27b"
 
 
 @pytest.mark.asyncio
@@ -205,27 +292,36 @@ def test_audio_stub_returns_deep_copy(stub_mode):
 
 
 @pytest.mark.asyncio
-async def test_proxy_multipart_short_circuits_before_mms_and_upstream(
-    stub_mode, monkeypatch
+async def test_proxy_multipart_stubs_the_upstream_and_still_emits_the_model_span(
+    stub_mode, monkeypatch, span_exporter
 ):
-    """The audio passthrough must not reach MMS or the LLM upstream in stub mode."""
+    """Audio stubs the upstream POST only, so the model span is still emitted."""
     from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
 
     service = OpenAIProxyService()
 
-    async def _fail(*args, **kwargs):
-        raise AssertionError("stub mode must not reach MMS or the upstream")
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid" + path, _SERVICE_INFO
 
-    monkeypatch.setattr(service, "resolve_upstream_url", _fail)
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
 
-    status, body = await service.proxy_multipart(
-        path="/audio/transcriptions",
-        files=_upload(1000),
-        data={"model": "llm-service-1", "response_format": "json"},
-    )
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
+
+    with traced_span("request", root=True, classify_status=True):
+        status, body = await service.proxy_multipart(
+            path="/audio/transcriptions",
+            files=_upload(1000),
+            data={"model": "llm-service-1", "response_format": "json"},
+        )
+
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
 
     assert status == 200
     assert "text" in body
+    assert spans["model"]["service_id"] == "llm-service-1"
 
 
 @pytest.mark.asyncio
