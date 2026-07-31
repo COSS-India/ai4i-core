@@ -1,0 +1,382 @@
+{
+  "ald": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1,
+          1
+        ],
+        "tensor": "AUDIO_DATA",
+        "value_path": "audio.audio_content"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "language_code",
+        "tensor": "LANGUAGE_CODE"
+      },
+      {
+        "dtype": "FP32",
+        "maps_to": "confidence",
+        "tensor": "CONFIDENCE"
+      },
+      {
+        "dtype": "BYTES",
+        "maps_to": "all_scores",
+        "tensor": "ALL_SCORES",
+        "transform": "json_parse"
+      }
+    ],
+    "response": {
+      "config_keys": [
+        "serviceId"
+      ],
+      "task_type": "audio-lang-detection"
+    },
+    "version": "1.0"
+  },
+  "asr-am-ensemble": {
+    "inputs": [
+      {
+        "dtype": "FP32",
+        "shape": [
+          -1,
+          -1
+        ],
+        "tensor": "AUDIO_SIGNAL",
+        "value_path": "audio.samples"
+      },
+      {
+        "dtype": "INT32",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "NUM_SAMPLES",
+        "value_path": "audio.num_samples"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "LANG_ID",
+        "value_path": "request.config.language.source_language"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "transcript",
+        "response_key": "output[].source",
+        "tensor": "TRANSCRIPTS"
+      }
+    ],
+    "response": {
+      "include_config": false,
+      "static_item_fields": {
+        "nBestTokens": null
+      }
+    },
+    "version": "1.0"
+  },
+  "indiclid": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "langPrediction",
+        "pair_with_input": "input.source",
+        "tensor": "OUTPUT_TEXT",
+        "transform": [
+          "json_parse",
+          "wrap_list"
+        ]
+      }
+    ],
+    "response": {
+      "include_config": false
+    },
+    "version": "1.0"
+  },
+  "indictrans": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "INPUT_LANGUAGE_ID",
+        "value_path": "request.config.language.source_language"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "OUTPUT_LANGUAGE_ID",
+        "value_path": "request.config.language.target_language"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "target",
+        "tensor": "OUTPUT_TEXT"
+      }
+    ],
+    "version": "1.0"
+  },
+  "lang-diarization": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1,
+          1
+        ],
+        "tensor": "AUDIO_DATA",
+        "value_path": "audio.audio_content"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1,
+          1
+        ],
+        "tensor": "LANGUAGE",
+        "value_path": "request.config.target_language"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "diarization_json",
+        "response_key": "output[]",
+        "tensor": "DIARIZATION_RESULT",
+        "transform": "json_parse"
+      }
+    ],
+    "response": {
+      "config_keys": [
+        "serviceId"
+      ],
+      "task_type": "language-diarization"
+    },
+    "version": "1.0"
+  },
+  "ner": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "LANG_ID",
+        "value_path": "request.config.language.sourceLanguage"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "target",
+        "tensor": "OUTPUT_TEXT",
+        "transform": "json_parse"
+      }
+    ],
+    "version": "1.0"
+  },
+  "speaker-diarization": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1,
+          1
+        ],
+        "tensor": "AUDIO_DATA",
+        "value_path": "audio.audio_content"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1,
+          1
+        ],
+        "tensor": "NUM_SPEAKERS",
+        "value_path": "request.config.num_speakers"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "diarization_json",
+        "tensor": "DIARIZATION_RESULT"
+      }
+    ],
+    "version": "1.0"
+  },
+  "surya-ocr": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1,
+          1
+        ],
+        "tensor": "IMAGE_DATA",
+        "value_path": "input.image_content"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "text",
+        "response_key": "output[].source",
+        "tensor": "OUTPUT_TEXT"
+      }
+    ],
+    "response": {
+      "static_item_fields": {
+        "target": ""
+      }
+    },
+    "version": "1"
+  },
+  "transliteration": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1
+        ],
+        "tensor": "INPUT_LANGUAGE_ID",
+        "value_path": "request.config.language.sourceLanguage"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          -1
+        ],
+        "tensor": "OUTPUT_LANGUAGE_ID",
+        "value_path": "request.config.language.targetLanguage"
+      },
+      {
+        "dtype": "BOOL",
+        "shape": [
+          -1
+        ],
+        "tensor": "IS_WORD_LEVEL",
+        "value_path": "request.config.is_word_level"
+      },
+      {
+        "dtype": "UINT8",
+        "shape": [
+          -1
+        ],
+        "tensor": "TOP_K",
+        "value_path": "request.config.top_k"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "BYTES",
+        "maps_to": "target",
+        "pair_with_input": "input.source",
+        "tensor": "OUTPUT_TEXT"
+      }
+    ],
+    "response": {
+      "include_config": false
+    },
+    "version": "1.0"
+  },
+  "tts": {
+    "inputs": [
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1
+        ],
+        "tensor": "INPUT_TEXT",
+        "value_path": "input.source"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1
+        ],
+        "tensor": "INPUT_SPEAKER_ID",
+        "value_path": "input.gender"
+      },
+      {
+        "dtype": "BYTES",
+        "shape": [
+          1
+        ],
+        "tensor": "INPUT_LANGUAGE_ID",
+        "value_path": "input.language_id"
+      }
+    ],
+    "model_version": "1",
+    "outputs": [
+      {
+        "dtype": "FP32",
+        "maps_to": "audio_data",
+        "tensor": "OUTPUT_GENERATED_AUDIO"
+      }
+    ],
+    "version": "1.0"
+  }
+}
