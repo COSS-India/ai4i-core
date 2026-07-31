@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db_optional, get_db
-from app.core.exceptions import InsufficientPermissionsError
+from app.core.exceptions import InsufficientPermissionsError, ValidationError
 from app.core.permissions import (
     ROLE_ADMIN as _ROLE_ADMIN,
     ROLE_TENANT_ADMIN as _ROLE_TENANT_ADMIN,
     permission_ids as _permission_ids,
 )
 from app.repositories.pay_per_use.ppu_usage_repository import PPUUsageRepository
+from app.schemas.enums.model_management import resolve_task_type
 from app.schemas.pay_per_use.usage import (
     TenantHierarchicalItem,
     TenantHierarchicalListResponse,
@@ -60,13 +61,22 @@ def _validate_tier_id(tier_id: Optional[str]) -> Optional[str]:
 
 
 def _parse_task_types(task_types: Optional[str]) -> Optional[list[str]]:
-    """Comma-separated task types → list (lower-cased), or None if not supplied.
-    Filtering is driven entirely by what the frontend passes; the backend keeps no
-    ENABLED_TASK_TYPES config of its own.
+    """Comma-separated task types → validated, canonicalized list, or None if not supplied.
+    Mirrors tier_service._resolve_task_types so /tiers and the usage endpoints reject
+    unrecognized task_types the same way (422 VALIDATION_ERROR) instead of silently
+    filtering to an empty/zeroed result.
     """
     if not task_types:
         return None
-    parsed = [t.strip().lower() for t in task_types.split(",") if t.strip()]
+    parsed = []
+    for raw in task_types.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            parsed.append(resolve_task_type(raw))
+        except ValueError as exc:
+            raise ValidationError(str(exc))
     return parsed or None
 
 
