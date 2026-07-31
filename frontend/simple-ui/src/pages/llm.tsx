@@ -21,16 +21,14 @@ import {
   ResponseContainer,
   ServicePageLayout,
 } from "../components/service-page";
-import {
-  ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR,
-  LLM_SUPPORTED_LANGUAGES,
-} from "../config/constants";
+import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServicePageDefaults } from "../config/servicePageConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useGuestServices } from "../hooks/useGuestServices";
 import { useLLM } from "../hooks/useLLM";
 import { listLLMServices } from "../services/llmService";
 import {
+  ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR,
   getRemainingTryItRequests,
   shouldWarnAboutRateLimit,
 } from "../services/tryItService";
@@ -40,6 +38,17 @@ const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
   code: l.code,
   label: l.label,
 }));
+
+/** Stable anonymous pick: lowest service_id so list-order churn can't flip the demo service. */
+function pickAnonymousTryItService<T extends { service_id: string }>(
+  services: T[],
+): T[] {
+  if (services.length <= 1) return services;
+  const sorted = [...services].sort((a, b) =>
+    a.service_id.localeCompare(b.service_id),
+  );
+  return sorted.slice(0, 1);
+}
 
 const LLMPage: React.FC = () => {
   const router = useRouter();
@@ -64,10 +73,10 @@ const LLMPage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  // AI4IDS-2688: Anonymous → one service; Guest / Logged-in → full registry list
+  // AI4IDS-2688: Anonymous → one deterministic service; Guest / Logged-in → full list
   const visibleServices = useMemo(() => {
     if (isAnonymous) {
-      return services.slice(0, 1);
+      return pickAnonymousTryItService(services);
     }
     return services;
   }, [isAnonymous, services]);

@@ -38,7 +38,7 @@ import {
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { LLM_ONLY_HOME_AND_NAV, MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
+import { MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
@@ -530,20 +530,15 @@ const Sidebar: React.FC = () => {
   const serviceItems = useMemo(
     () =>
       baseNavItems.filter((item) => {
-        // AI4IDS-2584 / AI4IDS-2688: Navigation shows only LLM when flag is on.
-        if (LLM_ONLY_HOME_AND_NAV && item.id !== TABS.llm) return false;
-
         // Guest allowlist — guests only.
         if (isGuestFromAccess || isGuest) {
           if (guestServicesLoading) return false;
           if (!allowedServiceIds?.has(item.id)) return false;
         }
 
-        // LLM-only mode: always show LLM in nav (anonymous cannot call inference-types).
-        if (LLM_ONLY_HOME_AND_NAV && item.id === TABS.llm) return true;
-
-        // Deployment gate (ENABLED_TASK_TYPES) — applies to every role.
-        if (inferenceTypesLoading) return false;
+        // Deployment gate (ENABLED_TASK_TYPES). Env allowlist is available
+        // immediately via useInferenceTypes even before the catalog loads.
+        if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
         if (!enabledServiceIds.has(item.id)) return false;
         return true;
       }),

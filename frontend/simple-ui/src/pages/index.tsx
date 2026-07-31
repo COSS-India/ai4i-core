@@ -32,7 +32,6 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
-import { LLM_ONLY_HOME_AND_NAV } from "../config/constants";
 import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
@@ -180,21 +179,16 @@ const HomePage: React.FC = () => {
         { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose" },
       ]
         .filter((service) => {
-          // AI4IDS-2584 / AI4IDS-2688: Home shows only LLM when flag is on.
-          if (LLM_ONLY_HOME_AND_NAV && service.id !== "llm") return false;
-
           // Guest allowlist — guests only.
           if (isGuest) {
             if (guestServicesLoading) return false;
             if (!(allowedServiceIds?.has(service.id) ?? false)) return false;
           }
 
-          // LLM-only mode: always show the LLM card (anonymous cannot call
-          // inference-types; waiting on that gate left Home empty).
-          if (LLM_ONLY_HOME_AND_NAV && service.id === "llm") return true;
-
-          // Deployment gate (ENABLED_TASK_TYPES) — applies to every user, admins included.
-          if (inferenceTypesLoading) return false;
+          // Deployment gate (ENABLED_TASK_TYPES). Env allowlist is available
+          // immediately via useInferenceTypes even before the catalog loads /
+          // for anonymous users who cannot call inference-types.
+          if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
           if (!enabledServiceIds.has(service.id)) return false;
           return true;
         })
@@ -231,7 +225,7 @@ const HomePage: React.FC = () => {
               AI Accessibility Studio
             </Heading>
             <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto" userSelect="none" cursor="default">
-              {LLM_ONLY_HOME_AND_NAV
+              {enabledServiceIds.size === 1 && enabledServiceIds.has("llm")
                 ? "Test and explore Large Language Models"
                 : "Test and explore NLP and LLM models"}
             </Text>

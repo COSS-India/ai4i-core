@@ -89,7 +89,7 @@ type EndpointContext = {
 const isTryItPublicPath = (pathNoQuery: string): boolean => {
   const tryItList = apiEndpoints.platform.services.tryItList.toLowerCase();
   const nmtTryIt = (apiEndpoints.platform.tryIt.nmt ?? apiEndpoints.platform.tryIt.execute).toLowerCase();
-  const llmTryIt = (apiEndpoints.llm.tryIt ?? apiEndpoints.platform.tryIt.llm).toLowerCase();
+  const llmTryIt = apiEndpoints.llm.tryIt.toLowerCase();
   return (
     pathNoQuery === tryItList ||
     pathNoQuery.endsWith("/try-it-service-list") ||

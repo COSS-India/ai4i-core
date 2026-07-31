@@ -1,6 +1,6 @@
-// Try-It service for anonymous access to NMT
-// Allows users to try NMT service without authentication
-// Rate limited to 5 requests per hour per user/IP
+// Try-It service for anonymous access to NMT / LLM
+// Allows users to try services without authentication.
+// Client-side rate limit is advisory only; gateway must enforce in prod.
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
@@ -10,6 +10,9 @@ import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import type { Service } from '../types/platform';
 import { UI_ERROR_MESSAGES } from '../config/constants';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
+
+/** Single source for anonymous try-it hourly limit (banner + tracker). */
+export const ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR = 5;
 
 const getTryItHeaders = () => ({
   'X-Anonymous-Session-Id': getAnonymousSessionId(),
@@ -149,8 +152,8 @@ export const shouldWarnAboutRateLimit = (): boolean => {
       return false;
     }
 
-    // Warn if approaching limit (4 or more requests)
-    return count >= 4;
+    // Warn if approaching limit (one request left before hit)
+    return count >= ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR - 1;
   } catch (e) {
     return false;
   }
@@ -190,7 +193,7 @@ export const trackTryItRequest = (): void => {
 export const getRemainingTryItRequests = (): number => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
-  const limit = 5;
+  const limit = ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR;
 
   if (typeof window === 'undefined') return limit;
 

@@ -152,18 +152,8 @@ export const MAX_TEXT_LENGTH = 512;
 /** Guest users may make this many inference requests per service per hour. */
 export const GUEST_REQUESTS_PER_HOUR_PER_SERVICE = 10;
 
-/**
- * AI4IDS-2584 / AI4IDS-2688: Home Page + Navigation show only the LLM model task type.
- * Set to `false` to restore the full NLP/Pipeline catalog in Home/Nav.
- * Service Management / Usage Dashboard allowlists come from ENABLED_TASK_TYPES.
- */
-export const LLM_ONLY_HOME_AND_NAV = true;
-
 /** Sidebar section label (was "Services"). */
 export const MODEL_TASK_TYPE_NAV_LABEL = "Model task type";
-
-/** Client-side anonymous try-it request limit (matches tryItService). */
-export const ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR = 5;
 
 // Minimum recording duration in seconds
 export const MIN_RECORDING_DURATION = 1;

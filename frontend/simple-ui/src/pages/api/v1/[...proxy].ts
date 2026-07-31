@@ -51,6 +51,9 @@ const PUBLIC_AUTH_PATH =
 
 // Anonymous try-it paths: no JWT, no forward-auth.
 // Covers NMT/LLM inference try-it and the public service-list endpoint.
+// Local-dev only: skips forward-auth for anonymous try-it. Production needs an
+// APISIX public route + rate-limit rule for /api/v1/llm/try-it (and nmt) —
+// the client sessionStorage counter is advisory and easily bypassed.
 const TRY_IT_PUBLIC_PATH =
   /^\/api\/v1\/((?:nmt|llm)\/try-it|(?:model-management\/)?services\/try-it-service-list)(\/|$|\?)/;
 
