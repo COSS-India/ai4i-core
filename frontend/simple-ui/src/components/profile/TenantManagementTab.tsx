@@ -112,6 +112,21 @@ const BUDGET_MAX_INTEGER_DIGITS = 7;
 const TIER_NO_SERVICES_MSG =
   "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
 
+/**
+ * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
+ * Uses local calendar day bounds so "Effective To = today" stays active
+ * through the end of that day (not midnight UTC, which expires immediately).
+ */
+function dateInputToStartOfDayIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+}
+
+function dateInputToEndOfDayIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+}
+
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
   const intPart = (dotIndex === -1 ? raw : raw.slice(0, dotIndex)).slice(
@@ -407,6 +422,13 @@ export default function TenantManagementTab({
       return;
     }
 
+    const effectiveFromIso = dateInputToStartOfDayIso(assignEffectiveFrom);
+    const effectiveToIso = dateInputToEndOfDayIso(assignEffectiveTo);
+    if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
+      setAssignTierError("Effective To must be after Effective From.");
+      return;
+    }
+
     setIsAssigning(true);
     setAssignTierError(null);
     try {
@@ -414,8 +436,8 @@ export default function TenantManagementTab({
         tenant_id: String(assignTierTenant.tenant_id),
         tier_id: assignTierId,
         budget: budgetValue,
-        effective_from: new Date(assignEffectiveFrom).toISOString(),
-        effective_to: new Date(assignEffectiveTo).toISOString(),
+        effective_from: effectiveFromIso,
+        effective_to: effectiveToIso,
       });
       queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
       toast({
