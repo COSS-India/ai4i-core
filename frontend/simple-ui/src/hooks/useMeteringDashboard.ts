@@ -51,7 +51,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isAdopterView = roleViewConfig.defaultView === "adopter";
   const isTenantView = roleViewConfig.defaultView === "tenant";
 
-  // Frontend-owned enabled set (NEXT_PUBLIC_ENABLED_TASK_TYPES). Passed as
+  // Frontend-owned enabled set (ENABLED_TASK_TYPES runtime config). Passed as
   // `task_types=` on metering APIs so the backend scopes metrics; UI renders
   // the response as-is. null while the catalog is still loading.
   //
