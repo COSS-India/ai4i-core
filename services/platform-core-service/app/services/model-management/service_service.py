@@ -340,6 +340,26 @@ class ServiceService:
             else:
                 update_data["unpublished_at"] = now
 
+        if "isTryItDefault" in request_dict:
+            is_default = bool(request_dict["isTryItDefault"])
+            update_data["is_try_it_default"] = is_default
+            if is_default and instance.task_type:
+                # At most one default per task_type: clear the flag on every
+                # other service of the same type before setting this one.
+                #
+                # task_type is nullable on the model (legacy rows predating
+                # this column), so a None task_type intentionally skips this
+                # invariant check rather than clearing across all null-typed
+                # services. This is safe: Try-It only ever surfaces services
+                # whose task_type is in _TRY_IT_SUPPORTED_TASK_TYPES (nmt/llm)
+                # — see routes/service.py's list_try_it_services — so a
+                # None-task_type service's is_try_it_default value can never
+                # be read by the Try-It flow regardless.
+                await self._services.clear_try_it_default(
+                    task_type=instance.task_type,
+                    exclude_service_id=instance.service_id,
+                )
+
         if "taskType" in request_dict:
             update_data["task_type"] = request_dict["taskType"]
         if "costPerUnit" in request_dict:
@@ -369,7 +389,7 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, policy, taskType, "
+                    "benchmarks, isPublished, isTryItDefault, policy, taskType, "
                     "costPerUnit, unitSize, tierIds. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),
