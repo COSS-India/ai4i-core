@@ -2,6 +2,8 @@ import type {
   MeteringDataState,
   MeteringGraph,
   MeteringWindow,
+  ModelConsumptionRow,
+  ModelConsumptionSummary,
   ServiceConsumptionSummary,
   ServiceRow,
 } from "../types/metering";
@@ -250,13 +252,14 @@ export interface ServiceChartSlice {
   pct: number;
 }
 
-/** Donut + legend data for service breakdown charts. */
+/** Donut + legend data for service breakdown charts. Zero-traffic rows omitted (AI4IDS-2673). */
 export function buildServiceBreakdownChart(breakdown: ServiceRow[]): {
   slices: ServiceChartSlice[];
   totalRequests: number;
 } {
-  const totalRequests = breakdown.reduce((sum, s) => sum + s.requests, 0);
-  const slices = breakdown.map((s, i) => {
+  const withTraffic = breakdown.filter((s) => s.requests > 0);
+  const totalRequests = withTraffic.reduce((sum, s) => sum + s.requests, 0);
+  const slices = withTraffic.map((s, i) => {
     const value = s.requests;
     const pct =
       s.percentage ?? (totalRequests > 0 ? (value / totalRequests) * 100 : 0);
@@ -290,11 +293,14 @@ export function deriveServiceInsights(
   }
   if (!breakdown.length) return null;
 
-  const mostUsed = [...breakdown].sort((a, b) => b.requests - a.requests)[0];
-  const highestFailure = [...breakdown].sort(
+  // Match backend + model-consumption: only services with traffic (AI4IDS-2689).
+  const withTraffic = breakdown.filter((r) => r.requests > 0);
+  const pool = withTraffic.length ? withTraffic : breakdown;
+  const mostUsed = [...pool].sort((a, b) => b.requests - a.requests)[0];
+  const highestFailure = [...pool].sort(
     (a, b) =>
-      (a.failure_rate_pct ?? 100 - a.success_pct) -
-      (b.failure_rate_pct ?? 100 - b.success_pct),
+      (b.failure_rate_pct ?? 100 - b.success_pct) -
+      (a.failure_rate_pct ?? 100 - a.success_pct),
   )[0];
 
   if (!mostUsed || !highestFailure) return null;
@@ -308,4 +314,65 @@ export function deriveServiceInsights(
 
 export function serviceFailureRate(row: ServiceRow): number {
   return row.failure_rate_pct ?? 100 - row.success_pct;
+}
+
+/** Donut + legend data for model-consumption breakdown charts. */
+export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
+  slices: ServiceChartSlice[];
+  totalRequests: number;
+} {
+  const totalRequests = breakdown.reduce((sum, s) => sum + s.requests, 0);
+  const slices = breakdown.map((s, i) => {
+    const value = s.requests;
+    const pct = totalRequests > 0 ? (value / totalRequests) * 100 : 0;
+    return {
+      name: s.name,
+      value,
+      color: meteringServiceColor(s.name, i),
+      pct,
+    };
+  });
+  return { slices, totalRequests };
+}
+
+export interface ModelInsights {
+  mostUsedName: string;
+  mostUsedRequests: number;
+  highestFailureName: string;
+  highestFailureRate: number;
+}
+
+/** Model Consumption KPI row — prefers API summary, derives from breakdown when absent. */
+export function deriveModelInsights(
+  summary: ModelConsumptionSummary | null | undefined,
+  breakdown: ModelConsumptionRow[],
+): ModelInsights | null {
+  if (summary?.most_used && summary.highest_failure_rate) {
+    return {
+      mostUsedName: summary.most_used.name?.trim() || summary.most_used.service_id || METERING.GRAPH.EMPTY_VALUE,
+      mostUsedRequests: summary.most_used.requests,
+      highestFailureName:
+        summary.highest_failure_rate.name?.trim() ||
+        summary.highest_failure_rate.service_id ||
+        METERING.GRAPH.EMPTY_VALUE,
+      highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
+    };
+  }
+  if (!breakdown.length) return null;
+
+  const withTraffic = breakdown.filter((r) => r.requests > 0);
+  const pool = withTraffic.length ? withTraffic : breakdown;
+  const mostUsed = [...pool].sort((a, b) => b.requests - a.requests)[0];
+  const highestFailure = [...pool].sort(
+    (a, b) => b.failure_rate_pct - a.failure_rate_pct,
+  )[0];
+
+  if (!mostUsed || !highestFailure) return null;
+
+  return {
+    mostUsedName: mostUsed.name,
+    mostUsedRequests: mostUsed.requests,
+    highestFailureName: highestFailure.name,
+    highestFailureRate: highestFailure.failure_rate_pct,
+  };
 }

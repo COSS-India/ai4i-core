@@ -28,7 +28,7 @@ import React, { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import { LoginRequest } from "../../types/auth";
 import LoadingSpinner from "../common/LoadingSpinner";
-import { API_BASE_URL } from "../../services/api";
+import { getApiBaseUrl } from "../../services/api";
 import { apiEndpoints } from "../../services/apiEndpoints";
 
 interface LoginFormProps {
@@ -313,7 +313,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
             _active={{ bg: "orange.500" }}
             onClick={() => {
               const apiBaseUrl =
-                API_BASE_URL || (typeof window !== "undefined"
+                getApiBaseUrl() || (typeof window !== "undefined"
                   ? window.location.origin
                   : "");
               const frontendCallback =

@@ -20,6 +20,7 @@ import {
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
 import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
+import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
@@ -38,6 +39,7 @@ function mapKeysToAdminRows(
 }
 
 export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) {
+  const { taskTypeNames, inferenceTypes } = useInferenceTypes();
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -268,14 +270,22 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [allApiKeys, apiKeyAccessContext, filterPermission, filterActive, keyNameSearch, permissions],
   );
 
-  /** Permission name+label pairs for the filter dropdown (full catalog, not keyed to loaded keys). */
-  const permissionFilterOptions = useMemo(
-    () =>
-      [...permissions]
-        .filter((p) => p.name)
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [permissions],
-  );
+  const permissionFilterOptions = useMemo(() => {
+    const named = [...permissions].filter((p) => p.name);
+    if (taskTypeNames.length === 0) {
+      return named.sort((a, b) => a.label.localeCompare(b.label));
+    }
+    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+    const knownTaskTypes = new Set(
+      inferenceTypes.map((t) => t.name.trim().toLowerCase()),
+    );
+    return named
+      .filter((p) => {
+        const prefix = p.name.split(".")[0]?.toLowerCase() ?? "";
+        return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [permissions, taskTypeNames, inferenceTypes]);
 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;

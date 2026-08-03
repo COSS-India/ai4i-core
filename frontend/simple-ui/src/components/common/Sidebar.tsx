@@ -38,10 +38,11 @@ import {
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { TABS } from "../../config/constants";
+import { MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getUsageDashboardOverviewPath } from "../../utils/navigation";
@@ -329,7 +330,7 @@ const topNavItems: NavItem[] = [
   },
 ];
 
-// Services (grouped under Services section) — order matches homepage (index.tsx services array)
+// Model task types (grouped under Model task type section) — order matches homepage
 const baseNavItems: NavItem[] = [
   {
     id: TABS.nmt,
@@ -365,7 +366,7 @@ const baseNavItems: NavItem[] = [
     icon: IoSparklesOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
+    requiresAuth: false, // AI4IDS-2688: anonymous try-it
   },
   {
     id: TABS.pipeline,
@@ -487,6 +488,7 @@ const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isLoading, user } = useAuth();
   const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
+  const { enabledServiceIds, isLoading: inferenceTypesLoading } = useInferenceTypes();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
@@ -528,10 +530,16 @@ const Sidebar: React.FC = () => {
   const serviceItems = useMemo(
     () =>
       baseNavItems.filter((item) => {
+        // Guest allowlist — guests only.
         if (isGuestFromAccess || isGuest) {
           if (guestServicesLoading) return false;
           if (!allowedServiceIds?.has(item.id)) return false;
         }
+
+        // Deployment gate (ENABLED_TASK_TYPES). Env allowlist is available
+        // immediately via useInferenceTypes even before the catalog loads.
+        if (inferenceTypesLoading && enabledServiceIds.size === 0) return false;
+        if (!enabledServiceIds.has(item.id)) return false;
         return true;
       }),
     [
@@ -539,6 +547,8 @@ const Sidebar: React.FC = () => {
       guestServicesLoading,
       isGuest,
       isGuestFromAccess,
+      enabledServiceIds,
+      inferenceTypesLoading,
     ],
   );
 
@@ -734,7 +744,7 @@ const Sidebar: React.FC = () => {
             >
               {isExpanded ? (
                 <Heading size="sm" color="gray.800" fontWeight="medium">
-                  Services
+                  {MODEL_TASK_TYPE_NAV_LABEL}
                 </Heading>
               ) : (
                 <Icon as={IoAppsOutline} boxSize={6} color="gray.600" />

@@ -262,6 +262,8 @@ export interface ModelListParams {
   offset?: number;
   limit?: number;
   taskType?: string;
+  /** Comma-separated yaml task types → `task_types=` query param */
+  taskTypes?: string;
   versionStatus?: string;
   createdBy?: string;
 }
@@ -397,6 +399,8 @@ export interface ServiceListParams {
   offset?: number;
   limit?: number;
   taskType?: string;
+  /** Comma-separated task types to include (frontend allowlist). */
+  taskTypes?: string;
   isPublished?: boolean;
   createdBy?: string;
 }

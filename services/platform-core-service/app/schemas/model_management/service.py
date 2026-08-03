@@ -73,7 +73,6 @@ class ServiceCreateRequest(BaseSchema):
     sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
-    isPublished: Optional[bool] = False
     taskType: str
     costPerUnit: float = Field(..., ge=0)
     unitSize: int
