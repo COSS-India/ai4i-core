@@ -83,6 +83,13 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
 
 
+def _caller_tenant_name(request: Request) -> Optional[str]:
+    """Organisation name for the caller's own tenant — X-Tenant-Name is the same
+    value the observability middleware uses as the Prometheus ``tenant`` label,
+    so it's what PromQL selectors must filter on (see build_base_selectors)."""
+    return request.headers.get("X-Tenant-Name") or None
+
+
 def _validate_scope_tenant(tenant_id: Optional[Union[str, int]]) -> Optional[str]:
     if tenant_id is None:
         return None
@@ -122,7 +129,31 @@ async def _cache_set(redis: aioredis.Redis, key: str, data: dict) -> None:
         pass
 
 
+def _partition_results(results: list) -> tuple[list, bool]:
+    """Unwrap ``asyncio.gather(..., return_exceptions=True)`` results into
+    (values-with-None-for-failures, degraded) — every route below downgrades
+    a partial Prometheus/DB failure to a "degraded" response instead of a 500.
+    """
+    degraded = False
+    values: list = []
+    for r in results:
+        if isinstance(r, Exception):
+            logger.warning("Metering query failed: %s", r)
+            degraded = True
+            values.append(None)
+        else:
+            values.append(r)
+    return values, degraded
+
+
 # ── Shared helpers ────────────────────────────────────────────────────────────
+
+
+class _OrgLookupError(Exception):
+    """Raised when the auth-DB lookup for a tenant's organisation fails —
+    as opposed to a clean query finding no such tenant, which is a plain
+    ``None`` return. Lets the caller tell "unknown tenant" (404) apart from
+    "couldn't check right now" (503)."""
 
 
 async def _resolve_org(svc: MeteringService, tenant_id: str) -> Optional[str]:
@@ -134,8 +165,62 @@ async def _resolve_org(svc: MeteringService, tenant_id: str) -> Optional[str]:
             {"id": int(tenant_id)},
         )
         return row.scalar()
-    except Exception:
-        return None
+    except Exception as exc:
+        logger.warning("Auth DB lookup failed for tenant_id=%s: %s", tenant_id, exc)
+        raise _OrgLookupError(f"Auth DB lookup failed for tenant_id={tenant_id}") from exc
+
+
+async def _resolve_tenant_scope(
+    request: Request,
+    svc: MeteringService,
+    tenant_id: Optional[int],
+    is_admin: bool,
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve (scope_tenant id, scope_tenant_name) and enforce the tenant
+    scoping guard on the NAME — the value PromQL selectors actually filter on,
+    not the id in scope_tenant. Checking the guard on the id while querying by
+    name let a missing/unresolved name fall through to an unscoped,
+    platform-wide query.
+
+    Non-admins are scoped to their own tenant via the gateway-injected
+    X-Tenant-Name header. An admin may narrow to another tenant_id; when that
+    id's organisation can't be resolved (unknown tenant / DB error), raise
+    rather than silently widening the query to platform-wide.
+    """
+    caller_tid = _caller_tenant_id(request)
+    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+
+    if not is_admin:
+        scope_tenant_name = _caller_tenant_name(request)
+    elif scope_tenant:
+        try:
+            scope_tenant_name = await _resolve_org(svc, scope_tenant)
+        except _OrgLookupError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not verify the requested tenant right now; please retry.",
+            ) from exc
+        if scope_tenant_name is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Could not resolve organisation for tenant_id={scope_tenant}.",
+            )
+    else:
+        scope_tenant_name = None
+
+    # Security backstop: a tenant admin (role 5) MUST carry a tenant context —
+    # the gateway injects X-Tenant-Name from the JWT-resolved tenant. Without
+    # it, scope_tenant_name is None and the queries below would run unscoped,
+    # leaking platform-wide aggregates. Refuse rather than widen scope
+    # (defense-in-depth; the gateway should never let this through, but the
+    # backstop guarantees it).
+    if not is_admin and scope_tenant_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin requires a tenant context (X-Tenant-Name).",
+        )
+
+    return scope_tenant, scope_tenant_name
 
 
 def _series_points(res, ndigits: int) -> list[GraphPoint]:
@@ -152,6 +237,146 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
             continue
         out.append(GraphPoint(ts=int(ts), value=round(f, ndigits)))
     return out
+
+
+def _avg_requests_per_tenant_cell(
+    ranking: Optional[dict], prev_avg: Optional[float]
+) -> Optional[Cell]:
+    """KPI card shown above the tenant ranking: avg requests per active
+    tenant, with the vs-previous-window percentage change."""
+    if not (ranking and ranking.get("total_tenant_count")):
+        return None
+    cur_avg = ranking.get("avg_per_active_tenant")
+    pct = (
+        round((cur_avg - prev_avg) / prev_avg * 100, 1)
+        if (prev_avg and cur_avg is not None) else None
+    )
+    return Cell(
+        key="avg_requests_per_tenant",
+        label="Avg Requests Per Active Tenant",
+        value=ranking["formatted_avg_per_active_tenant"],
+        pct_change=pct,
+    )
+
+
+def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
+    """Successful/Failed show the COUNT as the value and the rate as
+    sub-text (helper); both are colored on the frontend (green / red)."""
+    if not rt:
+        return []
+    success_rate = rt["success_rate"]["rate_pct"]
+    # No traffic → 0% failure (not 100%); 100−0 would be wrong.
+    failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
+    return [
+        Cell(
+            key="total_requests",
+            label="Total Requests",
+            value=rt["total_requests"]["formatted"],
+            previous=rt["total_requests"]["previous_formatted"],
+            pct_change=rt["total_requests"]["vs_previous_pct"],
+        ),
+        Cell(
+            key="successful",
+            label="Successful",
+            value=rt["successful_requests"]["formatted"],
+            previous=rt["successful_requests"]["previous_formatted"],
+            pct_change=rt["successful_requests"]["vs_previous_pct"],
+            helper=f"{success_rate:.2f}% success rate",
+        ),
+        Cell(
+            key="failed",
+            label="Failed",
+            value=rt["failed_requests"]["formatted"],
+            previous=rt["failed_requests"]["previous_formatted"],
+            pct_change=rt["failed_requests"]["vs_previous_pct"],
+            helper=f"{failure_rate:.2f}% failure rate",
+        ),
+        Cell(
+            key="avg_rps",
+            label="Avg RPS (req/s)",
+            value=rt["avg_rps"]["value"],
+            previous=rt["avg_rps"]["previous_value"],
+            pct_change=rt["avg_rps"]["vs_previous_pct"],
+        ),
+    ]
+
+
+def _platform_adoption_block(
+    is_admin: bool,
+    tc: Optional[dict],
+    at24: Optional[dict],
+    at7: Optional[dict],
+    at30: Optional[dict],
+) -> Optional[PlatformAdoption]:
+    if not (is_admin and tc):
+        return None
+    return PlatformAdoption(
+        total_tenants=tc["total_tenants"],
+        new_tenants_7d=tc["new_tenants"],
+        active_24h=at24["count"] if at24 else None,
+        active_7d=at7["count"] if at7 else None,
+        active_30d=at30["count"] if at30 else None,
+    )
+
+
+def _usage_concentration_block(is_admin: bool, conc: Optional[dict]) -> Optional[UsageConcentration]:
+    """``tenant`` IS the organisation name (the Prometheus label value)
+    already — no DB lookup needed."""
+    if not (is_admin and conc):
+        return None
+    return UsageConcentration(
+        top_tenants=[
+            TenantRow(
+                rank=t["rank"],
+                tenant=t["tenant"],
+                organisation=t["tenant"],
+                requests=t["requests"],
+                formatted_requests=MeteringService._format_count(t["requests"]),
+                percentage=t["percentage"],
+            )
+            for t in conc["top_tenants"]
+        ],
+        others=conc["others"],
+        top_concentration_pct=conc["top_concentration_percentage"],
+        grand_total=conc["grand_total"],
+    )
+
+
+def _tenant_ranking_rows(ranking_tenants: list[dict]) -> list[TenantRow]:
+    return [
+        TenantRow(
+            rank=t["rank"],
+            tenant=t["tenant"],
+            organisation=t["tenant"],
+            requests=t["requests"],
+            formatted_requests=t["formatted_requests"],
+            percentage=t["percentage"],
+        )
+        for t in ranking_tenants
+    ]
+
+
+def _service_consumption_summary(breakdown: Optional[dict]) -> Optional[ServiceSummary]:
+    """Summary KPIs — computed over services with traffic (a 0-request
+    service must not win "highest failure rate")."""
+    if breakdown is None:
+        return None
+    active = [s for s in breakdown["services"] if s["requests"] > 0]
+    most_used = max(active, key=lambda s: s["requests"]) if active else None
+    worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+    return ServiceSummary(
+        most_used=(
+            MostUsedService(service=most_used["service"], requests=most_used["requests"])
+            if most_used else None
+        ),
+        highest_failure_rate=(
+            HighestFailureService(
+                service=worst["service"],
+                failure_rate_pct=round(100 - worst["success_pct"], 2),
+            )
+            if worst else None
+        ),
+    )
 
 
 _STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -228,25 +453,6 @@ async def _request_volume_chart(
     )
 
 
-async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
-    """Batch-resolve tenant id -> organisation name from the auth DB.
-
-    Ids are pre-sanitized numeric strings; cast to int for the IN-list. Returns
-    {} when the auth DB is unavailable so callers fall back to the id.
-    """
-    numeric = [int(t) for t in tenant_ids if t and t.isdigit()]
-    if svc._auth_db is None or not numeric:
-        return {}
-    try:
-        rows = await svc._auth_db.execute(
-            text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"),
-            {"ids": numeric},
-        )
-        return {str(r[0]): r[1] for r in rows.all()}
-    except Exception:
-        return {}
-
-
 # Allowed time windows, typed as a Literal so FastAPI validates the query param
 # itself and returns the standard 422 for unsupported values (e.g. "15d") — matching
 # the documented OpenAPI contract — instead of a hand-rolled 400. ("all" is internal
@@ -272,30 +478,16 @@ async def get_overview(
     _require_metering_access(request)
 
     is_admin = _is_platform_admin(request)
-    caller_tid = _caller_tenant_id(request)
-    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
 
-    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
-    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
-    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
-    # rather than widen scope (defense-in-depth; the gateway should never let this
-    # through, but the backstop guarantees it).
-    if not is_admin and scope_tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
-
     cache_key = (
-        f"metering:overview:v2:{window}:{scope_tenant or 'all'}:"
+        f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{task_types or 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
-
-    degraded = False
 
     results = await asyncio.gather(
         svc.tenant_count(),
@@ -303,99 +495,23 @@ async def get_overview(
         svc.active_tenants("7d"),
         svc.active_tenants("30d"),
         svc.request_total(
-            inference_only=True, tenant=scope_tenant, service_id=None, time_range=window,
+            inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
             task_types=task_type_filter,
         ),
-        _request_volume_chart(svc, window, scope_tenant, task_type_filter),
+        _request_volume_chart(svc, window, scope_tenant_name, task_type_filter),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
         return_exceptions=True,
     )
+    (tc, at24, at7, at30, rt, chart, conc), degraded = _partition_results(results)
 
-    def _ok(r):
-        if isinstance(r, Exception):
-            logger.warning("Metering query failed: %s", r)
-            nonlocal degraded
-            degraded = True
-            return None
-        return r
+    org = scope_tenant_name
 
-    tc, at24, at7, at30, rt, chart, conc = [_ok(r) for r in results]
-
-    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
-
-    # KPI cells. Successful/Failed show the COUNT as the value and the rate as
-    # sub-text (helper); both are colored on the frontend (green / red).
-    kpis: list[Cell] = []
-    if rt:
-        success_rate = rt["success_rate"]["rate_pct"]
-        # No traffic → 0% failure (not 100%); 100−0 would be wrong.
-        failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
-        kpis.extend([
-            Cell(
-                key="total_requests",
-                label="Total Requests",
-                value=rt["total_requests"]["formatted"],
-                previous=rt["total_requests"]["previous_formatted"],
-                pct_change=rt["total_requests"]["vs_previous_pct"],
-            ),
-            Cell(
-                key="successful",
-                label="Successful",
-                value=rt["successful_requests"]["formatted"],
-                previous=rt["successful_requests"]["previous_formatted"],
-                pct_change=rt["successful_requests"]["vs_previous_pct"],
-                helper=f"{success_rate:.2f}% success rate",
-            ),
-            Cell(
-                key="failed",
-                label="Failed",
-                value=rt["failed_requests"]["formatted"],
-                previous=rt["failed_requests"]["previous_formatted"],
-                pct_change=rt["failed_requests"]["vs_previous_pct"],
-                helper=f"{failure_rate:.2f}% failure rate",
-            ),
-            Cell(
-                key="avg_rps",
-                label="Avg RPS (req/s)",
-                value=rt["avg_rps"]["value"],
-                previous=rt["avg_rps"]["previous_value"],
-                pct_change=rt["avg_rps"]["vs_previous_pct"],
-            ),
-        ])
-
-    # Platform adoption block (admin only)
-    platform_adoption: Optional[PlatformAdoption] = None
-    if is_admin and tc:
-        platform_adoption = PlatformAdoption(
-            total_tenants=tc["total_tenants"],
-            new_tenants_7d=tc["new_tenants"],
-            active_24h=at24["count"] if at24 else None,
-            active_7d=at7["count"] if at7 else None,
-            active_30d=at30["count"] if at30 else None,
-        )
-
-    # Usage concentration block (admin only) — resolve org names in one batched query
-    usage_conc: Optional[UsageConcentration] = None
-    if is_admin and conc:
-        org_map = await _resolve_orgs(svc, [t["tenant"] for t in conc["top_tenants"]])
-        usage_conc = UsageConcentration(
-            top_tenants=[
-                TenantRow(
-                    rank=t["rank"],
-                    tenant=t["tenant"],
-                    organisation=org_map.get(t["tenant"]),
-                    requests=t["requests"],
-                    formatted_requests=MeteringService._format_count(t["requests"]),
-                    percentage=t["percentage"],
-                )
-                for t in conc["top_tenants"]
-            ],
-            others=conc["others"],
-            top_concentration_pct=conc["top_concentration_percentage"],
-            grand_total=conc["grand_total"],
-        )
+    kpis = _overview_kpis(rt)
+    # Platform adoption / usage concentration are admin-only blocks.
+    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30)
+    usage_conc = _usage_concentration_block(is_admin, conc)
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -445,86 +561,49 @@ async def get_tenant_consumption(
 
     # Admin-only endpoint: scope to the selected tenant when one is chosen,
     # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
-    scope_tenant = _validate_scope_tenant(tenant_id or None)
+    # Routed through _resolve_tenant_scope (is_admin=True) so an unresolvable
+    # tenant_id raises rather than silently falling through to a platform-wide
+    # query that Scope.tenant_id would still report as tenant-scoped.
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, True)
 
     service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
 
     cache_key = (
-        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{task_types or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant_name or 'all'}:{task_types or 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
-    degraded = False
-
-    ranking_result, heatmap_result, prev_avg_result = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant),
+    results = await asyncio.gather(
+        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
         svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant
+            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant_name
         ),
-        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
         return_exceptions=True,
     )
-
-    def _ok(r):
-        if isinstance(r, Exception):
-            logger.warning("Metering query failed: %s", r)
-            nonlocal degraded
-            degraded = True
-            return None
-        return r
-
-    ranking = _ok(ranking_result)
-    heatmap = _ok(heatmap_result)
+    (ranking, heatmap, prev_avg), degraded = _partition_results(results)
 
     ranking_tenants = ranking["tenants"] if ranking else []
     heatmap_rows = heatmap["tenants"] if heatmap else []
 
-    # Batched auth-DB lookup: organisation names for both lists.
-    all_ids = list({t["tenant"] for t in ranking_tenants} | {r["tenant"] for r in heatmap_rows})
-    org_map = await _resolve_orgs(svc, all_ids)
-
+    # ``tenant`` IS the organisation name (the Prometheus label value)
+    # already — no DB lookup needed.
     for r in heatmap_rows:
-        r["organisation"] = org_map.get(r["tenant"])
+        r["organisation"] = r["tenant"]
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    # Avg requests per active tenant — KPI card shown above the ranking.
-    avg_per_tenant_cell = None
-    if ranking and ranking.get("total_tenant_count"):
-        prev_avg = _ok(prev_avg_result)
-        cur_avg = ranking.get("avg_per_active_tenant")
-        pct = (
-            round((cur_avg - prev_avg) / prev_avg * 100, 1)
-            if (prev_avg and cur_avg is not None) else None
-        )
-        avg_per_tenant_cell = Cell(
-            key="avg_requests_per_tenant",
-            label="Avg Requests Per Active Tenant",
-            value=ranking["formatted_avg_per_active_tenant"],
-            pct_change=pct,
-        )
 
     response = TenantConsumptionResponse(
         scope=Scope(
             role=_caller_role_label(request),
             tenant_id=scope_tenant,
-            organisation=org_map.get(scope_tenant) if scope_tenant else None,
+            organisation=scope_tenant_name,
             window=window,
         ),
-        avg_requests_per_tenant=avg_per_tenant_cell,
-        tenant_ranking=[
-            TenantRow(
-                rank=t["rank"],
-                tenant=t["tenant"],
-                organisation=org_map.get(t["tenant"]),
-                requests=t["requests"],
-                formatted_requests=t["formatted_requests"],
-                percentage=t["percentage"],
-            )
-            for t in ranking_tenants
-        ],
+        avg_requests_per_tenant=_avg_requests_per_tenant_cell(ranking, prev_avg),
+        tenant_ranking=_tenant_ranking_rows(ranking_tenants),
         usage_by_service=heatmap_rows,
         degraded=degraded,
         generated_at=generated_at,
@@ -553,66 +632,24 @@ async def get_service_consumption(
     _require_metering_access(request)
 
     is_admin = _is_platform_admin(request)
-    caller_tid = _caller_tenant_id(request)
-    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
 
-    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
-    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
-    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
-    # rather than widen scope (defense-in-depth; the gateway should never let this
-    # through, but the backstop guarantees it).
-    if not is_admin and scope_tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
-
-    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{task_types or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant_name or 'all'}:{task_types or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
-    degraded = False
-
-    breakdown_result, = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant, time_range=window, service_filter=service_filter),
+    results = await asyncio.gather(
+        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=service_filter),
         return_exceptions=True,
     )
+    (breakdown,), degraded = _partition_results(results)
 
-    def _ok(r):
-        if isinstance(r, Exception):
-            logger.warning("Metering query failed: %s", r)
-            nonlocal degraded
-            degraded = True
-            return None
-        return r
-
-    breakdown = _ok(breakdown_result)
-
-    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+    org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
-    # Summary KPIs — computed over services with traffic (a 0-request service
-    # must not win "highest failure rate").
-    summary: Optional[ServiceSummary] = None
-    if breakdown is not None:
-        active = [s for s in services if s["requests"] > 0]
-        most_used = max(active, key=lambda s: s["requests"]) if active else None
-        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
-        summary = ServiceSummary(
-            most_used=(
-                MostUsedService(service=most_used["service"], requests=most_used["requests"])
-                if most_used else None
-            ),
-            highest_failure_rate=(
-                HighestFailureService(
-                    service=worst["service"],
-                    failure_rate_pct=round(100 - worst["success_pct"], 2),
-                )
-                if worst else None
-            ),
-        )
+    summary = _service_consumption_summary(breakdown)
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -657,43 +694,20 @@ async def get_model_consumption(
     _require_metering_access(request)
 
     is_admin = _is_platform_admin(request)
-    caller_tid = _caller_tenant_id(request)
-    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
 
-    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
-    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
-    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
-    # rather than widen scope (defense-in-depth; the gateway should never let this
-    # through, but the backstop guarantees it).
-    if not is_admin and scope_tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
-
-    cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant_name or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
-    degraded = False
-
-    breakdown_result, = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant, time_range=window),
+    results = await asyncio.gather(
+        svc.model_breakdown(tenant=scope_tenant_name, time_range=window),
         return_exceptions=True,
     )
+    (breakdown,), degraded = _partition_results(results)
 
-    def _ok(r):
-        if isinstance(r, Exception):
-            logger.warning("Metering query failed: %s", r)
-            nonlocal degraded
-            degraded = True
-            return None
-        return r
-
-    breakdown = _ok(breakdown_result)
-
-    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+    org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
     # Summary KPIs — computed over services with traffic (a 0-request service
