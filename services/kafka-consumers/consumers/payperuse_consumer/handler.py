@@ -12,9 +12,8 @@ from config import settings
 from consumers.payperuse_consumer._billing import (
     ServicePricing,
     calculate_cost,
-    deduct_balance,
+    deduct_balance_and_update_quota,
     get_service_pricing,
-    update_quota_usage,
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
 )
@@ -173,38 +172,6 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     )
 
 
-async def _check_quota(db, ctx: BillingContext, tier_id: str, pricing: ServicePricing, billed_units: Decimal, cost: Decimal) -> bool:
-    if not pricing.task_type:
-        logger.debug(
-            "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
-            ctx.tenant_id, tier_id, pricing.task_type,
-        )
-        return False
-
-    usage = await update_quota_usage(
-        db,
-        tenant_id=ctx.tenant_id,
-        inference_name=pricing.task_type,
-        billing_month=ctx.billing_month,
-        tier_id=tier_id,
-        units=billed_units,
-        cost=cost,
-    )
-    if usage.recorded:
-        logger.debug(
-            "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
-            " units=%s quota_exhausted=%s",
-            ctx.tenant_id, pricing.task_type, ctx.billing_month, billed_units, usage.exhausted,
-        )
-    else:
-        logger.debug(
-            "Quota check: tasktype not mapped to tier | tenant=%s tier_id=%s"
-            " inference=%s quota_exhausted=%s",
-            ctx.tenant_id, tier_id, pricing.task_type, usage.exhausted,
-        )
-    return usage.exhausted
-
-
 async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     pricing: ServicePricing | None = await get_service_pricing(db, ctx.service_id)
     if pricing is None:
@@ -241,27 +208,59 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
 
     logger.debug("Cost calculated | tenant=%s cost=%s billed_units=%s", ctx.tenant_id, cost, billed_units)
 
-    wallet = await deduct_balance(db, ctx.tenant_id, cost)
+    # Fused single round-trip: balance deduction + quota upsert (see
+    # deduct_balance_and_update_quota's docstring). It can't tell "task_type
+    # unset" apart from "genuinely not entitled" on its own — both look like
+    # zero matching ppu_tier_quotas rows to it — so that distinction is
+    # applied here instead, same as the old _check_quota's early return.
+    write = await deduct_balance_and_update_quota(
+        db,
+        tenant_id=ctx.tenant_id,
+        inference_name=pricing.task_type,
+        billing_month=ctx.billing_month,
+        units=billed_units,
+        cost=cost,
+    )
 
-    if wallet.tier_id is None:
-        # deduct_balance already logged the warning; no active assignment means
-        # nothing was written to the wallet, and there's no tier to bill quota
-        # usage against. The tenant can't be served this tasktype right now —
-        # mark it exhausted so quota_guard blocks further requests, the same
+    if write.tier_id is None:
+        # deduct_balance_and_update_quota already logged the warning; no
+        # active assignment means nothing was written to either table. The
+        # tenant can't be served this tasktype right now — mark quota (not
+        # wallet) exhausted so quota_guard blocks further requests, the same
         # signal used for any other quota-exhausted case.
-        quota_exhausted = True
         wallet_exhausted = False
+        quota_exhausted = True
     else:
         logger.debug(
             "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
-            ctx.tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
+            ctx.tenant_id, write.tier_id, write.available_balance, write.wallet_exhausted,
         )
-        wallet_exhausted = wallet.exhausted
-        quota_exhausted = await _check_quota(db, ctx, wallet.tier_id, pricing, billed_units, cost)
+        wallet_exhausted = write.wallet_exhausted
+
+        if not pricing.task_type:
+            logger.debug(
+                "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
+                ctx.tenant_id, write.tier_id, pricing.task_type,
+            )
+            quota_exhausted = False
+        elif write.quota_recorded:
+            logger.debug(
+                "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
+                " units=%s quota_exhausted=%s",
+                ctx.tenant_id, pricing.task_type, ctx.billing_month, billed_units, write.quota_exhausted,
+            )
+            quota_exhausted = write.quota_exhausted
+        else:
+            logger.debug(
+                "Quota check: tasktype not mapped to tier | tenant=%s tier_id=%s"
+                " inference=%s quota_exhausted=%s",
+                ctx.tenant_id, write.tier_id, pricing.task_type, write.quota_exhausted,
+            )
+            quota_exhausted = write.quota_exhausted
 
     # Commit DB changes before any HTTP calls to avoid holding row locks
     # across slow or failing auth-service requests. A no-op (no rows touched)
-    # when wallet.tier_id was None above.
+    # when write.tier_id was None above.
     await db.commit()
     logger.debug("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
 

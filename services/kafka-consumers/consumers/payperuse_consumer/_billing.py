@@ -24,16 +24,29 @@ class ServicePricing:
 
 
 @dataclass
-class WalletResult:
+class BillingWriteResult:
+    """Result of the fused wallet-deduction + quota-upsert write.
+
+    tier_id is None when the tenant has no active tier assignment — nothing
+    was written to either table (wallet_exhausted is forced False here,
+    matching the caller's existing convention of using quota_exhausted
+    rather than wallet_exhausted to signal "no active assignment", so a
+    missing assignment doesn't fire the budget-exhausted auth-service call).
+
+    quota_recorded=False with tier_id set means no ppu_tier_quotas row
+    matches this tier/tasktype (or the caller passed an empty
+    inference_name because pricing.task_type was unset) — quota_exhausted
+    is True in that case as the DB-level default (not entitled), but
+    callers whose pricing.task_type was empty must override it to False
+    themselves, since that's a different "no quota constraint configured"
+    case that's indistinguishable from "not entitled" at the SQL level
+    (both yield zero matching rows).
+    """
     available_balance: Decimal
     tier_id: Optional[str]
-    exhausted: bool  # balance <= 0 or no active assignment
-
-
-@dataclass
-class QuotaUsageResult:
-    exhausted: bool
-    recorded: bool  # True iff a ppu_quota_usage row was actually written this call
+    wallet_exhausted: bool
+    quota_recorded: bool
+    quota_exhausted: bool
 
 
 async def get_service_pricing(
@@ -107,106 +120,103 @@ def calculate_cost(total_units: Decimal, pricing: ServicePricing) -> Decimal:
     return Decimal(0)
 
 
-async def deduct_balance(
-    db: AsyncSession,
-    tenant_id: str,
-    cost: Decimal,
-) -> WalletResult:
-    """
-    Deduct cost from the active tier assignment.
-    Returns WalletResult with the new balance and tier_id.
-    """
-    result = await db.execute(
-        text(
-            "UPDATE ppu_tenant_tier_assignments"
-            "   SET available_balance = available_balance - :cost,"
-            "       updated_at = now()"
-            " WHERE tenant_id = :tenant_id"
-            "   AND effective_from <= now()"
-            "   AND effective_to   >  now()"
-            " RETURNING available_balance, tier_id"
-        ),
-        {"cost": cost, "tenant_id": tenant_id},
-    )
-    row = result.first()
-    if row is None:
-        logger.warning("deduct_balance: no active assignment for tenant=%s", tenant_id)
-        return WalletResult(available_balance=Decimal(0), tier_id=None, exhausted=True)
-    return WalletResult(
-        available_balance=row.available_balance,
-        tier_id=str(row.tier_id),
-        exhausted=row.available_balance <= 0,
-    )
-
-
-async def update_quota_usage(
+async def deduct_balance_and_update_quota(
     db: AsyncSession,
     tenant_id: str,
     inference_name: str,
     billing_month: str,
-    tier_id: str,
     units: Decimal,
     cost: Decimal,
-) -> QuotaUsageResult:
+) -> BillingWriteResult:
     """
-    UPSERT quota usage for this tenant/inference_name/month/tier.
-    Accumulates units_used and cost_accum within the active tier's row. If the
-    tenant's active tier changes mid-month (see tenant_assignment_service.
-    reassign_tier), this starts a fresh row for the new tier rather than
-    folding into the previous tier's accumulated numbers.
+    Single round-trip fusing what were two sequential writes:
+      1. deduct_balance — debit the tenant's active tier assignment.
+      2. update_quota_usage — UPSERT this tenant/inference/month/tier's
+         accumulated usage, sourcing monthly_quota from ppu_tier_quotas.
 
-    ``recorded=False`` means no ppu_tier_quotas row exists for this
-    tier/tasktype, so nothing was written to ppu_quota_usage — exhausted is
-    still True in that case (not entitled), but callers must not log it as
-    an upsert.
+    A writable-CTE chain lets both writes commit as one statement in one
+    round-trip instead of two, with the same atomicity as before — both
+    succeed or both roll back together with the session's transaction.
+
+    wallet_update always attempts the deduction. quota_upsert only
+    produces a row when wallet_update produced one (an active assignment
+    exists) *and* ppu_tier_quotas has a matching (tier_id, inference_name)
+    row — if either is missing, quota_upsert's FROM/JOIN yields zero rows,
+    so nothing is inserted there, mirroring the old code's "no assignment"
+    and "not entitled" branches respectively. ppu_tier_quotas has a unique
+    constraint on (tier_id, inference_name), so quota_upsert never yields
+    more than one row when it does match.
+
+    inference_name='' (pricing.task_type unset) simply never matches a
+    ppu_tier_quotas row either, so quota_upsert naturally does nothing in
+    that case too — quota_recorded=False either way, and it's the
+    caller's job to distinguish "task_type unset" (not exhausted) from
+    "genuinely not entitled" (exhausted) using pricing.task_type, same as
+    the old _check_quota's early return did.
     """
-    snap_result = await db.execute(
-        text(
-            "SELECT monthly_quota FROM ppu_tier_quotas"
-            " WHERE tier_id = :tier_id AND inference_name = :inference_name"
-        ),
-        {"tier_id": tier_id, "inference_name": inference_name},
-    )
-    snap = snap_result.scalar()
-    if snap is None:
-        # No ppu_tier_quotas row means this tasktype isn't part of the tier's
-        # mapping at all — not entitled, not "unlimited". Treat as exhausted so
-        # _post_billing marks quota-{inference_name} and future requests to this
-        # tasktype are blocked by quota_guard.
-        logger.warning(
-            "update_quota_usage: tasktype not included in tier — tier_id=%s"
-            " inference_name=%s — marking quota exhausted",
-            tier_id, inference_name,
-        )
-        return QuotaUsageResult(exhausted=True, recorded=False)
-
     result = await db.execute(
         text(
-            "INSERT INTO ppu_quota_usage"
-            "  (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "   units_used, tier_id, cost_accum)"
-            " VALUES"
-            "  (gen_random_uuid(), :tenant_id, :inference_name, :billing_month, :snap,"
-            "   :units, :tier_id, :cost)"
-            " ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
-            " DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
-            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
-            "               updated_at = now()"
-            " RETURNING units_used, monthly_quota_snap"
+            "WITH wallet_update AS ("
+            "    UPDATE ppu_tenant_tier_assignments"
+            "       SET available_balance = available_balance - :cost,"
+            "           updated_at = now()"
+            "     WHERE tenant_id = :tenant_id"
+            "       AND effective_from <= now()"
+            "       AND effective_to   >  now()"
+            "    RETURNING available_balance, tier_id"
+            "),"
+            " quota_upsert AS ("
+            "    INSERT INTO ppu_quota_usage"
+            "      (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
+            "       units_used, tier_id, cost_accum)"
+            "    SELECT gen_random_uuid(), :tenant_id, :inference_name, :billing_month,"
+            "           ptq.monthly_quota, :units, wallet_update.tier_id, :cost"
+            "    FROM wallet_update"
+            "    JOIN ppu_tier_quotas ptq"
+            "      ON ptq.tier_id = wallet_update.tier_id AND ptq.inference_name = :inference_name"
+            "    ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
+            "    DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
+            "                  cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
+            "                  updated_at = now()"
+            "    RETURNING units_used, monthly_quota_snap"
+            " )"
+            " SELECT wallet_update.available_balance, wallet_update.tier_id,"
+            "        quota_upsert.units_used, quota_upsert.monthly_quota_snap"
+            " FROM wallet_update"
+            " LEFT JOIN quota_upsert ON true"
         ),
         {
             "tenant_id": tenant_id,
             "inference_name": inference_name,
             "billing_month": billing_month,
-            "snap": snap,
             "units": units,
-            "tier_id": tier_id,
             "cost": cost,
         },
     )
     row = result.first()
-    exhausted = row is not None and row.units_used >= row.monthly_quota_snap
-    return QuotaUsageResult(exhausted=exhausted, recorded=True)
+    if row is None:
+        # wallet_update itself produced no row — no active tier assignment.
+        # wallet_exhausted stays False here (not True) so this doesn't fire
+        # the budget-exhausted auth-service call; quota_exhausted=True is
+        # the signal callers use instead to block further requests.
+        logger.warning("deduct_balance: no active assignment for tenant=%s", tenant_id)
+        return BillingWriteResult(
+            available_balance=Decimal(0), tier_id=None,
+            wallet_exhausted=False, quota_recorded=False, quota_exhausted=True,
+        )
+
+    quota_recorded = row.units_used is not None
+    # Not recorded (no ppu_tier_quotas match) defaults to exhausted=True —
+    # the DB-level "not entitled" signal; empty-task_type callers override
+    # this to False themselves (see the docstring above).
+    quota_exhausted = (not quota_recorded) or (row.units_used >= row.monthly_quota_snap)
+    return BillingWriteResult(
+        available_balance=row.available_balance,
+        tier_id=str(row.tier_id),
+        wallet_exhausted=row.available_balance <= 0,
+        quota_recorded=quota_recorded,
+        quota_exhausted=quota_exhausted,
+    )
 
 
 def _get_billing_data(message: Message) -> Optional[dict]:
