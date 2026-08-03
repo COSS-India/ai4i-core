@@ -1,10 +1,11 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
 import httpx
-from ai4i_core.bootstrap import get_redis_client
+from ai4i_core.bootstrap import get_redis_client, get_db
 from ai4i_core.logging import get_logger
 from confluent_kafka.cimpl import Message
 
@@ -18,9 +19,14 @@ from consumers.payperuse_consumer._billing import (
     _get_billed_key, _update_billing_on_cache,
 )
 from consumers.registry import kafka_listener
-from db_registry import db_registry
 
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def get_session():
+    async for db in get_db():
+        yield db
 
 
 def _get_otel_attributes(attrs: dict):
@@ -279,7 +285,7 @@ async def handle_ppu_usage(msg: Message) -> None:
     if ctx is None:
         return
 
-    async with db_registry.get_session(settings.db_settings.PLATFORM_CORE_DB) as db:
+    async with get_session() as db:
         outcome = await _bill_usage(db, ctx)
 
     if outcome is None:
