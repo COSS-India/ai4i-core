@@ -211,7 +211,7 @@ async def update_quota_usage(
 
 def _get_billing_data(message: Message) -> Optional[dict]:
     payload_bytes = message.value()
-    logger.info(
+    logger.debug(
         "Message received | topic=%s partition=%d offset=%d size=%d bytes",
         message.topic(),
         message.partition(),

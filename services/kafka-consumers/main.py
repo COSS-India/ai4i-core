@@ -22,6 +22,19 @@ logger = get_logger(__name__)
 KAFKA_GROUP_ID = "aio-python-consumers"
 # ===============
 
+# Commit offsets every N successful messages, or every T seconds since the
+# last commit — whichever comes first — instead of after every message. A
+# broker round-trip per message is real overhead under burst load; batching
+# is safe here because handle_ppu_usage is already redelivery-safe (see the
+# Redis dedup check) — a crash mid-batch just means up to COMMIT_BATCH_SIZE
+# already-billed messages get redelivered and no-op'd on restart, not
+# double-billed. Assumes a single partition (true today, see
+# KAFKA_GROUP_ID note above) — commit(message=msg) only advances that
+# message's own partition, so a multi-partition topic would need per-
+# partition tracking instead of one shared counter/last-message.
+COMMIT_BATCH_SIZE = 100
+COMMIT_INTERVAL_S = 5.0
+
 async def main() -> None:
     # ── Database registry ──
     db_cfg = settings.db_settings
@@ -93,6 +106,17 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
 
+    uncommitted = 0
+    last_msg = None
+    last_commit_time = loop.time()
+
+    async def _flush_commit() -> None:
+        nonlocal uncommitted, last_commit_time
+        if uncommitted and last_msg is not None:
+            await consumer.commit(message=last_msg)
+            uncommitted = 0
+            last_commit_time = loop.time()
+
     async with consumer:
         while not shutdown.is_set():
             try:
@@ -102,19 +126,34 @@ async def main() -> None:
                 continue
 
             if msg is None:
+                # Nothing to process right now — flush any pending commit so
+                # offsets aren't held back indefinitely during quiet periods.
+                if loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
+                    await _flush_commit()
                 continue
             if msg.error():
                 logger.error("Kafka error: %s", msg.error())
                 continue
 
             try:
-                await registry.dispatch(msg.topic(), msg, consumer)
+                await registry.dispatch(msg.topic(), msg)
             except Exception as exc:
                 logger.exception(
                     "Unhandled error dispatching message from topic %s: %s",
                     msg.topic(),
                     exc,
                 )
+                # Don't count a failed message toward the batch — its offset
+                # must stay uncommitted so it's redelivered on restart.
+                continue
+
+            uncommitted += 1
+            last_msg = msg
+            if uncommitted >= COMMIT_BATCH_SIZE or loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
+                await _flush_commit()
+
+        # Flush any remaining uncommitted offset before shutting down.
+        await _flush_commit()
 
     logger.info("Shutdown signal received — draining database connections")
     await db_registry.close_all()
