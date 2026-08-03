@@ -155,20 +155,46 @@ async def update_quota_usage(
     reassign_tier), this starts a fresh row for the new tier rather than
     folding into the previous tier's accumulated numbers.
 
+    Single round-trip: monthly_quota is sourced from ppu_tier_quotas directly
+    in the INSERT's SELECT (instead of a separate lookup query first). If no
+    ppu_tier_quotas row exists for this tier/tasktype, that SELECT source
+    yields zero rows, so nothing is inserted and RETURNING comes back empty —
+    that's how the ``recorded=False`` case below is detected, same meaning as
+    before: not entitled, not "unlimited". ppu_tier_quotas has a unique
+    constraint on (tier_id, inference_name), so the source never yields more
+    than one row.
+
     ``recorded=False`` means no ppu_tier_quotas row exists for this
     tier/tasktype, so nothing was written to ppu_quota_usage — exhausted is
     still True in that case (not entitled), but callers must not log it as
     an upsert.
     """
-    snap_result = await db.execute(
+    result = await db.execute(
         text(
-            "SELECT monthly_quota FROM ppu_tier_quotas"
-            " WHERE tier_id = :tier_id AND inference_name = :inference_name"
+            "INSERT INTO ppu_quota_usage"
+            "  (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
+            "   units_used, tier_id, cost_accum)"
+            " SELECT gen_random_uuid(), :tenant_id, :inference_name, :billing_month,"
+            "        ptq.monthly_quota, :units, :tier_id, :cost"
+            " FROM ppu_tier_quotas ptq"
+            " WHERE ptq.tier_id = :tier_id AND ptq.inference_name = :inference_name"
+            " ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
+            " DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
+            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
+            "               updated_at = now()"
+            " RETURNING units_used, monthly_quota_snap"
         ),
-        {"tier_id": tier_id, "inference_name": inference_name},
+        {
+            "tenant_id": tenant_id,
+            "inference_name": inference_name,
+            "billing_month": billing_month,
+            "units": units,
+            "tier_id": tier_id,
+            "cost": cost,
+        },
     )
-    snap = snap_result.scalar()
-    if snap is None:
+    row = result.first()
+    if row is None:
         # No ppu_tier_quotas row means this tasktype isn't part of the tier's
         # mapping at all — not entitled, not "unlimited". Treat as exhausted so
         # _post_billing marks quota-{inference_name} and future requests to this
@@ -180,32 +206,7 @@ async def update_quota_usage(
         )
         return QuotaUsageResult(exhausted=True, recorded=False)
 
-    result = await db.execute(
-        text(
-            "INSERT INTO ppu_quota_usage"
-            "  (id, tenant_id, inference_name, billing_month, monthly_quota_snap,"
-            "   units_used, tier_id, cost_accum)"
-            " VALUES"
-            "  (gen_random_uuid(), :tenant_id, :inference_name, :billing_month, :snap,"
-            "   :units, :tier_id, :cost)"
-            " ON CONFLICT (tenant_id, inference_name, billing_month, tier_id)"
-            " DO UPDATE SET units_used = ppu_quota_usage.units_used + EXCLUDED.units_used,"
-            "               cost_accum = ppu_quota_usage.cost_accum + EXCLUDED.cost_accum,"
-            "               updated_at = now()"
-            " RETURNING units_used, monthly_quota_snap"
-        ),
-        {
-            "tenant_id": tenant_id,
-            "inference_name": inference_name,
-            "billing_month": billing_month,
-            "snap": snap,
-            "units": units,
-            "tier_id": tier_id,
-            "cost": cost,
-        },
-    )
-    row = result.first()
-    exhausted = row is not None and row.units_used >= row.monthly_quota_snap
+    exhausted = row.units_used >= row.monthly_quota_snap
     return QuotaUsageResult(exhausted=exhausted, recorded=True)
 
 
