@@ -185,6 +185,19 @@ class MeteringService:
         }
 
     async def active_tenants(self, time_range: Optional[str]) -> dict:
+        """
+        ROLLOUT NOTE: the ``tenant`` label switched from the numeric tenant id
+        to the organisation name (see ObservabilityMiddleware). Existing
+        Prometheus series from before the cutover still carry the id, which
+        never matches ``valid_names`` (current organisation names) below, so
+        any query window spanning the cutover undercounts — pre-cutover,
+        id-labelled series are dropped even though real traffic occurred.
+        This self-heals as pre-cutover series age out of the window (1h/24h
+        clear within a day; 7d/30d take up to 7/30 days). There is no
+        after-the-fact fix: Prometheus relabeling only applies at scrape time
+        to a target's own labels, it cannot rewrite already-stored series to
+        translate an id to the org name it corresponded to at write time.
+        """
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
         prom_results, valid_names = await asyncio.gather(
@@ -390,7 +403,7 @@ class MeteringService:
         )
         tokens_parts = ['token_type="total"', 'tenant!="unknown"']
         if tenant:
-            tokens_parts.append(f'tenant="{tenant}"')
+            tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
         tokens_sel = "{" + ",".join(tokens_parts) + "}"
 
         total_q = sum_over_window_by(f"{_METRIC}{base_sel}", "service_id", time_range)

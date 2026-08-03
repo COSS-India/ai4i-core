@@ -14,6 +14,7 @@ import binascii
 import json
 import logging
 from functools import lru_cache
+from urllib.parse import quote
 
 from ai4i_core.ppu import get_inference_types
 from fastapi import APIRouter, Depends, Request, Response
@@ -113,6 +114,12 @@ def _set_tenant_headers(response: Response, tenant_id: object) -> None:
     (no DB round trip on this hot path — see tenant_name_cache.py). Falls back
     to the id itself on a cache miss (e.g. a tenant created moments before this
     worker's next refresh) so the label is never empty for a real tenant.
+
+    Starlette encodes header values as latin-1, but organisation names accept
+    any Unicode letter (see _check_org_chars in schemas/tenant.py) — a name
+    with e.g. Devanagari or Tamil characters would raise UnicodeEncodeError
+    here and 500 the whole /validate call. Percent-encode it when it isn't
+    latin-1 encodable; the observability middleware decodes it back.
     """
     response.headers["X-Tenant-ID"] = str(tenant_id)
     name = None
@@ -120,7 +127,12 @@ def _set_tenant_headers(response: Response, tenant_id: object) -> None:
         name = tenant_name_cache.get_name(int(tenant_id))
     except (TypeError, ValueError):
         pass
-    response.headers["X-Tenant-Name"] = name or str(tenant_id)
+    name = name or str(tenant_id)
+    try:
+        name.encode("latin-1")
+    except UnicodeEncodeError:
+        name = quote(name, safe="")
+    response.headers["X-Tenant-Name"] = name
 
 
 def _extract_token(request: Request) -> str:

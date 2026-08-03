@@ -7,6 +7,16 @@ emission. Tenant is read from the gateway-injected ``X-Tenant-Name`` header
 in-memory tenant_name_cache) — this middleware does NOT decode JWTs, does NOT
 look up the tenant id itself, and does NOT open OpenTelemetry spans.
 
+ROLLOUT NOTE: the ``tenant`` label value changed from the numeric tenant id to
+the organisation name here. Series written before a deploy of this change
+keep the old id value forever — Prometheus has no way to rewrite a stored
+series' label after the fact — so any dashboard query window spanning the
+cutover moment mixes two label values for what was really one tenant (see
+MeteringService.active_tenants for the concrete symptom). This clears itself
+once pre-cutover series age out of the query window; no relabel rule can fix
+it retroactively since relabeling only sees a scrape target's own labels, not
+a historical series' stored value.
+
 Unit counts (characters/audio-minutes/images/tokens), language labels, and
 service_id are NOT re-derived here — this middleware never reads or parses
 the request body at all. Every value is computed exactly once by the request
@@ -27,6 +37,7 @@ import asyncio
 import logging
 import time
 from typing import Any, AsyncIterator, Optional
+from urllib.parse import unquote
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -35,6 +46,17 @@ from .config import PluginConfig
 from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
+
+
+def _tenant_label(request: Request) -> str:
+    """Read the ``tenant`` metric label from the gateway-injected
+    X-Tenant-Name header (organisation name, set by auth-service /validate).
+
+    auth-service percent-encodes the name when it isn't latin-1 encodable
+    (Starlette can only send latin-1 header values) — undo that here so the
+    label carries the real Unicode organisation name, not the encoded form.
+    """
+    return unquote((request.headers.get("X-Tenant-Name") or "").strip()) or "unknown"
 
 
 def set_billed_state(
@@ -141,13 +163,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         duration = time.time() - start_time
 
-        # tenant_label is the tenant's organisation name, from the
-        # gateway-injected X-Tenant-Name header (set by auth-service /validate
-        # after verifying the bearer token; the gateway forwards it upstream).
-        # HTTP header names are case-insensitive, so this matches
-        # X-Tenant-Name / X-TENANT-NAME / x-tenant-name.
         # service_id is populated during request handling by model-management.
-        tenant_label = (request.headers.get("X-Tenant-Name") or "").strip() or "unknown"
+        tenant_label = _tenant_label(request)
         # service_id is set on request.state by the route handler for LLM
         # (from payload serviceId before proxy_traced is called) and by the
         # orchestrator for Triton services. Falls back to empty string.
@@ -218,7 +235,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 yield chunk
         finally:
             duration = time.time() - start_time
-            tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
+            tenant_label = _tenant_label(request)
             service_id = getattr(request.state, "service_id", "") or ""
             self._schedule_metrics(
                 path=path,

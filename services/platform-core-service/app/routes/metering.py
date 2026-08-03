@@ -145,6 +145,53 @@ async def _resolve_org(svc: MeteringService, tenant_id: str) -> Optional[str]:
         return None
 
 
+async def _resolve_tenant_scope(
+    request: Request,
+    svc: MeteringService,
+    tenant_id: Optional[int],
+    is_admin: bool,
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve (scope_tenant id, scope_tenant_name) and enforce the tenant
+    scoping guard on the NAME — the value PromQL selectors actually filter on,
+    not the id in scope_tenant. Checking the guard on the id while querying by
+    name let a missing/unresolved name fall through to an unscoped,
+    platform-wide query.
+
+    Non-admins are scoped to their own tenant via the gateway-injected
+    X-Tenant-Name header. An admin may narrow to another tenant_id; when that
+    id's organisation can't be resolved (unknown tenant / DB error), raise
+    rather than silently widening the query to platform-wide.
+    """
+    caller_tid = _caller_tenant_id(request)
+    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+
+    if not is_admin:
+        scope_tenant_name = _caller_tenant_name(request)
+    elif scope_tenant:
+        scope_tenant_name = await _resolve_org(svc, scope_tenant)
+        if scope_tenant_name is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Could not resolve organisation for tenant_id={scope_tenant}.",
+            )
+    else:
+        scope_tenant_name = None
+
+    # Security backstop: a tenant admin (role 5) MUST carry a tenant context —
+    # the gateway injects X-Tenant-Name from the JWT-resolved tenant. Without
+    # it, scope_tenant_name is None and the queries below would run unscoped,
+    # leaking platform-wide aggregates. Refuse rather than widen scope
+    # (defense-in-depth; the gateway should never let this through, but the
+    # backstop guarantees it).
+    if not is_admin and scope_tenant_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin requires a tenant context (X-Tenant-Name).",
+        )
+
+    return scope_tenant, scope_tenant_name
+
+
 def _series_points(res, ndigits: int) -> list[GraphPoint]:
     """Build GraphPoints from a query_range result, skipping NaN/Inf samples."""
     if isinstance(res, Exception) or not res:
@@ -260,30 +307,8 @@ async def get_overview(
     _require_metering_access(request)
 
     is_admin = _is_platform_admin(request)
-    caller_tid = _caller_tenant_id(request)
-    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     task_type_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
-
-    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
-    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
-    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
-    # rather than widen scope (defense-in-depth; the gateway should never let this
-    # through, but the backstop guarantees it).
-    if not is_admin and scope_tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
-
-    # PromQL selectors filter on the tenant ORGANISATION NAME (the Prometheus
-    # ``tenant`` label value), not the id in scope_tenant. Non-admins already
-    # have their own tenant's name on the gateway-injected X-Tenant-Name header
-    # (no DB call needed); an admin narrowing to another tenant_id has no such
-    # header, so its name is resolved from the auth DB.
-    scope_tenant_name = (
-        _caller_tenant_name(request) if not is_admin
-        else (await _resolve_org(svc, scope_tenant) if scope_tenant else None)
-    )
 
     cache_key = (
         f"metering:overview:v2:{window}:{scope_tenant or 'all'}:"
@@ -552,28 +577,8 @@ async def get_service_consumption(
     _require_metering_access(request)
 
     is_admin = _is_platform_admin(request)
-    caller_tid = _caller_tenant_id(request)
-    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
     service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
-
-    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
-    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
-    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
-    # rather than widen scope (defense-in-depth; the gateway should never let this
-    # through, but the backstop guarantees it).
-    if not is_admin and scope_tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
-
-
-    # PromQL selectors filter on the tenant organisation name (the Prometheus
-    # ``tenant`` label value), not the id in scope_tenant.
-    scope_tenant_name = (
-        _caller_tenant_name(request) if not is_admin
-        else (await _resolve_org(svc, scope_tenant) if scope_tenant else None)
-    )
 
     cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{task_types or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
@@ -664,19 +669,7 @@ async def get_model_consumption(
     _require_metering_access(request)
 
     is_admin = _is_platform_admin(request)
-    caller_tid = _caller_tenant_id(request)
-    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
-
-    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
-    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
-    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
-    # rather than widen scope (defense-in-depth; the gateway should never let this
-    # through, but the backstop guarantees it).
-    if not is_admin and scope_tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
-        )
+    scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
 
     cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
@@ -686,7 +679,7 @@ async def get_model_consumption(
     degraded = False
 
     breakdown_result, = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant, time_range=window),
+        svc.model_breakdown(tenant=scope_tenant_name, time_range=window),
         return_exceptions=True,
     )
 
@@ -700,7 +693,7 @@ async def get_model_consumption(
 
     breakdown = _ok(breakdown_result)
 
-    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+    org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
     # Summary KPIs — computed over services with traffic (a 0-request service
