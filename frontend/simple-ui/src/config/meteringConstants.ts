@@ -55,6 +55,9 @@ export const METERING = {
       FAILED: "failed",
       AVG_RPS: "avg_rps",
     },
+    LABELS: {
+      avg_rps: "Avg RPS",
+    },
     HELPERS: {
       total_requests: "across all services and tenants",
       successful: "of all requests",
