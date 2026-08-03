@@ -19,9 +19,35 @@ from app.utils.metering_promql_builder import (
     WINDOW_STEP,
     apply_time_range,
     build_base_selectors,
+    escape_label_value,
     sum_over_window,
     sum_over_window_by,
 )
+
+
+class TestEscapeLabelValue:
+    def test_plain_value_unchanged(self):
+        assert escape_label_value("Acme Corp") == "Acme Corp"
+
+    def test_double_quote_escaped(self):
+        assert escape_label_value('Acme "Corp"') == 'Acme \\"Corp\\"'
+
+    def test_backslash_escaped(self):
+        assert escape_label_value("Acme\\Corp") == "Acme\\\\Corp"
+
+    def test_backslash_escaped_before_quote_so_result_is_not_double_escaped(self):
+        # Backslashes must be escaped FIRST. If quotes were escaped first, the
+        # backslash pass would then double the backslash the quote-escape just
+        # inserted too, over-escaping the value a PromQL parser would receive.
+        raw = "a" + "\\" + '"' + "b"  # 4 literal chars: a \ " b
+        escaped = escape_label_value(raw)
+        # Backslash doubled first (a\\"b), then the quote escaped (a\\\"b):
+        # one embedded quote, preceded by exactly 3 backslash characters.
+        expected = "a" + ("\\" * 3) + '"' + "b"
+        assert escaped == expected
+
+    def test_empty_string_unchanged(self):
+        assert escape_label_value("") == ""
 
 
 class TestBuildBaseSelectors:
@@ -489,6 +515,26 @@ class TestModelBreakdown:
         for call in client.query.call_args_list:
             promql = call[0][0]
             assert 'tenant="42"' in promql
+
+    async def test_tenant_with_quote_is_escaped_in_tokens_selector(self):
+        """The tokens_sel selector (unlike base_sel/success_sel, which go
+        through build_base_selectors) is hand-built with an f-string — it was
+        the one selector left unescaped before escape_label_value was added
+        there too."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        tenant = 'Acme "Corp"'
+        await svc.model_breakdown(tenant=tenant, time_range="24h")
+
+        tokens_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
+        ]
+        assert len(tokens_calls) == 1
+        assert f'tenant="{escape_label_value(tenant)}"' in tokens_calls[0]
+        assert f'tenant="{tenant}"' not in tokens_calls[0]
 
     async def test_llm_only_endpoint_selector_used(self):
         client = MagicMock()
