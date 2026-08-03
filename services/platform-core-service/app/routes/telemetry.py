@@ -85,7 +85,7 @@ async def search_traces_opensearch(
     page: int = Query(1, ge=1, description="Page number for pagination"),
     page_size: int = Query(20, ge=1, le=100, description="Number of traces per page"),
     opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
-) -> SearchTracesResponse:
+):
     """
     Search traces from OpenSearch using direct queries on nested fields.
     """
@@ -258,7 +258,7 @@ async def get_trace_by_id(
     trace_id: str,
     request: Request,
     opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
-) -> TraceResponse:
+):
     """
     Get a specific trace by ID from OpenSearch.
 
