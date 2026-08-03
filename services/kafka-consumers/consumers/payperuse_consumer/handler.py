@@ -134,7 +134,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
     # (older spans without this attribute), billing proceeds as before.
     auth_type: str = str(attrs.get("authType", "")).strip()
     if auth_type and auth_type != "api_key":
-        logger.info(
+        logger.debug(
             "Skipping billing for non-API-key request | auth_type=%r offset=%d span_id=%s",
             auth_type, msg.offset(), span_id,
         )
@@ -142,7 +142,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
 
     total_tokens: float = input_tokens + output_tokens
 
-    logger.info(
+    logger.debug(
         "Billing fields extracted | offset=%d tenant_id=%r service_id=%r"
         " input_tokens=%s output_tokens=%s total_tokens=%s span_id=%s",
         msg.offset(), tenant_id, service_id, input_tokens, output_tokens, total_tokens, span_id,
@@ -157,7 +157,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
         return None
 
     billing_month = _resolve_billing_month(data.get("end_time"))
-    logger.info("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
+    logger.debug("Billing month resolved | tenant=%s billing_month=%s", tenant_id, billing_month)
 
     return BillingContext(
         tenant_id=tenant_id,
@@ -175,7 +175,7 @@ async def _prepare_billing_context(msg: Message) -> Optional[BillingContext]:
 
 async def _check_quota(db, ctx: BillingContext, tier_id: str, pricing: ServicePricing, billed_units: Decimal, cost: Decimal) -> bool:
     if not pricing.task_type:
-        logger.info(
+        logger.debug(
             "Quota update skipped | tenant=%s tier_id=%s task_type=%r",
             ctx.tenant_id, tier_id, pricing.task_type,
         )
@@ -191,13 +191,13 @@ async def _check_quota(db, ctx: BillingContext, tier_id: str, pricing: ServicePr
         cost=cost,
     )
     if usage.recorded:
-        logger.info(
+        logger.debug(
             "Quota usage upserted | tenant=%s inference=%s billing_month=%s"
             " units=%s quota_exhausted=%s",
             ctx.tenant_id, pricing.task_type, ctx.billing_month, billed_units, usage.exhausted,
         )
     else:
-        logger.info(
+        logger.debug(
             "Quota check: tasktype not mapped to tier | tenant=%s tier_id=%s"
             " inference=%s quota_exhausted=%s",
             ctx.tenant_id, tier_id, pricing.task_type, usage.exhausted,
@@ -214,7 +214,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         )
         return None
 
-    logger.info(
+    logger.debug(
         "Pricing resolved | service_id=%s task_type=%r"
         " unit_rate=%s cost_per_unit=%s unit_size=%s",
         ctx.service_id, pricing.task_type,
@@ -239,7 +239,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         )
         return None
 
-    logger.info("Cost calculated | tenant=%s cost=%s billed_units=%s", ctx.tenant_id, cost, billed_units)
+    logger.debug("Cost calculated | tenant=%s cost=%s billed_units=%s", ctx.tenant_id, cost, billed_units)
 
     wallet = await deduct_balance(db, ctx.tenant_id, cost)
 
@@ -252,7 +252,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
         quota_exhausted = True
         wallet_exhausted = False
     else:
-        logger.info(
+        logger.debug(
             "Balance deducted | tenant=%s tier_id=%s available_balance=%s exhausted=%s",
             ctx.tenant_id, wallet.tier_id, wallet.available_balance, wallet.exhausted,
         )
@@ -263,7 +263,7 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     # across slow or failing auth-service requests. A no-op (no rows touched)
     # when wallet.tier_id was None above.
     await db.commit()
-    logger.info("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
+    logger.debug("DB commit successful | tenant=%s offset=%d", ctx.tenant_id, ctx.offset)
 
     return BillingOutcome(
         pricing=pricing,
