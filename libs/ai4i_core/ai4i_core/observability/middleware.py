@@ -2,9 +2,10 @@
 Middleware for AI4ICore Observability Plugin.
 
 Handles request tracking, path-based service detection, and Prometheus metric
-emission. Tenant is read from the gateway-injected ``X-Tenant-Id`` header
-(set by ``auth-service /validate``) — this middleware does NOT decode JWTs and
-does NOT open OpenTelemetry spans.
+emission. Tenant is read from the gateway-injected ``X-Tenant-Name`` header
+(the tenant's organisation name, set by ``auth-service /validate`` from its
+in-memory tenant_name_cache) — this middleware does NOT decode JWTs, does NOT
+look up the tenant id itself, and does NOT open OpenTelemetry spans.
 
 Unit counts (characters/audio-minutes/images/tokens), language labels, and
 service_id are NOT re-derived here — this middleware never reads or parses
@@ -120,12 +121,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration = time.time() - start_time
 
-        # tenant_id comes from the gateway-injected X-Tenant-Id header (set by
-        # auth-service /validate after verifying the bearer token; the gateway
-        # forwards it upstream). HTTP header names are case-insensitive, so
-        # this matches X-Tenant-Id / X-Tenant-ID / x-tenant-id.
+        # tenant_label is the tenant's organisation name, from the
+        # gateway-injected X-Tenant-Name header (set by auth-service /validate
+        # after verifying the bearer token; the gateway forwards it upstream).
+        # HTTP header names are case-insensitive, so this matches
+        # X-Tenant-Name / X-TENANT-NAME / x-tenant-name.
         # service_id is populated during request handling by model-management.
-        tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
+        tenant_label = (request.headers.get("X-Tenant-Name") or "").strip() or "unknown"
         # service_id is set on request.state by the route handler for LLM
         # (from payload serviceId before proxy_traced is called) and by the
         # orchestrator for Triton services. Falls back to empty string.

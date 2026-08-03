@@ -60,6 +60,7 @@ const TRY_IT_PUBLIC_PATH =
 const IDENTITY_HEADERS = [
   "x-user-id",
   "x-tenant-id",
+  "x-tenant-name",
   "x-permission-ids",
   "x-user-plan",
 ] as const;
@@ -89,6 +90,7 @@ interface UserHeaders {
   [key: string]: string;
   "X-User-ID": string;
   "X-Tenant-ID": string;
+  "X-Tenant-Name": string;
   "X-Permission-IDs": string;
   "X-User-Plan": string;
 }
@@ -132,6 +134,7 @@ async function callAuthValidate(
       headers: {
         "X-User-ID": res.headers.get("x-user-id") ?? "",
         "X-Tenant-ID": res.headers.get("x-tenant-id") ?? "",
+        "X-Tenant-Name": res.headers.get("x-tenant-name") ?? "",
         "X-Permission-IDs": res.headers.get("x-permission-ids") ?? "",
         "X-User-Plan": res.headers.get("x-user-plan") ?? "",
       },

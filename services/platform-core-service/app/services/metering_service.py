@@ -14,6 +14,7 @@ from app.utils.metering_promql_builder import (
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
     build_base_selectors,
+    escape_label_value,
     sum_over_window,
 )
 
@@ -167,9 +168,9 @@ class MeteringService:
     async def active_tenants(self, time_range: Optional[str]) -> dict:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
-        prom_results, valid_ids = await asyncio.gather(
+        prom_results, valid_names = await asyncio.gather(
             self._client.query(promql),
-            self._fetch_valid_tenant_ids(),
+            self._fetch_valid_tenant_names(),
         )
         # Filter Prometheus results to only tenants that currently exist in the
         # DB. Without this, deleted tenants whose Prometheus series are still
@@ -180,7 +181,7 @@ class MeteringService:
                 "request_count": int(float(r["value"][1])),
             }
             for r in prom_results
-            if valid_ids is None or r["metric"].get("tenant") in valid_ids
+            if valid_names is None or r["metric"].get("tenant") in valid_names
         ]
         return {
             "active_tenants": tenants,
@@ -310,7 +311,7 @@ class MeteringService:
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _base = _ep + ',tenant!="unknown"' + (f',tenant="{tenant}"' if tenant else "")
+        _base = _ep + ',tenant!="unknown"' + (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
 
@@ -395,7 +396,7 @@ class MeteringService:
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _tenant_sel = f',tenant="{tenant}"' if tenant else ''
+        _tenant_sel = f',tenant="{escape_label_value(tenant)}"' if tenant else ''
         base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
@@ -514,7 +515,7 @@ class MeteringService:
             if not native_metric:
                 continue
             extra = cfg.get("native_extra_labels") or []
-            parts = [f'tenant="{tenant}"'] if tenant else []
+            parts = [f'tenant="{escape_label_value(tenant)}"'] if tenant else []
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
             # Use increase()-based counting (via sum_over_window), NOT a raw
@@ -620,17 +621,20 @@ class MeteringService:
         base = f"sum by(tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base
 
-    async def _fetch_valid_tenant_ids(self) -> Optional[set]:
-        """Return the set of currently-valid tenant ID strings from the auth DB.
+    async def _fetch_valid_tenant_names(self) -> Optional[set]:
+        """Return the set of currently-valid tenant organisation names from the auth DB.
 
-        Returns None when the auth DB is unavailable so callers fall back to
-        unfiltered Prometheus results rather than returning an empty count.
+        The Prometheus ``tenant`` label carries the organisation name (see
+        ai4i_core.observability.middleware), so filtering against still-valid
+        tenants must match on that same value. Returns None when the auth DB
+        is unavailable so callers fall back to unfiltered Prometheus results
+        rather than returning an empty count.
         """
         if self._auth_db is None:
             return None
         try:
-            rows = await self._auth_db.execute(text("SELECT id FROM tenants"))
-            return {str(r[0]) for r in rows.all()}
+            rows = await self._auth_db.execute(text("SELECT organisation FROM tenants"))
+            return {r[0] for r in rows.all()}
         except Exception:
-            logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
+            logger.warning("_fetch_valid_tenant_names: auth DB query failed", exc_info=True)
             return None

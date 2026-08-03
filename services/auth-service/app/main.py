@@ -27,6 +27,7 @@ from app.core.security import key_manager
 from app.dependencies.auth import init_jwt_verifier
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
+from app.services.tenant_name_cache import tenant_name_cache
 
 from ai4i_core.logging import configure_logging, RequestMiddleware
 
@@ -62,9 +63,11 @@ async def lifespan(app: FastAPI):
     init_jwt_verifier()
     await _load_api_permissions_with_retry(app)
     await role_permission_cache.start()
+    await tenant_name_cache.start()
 
     yield
 
+    await tenant_name_cache.stop()
     await role_permission_cache.stop()
     await close_redis()
     await close_database()

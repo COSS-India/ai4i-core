@@ -78,6 +78,13 @@ def _caller_tenant_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Tenant-Id") or None
 
 
+def _caller_tenant_name(request: Request) -> Optional[str]:
+    """Organisation name for the caller's own tenant — X-Tenant-Name is the same
+    value the observability middleware uses as the Prometheus ``tenant`` label,
+    so it's what PromQL selectors must filter on (see build_base_selectors)."""
+    return request.headers.get("X-Tenant-Name") or None
+
+
 def _validate_scope_tenant(tenant_id: Optional[Union[str, int]]) -> Optional[str]:
     if tenant_id is None:
         return None
@@ -221,25 +228,6 @@ async def _request_volume_chart(
     )
 
 
-async def _resolve_orgs(svc: MeteringService, tenant_ids: list[str]) -> dict:
-    """Batch-resolve tenant id -> organisation name from the auth DB.
-
-    Ids are pre-sanitized numeric strings; cast to int for the IN-list. Returns
-    {} when the auth DB is unavailable so callers fall back to the id.
-    """
-    numeric = [int(t) for t in tenant_ids if t and t.isdigit()]
-    if svc._auth_db is None or not numeric:
-        return {}
-    try:
-        rows = await svc._auth_db.execute(
-            text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"),
-            {"ids": numeric},
-        )
-        return {str(r[0]): r[1] for r in rows.all()}
-    except Exception:
-        return {}
-
-
 # Allowed time windows, typed as a Literal so FastAPI validates the query param
 # itself and returns the standard 422 for unsupported values (e.g. "15d") — matching
 # the documented OpenAPI contract — instead of a hand-rolled 400. ("all" is internal
@@ -275,6 +263,16 @@ async def get_overview(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
+    # PromQL selectors filter on the tenant ORGANISATION NAME (the Prometheus
+    # ``tenant`` label value), not the id in scope_tenant. Non-admins already
+    # have their own tenant's name on the gateway-injected X-Tenant-Name header
+    # (no DB call needed); an admin narrowing to another tenant_id has no such
+    # header, so its name is resolved from the auth DB.
+    scope_tenant_name = (
+        _caller_tenant_name(request) if not is_admin
+        else (await _resolve_org(svc, scope_tenant) if scope_tenant else None)
+    )
+
     cache_key = f"metering:overview:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -287,8 +285,8 @@ async def get_overview(
         svc.active_tenants("24h"),
         svc.active_tenants("7d"),
         svc.active_tenants("30d"),
-        svc.request_total(inference_only=True, tenant=scope_tenant, service_id=None, time_range=window),
-        _request_volume_chart(svc, window, scope_tenant),
+        svc.request_total(inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window),
+        _request_volume_chart(svc, window, scope_tenant_name),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else asyncio.sleep(0),
         return_exceptions=True,
@@ -304,7 +302,7 @@ async def get_overview(
 
     tc, at24, at7, at30, rt, chart, conc = [_ok(r) for r in results]
 
-    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+    org = scope_tenant_name
 
     # KPI cells. Successful/Failed show the COUNT as the value and the rate as
     # sub-text (helper); both are colored on the frontend (green / red).
@@ -357,16 +355,16 @@ async def get_overview(
             active_30d=at30["count"] if at30 else None,
         )
 
-    # Usage concentration block (admin only) — resolve org names in one batched query
+    # Usage concentration block (admin only). ``tenant`` IS the organisation
+    # name (the Prometheus label value) already — no DB lookup needed.
     usage_conc: Optional[UsageConcentration] = None
     if is_admin and conc:
-        org_map = await _resolve_orgs(svc, [t["tenant"] for t in conc["top_tenants"]])
         usage_conc = UsageConcentration(
             top_tenants=[
                 TenantRow(
                     rank=t["rank"],
                     tenant=t["tenant"],
-                    organisation=org_map.get(t["tenant"]),
+                    organisation=t["tenant"],
                     requests=t["requests"],
                     formatted_requests=MeteringService._format_count(t["requests"]),
                     percentage=t["percentage"],
@@ -424,6 +422,9 @@ async def get_tenant_consumption(
     # Admin-only endpoint: scope to the selected tenant when one is chosen,
     # otherwise platform-wide (tenant=None) for the cross-tenant ranking.
     scope_tenant = _validate_scope_tenant(tenant_id or None)
+    # PromQL selectors filter on the tenant organisation name (the Prometheus
+    # ``tenant`` label value), not the id in scope_tenant.
+    scope_tenant_name = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
     service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
 
@@ -437,11 +438,11 @@ async def get_tenant_consumption(
     degraded = False
 
     ranking_result, heatmap_result, prev_avg_result = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant),
+        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
         svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant
+            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant_name
         ),
-        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
         return_exceptions=True,
     )
 
@@ -459,12 +460,10 @@ async def get_tenant_consumption(
     ranking_tenants = ranking["tenants"] if ranking else []
     heatmap_rows = heatmap["tenants"] if heatmap else []
 
-    # Batched auth-DB lookup: organisation names for both lists.
-    all_ids = list({t["tenant"] for t in ranking_tenants} | {r["tenant"] for r in heatmap_rows})
-    org_map = await _resolve_orgs(svc, all_ids)
-
+    # ``tenant`` IS the organisation name (the Prometheus label value)
+    # already — no DB lookup needed.
     for r in heatmap_rows:
-        r["organisation"] = org_map.get(r["tenant"])
+        r["organisation"] = r["tenant"]
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -488,7 +487,7 @@ async def get_tenant_consumption(
         scope=Scope(
             role=_caller_role_label(request),
             tenant_id=scope_tenant,
-            organisation=org_map.get(scope_tenant) if scope_tenant else None,
+            organisation=scope_tenant_name,
             window=window,
         ),
         avg_requests_per_tenant=avg_per_tenant_cell,
@@ -496,7 +495,7 @@ async def get_tenant_consumption(
             TenantRow(
                 rank=t["rank"],
                 tenant=t["tenant"],
-                organisation=org_map.get(t["tenant"]),
+                organisation=t["tenant"],
                 requests=t["requests"],
                 formatted_requests=t["formatted_requests"],
                 percentage=t["percentage"],
@@ -542,6 +541,13 @@ async def get_service_consumption(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
+    # PromQL selectors filter on the tenant organisation name (the Prometheus
+    # ``tenant`` label value), not the id in scope_tenant.
+    scope_tenant_name = (
+        _caller_tenant_name(request) if not is_admin
+        else (await _resolve_org(svc, scope_tenant) if scope_tenant else None)
+    )
+
     cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -550,7 +556,7 @@ async def get_service_consumption(
     degraded = False
 
     breakdown_result, = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant, time_range=window),
+        svc.service_breakdown(tenant=scope_tenant_name, time_range=window),
         return_exceptions=True,
     )
 
@@ -564,7 +570,7 @@ async def get_service_consumption(
 
     breakdown = _ok(breakdown_result)
 
-    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+    org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
     # Summary KPIs — computed over services with traffic (a 0-request service

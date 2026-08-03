@@ -68,6 +68,17 @@ WINDOW_STEP: dict = {
 }
 
 
+def escape_label_value(value: str) -> str:
+    """Escape a value for interpolation into a PromQL string literal.
+
+    The ``tenant`` label now carries the tenant's organisation name (free
+    text set by an admin), not a numeric id — unlike an id, it can contain
+    ``"`` or ``\\``, which would otherwise break out of the label selector's
+    quotes and let one value inject extra selectors into the query.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def apply_time_range(metric_expr: str, time_range: str | None) -> str:
     """Wrap metric_expr in increase(...[window]) when a time range is given.
 
@@ -229,7 +240,7 @@ def build_base_selectors(
     if inference_only:
         selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{INFERENCE_ENDPOINT_REGEX}"')
     if tenant:
-        selectors.append(f'tenant="{tenant}"')
+        selectors.append(f'tenant="{escape_label_value(tenant)}"')
     if service_id:
         selectors.append(f'service_id="{service_id}"')
     if extra:

@@ -66,6 +66,7 @@ from app.services.email_helpers import (
     setup_token_expires_at,
 )
 from app.services.role_service import RoleService
+from app.services.tenant_name_cache import tenant_name_cache
 from app.services.token_service import TokenService
 from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
@@ -491,6 +492,7 @@ class TenantService:
 
         # provision_user committed; refresh to surface server-side defaults.
         await self._tenants.refresh(tenant)
+        tenant_name_cache.set_name(tenant.id, tenant.organisation)
 
         if body.plan_id:
             try:
@@ -695,6 +697,8 @@ class TenantService:
         # ── Single atomic commit + refresh.
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
+        if "organisation" in data:
+            tenant_name_cache.set_name(tenant.id, tenant.organisation)
 
         # ── Email enqueue happens AFTER the commit so a rolled-back tx can't
         # leak a delivered email whose token row was never persisted.
