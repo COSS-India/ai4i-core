@@ -259,6 +259,89 @@ def _avg_requests_per_tenant_cell(
     )
 
 
+def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
+    """Successful/Failed show the COUNT as the value and the rate as
+    sub-text (helper); both are colored on the frontend (green / red)."""
+    if not rt:
+        return []
+    success_rate = rt["success_rate"]["rate_pct"]
+    # No traffic → 0% failure (not 100%); 100−0 would be wrong.
+    failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
+    return [
+        Cell(
+            key="total_requests",
+            label="Total Requests",
+            value=rt["total_requests"]["formatted"],
+            previous=rt["total_requests"]["previous_formatted"],
+            pct_change=rt["total_requests"]["vs_previous_pct"],
+        ),
+        Cell(
+            key="successful",
+            label="Successful",
+            value=rt["successful_requests"]["formatted"],
+            previous=rt["successful_requests"]["previous_formatted"],
+            pct_change=rt["successful_requests"]["vs_previous_pct"],
+            helper=f"{success_rate:.2f}% success rate",
+        ),
+        Cell(
+            key="failed",
+            label="Failed",
+            value=rt["failed_requests"]["formatted"],
+            previous=rt["failed_requests"]["previous_formatted"],
+            pct_change=rt["failed_requests"]["vs_previous_pct"],
+            helper=f"{failure_rate:.2f}% failure rate",
+        ),
+        Cell(
+            key="avg_rps",
+            label="Avg RPS (req/s)",
+            value=rt["avg_rps"]["value"],
+            previous=rt["avg_rps"]["previous_value"],
+            pct_change=rt["avg_rps"]["vs_previous_pct"],
+        ),
+    ]
+
+
+def _platform_adoption_block(
+    is_admin: bool,
+    tc: Optional[dict],
+    at24: Optional[dict],
+    at7: Optional[dict],
+    at30: Optional[dict],
+) -> Optional[PlatformAdoption]:
+    if not (is_admin and tc):
+        return None
+    return PlatformAdoption(
+        total_tenants=tc["total_tenants"],
+        new_tenants_7d=tc["new_tenants"],
+        active_24h=at24["count"] if at24 else None,
+        active_7d=at7["count"] if at7 else None,
+        active_30d=at30["count"] if at30 else None,
+    )
+
+
+def _usage_concentration_block(is_admin: bool, conc: Optional[dict]) -> Optional[UsageConcentration]:
+    """``tenant`` IS the organisation name (the Prometheus label value)
+    already — no DB lookup needed."""
+    if not (is_admin and conc):
+        return None
+    return UsageConcentration(
+        top_tenants=[
+            TenantRow(
+                rank=t["rank"],
+                tenant=t["tenant"],
+                organisation=t["tenant"],
+                requests=t["requests"],
+                formatted_requests=MeteringService._format_count(t["requests"]),
+                percentage=t["percentage"],
+            )
+            for t in conc["top_tenants"]
+        ],
+        others=conc["others"],
+        top_concentration_pct=conc["top_concentration_percentage"],
+        grand_total=conc["grand_total"],
+    )
+
+
 def _tenant_ranking_rows(ranking_tenants: list[dict]) -> list[TenantRow]:
     return [
         TenantRow(
@@ -271,6 +354,29 @@ def _tenant_ranking_rows(ranking_tenants: list[dict]) -> list[TenantRow]:
         )
         for t in ranking_tenants
     ]
+
+
+def _service_consumption_summary(breakdown: Optional[dict]) -> Optional[ServiceSummary]:
+    """Summary KPIs — computed over services with traffic (a 0-request
+    service must not win "highest failure rate")."""
+    if breakdown is None:
+        return None
+    active = [s for s in breakdown["services"] if s["requests"] > 0]
+    most_used = max(active, key=lambda s: s["requests"]) if active else None
+    worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+    return ServiceSummary(
+        most_used=(
+            MostUsedService(service=most_used["service"], requests=most_used["requests"])
+            if most_used else None
+        ),
+        highest_failure_rate=(
+            HighestFailureService(
+                service=worst["service"],
+                failure_rate_pct=round(100 - worst["success_pct"], 2),
+            )
+            if worst else None
+        ),
+    )
 
 
 _STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -402,77 +508,10 @@ async def get_overview(
 
     org = scope_tenant_name
 
-    # KPI cells. Successful/Failed show the COUNT as the value and the rate as
-    # sub-text (helper); both are colored on the frontend (green / red).
-    kpis: list[Cell] = []
-    if rt:
-        success_rate = rt["success_rate"]["rate_pct"]
-        # No traffic → 0% failure (not 100%); 100−0 would be wrong.
-        failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
-        kpis.extend([
-            Cell(
-                key="total_requests",
-                label="Total Requests",
-                value=rt["total_requests"]["formatted"],
-                previous=rt["total_requests"]["previous_formatted"],
-                pct_change=rt["total_requests"]["vs_previous_pct"],
-            ),
-            Cell(
-                key="successful",
-                label="Successful",
-                value=rt["successful_requests"]["formatted"],
-                previous=rt["successful_requests"]["previous_formatted"],
-                pct_change=rt["successful_requests"]["vs_previous_pct"],
-                helper=f"{success_rate:.2f}% success rate",
-            ),
-            Cell(
-                key="failed",
-                label="Failed",
-                value=rt["failed_requests"]["formatted"],
-                previous=rt["failed_requests"]["previous_formatted"],
-                pct_change=rt["failed_requests"]["vs_previous_pct"],
-                helper=f"{failure_rate:.2f}% failure rate",
-            ),
-            Cell(
-                key="avg_rps",
-                label="Avg RPS (req/s)",
-                value=rt["avg_rps"]["value"],
-                previous=rt["avg_rps"]["previous_value"],
-                pct_change=rt["avg_rps"]["vs_previous_pct"],
-            ),
-        ])
-
-    # Platform adoption block (admin only)
-    platform_adoption: Optional[PlatformAdoption] = None
-    if is_admin and tc:
-        platform_adoption = PlatformAdoption(
-            total_tenants=tc["total_tenants"],
-            new_tenants_7d=tc["new_tenants"],
-            active_24h=at24["count"] if at24 else None,
-            active_7d=at7["count"] if at7 else None,
-            active_30d=at30["count"] if at30 else None,
-        )
-
-    # Usage concentration block (admin only). ``tenant`` IS the organisation
-    # name (the Prometheus label value) already — no DB lookup needed.
-    usage_conc: Optional[UsageConcentration] = None
-    if is_admin and conc:
-        usage_conc = UsageConcentration(
-            top_tenants=[
-                TenantRow(
-                    rank=t["rank"],
-                    tenant=t["tenant"],
-                    organisation=t["tenant"],
-                    requests=t["requests"],
-                    formatted_requests=MeteringService._format_count(t["requests"]),
-                    percentage=t["percentage"],
-                )
-                for t in conc["top_tenants"]
-            ],
-            others=conc["others"],
-            top_concentration_pct=conc["top_concentration_percentage"],
-            grand_total=conc["grand_total"],
-        )
+    kpis = _overview_kpis(rt)
+    # Platform adoption / usage concentration are admin-only blocks.
+    platform_adoption = _platform_adoption_block(is_admin, tc, at24, at7, at30)
+    usage_conc = _usage_concentration_block(is_admin, conc)
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -610,26 +649,7 @@ async def get_service_consumption(
     org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
-    # Summary KPIs — computed over services with traffic (a 0-request service
-    # must not win "highest failure rate").
-    summary: Optional[ServiceSummary] = None
-    if breakdown is not None:
-        active = [s for s in services if s["requests"] > 0]
-        most_used = max(active, key=lambda s: s["requests"]) if active else None
-        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
-        summary = ServiceSummary(
-            most_used=(
-                MostUsedService(service=most_used["service"], requests=most_used["requests"])
-                if most_used else None
-            ),
-            highest_failure_rate=(
-                HighestFailureService(
-                    service=worst["service"],
-                    failure_rate_pct=round(100 - worst["success_pct"], 2),
-                )
-                if worst else None
-            ),
-        )
+    summary = _service_consumption_summary(breakdown)
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
