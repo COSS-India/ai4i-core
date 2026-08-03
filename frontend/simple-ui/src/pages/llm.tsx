@@ -34,10 +34,6 @@ import {
 } from "../services/tryItService";
 
 const pageDefaults = getServicePageDefaults("llm");
-const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
-  code: l.code,
-  label: l.label,
-}));
 
 /** Stable anonymous pick: lowest service_id so list-order churn can't flip the demo service. */
 function pickAnonymousTryItService<T extends { service_id: string }>(
@@ -61,6 +57,8 @@ const LLMPage: React.FC = () => {
   );
 
   const isAnonymous = !authLoading && !isAuthenticated;
+  const getLanguageLabel = (code: string): string =>
+    LLM_SUPPORTED_LANGUAGES.find((l) => l.code === code)?.label ?? code;
 
   const {
     data: services = [],
@@ -134,6 +132,42 @@ const LLMPage: React.FC = () => {
     () => mapToServiceOptions(visibleServices),
     [visibleServices]
   );
+
+  // Restrict language options to what the selected service was configured with —
+  // strictly by direction: a code only appears as a Target option if it actually
+  // appeared in a targetLanguage field (never inferred from sourceLanguage, and
+  // vice versa). No service selected, or a service with no configured languages
+  // on that side, means no options on that side.
+  const sourceLanguageOptions = useMemo(
+    () =>
+      (selectedService?.supported_source_languages ?? []).map((code) => ({
+        code,
+        label: getLanguageLabel(code),
+      })),
+    [selectedService]
+  );
+  const targetLanguageOptions = useMemo(
+    () =>
+      (selectedService?.supported_target_languages ?? []).map((code) => ({
+        code,
+        label: getLanguageLabel(code),
+      })),
+    [selectedService]
+  );
+
+  useEffect(() => {
+    const sourceCodes = new Set(sourceLanguageOptions.map((o) => o.code));
+    const targetCodes = new Set(targetLanguageOptions.map((o) => o.code));
+    if (inputLanguage && !sourceCodes.has(inputLanguage)) setInputLanguage("");
+    if (outputLanguage && !targetCodes.has(outputLanguage)) setOutputLanguage("");
+  }, [
+    sourceLanguageOptions,
+    targetLanguageOptions,
+    inputLanguage,
+    outputLanguage,
+    setInputLanguage,
+    setOutputLanguage,
+  ]);
 
   const anonymousRateLimitReached =
     isAnonymous && remainingRequests <= 0;
@@ -240,8 +274,8 @@ const LLMPage: React.FC = () => {
             targetLanguage: outputLanguage,
             onSourceChange: setInputLanguage,
             onTargetChange: setOutputLanguage,
-            sourceOptions: languageOptions,
-            targetOptions: languageOptions,
+            sourceOptions: sourceLanguageOptions,
+            targetOptions: targetLanguageOptions,
             onSwap: swapLanguages,
             disabled: fetching || !serviceId || anonymousRateLimitReached,
           }}

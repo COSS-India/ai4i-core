@@ -21,7 +21,10 @@ export interface LLMServiceDetailsResponse {
   name: string;
   serviceDescription: string;
   endpoint: string;
-  supported_languages: string[];
+  /** Languages that appeared as a sourceLanguage (or an undirected code/language/string entry). */
+  supported_source_languages: string[];
+  /** Languages that appeared as a targetLanguage (or an undirected code/language/string entry). */
+  supported_target_languages: string[];
 }
 
 const getLanguageLabel = (code: string): string => {
@@ -45,11 +48,16 @@ const getTryItHeaders = () => ({
 });
 
 function mapServiceToLLMDetails(service: Record<string, any>): LLMServiceDetailsResponse {
-  const supportedLanguages: string[] = [];
+  // Split strictly by direction: a code only counts as a target option if it
+  // actually appeared in a targetLanguage field (never inferred from source).
+  const sourceLanguages: string[] = [];
+  const targetLanguages: string[] = [];
   if (Array.isArray(service.languages)) {
     service.languages.forEach((lang: unknown) => {
       if (typeof lang === 'string') {
-        supportedLanguages.push(lang);
+        // No direction info on a plain string entry — offer it on both sides.
+        sourceLanguages.push(lang);
+        targetLanguages.push(lang);
       } else if (lang && typeof lang === 'object') {
         const langObj = lang as {
           code?: string;
@@ -57,12 +65,13 @@ function mapServiceToLLMDetails(service: Record<string, any>): LLMServiceDetails
           sourceLanguage?: string;
           targetLanguage?: string;
         };
-        const langCode =
-          langObj.code ||
-          langObj.language ||
-          langObj.sourceLanguage ||
-          langObj.targetLanguage;
-        if (langCode) supportedLanguages.push(langCode);
+        const undirected = langObj.code || langObj.language;
+        if (undirected) {
+          sourceLanguages.push(undirected);
+          targetLanguages.push(undirected);
+        }
+        if (langObj.sourceLanguage) sourceLanguages.push(langObj.sourceLanguage);
+        if (langObj.targetLanguage) targetLanguages.push(langObj.targetLanguage);
       }
     });
   }
@@ -84,10 +93,10 @@ function mapServiceToLLMDetails(service: Record<string, any>): LLMServiceDetails
       service.description ||
       'No description available',
     endpoint,
-    supported_languages:
-      supportedLanguages.length > 0
-        ? Array.from(new Set(supportedLanguages))
-        : LLM_SUPPORTED_LANGUAGES.map((l) => l.code),
+    // No fallback to the full language list: a service with no configured
+    // languages on a given side should present no selectable languages there.
+    supported_source_languages: Array.from(new Set(sourceLanguages)),
+    supported_target_languages: Array.from(new Set(targetLanguages)),
   };
 }
 
