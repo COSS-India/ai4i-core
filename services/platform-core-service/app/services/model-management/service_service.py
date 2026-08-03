@@ -346,6 +346,15 @@ class ServiceService:
             if is_default and instance.task_type:
                 # At most one default per task_type: clear the flag on every
                 # other service of the same type before setting this one.
+                #
+                # task_type is nullable on the model (legacy rows predating
+                # this column), so a None task_type intentionally skips this
+                # invariant check rather than clearing across all null-typed
+                # services. This is safe: Try-It only ever surfaces services
+                # whose task_type is in _TRY_IT_SUPPORTED_TASK_TYPES (nmt/llm)
+                # — see routes/service.py's list_try_it_services — so a
+                # None-task_type service's is_try_it_default value can never
+                # be read by the Try-It flow regardless.
                 await self._services.clear_try_it_default(
                     task_type=instance.task_type,
                     exclude_service_id=instance.service_id,
