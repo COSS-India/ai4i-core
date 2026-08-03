@@ -6,16 +6,20 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
     TIME_RANGES,
     SERVICE_BREAKDOWN_CONFIG,
     SERVICE_BREAKDOWN_ENDPOINT_REGEX,
+    LLM_CHAT_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
     build_base_selectors,
+    build_task_type_selector,
     escape_label_value,
     sum_over_window,
+    sum_over_window_by,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,9 +28,15 @@ _METRIC = "telemetry_obsv_requests_total"
 
 
 class MeteringService:
-    def __init__(self, client: PrometheusClient, auth_db: Optional[AsyncSession] = None) -> None:
+    def __init__(
+        self,
+        client: PrometheusClient,
+        auth_db: Optional[AsyncSession] = None,
+        service_repo: Optional[ServiceRepository] = None,
+    ) -> None:
         self._client = client
         self._auth_db = auth_db
+        self._service_repo = service_repo
 
     # ── public methods ──────────────────────────────────────────────────────
 
@@ -36,10 +46,14 @@ class MeteringService:
         tenant: Optional[str],
         service_id: Optional[str],
         time_range: Optional[str],
+        task_types: Optional[list[str]] = None,
     ) -> dict:
-        label_str = build_base_selectors(inference_only, tenant, service_id)
+        task_sel = build_task_type_selector(task_types)
+        extra = [task_sel] if task_sel else None
+        success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
+        label_str = build_base_selectors(inference_only, tenant, service_id, extra=extra)
         success_label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=['status_code=~"2.."']
+            inference_only, tenant, service_id, extra=success_extra
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
@@ -68,7 +82,12 @@ class MeteringService:
 
         total_v = round(_float(raw[0]))
         success_v = round(_float(raw[1]))
-        avg_rps_v = round(_float(raw[2]), 2)
+        # 4dp, not 2 — a real but sparse rate (e.g. 112 requests over a 24h
+        # window ≈ 0.0013 req/s) rounds to a misleading 0.0 at 2dp even
+        # though traffic did occur. The frontend's formatMeteringRps()
+        # already renders up to 4dp for values < 1; this just gives it
+        # something non-zero to show.
+        avg_rps_v = round(_float(raw[2]), 4)
         success_rate = round(success_v / total_v * 100, 2) if total_v else 0.0
         raw_failed = total_v - success_v
         if raw_failed < 0:
@@ -99,7 +118,7 @@ class MeteringService:
             prev_total_v = prev_total
             prev_failed_v = prev_failed
             prev_success_v = prev_success
-            prev_avg_rps_v = round(prev_avg_rps, 2)
+            prev_avg_rps_v = round(prev_avg_rps, 4)
             # Previous success rate is undefined without prior traffic → report 0.
             prev_success_rate_v = (
                 round(prev_success / prev_total * 100, 2) if prev_total > 0 else 0.0
@@ -256,8 +275,11 @@ class MeteringService:
                 "auth_db_available": False,
             }
 
-    async def usage_concentration(self, limit: int, time_range: Optional[str]) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+    async def usage_concentration(
+        self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
+    ) -> dict:
+        task_sel = build_task_type_selector(task_types)
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
 
@@ -301,7 +323,10 @@ class MeteringService:
             "promql": promql,
         }
 
-    async def service_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
+    async def service_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        service_filter: Optional[list[str]] = None,
+    ) -> dict:
         """Per-service stats: requests, native units, success %, failed, vs prev period.
 
         Fires all Prometheus queries in a single asyncio.gather:
@@ -321,7 +346,7 @@ class MeteringService:
             self._client.query(self._service_breakdown_by_ep_promql(base_sel, window)),     # 0 total
             self._client.query(self._service_breakdown_by_ep_promql(success_sel, window)),  # 1 success
         ]
-        native_tasks, native_coros = self._native_unit_queries(tenant, time_range)
+        native_tasks, native_coros = self._native_unit_queries(tenant, time_range, service_filter)
 
         raw = await asyncio.gather(*fixed_queries, *native_coros, return_exceptions=True)
 
@@ -330,7 +355,94 @@ class MeteringService:
         natives = self._unpack_native_units(native_tasks, raw, native_offset=len(fixed_queries))
 
         return {
-            "services": self._service_breakdown_rows(totals, successes, natives),
+            "services": self._service_breakdown_rows(totals, successes, natives, service_filter),
+            "filters": {"tenant": tenant, "time_range": time_range or "all"},
+        }
+
+    async def model_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
+        """Per-service LLM usage: requests, tokens, success %, grouped by
+        `service_id` — the tenant-facing service the client called (the
+        OpenAI `model` field as sent), NOT the `model` Prometheus label.
+
+        The `model` label (the real upstream model echoed back by the
+        inference engine) is intentionally not grouped or filtered on here:
+        one service maps to exactly one model, but many services can share
+        the same underlying model, so grouping by model would merge
+        distinct services' traffic and destroy tenant attribution. See
+        model-consumption-api-highlevel-design.md §1/§5. Each row's
+        `model_name` (informational only) is resolved via a batched
+        mm_services -> mm_models DB lookup (mm_services.model_id is an
+        opaque hash, not a display name — see
+        ServiceRepository.get_names_and_models_by_service_ids), not from
+        Prometheus — the `model` label is absent on failed requests and can
+        differ between the buffered and streaming response paths for the
+        same service.
+
+        Fires 3 queries in one asyncio.gather: total requests, successful
+        requests, and tokens processed — each grouped by `service_id`.
+        """
+        base_sel = build_base_selectors(
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
+        )
+        success_sel = build_base_selectors(
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            extra=['status_code=~"2.."'],
+        )
+        tokens_parts = ['token_type="total"', 'tenant!="unknown"']
+        if tenant:
+            tokens_parts.append(f'tenant="{tenant}"')
+        tokens_sel = "{" + ",".join(tokens_parts) + "}"
+
+        total_q = sum_over_window_by(f"{_METRIC}{base_sel}", "service_id", time_range)
+        success_q = sum_over_window_by(f"{_METRIC}{success_sel}", "service_id", time_range)
+        tokens_q = sum_over_window_by(
+            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", "service_id", time_range
+        )
+
+        raw = await asyncio.gather(
+            self._client.query(total_q),
+            self._client.query(success_q),
+            self._client.query(tokens_q),
+            return_exceptions=True,
+        )
+
+        def _safe_list(r):
+            return r if not isinstance(r, Exception) else []
+
+        totals = self._label_dict(_safe_list(raw[0]), "service_id")
+        successes = self._label_dict(_safe_list(raw[1]), "service_id")
+        tokens = self._label_dict(_safe_list(raw[2]), "service_id")
+
+        # "" means the client sent no `model` field at all — not a real service.
+        service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
+
+        names_and_models: dict = {}
+        if self._service_repo is not None and service_ids:
+            try:
+                names_and_models = await self._service_repo.get_names_and_models_by_service_ids(
+                    list(service_ids)
+                )
+            except Exception:
+                logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
+
+        services = []
+        for service_id in service_ids:
+            total_v = totals.get(service_id, 0)
+            success_v = successes.get(service_id, 0)
+            name, model_name = names_and_models.get(service_id, (service_id, None))
+            services.append({
+                "service_id": service_id,
+                "name": name,
+                "model_name": model_name,
+                "requests": total_v,
+                "native_units": float(tokens.get(service_id, 0)),
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+            })
+
+        services.sort(key=lambda s: s["requests"], reverse=True)
+
+        return {
+            "services": services,
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
@@ -504,13 +616,20 @@ class MeteringService:
         )
 
     def _native_unit_queries(
-        self, tenant: Optional[str], time_range: Optional[str]
+        self, tenant: Optional[str], time_range: Optional[str],
+        service_filter: Optional[list[str]] = None,
     ) -> tuple[list[str], list]:
         """Per-service native-unit scalar query coroutines — one per task
-        that has a real Prometheus Histogram _sum metric (SERVICE_BREAKDOWN_CONFIG)."""
+        that has a real Prometheus Histogram _sum metric (SERVICE_BREAKDOWN_CONFIG).
+
+        service_filter (the frontend's enabled-task-type allowlist), when
+        given, skips the native-unit query entirely for excluded tasks —
+        a query-level reduction, not just a display-level one."""
         native_tasks: list[str] = []
         native_coros = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if service_filter is not None and task not in service_filter:
+                continue
             native_metric = cfg.get("native_metric")
             if not native_metric:
                 continue
@@ -548,10 +667,18 @@ class MeteringService:
         return natives
 
     @staticmethod
-    def _service_breakdown_rows(totals: dict, successes: dict, natives: dict) -> list:
-        """Assemble + sort the per-service rows from the three unpacked dicts."""
+    def _service_breakdown_rows(
+        totals: dict, successes: dict, natives: dict,
+        service_filter: Optional[list[str]] = None,
+    ) -> list:
+        """Assemble + sort the per-service rows from the three unpacked dicts.
+
+        service_filter (the frontend's enabled-task-type allowlist), when
+        given, excludes rows for tasks not in it."""
         services = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
+            if service_filter is not None and task not in service_filter:
+                continue
             total_v = totals.get(task, 0)
             success_v = successes.get(task, 0)
             services.append({
@@ -583,6 +710,15 @@ class MeteringService:
                 raw = parts[2] if len(parts) >= 4 else ep
                 task = raw.replace("-", "_")
             out[task] = out.get(task, 0) + round(float(r["value"][1]))
+        return out
+
+    @staticmethod
+    def _label_dict(results: list, label: str) -> dict:
+        """Map a label's value -> rounded sum from a `sum by(<label>)` result vector."""
+        out: dict = {}
+        for r in results:
+            key = r["metric"].get(label, "")
+            out[key] = out.get(key, 0) + round(float(r["value"][1]))
         return out
 
     @staticmethod

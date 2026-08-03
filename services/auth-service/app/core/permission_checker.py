@@ -22,6 +22,16 @@ def get_global_endpoint_permission_map() -> dict[str, int]:
     return dict(_GLOBAL_ENDPOINT_PERMISSION_MAP)
 
 
+def endpoint_permission_map_loaded() -> bool:
+    """True once the startup load populated the endpoint → permission map.
+
+    Callers that must FAIL CLOSED when the mapping never loaded (e.g. the
+    forward-auth anonymous path) check this instead of treating an empty map
+    as "everything is public".
+    """
+    return bool(_GLOBAL_ENDPOINT_PERMISSION_MAP)
+
+
 class PermissionChecker:
     """Checks if a user/API key has the required permission for an endpoint."""
 
@@ -122,3 +132,10 @@ class PermissionChecker:
     def has_any_role(required_roles: list[str], user_roles: list[str]) -> bool:
         """Check if the user has any of the required roles."""
         return bool(set(required_roles) & set(user_roles))
+
+
+# Module-level singleton — the ONE checker instance for this process. Its own
+# _api_permission_map stays empty so lookups read the process-wide global map
+# (populated once at startup by main.load_api_permissions). Import this instead
+# of stashing a second copy on app.state or constructing ad-hoc instances.
+permission_checker = PermissionChecker()

@@ -23,8 +23,13 @@ from app.schemas.metering import (
     Graph,
     GraphPoint,
     GraphSeries,
+    HighestFailureModel,
     HighestFailureService,
+    ModelConsumptionResponse,
+    ModelConsumptionSummary,
+    MostUsedModel,
     MostUsedService,
+    ServiceModelRow,
     OverviewResponse,
     PlatformAdoption,
     Scope,
@@ -169,6 +174,7 @@ async def _request_volume_chart(
     svc: MeteringService,
     window: str,
     tenant: Optional[str],
+    task_types: Optional[list[str]] = None,
 ) -> Optional[Graph]:
     """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
       - "successful" : 2xx request count per bucket
@@ -176,14 +182,15 @@ async def _request_volume_chart(
     """
     if window not in WINDOW_STEP:
         return None
-    from app.utils.metering_promql_builder import build_base_selectors, sum_over_window
+    from app.utils.metering_promql_builder import (
+        build_base_selectors, build_task_type_selector, sum_over_window,
+    )
 
-    success_sel = build_base_selectors(
-        inference_only=True, tenant=tenant, extra=['status_code=~"2.."']
-    )
-    failed_sel = build_base_selectors(
-        inference_only=True, tenant=tenant, extra=['status_code=~"[45].."']
-    )
+    task_sel = build_task_type_selector(task_types)
+    success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
+    failed_extra = [task_sel, 'status_code=~"[45].."'] if task_sel else ['status_code=~"[45].."']
+    success_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=success_extra)
+    failed_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=failed_extra)
     success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
     step = WINDOW_STEP[window]
@@ -243,6 +250,10 @@ async def get_overview(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
+    task_types: Optional[str] = Query(
+        None, description="Comma-separated task types to scope KPIs, the request-volume "
+        "chart, and usage concentration to (e.g. llm,nmt)."
+    ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -251,6 +262,7 @@ async def get_overview(
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
     scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    task_type_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
 
     # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
     # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
@@ -273,7 +285,10 @@ async def get_overview(
         else (await _resolve_org(svc, scope_tenant) if scope_tenant else None)
     )
 
-    cache_key = f"metering:overview:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = (
+        f"metering:overview:v2:{window}:{scope_tenant or 'all'}:"
+        f"{_caller_role_label(request)}:{task_types or 'all'}"
+    )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
@@ -285,10 +300,14 @@ async def get_overview(
         svc.active_tenants("24h"),
         svc.active_tenants("7d"),
         svc.active_tenants("30d"),
-        svc.request_total(inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window),
-        _request_volume_chart(svc, window, scope_tenant_name),
+        svc.request_total(
+            inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
+            task_types=task_type_filter,
+        ),
+        _request_volume_chart(svc, window, scope_tenant_name, task_type_filter),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
-        svc.usage_concentration(limit=5, time_range=window) if (is_admin and not scope_tenant) else asyncio.sleep(0),
+        svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
+        if (is_admin and not scope_tenant) else asyncio.sleep(0),
         return_exceptions=True,
     )
 
@@ -379,7 +398,10 @@ async def get_overview(
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     response = OverviewResponse(
-        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        scope=Scope(
+            role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
+            window=window, task_types=task_type_filter,
+        ),
         kpis=kpis,
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
@@ -403,10 +425,10 @@ async def get_tenant_consumption(
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Scope to a single tenant (admin only)"),
-    services: Optional[str] = Query(
+    task_types: Optional[str] = Query(
         None,
         pattern=r"^[a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*$",
-        description="Comma-separated service keys for the heatmap columns (default: all)",
+        description="Comma-separated task types for the heatmap columns (default: all)",
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
@@ -426,10 +448,10 @@ async def get_tenant_consumption(
     # ``tenant`` label value), not the id in scope_tenant.
     scope_tenant_name = await _resolve_org(svc, scope_tenant) if scope_tenant else None
 
-    service_filter = [s.strip() for s in services.split(",") if s.strip()] if services else None
+    service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
 
     cache_key = (
-        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{services or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant or 'all'}:{task_types or 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -521,6 +543,9 @@ async def get_service_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
+    task_types: Optional[str] = Query(
+        None, description="Comma-separated task types to include (frontend allowlist)."
+    ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -529,6 +554,7 @@ async def get_service_consumption(
     is_admin = _is_platform_admin(request)
     caller_tid = _caller_tenant_id(request)
     scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+    service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
 
     # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
     # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
@@ -541,6 +567,7 @@ async def get_service_consumption(
             detail="Tenant admin requires a tenant context (X-Tenant-Id).",
         )
 
+
     # PromQL selectors filter on the tenant organisation name (the Prometheus
     # ``tenant`` label value), not the id in scope_tenant.
     scope_tenant_name = (
@@ -548,7 +575,7 @@ async def get_service_consumption(
         else (await _resolve_org(svc, scope_tenant) if scope_tenant else None)
     )
 
-    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant or 'all'}:{task_types or 'all'}:{_caller_role_label(request)}"
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
@@ -556,7 +583,7 @@ async def get_service_consumption(
     degraded = False
 
     breakdown_result, = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant_name, time_range=window),
+        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=service_filter),
         return_exceptions=True,
     )
 
@@ -605,6 +632,116 @@ async def get_service_consumption(
                 requests=s["requests"],
                 native_units=s["native_units"],
                 native_unit_suffix=s["native_unit_suffix"],
+                success_pct=s["success_pct"],
+                # No traffic → nothing succeeded AND nothing failed. Without this
+                # guard, success_pct=0 for a 0-request service makes 100-0=100%
+                # failure, which is wrong (it should be 0%).
+                failure_rate_pct=round(100 - s["success_pct"], 2) if s["requests"] else 0.0,
+            )
+            for s in services
+        ],
+        degraded=degraded,
+        generated_at=generated_at,
+    )
+
+    if not degraded:
+        await _cache_set(redis, cache_key, response.model_dump())
+
+    return response
+
+
+# ── Tab 4: Model Consumption ──────────────────────────────────────────────────
+
+
+@router.get("/model-consumption", response_model=ModelConsumptionResponse)
+async def get_model_consumption(
+    request: Request,
+    window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
+    tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
+    svc: MeteringService = Depends(get_metering_service),
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    _require_metering_access(request)
+
+    is_admin = _is_platform_admin(request)
+    caller_tid = _caller_tenant_id(request)
+    scope_tenant = _validate_scope_tenant(caller_tid if not is_admin else (tenant_id or None))
+
+    # Security backstop: a tenant admin (role 5) MUST carry a tenant context — the
+    # gateway injects X-Tenant-Id from the JWT. Without it, scope_tenant is None and
+    # the queries below would run unscoped, leaking platform-wide aggregates. Refuse
+    # rather than widen scope (defense-in-depth; the gateway should never let this
+    # through, but the backstop guarantees it).
+    if not is_admin and scope_tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin requires a tenant context (X-Tenant-Id).",
+        )
+
+    cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant or 'all'}:{_caller_role_label(request)}"
+    cached = await _cache_get(redis, cache_key)
+    if cached:
+        return cached
+
+    degraded = False
+
+    breakdown_result, = await asyncio.gather(
+        svc.model_breakdown(tenant=scope_tenant, time_range=window),
+        return_exceptions=True,
+    )
+
+    def _ok(r):
+        if isinstance(r, Exception):
+            logger.warning("Metering query failed: %s", r)
+            nonlocal degraded
+            degraded = True
+            return None
+        return r
+
+    breakdown = _ok(breakdown_result)
+
+    org = await _resolve_org(svc, scope_tenant) if scope_tenant else None
+
+    services = breakdown["services"] if breakdown else []
+    # Summary KPIs — computed over services with traffic (a 0-request service
+    # must not win "highest failure rate").
+    summary: Optional[ModelConsumptionSummary] = None
+    if breakdown is not None:
+        active = [s for s in services if s["requests"] > 0]
+        most_used = max(active, key=lambda s: s["requests"]) if active else None
+        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+        summary = ModelConsumptionSummary(
+            most_used=(
+                MostUsedModel(
+                    service_id=most_used["service_id"],
+                    name=most_used["name"],
+                    requests=most_used["requests"],
+                )
+                if most_used else None
+            ),
+            highest_failure_rate=(
+                HighestFailureModel(
+                    service_id=worst["service_id"],
+                    name=worst["name"],
+                    failure_rate_pct=round(100 - worst["success_pct"], 2),
+                )
+                if worst else None
+            ),
+        )
+
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    response = ModelConsumptionResponse(
+        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        summary=summary,
+        breakdown=[
+            ServiceModelRow(
+                service_id=s["service_id"],
+                name=s["name"],
+                model_name=s["model_name"],
+                requests=s["requests"],
+                native_units=s["native_units"],
+                native_unit_suffix="tokens",
                 success_pct=s["success_pct"],
                 # No traffic → nothing succeeded AND nothing failed. Without this
                 # guard, success_pct=0 for a 0-request service makes 100-0=100%

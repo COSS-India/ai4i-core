@@ -51,7 +51,7 @@ class ServiceRepository:
     async def count_services(
         self,
         *,
-        task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
     ) -> int:
@@ -63,8 +63,8 @@ class ServiceRepository:
                 Model.version == Service.model_version,
             ),
         ).where(Service.deleted_at.is_(None))
-        if task_type:
-            stmt = stmt.where(Model.task["type"].astext == task_type)
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
@@ -75,7 +75,7 @@ class ServiceRepository:
     async def list_services(
         self,
         *,
-        task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
         offset: int = 0,
@@ -93,8 +93,8 @@ class ServiceRepository:
             )
             .where(Service.deleted_at.is_(None))
         )
-        if task_type:
-            stmt = stmt.where(Model.task["type"].astext == task_type)
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if is_published is not None:
             stmt = stmt.where(Service.is_published == is_published)
         if created_by is not None:
@@ -140,6 +140,30 @@ class ServiceRepository:
             .where(cast(PPUTier.id, String).in_(tier_ids))
         )
         return {row.id_str: row.name for row in result.all()}
+
+    async def get_names_and_models_by_service_ids(
+        self, service_ids: List[str]
+    ) -> Dict[str, Tuple[str, Optional[str]]]:
+        """Return {service_id: (name, model_name)} for the given service ids.
+
+        model_name is resolved via mm_models.name — mm_services.model_id is
+        an opaque hash (sha256(f"{name}:{version}")[:32], see
+        app/utils/hashing.py), not a human-readable model name on its own.
+        Outer join so a service whose model row is missing still returns its
+        own name, with model_name = None.
+
+        Excludes soft-deleted services. Used by the model-consumption
+        metering endpoint to resolve a display name + underlying model name
+        for each service_id grouped from Prometheus.
+        """
+        if not service_ids:
+            return {}
+        result = await self._db.execute(
+            select(Service.service_id, Service.name, Model.name.label("model_name"))
+            .outerjoin(Model, Model.model_id == Service.model_id)
+            .where(Service.service_id.in_(service_ids), Service.deleted_at.is_(None))
+        )
+        return {row.service_id: (row.name, row.model_name) for row in result.all()}
 
     # ── Writes ──
 

@@ -25,21 +25,6 @@ router = APIRouter(
 )
 
 
-def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
-    """Translate the raw query-string into a normalized task-type value.
-
-    `None` and the literal string `"none"` (case-insensitive) both mean
-    "no filter".
-    """
-    if not task_type or task_type.lower() == "none":
-        return None
-    try:
-        return TaskTypeEnum(task_type).value
-    except ValueError:
-        valid = [e.value for e in TaskTypeEnum]
-        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
-
-
 _MODEL_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
 _MODEL_ID_MAX_LEN = 255
 
@@ -65,9 +50,9 @@ def _validate_model_id(model_id: str) -> str:
 @router.get("")
 async def list_models(
     response: Response,
-    task_type: Optional[str] = Query(
+    task_types: Optional[str] = Query(
         None,
-        description="Filter by task type (asr, nmt, tts, etc.).",
+        description="Comma-separated task types to include. A single value is a one-element list.",
     ),
     include_deprecated: bool = Query(
         True,
@@ -102,8 +87,17 @@ async def list_models(
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
     if version_status is not None and version_status not in valid_version_statuses:
         raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
+    # ONE task-type filter param: a drill-down is just a one-element list, so a
+    # separate single param would only recreate union/precedence ambiguity.
+    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # registered models) are skipped rather than failing the whole request —
+    # they can't match any row anyway.
+    _task_types = []
+    if task_types:
+        valid = {m.value for m in TaskTypeEnum}
+        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
     items, total = await svc.list_models(
-        task_type=_resolve_task_type(task_type),
+        task_types=_task_types or None,
         include_deprecated=include_deprecated,
         version_status=version_status,
         model_name=model_name,

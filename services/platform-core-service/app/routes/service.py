@@ -26,16 +26,6 @@ router = APIRouter(
 )
 
 
-def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
-    if not task_type or task_type.lower() == "none":
-        return None
-    try:
-        return TaskTypeEnum(task_type).value
-    except ValueError:
-        valid = [e.value for e in TaskTypeEnum]
-        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
-
-
 # ── RBAC-aware response filtering (AI4IDS-1816) ──────────────────────────────
 #
 # service.read (permission id 51) is deliberately granted to every role,
@@ -94,25 +84,29 @@ def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in item.items() if k in _NON_ADMIN_SERVICE_FIELDS}
 
 
+_TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
+
+
 @router.get(
     "/try-it-service-list",
     summary="List Try-It Services",
 )
 async def list_try_it_services(
-    task_type: str = Query(
+    task_types: str = Query(
         ...,
-        description="Task type. Currently supports 'nmt'.",
+        description="Comma-separated task types",
     ),
     svc: ServiceService = Depends(get_service_service),
 ):
     """List published services available for public trial."""
-    if not task_type or task_type.lower() != TaskTypeEnum.nmt.value:
+    _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in _TRY_IT_SUPPORTED_TASK_TYPES]
+    if not _task_types:
         raise ValidationError(
             message="Try-it is not available for this task type.",
             code="TRY_IT_UNSUPPORTED",
         )
     items, total = await svc.list_services(
-        task_type=TaskTypeEnum.nmt.value, is_published=True
+        task_types=_task_types, is_published=True
     )
     # This endpoint has no auth at all (see api_permissions.json: try-it is
     # public) — always filtered, never the admin/full view.
@@ -124,8 +118,9 @@ async def list_try_it_services(
 async def list_services(
     request: Request,
     response: Response,
-    task_type: Optional[str] = Query(
-        None, description="Filter by task type."
+    task_types: Optional[str] = Query(
+        None,
+        description="Comma-separated task types to include. A single value is a one-element list.",
     ),
     is_published: Optional[bool] = Query(
         None,
@@ -148,8 +143,17 @@ async def list_services(
     svc: ServiceService = Depends(get_service_service),
 ):
     """List services with optional filters and offset/limit pagination."""
+    # ONE task-type filter param: a drill-down is just a one-element list, so a
+    # separate single param would only recreate union/precedence ambiguity.
+    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # registered models) are skipped rather than failing the whole request —
+    # they can't match any row anyway.
+    _task_types = []
+    if task_types:
+        valid = {m.value for m in TaskTypeEnum}
+        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
     items, total = await svc.list_services(
-        task_type=_resolve_task_type(task_type),
+        task_types=_task_types or None,
         is_published=is_published,
         created_by=created_by,
         offset=offset,

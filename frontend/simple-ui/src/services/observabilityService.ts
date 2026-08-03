@@ -2,6 +2,7 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import { getTelemetryServiceUrl } from '../config/runtimeConfig';
 import {
   logAggregationResponseSchema,
   logSearchResponseSchema,
@@ -40,10 +41,9 @@ export type {
   TraceSearchResponse,
 } from '../types/observability';
 
-// Empty base URL uses same-origin paths so Next.js dev rewrites can proxy to the backend.
-const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ?? '';
-
-const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`;
+// Empty base URL uses same-origin paths so Next.js can proxy to the backend.
+const telemetryUrl = (path: string): string =>
+  `${getTelemetryServiceUrl()}${path}`;
 
 /** Path segment for GET /telemetry/traces/{id} (keep 0x prefix as returned by search). */
 export function telemetryTraceIdForApi(traceId: string): string {
@@ -256,7 +256,7 @@ export const searchTelemetryTraces = async (
 ): Promise<TelemetryTraceSearchResponse> => {
   try {
     const queryParams = new URLSearchParams();
-    if (params.taskType) queryParams.append('task_type', params.taskType.toUpperCase());
+    if (params.taskType) queryParams.append('task_types', params.taskType.toUpperCase());
     const statusFilter = mapStatusFilter(params.level);
     if (statusFilter) queryParams.append('status_filter', statusFilter);
     if (params.startDate) queryParams.append('start_date', params.startDate);

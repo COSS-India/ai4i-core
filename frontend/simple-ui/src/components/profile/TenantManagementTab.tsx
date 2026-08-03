@@ -62,6 +62,7 @@ import {
   type TenantTierAssignment,
   adjustTenantBudget,
 } from "../../services/tierManagementService";
+import { fetchAllServicesMatchingFilters } from "../../services/servicesManagementService";
 import {
   FiArrowLeft,
   FiCheckCircle,
@@ -106,6 +107,25 @@ import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
+
+/** Shown when assigning/reassigning a tier that has no mapped services. */
+const TIER_NO_SERVICES_MSG =
+  "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
+
+/**
+ * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
+ * Uses local calendar day bounds so "Effective To = today" stays active
+ * through the end of that day (not midnight UTC, which expires immediately).
+ */
+function dateInputToStartOfDayIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+}
+
+function dateInputToEndOfDayIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+}
 
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
@@ -205,6 +225,11 @@ export default function TenantManagementTab({
     onOpen: onAssignTierOpen,
     onClose: onAssignTierClose,
   } = useDisclosure();
+  const {
+    isOpen: isViewTierOpen,
+    onOpen: onViewTierOpen,
+    onClose: onViewTierClose,
+  } = useDisclosure();
 
   const tiersQuery = useQuery({
     queryKey: ["tiers"],
@@ -212,6 +237,25 @@ export default function TenantManagementTab({
     staleTime: 5 * 60_000,
   });
   const tierOptions = tiersQuery.data?.data ?? [];
+
+  // Shared with Tier Management so service↔tier mappings stay consistent.
+  // Used to block assigning a tier that has no services mapped.
+  const servicesForTiersQuery = useQuery({
+    queryKey: ["services-for-tiers"],
+    queryFn: () => fetchAllServicesMatchingFilters({}),
+    staleTime: 60_000,
+    enabled: isAdmin && (isAssignTierOpen || isViewTierOpen),
+  });
+  const tierIdsWithServices = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of servicesForTiersQuery.data?.items ?? []) {
+      for (const tierId of s.tierIds ?? []) {
+        if (tierId) ids.add(String(tierId));
+      }
+    }
+    return ids;
+  }, [servicesForTiersQuery.data]);
+  const serviceMappingsReady = servicesForTiersQuery.isSuccess;
 
   const tenantTiersQuery = useQuery({
     queryKey: ["tenant-tiers"],
@@ -237,11 +281,6 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
-  const {
-    isOpen: isViewTierOpen,
-    onOpen: onViewTierOpen,
-    onClose: onViewTierClose,
-  } = useDisclosure();
 
   const handleCloseManagePlan = () => {
     if (isSavingPlan) return;
@@ -259,6 +298,41 @@ export default function TenantManagementTab({
 
   const handleSaveManagePlan = async () => {
     if (!viewTierTenant || !manageTierId) return;
+
+    // Wait for service mapping data before allowing reassignment to a
+    // potentially service-less tier (avoids ghost / contradictory state).
+    if (servicesForTiersQuery.isLoading || servicesForTiersQuery.isFetching) {
+      toast({
+        title: "Loading services",
+        description: "Please wait while service mappings are loaded.",
+        status: "info",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (servicesForTiersQuery.isError) {
+      toast({
+        title: "Cannot update plan",
+        description:
+          "Unable to verify service mappings for this Tier. Please refresh and try again.",
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!tierIdsWithServices.has(String(manageTierId))) {
+      toast({
+        title: "Cannot update plan",
+        description: TIER_NO_SERVICES_MSG,
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+      return;
+    }
+
     setIsSavingPlan(true);
     try {
       await reassignTenantTier({
@@ -329,6 +403,32 @@ export default function TenantManagementTab({
       return;
     }
 
+    // Block assignment of tiers with no mapped services before calling the API,
+    // so we never create a partial/ghost assignment or show misleading feedback.
+    if (servicesForTiersQuery.isLoading || servicesForTiersQuery.isFetching) {
+      setAssignTierError(
+        "Loading service mappings… please try again in a moment.",
+      );
+      return;
+    }
+    if (servicesForTiersQuery.isError) {
+      setAssignTierError(
+        "Unable to verify service mappings for this Tier. Please refresh and try again.",
+      );
+      return;
+    }
+    if (!tierIdsWithServices.has(String(assignTierId))) {
+      setAssignTierError(TIER_NO_SERVICES_MSG);
+      return;
+    }
+
+    const effectiveFromIso = dateInputToStartOfDayIso(assignEffectiveFrom);
+    const effectiveToIso = dateInputToEndOfDayIso(assignEffectiveTo);
+    if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
+      setAssignTierError("Effective To must be after Effective From.");
+      return;
+    }
+
     setIsAssigning(true);
     setAssignTierError(null);
     try {
@@ -336,8 +436,8 @@ export default function TenantManagementTab({
         tenant_id: String(assignTierTenant.tenant_id),
         tier_id: assignTierId,
         budget: budgetValue,
-        effective_from: new Date(assignEffectiveFrom).toISOString(),
-        effective_to: new Date(assignEffectiveTo).toISOString(),
+        effective_from: effectiveFromIso,
+        effective_to: effectiveToIso,
       });
       queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
       toast({
@@ -365,7 +465,15 @@ export default function TenantManagementTab({
         message = detail;
       }
       message = message ?? err?.message ?? "An error occurred.";
-      setAssignTierError(String(message));
+      const messageStr = String(message);
+      // Map overlapping-period 409 into a clearer failure (not a success-sounding state).
+      if (/already has a tier assignment overlapping/i.test(messageStr)) {
+        setAssignTierError(
+          "This tenant already has a tier assignment for the selected date range. Choose different dates or manage the existing assignment.",
+        );
+      } else {
+        setAssignTierError(messageStr);
+      }
     } finally {
       setIsAssigning(false);
     }
@@ -1893,12 +2001,19 @@ export default function TenantManagementTab({
     const isBudgetInvalid =
       assignBudget.trim() !== "" &&
       (!Number.isFinite(budgetNum) || budgetNum <= 0);
+    const selectedTierHasNoServices =
+      !!assignTierId &&
+      serviceMappingsReady &&
+      !tierIdsWithServices.has(String(assignTierId));
     const canAssign =
       !!assignTierId &&
       !!assignBudget.trim() &&
       !isBudgetInvalid &&
       !!assignEffectiveFrom &&
-      !!assignEffectiveTo;
+      !!assignEffectiveTo &&
+      !selectedTierHasNoServices &&
+      !servicesForTiersQuery.isLoading &&
+      !servicesForTiersQuery.isError;
     return (
       <Modal
         isOpen={isAssignTierOpen}
@@ -1914,30 +2029,47 @@ export default function TenantManagementTab({
           <ModalCloseButton isDisabled={isAssigning} />
           <ModalBody pb={6}>
             <VStack align="stretch" spacing={5}>
-              {assignTierError && (
+              {(assignTierError || selectedTierHasNoServices) && (
                 <Alert status="error" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription fontSize="sm">
-                    {assignTierError}
+                    {assignTierError ?? TIER_NO_SERVICES_MSG}
                   </AlertDescription>
                 </Alert>
               )}
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={selectedTierHasNoServices}>
                 <FormLabel fontWeight="semibold" fontSize="sm">
                   Tier
                 </FormLabel>
                 <Select
                   value={assignTierId}
-                  onChange={(e) => setAssignTierId(e.target.value)}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setAssignTierId(nextId);
+                    if (
+                      nextId &&
+                      serviceMappingsReady &&
+                      !tierIdsWithServices.has(String(nextId))
+                    ) {
+                      setAssignTierError(TIER_NO_SERVICES_MSG);
+                    } else {
+                      setAssignTierError(null);
+                    }
+                  }}
                   placeholder="Select a tier"
                   size="sm"
                   isDisabled={isAssigning}
                 >
-                  {tierOptions.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
+                  {tierOptions.map((t) => {
+                    const hasServices = tierIdsWithServices.has(String(t.id));
+                    return (
+                      <option key={t.id} value={t.id}>
+                        {serviceMappingsReady && !hasServices
+                          ? `${t.name} (no services mapped)`
+                          : t.name}
+                      </option>
+                    );
+                  })}
                 </Select>
               </FormControl>
 
@@ -2020,6 +2152,10 @@ export default function TenantManagementTab({
   function renderViewTierModal() {
     const a = viewTierTenant;
     const hasTierChanged = manageTierId !== originalTierId;
+    const manageTierHasNoServices =
+      !!manageTierId &&
+      serviceMappingsReady &&
+      !tierIdsWithServices.has(String(manageTierId));
 
     const showSaveButton = isEditingTier && hasTierChanged;
 
@@ -2069,11 +2205,18 @@ export default function TenantManagementTab({
                         value={manageTierId}
                         onChange={(e) => setManageTierId(e.target.value)}
                       >
-                        {tierOptions.map((tier) => (
-                          <option key={tier.id} value={tier.id}>
-                            {tier.name}
-                          </option>
-                        ))}
+                        {tierOptions.map((tier) => {
+                          const hasServices = tierIdsWithServices.has(
+                            String(tier.id),
+                          );
+                          return (
+                            <option key={tier.id} value={tier.id}>
+                              {serviceMappingsReady && !hasServices
+                                ? `${tier.name} (no services mapped)`
+                                : tier.name}
+                            </option>
+                          );
+                        })}
                       </Select>
 
                       <Button
@@ -2085,6 +2228,11 @@ export default function TenantManagementTab({
                       </Button>
                     </HStack>
                   )}
+                  {isEditingTier && manageTierHasNoServices && (
+                      <FormHelperText color="red.500">
+                        {TIER_NO_SERVICES_MSG}
+                      </FormHelperText>
+                    )}
                 </FormControl>
 
                 <FormControl>
@@ -2177,7 +2325,12 @@ export default function TenantManagementTab({
                 onClick={handleSaveManagePlan}
                 isLoading={isSavingPlan}
                 loadingText="Saving..."
-                isDisabled={!manageTierId}
+                isDisabled={
+                  !manageTierId ||
+                  manageTierHasNoServices ||
+                  servicesForTiersQuery.isLoading ||
+                  servicesForTiersQuery.isError
+                }
               >
                 Save Changes
               </Button>

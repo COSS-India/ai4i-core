@@ -127,18 +127,9 @@ def _setup_openapi_security(app: FastAPI) -> None:
             "name": "X-Permission-IDs",
             "description": "Comma-separated list of permission IDs injected by the gateway after token validation.",
         }
-        security_schemes["XBudgetExhausted"] = {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-Budget-Exhausted",
-            "description": "Injected by the gateway. Set to 'true' when the tenant's overall budget is exhausted — triggers HTTP 429 (budget_exhausted) for all inference requests.",
-        }
-        security_schemes["XQuotaExhausted"] = {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-Quota-Exhausted",
-            "description": "Injected by the gateway. Comma-separated inference type names whose monthly quota is exhausted (e.g. 'nmt' or 'nmt,asr') — triggers HTTP 429 (quota_exhausted) when the request path matches any exhausted type.",
-        }
+        # Quota/budget exhaustion is enforced by auth-service /auth/validate
+        # (HTTP 429 at the gateway forward-auth step) — no exhaustion headers
+        # reach this service.
         for path, methods in (schema.get("paths") or {}).items():
             if path in _PUBLIC_PATHS:
                 continue
@@ -148,8 +139,6 @@ def _setup_openapi_security(app: FastAPI) -> None:
                         {"bearerAuth": []},
                         {"XUserID": []},
                         {"XPermissionIDs": []},
-                        {"XBudgetExhausted": []},
-                        {"XQuotaExhausted": []},
                     ])
         app.openapi_schema = schema
         return app.openapi_schema

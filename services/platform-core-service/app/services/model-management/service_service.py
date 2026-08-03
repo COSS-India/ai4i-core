@@ -133,14 +133,14 @@ class ServiceService:
     async def list_services(
         self,
         *,
-        task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
         offset: int = 0,
         limit: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._services.list_services(
-            task_type=task_type,
+            task_types=task_types,
             is_published=is_published,
             created_by=created_by,
             offset=offset,
@@ -159,7 +159,7 @@ class ServiceService:
         ]
         if offset > 0 or limit is not None:
             total = await self._services.count_services(
-                task_type=task_type,
+                task_types=task_types,
                 is_published=is_published,
                 created_by=created_by,
             )
@@ -208,8 +208,6 @@ class ServiceService:
 
         # 6. Persist
         service_id = payload.serviceId
-        is_published = bool(payload.isPublished)
-        now = datetime.now(timezone.utc) if is_published else None
         unit_rate = (
             payload.costPerUnit / payload.unitSize
             if payload.costPerUnit is not None and payload.unitSize is not None
@@ -232,8 +230,6 @@ class ServiceService:
             api_key=payload.api_key,
             health_status=jsonable_encoder(payload.healthStatus) if payload.healthStatus else {},
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
-            is_published=is_published,
-            published_at=now,
             task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,

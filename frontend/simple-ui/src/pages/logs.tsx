@@ -39,7 +39,8 @@ import {
   TelemetryTraceRecord,
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
-import { isTenantStatus, MODEL_TASK_TYPE_LIST, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { listTenants } from "../services/tenantService";
 import {
   useAdminTableSurface,
@@ -97,8 +98,19 @@ const convertToISOFormat = (datetimeLocal: string): string => {
 const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
+  // Task-type filter options come from the enabled set (ENABLED_TASK_TYPES),
+  // not a hardcoded list, so disabled types don't appear here either.
+  const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
 
   const [taskType, setTaskType] = useState<string>("");
+  const didInitTaskTypeFilter = useRef(false);
+  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
+  useEffect(() => {
+    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
+    didInitTaskTypeFilter.current = true;
+    if (taskTypeNames.length > 0) setTaskType(taskTypeNames[0]);
+    setTaskTypeFilterReady(true);
+  }, [isLoadingTaskTypes, taskTypeNames]);
   const [level, setLevel] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
@@ -252,7 +264,7 @@ const LogsPage: React.FC = () => {
         tenant_id: apiTenantId,
       });
     },
-    enabled: isAuthenticated && (!isTenantAdmin || !!apiTenantId),
+    enabled: isAuthenticated && (!isTenantAdmin || !!apiTenantId) && taskTypeFilterReady,
     staleTime: 30 * 1000,
   });
 
@@ -339,7 +351,7 @@ const LogsPage: React.FC = () => {
   }, [autoRefresh]);
 
   const clearAllFilters = () => {
-    setTaskType("");
+    if (taskTypeNames.length > 0) setTaskType(taskTypeNames[0]);
     setLevel("");
     setSearchQuery("");
     setSelectedTenantId("");
@@ -492,7 +504,6 @@ const LogsPage: React.FC = () => {
   }, [openTraceDetail, resolveTenantName]);
 
   const hasAppliedFilters =
-    taskType !== "" ||
     level !== "" ||
     (canPickTenant && selectedTenantId !== "") ||
     searchQuery.trim() !== "";
@@ -689,8 +700,7 @@ const LogsPage: React.FC = () => {
                             onChange={setTaskType}
                             formControlProps={{ w: { base: "full", sm: "160px" } }}
                           >
-                            <option value="">All Task Types</option>
-                            {MODEL_TASK_TYPE_LIST.map((tt) => (
+                            {taskTypeNames.map((tt) => (
                               <option key={tt} value={tt}>
                                 {formatModelTaskTypeLabel(tt)}
                               </option>

@@ -27,7 +27,7 @@ import {
 } from '../types/auth';
 import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
-import { API_BASE_URL, apiService } from './api';
+import { getApiBaseUrl, apiService } from './api';
 import { ApiValidationError } from './dto/apiValidationError';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import {
@@ -66,10 +66,8 @@ import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInact
 const authPath = apiEndpoints.auth.paths;
 
 class AuthService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.base}`;
+  private get baseUrl(): string {
+    return `${getApiBaseUrl()}${apiEndpoints.auth.base}`;
   }
 
   private async validatedRequest<S extends ZodTypeAny>(

@@ -42,6 +42,7 @@ export interface MeteringScope {
   tenant_id: string | null;
   organisation: string | null;
   window: MeteringWindow;
+  task_types?: string[] | null;
 }
 
 export interface PlatformAdoption {
@@ -154,4 +155,36 @@ export interface ServiceConsumptionResponse extends MeteringResponseMeta {
   service_breakdown: ServiceRow[];
   throughput?: ThroughputData;
   request_volume?: MeteringGraph | null;
+}
+
+/** Per-service LLM row from GET /metering/model-consumption (no roll-up by model_name). */
+export interface ModelConsumptionRow {
+  service_id: string;
+  name: string;
+  model_name?: string | null;
+  requests: number;
+  native_units: number;
+  native_unit_suffix: string;
+  success_pct: number;
+  failure_rate_pct: number;
+}
+
+export interface ModelConsumptionSummary {
+  most_used?: {
+    service_id?: string | null;
+    name?: string | null;
+    requests: number;
+  } | null;
+  highest_failure_rate?: {
+    service_id?: string | null;
+    name?: string | null;
+    failure_rate_pct: number;
+  } | null;
+}
+
+/** GET /api/v1/metering/model-consumption — no throughput/request_volume. */
+export interface ModelConsumptionResponse extends MeteringResponseMeta {
+  scope: MeteringScope;
+  summary?: ModelConsumptionSummary | null;
+  breakdown: ModelConsumptionRow[];
 }
