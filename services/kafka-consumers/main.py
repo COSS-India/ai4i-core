@@ -1,7 +1,7 @@
 import asyncio
 import signal
 
-from confluent_kafka import KafkaException
+from confluent_kafka import KafkaException, TopicPartition
 from confluent_kafka.aio import AIOConsumer
 
 from ai4i_core.bootstrap import init_redis
@@ -28,10 +28,22 @@ KAFKA_GROUP_ID = "aio-python-consumers"
 # is safe here because handle_ppu_usage is already redelivery-safe (see the
 # Redis dedup check) — a crash mid-batch just means up to COMMIT_BATCH_SIZE
 # already-billed messages get redelivered and no-op'd on restart, not
-# double-billed. Assumes a single partition (true today, see
-# KAFKA_GROUP_ID note above) — commit(message=msg) only advances that
-# message's own partition, so a multi-partition topic would need per-
-# partition tracking instead of one shared counter/last-message.
+# double-billed.
+#
+# Tracked per (topic, partition) — NOT a single shared "last message" — and
+# committed via explicit TopicPartition offsets, not a bare consumer.commit().
+# A single shared last-message was tried first and is WRONG for a
+# multi-partition topic: commit(message=msg) only advances msg's own
+# partition, so with messages interleaving across partitions, whichever
+# partition owned the most-recently-processed message got committed and the
+# rest never advanced at all — reproduced locally against an 8-partition
+# topic (7 of 8 partitions never committed a single offset). A bare
+# consumer.commit() (no explicit offsets) isn't a safe fix either:
+# enable.auto.offset.store defaults to true, so poll() auto-marks a
+# message's offset as committable the instant it's returned — including
+# messages whose processing later raised — a bare commit() would then
+# commit past a failed message anyway. Explicit per-partition offsets, only
+# updated after a message's dispatch() succeeds, avoid both problems.
 COMMIT_BATCH_SIZE = 100
 COMMIT_INTERVAL_S = 5.0
 
@@ -106,16 +118,26 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
 
+    # (topic, partition) -> next offset to commit (last successfully
+    # processed message's offset + 1 — matching the +1 convention
+    # consumer.commit(message=msg) applies automatically, which committing
+    # via explicit TopicPartition offsets does NOT do for us.
+    pending_offsets: dict[tuple[str, int], int] = {}
     uncommitted = 0
-    last_msg = None
     last_commit_time = loop.time()
 
     async def _flush_commit() -> None:
-        nonlocal uncommitted, last_commit_time
-        if uncommitted and last_msg is not None:
-            await consumer.commit(message=last_msg)
-            uncommitted = 0
-            last_commit_time = loop.time()
+        nonlocal uncommitted, last_commit_time, pending_offsets
+        if not pending_offsets:
+            return
+        offsets = [
+            TopicPartition(topic, partition, offset)
+            for (topic, partition), offset in pending_offsets.items()
+        ]
+        await consumer.commit(offsets=offsets)
+        pending_offsets = {}
+        uncommitted = 0
+        last_commit_time = loop.time()
 
     async with consumer:
         while not shutdown.is_set():
@@ -147,12 +169,12 @@ async def main() -> None:
                 # must stay uncommitted so it's redelivered on restart.
                 continue
 
+            pending_offsets[(msg.topic(), msg.partition())] = msg.offset() + 1
             uncommitted += 1
-            last_msg = msg
             if uncommitted >= COMMIT_BATCH_SIZE or loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
                 await _flush_commit()
 
-        # Flush any remaining uncommitted offset before shutting down.
+        # Flush any remaining uncommitted offsets before shutting down.
         await _flush_commit()
 
     logger.info("Shutdown signal received — draining database connections")
