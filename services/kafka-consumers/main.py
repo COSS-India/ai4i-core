@@ -1,8 +1,9 @@
 import asyncio
+import functools
 import signal
+from concurrent.futures import ThreadPoolExecutor
 
-from confluent_kafka import KafkaException, TopicPartition
-from confluent_kafka.aio import AIOConsumer
+from confluent_kafka import Consumer, KafkaException, TopicPartition
 
 from ai4i_core.bootstrap import init_redis
 from ai4i_core.logging import configure_logging, get_logger
@@ -97,10 +98,22 @@ async def main() -> None:
         registry.topics(),
     )
 
-    consumer = AIOConsumer(build_consumer_config(KAFKA_GROUP_ID, settings))
+    # Plain sync Consumer, not confluent_kafka.aio.AIOConsumer: AIOConsumer
+    # binds its background-thread -> event-loop callback bridge via the
+    # deprecated asyncio.get_event_loop() (confluentinc/confluent-kafka-python
+    # #2211, open/unfixed), which can silently attach to the wrong loop —
+    # await consumer.poll() then hangs forever with no error, no exception,
+    # no log line. The sync Consumer has no such bridge to get wrong: every
+    # blocking call below is pushed onto _kafka_executor explicitly by us.
+    consumer = Consumer(build_consumer_config(KAFKA_GROUP_ID, settings))
+    # Single worker: our loop only ever has one poll()/commit() call in
+    # flight at a time (each is awaited before the next is issued), and the
+    # underlying librdkafka Consumer handle isn't safe to call concurrently
+    # from multiple threads.
+    _kafka_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kafka-consumer")
 
     try:
-        await consumer.subscribe(registry.topics())
+        consumer.subscribe(registry.topics())
     except KafkaException as exc:
         logger.critical("Failed to subscribe to Kafka topics: %s", exc)
         raise
@@ -134,15 +147,25 @@ async def main() -> None:
             TopicPartition(topic, partition, offset)
             for (topic, partition), offset in pending_offsets.items()
         ]
-        await consumer.commit(offsets=offsets)
+        # asynchronous=False: block until the broker has acked the commit,
+        # matching the previous AIOConsumer.commit()'s await semantics —
+        # the default (asynchronous=True) would return immediately and
+        # complete the round-trip in the background, which would let us
+        # clear pending_offsets before the commit is actually durable.
+        await loop.run_in_executor(
+            _kafka_executor,
+            functools.partial(consumer.commit, offsets=offsets, asynchronous=False),
+        )
         pending_offsets = {}
         uncommitted = 0
         last_commit_time = loop.time()
 
-    async with consumer:
+    try:
         while not shutdown.is_set():
             try:
-                msg = await consumer.poll(timeout=settings.KAFKA_POLL_TIMEOUT_S)
+                msg = await loop.run_in_executor(
+                    _kafka_executor, consumer.poll, settings.KAFKA_POLL_TIMEOUT_S
+                )
             except KafkaException as exc:
                 logger.error("Poll failed: %s", exc)
                 continue
@@ -176,6 +199,11 @@ async def main() -> None:
 
         # Flush any remaining uncommitted offsets before shutting down.
         await _flush_commit()
+    finally:
+        # consumer.close() blocks briefly (leaves the group, one-off at
+        # shutdown) — not worth routing through the executor.
+        consumer.close()
+        _kafka_executor.shutdown(wait=True)
 
     logger.info("Shutdown signal received — draining database connections")
     await db_registry.close_all()
