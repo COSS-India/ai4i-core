@@ -59,6 +59,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "endpoint",
     "taskType",
     "isPublished",
+    "isTryItDefault",
     "task",
     "languages",
     "versionStatus",

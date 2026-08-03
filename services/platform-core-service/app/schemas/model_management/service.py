@@ -132,7 +132,7 @@ class ServiceUpdateRequest(BaseSchema):
     # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER (see AI4IDS-2524/2525/2526/
     # 2527 — requiring them unconditionally, including on this toggle, would
     # break that flow; see _require_billing_fields_on_substantive_edit below).
-    _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished"}
+    _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished", "isTryItDefault"}
     _BILLING_FIELDS_REQUIRED_TOGETHER = ("taskType", "costPerUnit", "unitSize", "tierIds")
 
     serviceId: str
@@ -145,6 +145,7 @@ class ServiceUpdateRequest(BaseSchema):
     healthStatus: Optional[str] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
+    isTryItDefault: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
     taskType: Optional[str] = None
     costPerUnit: Optional[float] = Field(None, ge=0)
@@ -230,6 +231,7 @@ class ServiceResponse(BaseSchema):
     benchmarks: Optional[Dict[str, Any]] = None
     policy: Optional[Dict[str, Any]] = None
     isPublished: bool = False
+    isTryItDefault: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
     taskType: Optional[str] = None

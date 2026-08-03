@@ -45,6 +45,7 @@ class Service(Base):
         Index("ix_mm_services_is_published", "is_published"),
         Index("ix_mm_services_created_by", "created_by"),
         Index("ix_mm_services_deleted_at", "deleted_at"),
+        Index("ix_mm_services_is_try_it_default", "is_try_it_default"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -63,6 +64,7 @@ class Service(Base):
     policy = Column(JSONB, nullable=True)
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
     published_at = Column(DateTime(timezone=True), nullable=True)
+    is_try_it_default = Column(Boolean, nullable=False, default=False, server_default="false")
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     task_type = Column(String(32), nullable=True)
