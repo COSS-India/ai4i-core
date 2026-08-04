@@ -9,8 +9,14 @@ Three sizes based on the request prompt's character length:
   SMALL_LLM_RESPONSE   — short reply    (< 200 chars prompt)
   MEDIUM_LLM_RESPONSE  — a few sentences (200–999 chars prompt)
   LARGE_LLM_RESPONSE   — full paragraph  (>= 1000 chars prompt)
+
+``chat_completion_chunks`` re-expresses any one of those bodies as the SSE
+chunk sequence a vLLM-style server emits for the same reply, so the streaming
+stub and the buffered stub are two views of one fixture and can never disagree
+on the token counts that get billed.
 """
 
+import re
 from typing import Any
 
 
@@ -62,3 +68,77 @@ LARGE_LLM_RESPONSE: dict[str, Any] = _completion(
     prompt_tokens=620,
     completion_tokens=210,
 )
+
+
+# One word per delta, which is roughly how a real vLLM server streams: one
+# chunk per token. Keeping the chunk count proportional to the reply length is
+# what makes the stubbed stream exercise a realistic number of per-chunk
+# _record_stream_usage parses instead of collapsing the whole reply into one.
+_WORDS_PER_DELTA = 1
+
+
+def _content_deltas(text: str, words_per_delta: int = _WORDS_PER_DELTA) -> list[str]:
+    """Slice ``text`` into per-delta pieces of ``words_per_delta`` words each.
+
+    Cuts by offset at word boundaries rather than splitting and re-joining, so
+    concatenating the pieces reproduces ``text`` exactly — whitespace included.
+    A client that accumulates the deltas therefore ends up with the same string
+    the buffered stub would have returned in one shot.
+    """
+    if not text:
+        return []
+    starts = [m.start() for m in re.finditer(r"\S+", text)]
+    if not starts:
+        return [text]
+    pieces = []
+    previous = 0
+    for cut in starts[words_per_delta::words_per_delta]:
+        pieces.append(text[previous:cut])
+        previous = cut
+    pieces.append(text[previous:])
+    return pieces
+
+
+def chat_completion_chunks(completion: dict[str, Any]) -> list[dict[str, Any]]:
+    """Re-express a buffered chat-completion body as its SSE chunk sequence.
+
+    Emits, in OpenAI streaming order: an opening role delta, one delta per
+    ``_WORDS_PER_DELTA`` words of content, a ``finish_reason`` chunk, and
+    finally a chunk carrying the completion's own ``usage`` block.
+
+    That last chunk is not optional. OpenAIProxyService._record_stream_usage
+    reads the token counts off it onto the ai-inference span, and the PPU Kafka
+    consumer skips billing entirely when those come through as zero, so a
+    stream without it would return 200 and silently bill nothing.
+
+    Every dict is freshly built, so callers cannot mutate the shared fixtures
+    and no deep copy is needed on the way out.
+    """
+    envelope = {
+        "id": completion["id"],
+        "object": "chat.completion.chunk",
+        "created": completion["created"],
+        "model": completion["model"],
+    }
+    chunks: list[dict[str, Any]] = [
+        {**envelope, "choices": [
+            {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None},
+        ]},
+    ]
+    content = completion["choices"][0]["message"]["content"]
+    chunks.extend(
+        {**envelope, "choices": [
+            {"index": 0, "delta": {"content": piece}, "finish_reason": None},
+        ]}
+        for piece in _content_deltas(content)
+    )
+    chunks.append(
+        {**envelope, "choices": [
+            {"index": 0, "delta": {}, "finish_reason": "stop"},
+        ]},
+    )
+    # Usage rides a chunk with no choices, the way vLLM emits it when the
+    # client asked for stream_options.include_usage (which
+    # OpenAIProxyService._with_include_usage always does).
+    chunks.append({**envelope, "choices": [], "usage": dict(completion["usage"])})
+    return chunks
