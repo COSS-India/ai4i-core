@@ -94,15 +94,20 @@ const ServicesManagement: React.FC = () => {
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,
+    unitTypeOptions,
+    setUnitType,
     pricePerUnit,
     setPricePerUnit,
     unitSize,
     setUnitSize,
+    currency,
+    setCurrency,
     selectedTiers,
     toggleTier,
     availableTiers,
     isCreateFormModelSelected,
     canCreateService,
+    isLlmTaskType,
     serviceIdError,
     isSubmitting,
     handleSubmit,
@@ -414,15 +419,20 @@ const ServicesManagement: React.FC = () => {
                       isLoadingModels={isLoadingModels}
                       filteredModelsForDropdown={filteredModelsForDropdown}
                       unitType={unitType}
+                      unitTypeOptions={unitTypeOptions}
+                      onUnitTypeChange={setUnitType}
                       pricePerUnit={pricePerUnit}
                       onPricePerUnitChange={setPricePerUnit}
                       unitSize={unitSize}
                       onUnitSizeChange={setUnitSize}
+                      currency={currency}
+                      onCurrencyChange={setCurrency}
                       selectedTiers={selectedTiers}
                       onToggleTier={toggleTier}
                       availableTiers={availableTiers}
                       isCreateFormModelSelected={isCreateFormModelSelected}
                       canCreateService={canCreateService}
+                      isLlmTaskType={isLlmTaskType}
                       serviceIdError={serviceIdError}
                       isSubmitting={isSubmitting}
                       onSubmit={handleSubmit}
