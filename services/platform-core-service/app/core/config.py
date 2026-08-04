@@ -132,6 +132,10 @@ class CoreSettings(BaseSettings):
     # identically. See endpoint_validator._VALIDATION_MODE_THRESHOLDS.
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
+    # Cap on PATCH /services bulk endpoint-update array size. Each item runs
+    # a live probe with endpoint_validation_timeout_seconds, so an unbounded
+    # array can outlast a proxy timeout even with concurrent probing.
+    bulk_endpoint_update_max_items: int = 50
     # Async (poll-until-done) probes cap both attempts and total wall-clock
     # time so a slow/stuck partner endpoint can't hang a create/update
     # request indefinitely — ULCA's reference implementation polls in an

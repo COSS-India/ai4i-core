@@ -1,10 +1,11 @@
 import asyncio
+import functools
 import signal
+from concurrent.futures import ThreadPoolExecutor
 
-from confluent_kafka import KafkaException
-from confluent_kafka.aio import AIOConsumer
+from confluent_kafka import Consumer, KafkaException, TopicPartition
 
-from ai4i_core.bootstrap import init_redis
+from ai4i_core.bootstrap import init_database, close_database, init_redis
 from ai4i_core.logging import configure_logging, get_logger
 
 configure_logging(service_name="aiokafka-consumer")
@@ -12,7 +13,6 @@ configure_logging(service_name="aiokafka-consumer")
 import consumers.payperuse_consumer  # noqa: F401 — side-effect import: populates TOPIC_REGISTRY
 from config import settings, build_consumer_config
 from consumers.registry import KafkaRegistry, TOPIC_REGISTRY
-from db_registry import db_registry, init_databases
 
 logger = get_logger(__name__)
 
@@ -22,11 +22,36 @@ logger = get_logger(__name__)
 KAFKA_GROUP_ID = "aio-python-consumers"
 # ===============
 
+# Commit offsets every N successful messages, or every T seconds since the
+# last commit — whichever comes first — instead of after every message. A
+# broker round-trip per message is real overhead under burst load; batching
+# is safe here because handle_ppu_usage is already redelivery-safe (see the
+# Redis dedup check) — a crash mid-batch just means up to COMMIT_BATCH_SIZE
+# already-billed messages get redelivered and no-op'd on restart, not
+# double-billed.
+#
+# Tracked per (topic, partition) — NOT a single shared "last message" — and
+# committed via explicit TopicPartition offsets, not a bare consumer.commit().
+# A single shared last-message was tried first and is WRONG for a
+# multi-partition topic: commit(message=msg) only advances msg's own
+# partition, so with messages interleaving across partitions, whichever
+# partition owned the most-recently-processed message got committed and the
+# rest never advanced at all — reproduced locally against an 8-partition
+# topic (7 of 8 partitions never committed a single offset). A bare
+# consumer.commit() (no explicit offsets) isn't a safe fix either:
+# enable.auto.offset.store defaults to true, so poll() auto-marks a
+# message's offset as committable the instant it's returned — including
+# messages whose processing later raised — a bare commit() would then
+# commit past a failed message anyway. Explicit per-partition offsets, only
+# updated after a message's dispatch() succeeds, avoid both problems.
+COMMIT_BATCH_SIZE = 100
+COMMIT_INTERVAL_S = 5.0
+
 async def main() -> None:
-    # ── Database registry ──
+    # ── Database ──
     db_cfg = settings.db_settings
     logger.info(
-        "Initialising database registry | host=%s port=%d pool_size=%d max_overflow=%d"
+        "Initialising database | host=%s port=%d pool_size=%d max_overflow=%d"
         " platform_core_db=%s",
         db_cfg.POSTGRES_HOST,
         db_cfg.POSTGRES_PORT,
@@ -35,16 +60,16 @@ async def main() -> None:
         db_cfg.PLATFORM_CORE_DB,
     )
     try:
-        await init_databases(db_cfg)
+        await init_database(
+            db_url=db_cfg.get_database_url(db_cfg.PLATFORM_CORE_DB),
+            pool_size=db_cfg.DB_POOL_SIZE,
+            max_overflow=db_cfg.DB_MAX_OVERFLOW,
+        )
     except Exception as exc:
-        logger.critical("Failed to initialise database registry | error=%s", exc)
+        logger.critical("Failed to initialise database | error=%s", exc)
         raise
 
-    logger.info(
-        "Database registry ready | count=%d registered=%s",
-        len(db_registry.names()),
-        db_registry.names(),
-    )
+    logger.info("Database ready | platform_core_db=%s", db_cfg.PLATFORM_CORE_DB)
 
     # ── Redis ──
     redis_cfg = settings.redis_settings
@@ -72,10 +97,22 @@ async def main() -> None:
         registry.topics(),
     )
 
-    consumer = AIOConsumer(build_consumer_config(KAFKA_GROUP_ID, settings))
+    # Plain sync Consumer, not confluent_kafka.aio.AIOConsumer: AIOConsumer
+    # binds its background-thread -> event-loop callback bridge via the
+    # deprecated asyncio.get_event_loop() (confluentinc/confluent-kafka-python
+    # #2211, open/unfixed), which can silently attach to the wrong loop —
+    # await consumer.poll() then hangs forever with no error, no exception,
+    # no log line. The sync Consumer has no such bridge to get wrong: every
+    # blocking call below is pushed onto _kafka_executor explicitly by us.
+    consumer = Consumer(build_consumer_config(KAFKA_GROUP_ID, settings))
+    # Single worker: our loop only ever has one poll()/commit() call in
+    # flight at a time (each is awaited before the next is issued), and the
+    # underlying librdkafka Consumer handle isn't safe to call concurrently
+    # from multiple threads.
+    _kafka_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kafka-consumer")
 
     try:
-        await consumer.subscribe(registry.topics())
+        consumer.subscribe(registry.topics())
     except KafkaException as exc:
         logger.critical("Failed to subscribe to Kafka topics: %s", exc)
         raise
@@ -93,31 +130,82 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
 
-    async with consumer:
+    # (topic, partition) -> next offset to commit (last successfully
+    # processed message's offset + 1 — matching the +1 convention
+    # consumer.commit(message=msg) applies automatically, which committing
+    # via explicit TopicPartition offsets does NOT do for us.
+    pending_offsets: dict[tuple[str, int], int] = {}
+    uncommitted = 0
+    last_commit_time = loop.time()
+
+    async def _flush_commit() -> None:
+        nonlocal uncommitted, last_commit_time, pending_offsets
+        if not pending_offsets:
+            return
+        offsets = [
+            TopicPartition(topic, partition, offset)
+            for (topic, partition), offset in pending_offsets.items()
+        ]
+        # asynchronous=False: block until the broker has acked the commit,
+        # matching the previous AIOConsumer.commit()'s await semantics —
+        # the default (asynchronous=True) would return immediately and
+        # complete the round-trip in the background, which would let us
+        # clear pending_offsets before the commit is actually durable.
+        await loop.run_in_executor(
+            _kafka_executor,
+            functools.partial(consumer.commit, offsets=offsets, asynchronous=False),
+        )
+        pending_offsets = {}
+        uncommitted = 0
+        last_commit_time = loop.time()
+
+    try:
         while not shutdown.is_set():
             try:
-                msg = await consumer.poll(timeout=settings.KAFKA_POLL_TIMEOUT_S)
+                msg = await loop.run_in_executor(
+                    _kafka_executor, consumer.poll, settings.KAFKA_POLL_TIMEOUT_S
+                )
             except KafkaException as exc:
                 logger.error("Poll failed: %s", exc)
                 continue
 
             if msg is None:
+                # Nothing to process right now — flush any pending commit so
+                # offsets aren't held back indefinitely during quiet periods.
+                if loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
+                    await _flush_commit()
                 continue
             if msg.error():
                 logger.error("Kafka error: %s", msg.error())
                 continue
 
             try:
-                await registry.dispatch(msg.topic(), msg, consumer)
+                await registry.dispatch(msg.topic(), msg)
             except Exception as exc:
                 logger.exception(
                     "Unhandled error dispatching message from topic %s: %s",
                     msg.topic(),
                     exc,
                 )
+                # Don't count a failed message toward the batch — its offset
+                # must stay uncommitted so it's redelivered on restart.
+                continue
 
-    logger.info("Shutdown signal received — draining database connections")
-    await db_registry.close_all()
+            pending_offsets[(msg.topic(), msg.partition())] = msg.offset() + 1
+            uncommitted += 1
+            if uncommitted >= COMMIT_BATCH_SIZE or loop.time() - last_commit_time >= COMMIT_INTERVAL_S:
+                await _flush_commit()
+
+        # Flush any remaining uncommitted offsets before shutting down.
+        await _flush_commit()
+    finally:
+        # consumer.close() blocks briefly (leaves the group, one-off at
+        # shutdown) — not worth routing through the executor.
+        consumer.close()
+        _kafka_executor.shutdown(wait=True)
+
+    logger.info("Shutdown signal received — closing database connection")
+    await close_database()
     logger.info("Consumer shut down cleanly.")
 
 
