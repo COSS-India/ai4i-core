@@ -49,10 +49,10 @@ interface TenantServiceHeatmapSectionProps {
   tenantOrganisationById?: Record<string, string>;
 }
 
-/** UNDO: remove this filter (and ALLOWED_SERVICE_KEYS) to show all heatmap.SERVICES again. */
-const ALLOWED_SERVICE_KEYS: ReadonlySet<string> = new Set(
-  METERING.HEATMAP.ALLOWED_SERVICE_KEYS,
-);
+/** UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
+ * TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
+ */
+// (Select-services UI kept commented below; columns now follow BE response keys.)
 
 const TenantServiceHeatmapSection: React.FC<
   TenantServiceHeatmapSectionProps
@@ -68,7 +68,7 @@ const TenantServiceHeatmapSection: React.FC<
   const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
 
   /*
-   * UNDO — multi-service "Select services" dropdown (replace LLM-only visibleServices below):
+   * UNDO — multi-service "Select services" dropdown:
    *
    * const [selectedServices, setSelectedServices] = useState<Set<string>>(
    *   () => new Set(catalogServices.map((s) => s.key)),
@@ -137,11 +137,16 @@ const TenantServiceHeatmapSection: React.FC<
    * );
    */
 
-  // Active: LLM-only (driven by METERING.HEATMAP.ALLOWED_SERVICE_KEYS).
-  const visibleServices = useMemo(
-    () => catalogServices.filter((s) => ALLOWED_SERVICE_KEYS.has(s.key)),
-    [catalogServices],
-  );
+  // Columns follow whatever service keys the BE heatmap payload includes
+  // (ENABLED_TASK_TYPES today may be LLM-only; later LLM+others without FE changes).
+  const visibleServices = useMemo(() => {
+    const present = new Set<string>();
+    rows.forEach((row) => {
+      Object.keys(row.services ?? {}).forEach((key) => present.add(key));
+    });
+    if (present.size === 0) return [...catalogServices];
+    return catalogServices.filter((s) => present.has(s.key));
+  }, [rows, catalogServices]);
 
   const maxCellValue = useMemo(() => {
     let max = 0;

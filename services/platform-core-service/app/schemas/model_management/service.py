@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from app.core.config import settings
 from app.schemas.base import BaseSchema
 from app.schemas.common import BenchmarkEntry, validate_entity_name
 from app.schemas.enums.model_management import (
@@ -73,7 +74,6 @@ class ServiceCreateRequest(BaseSchema):
     sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
-    isPublished: Optional[bool] = False
     taskType: str
     costPerUnit: float = Field(..., ge=0)
     unitSize: int
@@ -133,7 +133,7 @@ class ServiceUpdateRequest(BaseSchema):
     # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER (see AI4IDS-2524/2525/2526/
     # 2527 — requiring them unconditionally, including on this toggle, would
     # break that flow; see _require_billing_fields_on_substantive_edit below).
-    _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished"}
+    _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished", "isTryItDefault"}
     _BILLING_FIELDS_REQUIRED_TOGETHER = ("taskType", "costPerUnit", "unitSize", "tierIds")
 
     serviceId: str
@@ -146,6 +146,7 @@ class ServiceUpdateRequest(BaseSchema):
     healthStatus: Optional[str] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
+    isTryItDefault: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
     taskType: Optional[str] = None
     costPerUnit: Optional[float] = Field(None, ge=0)
@@ -211,6 +212,32 @@ class ServiceUpdateRequest(BaseSchema):
         return self
 
 
+class ServiceEndpointUpdateItem(BaseSchema):
+    """A single {serviceId, endpoint} pair, used by the bulk endpoint-update
+    request below."""
+
+    serviceId: str
+    endpoint: str
+
+
+class ServiceBulkEndpointUpdateRequest(BaseSchema):
+    """Request body for PATCH /services when updating multiple services'
+    endpoints in a single call: {"services": [{"serviceId", "endpoint"}, ...]}.
+
+    Distinguished from ServiceUpdateRequest by the top-level "services" key,
+    so both shapes can be accepted on the same route without ambiguity.
+
+    Bypasses ServiceUpdateRequest's billing-fields-required-together rule
+    (added for AI4IDS-2524/2527) by design: unlike that request, this shape
+    can only ever touch `endpoint`, so there is no substantive-edit case to
+    guard against here.
+    """
+
+    services: List[ServiceEndpointUpdateItem] = Field(
+        ..., min_length=1, max_length=settings.bulk_endpoint_update_max_items
+    )
+
+
 # ── Response ──
 
 
@@ -231,6 +258,7 @@ class ServiceResponse(BaseSchema):
     benchmarks: Optional[Dict[str, Any]] = None
     policy: Optional[Dict[str, Any]] = None
     isPublished: bool = False
+    isTryItDefault: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
     taskType: Optional[str] = None

@@ -4,13 +4,15 @@ const path = require('path');
 
 /**
  * Allowed API/backend origins for CSP connect-src. Restricts fetch/XHR/WebSocket to these domains.
- * Uses NEXT_PUBLIC_* env vars when set (e.g. at build time); falls back to localhost for dev.
+ * Prefers runtime server-config env names; falls back to legacy NEXT_PUBLIC_* and localhost.
+ * Note: CSP itself is still evaluated at next build / server start for this headers() block.
+ * Same-origin (empty API_URL / TELEMETRY_SERVICE_URL) only needs 'self'.
  */
 function getAllowedConnectOrigins() {
   const origins = new Set(["'self'"]);
   const urls = [
-    process.env.NEXT_PUBLIC_API_URL,
-    process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL,
+    process.env.API_URL || process.env.NEXT_PUBLIC_API_URL,
+    process.env.TELEMETRY_SERVICE_URL || process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL,
     process.env.NEXT_PUBLIC_ASR_STREAM_URL,
     process.env.NEXT_PUBLIC_TTS_STREAM_URL,
   ];
@@ -89,9 +91,9 @@ const nextConfig = {
       { protocol: 'https', hostname: 'api-gateway-service' },
     ],
   },
-  // Note: NEXT_PUBLIC_* variables from .env files are automatically exposed by Next.js
-  // No need to manually set them in the env object - that can cause conflicts
-  // If NEXT_PUBLIC_API_URL is not set in .env, the code will use the fallback in api.ts
+  // Runtime config (API_URL, TELEMETRY_SERVICE_URL, ENABLED_TASK_TYPES) is
+  // served from /api/config — not baked into the client bundle.
+  // If API_URL is not set, the code uses same-origin (empty base URL).
   output: 'standalone',
   // Monorepo: pin tracing root to this app (avoids parent lockfile workspace inference).
   outputFileTracingRoot: path.join(__dirname),

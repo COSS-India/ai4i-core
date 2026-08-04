@@ -15,7 +15,6 @@ import {
   type BillingPeriodKey,
 } from "../utils/usageSpendHelpers";
 import type {
-  SpendByTaskType,
   TenantUsageItem,
   UsageSummaryResponse,
 } from "../types/usageSpend";
@@ -48,27 +47,33 @@ export function useUsageAndSpendData({
   const scopedId = (isTenantView ? tenantId : scopeTenantId)?.trim() || null;
   const isScoped = Boolean(scopedId);
 
+  // Frontend-enabled task types sent to the backend so it query-filters the
+  // response (ENABLED_TASK_TYPES via useInferenceTypes). undefined
+  // while the catalog is still loading ⇒ backend returns all (no filter).
+  const enabledParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const summaryQuery = useQuery({
-    queryKey: ["usage-summary", billingPeriod, refreshNonce],
-    queryFn: () => fetchUsageSummary({ billingPeriod }),
+    queryKey: ["usage-summary", billingPeriod, enabledParam, refreshNonce],
+    queryFn: () => fetchUsageSummary({ billingPeriod, taskTypes: enabledParam }),
     enabled: !isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
     retry: 1,
   });
 
   const previousSummaryQuery = useQuery({
-    queryKey: ["usage-summary", previousBillingPeriod, refreshNonce],
-    queryFn: () => fetchUsageSummary({ billingPeriod: previousBillingPeriod }),
+    queryKey: ["usage-summary", previousBillingPeriod, enabledParam, refreshNonce],
+    queryFn: () =>
+      fetchUsageSummary({ billingPeriod: previousBillingPeriod, taskTypes: enabledParam }),
     enabled: !isScoped && periodKey === "current",
     staleTime: USAGE_SPEND_STALE_MS,
     retry: 1,
   });
 
   const scopedQuery = useQuery({
-    queryKey: ["usage-tenant", scopedId, billingPeriod, refreshNonce],
+    queryKey: ["usage-tenant", scopedId, billingPeriod, enabledParam, refreshNonce],
     queryFn: () => {
       if (!scopedId) throw new Error("Tenant id is required");
-      return fetchTenantUsageById(scopedId, billingPeriod);
+      return fetchTenantUsageById(scopedId, billingPeriod, enabledParam);
     },
     enabled: isScoped,
     staleTime: USAGE_SPEND_STALE_MS,
@@ -81,6 +86,7 @@ export function useUsageAndSpendData({
       billingPeriod,
       filterTierId,
       filterTaskType,
+      enabledParam,
       sortOrder,
       refreshNonce,
     ],
@@ -89,6 +95,7 @@ export function useUsageAndSpendData({
         billingPeriod,
         tierId: filterTierId || undefined,
         modelTaskType: filterTaskType || undefined,
+        taskTypes: enabledParam,
         sortOrder,
         limit: 100,
         offset: 0,
@@ -99,8 +106,8 @@ export function useUsageAndSpendData({
   });
 
   const tiersQuery = useQuery({
-    queryKey: ["tiers", refreshNonce],
-    queryFn: () => fetchTiers(),
+    queryKey: ["tiers", enabledParam, refreshNonce],
+    queryFn: () => fetchTiers(enabledParam),
     staleTime: 5 * USAGE_SPEND_STALE_MS,
     retry: 1,
   });
@@ -115,20 +122,31 @@ export function useUsageAndSpendData({
     const summary = summaryQuery.data;
     if (!summary) return undefined;
 
-    let next: UsageSummaryResponse = summary;
-    if (filterTaskType) {
-      const spendByModelTaskType = summary.spendByModelTaskType.filter(
-        (i) => i.modelTaskType.trim().toLowerCase() === filterTaskType.trim().toLowerCase(),
-      );
-      const totalSpend = spendByModelTaskType.reduce((s, i) => s + i.spend, 0);
-      next = {
+    // Recompute totalSpend + shares over a filtered row set.
+    const recompute = (
+      rows: typeof summary.spendByModelTaskType,
+    ): UsageSummaryResponse => {
+      const totalSpend = rows.reduce((s, i) => s + i.spend, 0);
+      return {
         ...summary,
         totalSpend,
-        spendByModelTaskType: spendByModelTaskType.map((i) => ({
+        spendByModelTaskType: rows.map((i) => ({
           ...i,
           percentage: totalSpend > 0 ? Number(((i.spend / totalSpend) * 100).toFixed(1)) : 0,
         })),
       };
+    };
+
+    // Enabled-task-type filtering is done at the backend (`task_types=` query param),
+    // so no client-side enabled filter here — only the single-type drill-down below.
+    let next: UsageSummaryResponse = summary;
+
+    if (filterTaskType) {
+      next = recompute(
+        next.spendByModelTaskType.filter(
+          (i) => i.modelTaskType.trim().toLowerCase() === filterTaskType.trim().toLowerCase(),
+        ),
+      );
     }
 
     if (next.activeTenants == null || next.budgetExceededTenants == null) {
@@ -177,25 +195,21 @@ export function useUsageAndSpendData({
     ],
   );
 
+  // Only the frontend-enabled task types (ENABLED_TASK_TYPES via
+  // useInferenceTypes). Data-derived types are NOT added, so disabled types with
+  // historical spend don't appear in the dropdown.
   const taskTypeOptions = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
-    const add = (t: string) => {
+    for (const t of taskTypeNames) {
       const n = t.trim();
       if (n && !seen.has(n)) {
         seen.add(n);
         out.push(n);
       }
-    };
-    taskTypeNames.forEach(add);
-    (summaryQuery.data?.spendByModelTaskType ?? []).forEach((i: SpendByTaskType) =>
-      add(i.modelTaskType),
-    );
-    (scopedQuery.data?.tierBreakdown ?? []).forEach((tier) =>
-      (tier.taskTypes ?? []).forEach((t) => add(t.taskType)),
-    );
+    }
     return out;
-  }, [taskTypeNames, summaryQuery.data?.spendByModelTaskType, scopedQuery.data?.tierBreakdown]);
+  }, [taskTypeNames]);
 
   const errMsg = (e: unknown) => (e ? parseError(e).message : null);
 

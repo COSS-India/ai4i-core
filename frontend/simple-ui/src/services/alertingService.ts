@@ -4,7 +4,7 @@
  */
 import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
-import { API_BASE_URL, apiService } from './api';
+import { getApiBaseUrl, apiService } from './api';
 import {
   alertDefinitionSchema,
   alertHistoryItemSchema,
@@ -34,10 +34,8 @@ import type {
 } from '../types/alerting';
 
 class AlertingService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}${apiEndpoints.alerts.base}`;
+  private get baseUrl(): string {
+    return `${getApiBaseUrl()}${apiEndpoints.alerts.base}`;
   }
 
   private getAccessToken(): string | null {

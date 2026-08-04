@@ -2,9 +2,20 @@
 Middleware for AI4ICore Observability Plugin.
 
 Handles request tracking, path-based service detection, and Prometheus metric
-emission. Tenant is read from the gateway-injected ``X-Tenant-Id`` header
-(set by ``auth-service /validate``) — this middleware does NOT decode JWTs and
-does NOT open OpenTelemetry spans.
+emission. Tenant is read from the gateway-injected ``X-Tenant-Name`` header
+(the tenant's organisation name, set by ``auth-service /validate`` from its
+in-memory tenant_name_cache) — this middleware does NOT decode JWTs, does NOT
+look up the tenant id itself, and does NOT open OpenTelemetry spans.
+
+ROLLOUT NOTE: the ``tenant`` label value changed from the numeric tenant id to
+the organisation name here. Series written before a deploy of this change
+keep the old id value forever — Prometheus has no way to rewrite a stored
+series' label after the fact — so any dashboard query window spanning the
+cutover moment mixes two label values for what was really one tenant (see
+MeteringService.active_tenants for the concrete symptom). This clears itself
+once pre-cutover series age out of the query window; no relabel rule can fix
+it retroactively since relabeling only sees a scrape target's own labels, not
+a historical series' stored value.
 
 Unit counts (characters/audio-minutes/images/tokens), language labels, and
 service_id are NOT re-derived here — this middleware never reads or parses
@@ -25,7 +36,8 @@ size-based metric.
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
+from urllib.parse import unquote
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -34,6 +46,17 @@ from .config import PluginConfig
 from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
+
+
+def _tenant_label(request: Request) -> str:
+    """Read the ``tenant`` metric label from the gateway-injected
+    X-Tenant-Name header (organisation name, set by auth-service /validate).
+
+    auth-service percent-encodes the name when it isn't latin-1 encodable
+    (Starlette can only send latin-1 header values) — undo that here so the
+    label carries the real Unicode organisation name, not the encoded form.
+    """
+    return unquote((request.headers.get("X-Tenant-Name") or "").strip()) or "unknown"
 
 
 def set_billed_state(
@@ -118,14 +141,30 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # buffering needed anymore — billed_* already carries what we'd have
         # re-parsed the response for.
         response = await call_next(request)
+
+        # LLM (chat / chat-completions): for a streaming (SSE) response the
+        # billed token counts only land on request.state AFTER the app's own
+        # generator finishes (the final SSE chunk carries the usage block), so
+        # reading state here would be too early. Defer metric emission until
+        # the body is fully drained by wrapping the response iterator — chunks
+        # are forwarded untouched, so the stream stays live (never buffered).
+        # The same wrapper is correct for the non-stream JSON shape too
+        # (single chunk, state already populated), keeping one code path.
+        if service_type == "llm":
+            response.body_iterator = self._wrap_llm_response(
+                response.body_iterator,
+                request=request,
+                path=path,
+                method=method,
+                status_code=response.status_code,
+                start_time=start_time,
+            )
+            return response
+
         duration = time.time() - start_time
 
-        # tenant_id comes from the gateway-injected X-Tenant-Id header (set by
-        # auth-service /validate after verifying the bearer token; the gateway
-        # forwards it upstream). HTTP header names are case-insensitive, so
-        # this matches X-Tenant-Id / X-Tenant-ID / x-tenant-id.
         # service_id is populated during request handling by model-management.
-        tenant_label = (request.headers.get("X-Tenant-Id") or "").strip() or "unknown"
+        tenant_label = _tenant_label(request)
         # service_id is set on request.state by the route handler for LLM
         # (from payload serviceId before proxy_traced is called) and by the
         # orchestrator for Triton services. Falls back to empty string.
@@ -145,9 +184,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         model = getattr(request.state, "model", "") or ""
 
         # Fire-and-forget: emit metrics WITHOUT blocking the response.
-        # Holding the task in self._pending_tasks keeps it alive —
-        # asyncio.create_task only keeps a weak reference.
-        task = asyncio.create_task(self._record_metrics(
+        self._schedule_metrics(
             path=path,
             method=method,
             service_type=service_type,
@@ -160,11 +197,58 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             source_lang=source_lang,
             target_lang=target_lang,
             model=model,
-        ))
+        )
+
+        return response
+
+    def _schedule_metrics(self, **kwargs: Any) -> None:
+        """Fire-and-forget ``_record_metrics`` WITHOUT blocking the response.
+
+        Holding the task in ``self._pending_tasks`` keeps it alive —
+        ``asyncio.create_task`` only keeps a weak reference.
+        """
+        task = asyncio.create_task(self._record_metrics(**kwargs))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
 
-        return response
+    async def _wrap_llm_response(
+        self,
+        body_iterator: AsyncIterator[Any],
+        *,
+        request: Request,
+        path: str,
+        method: str,
+        status_code: int,
+        start_time: float,
+    ) -> AsyncIterator[Any]:
+        """Forward LLM response chunks untouched, then emit metrics once the
+        body is fully drained — see the comment in dispatch().
+
+        The route's own generator sets the billed token counts on
+        ``request.state`` (via ``set_billed_state``) after its last chunk, and
+        Starlette only finishes this iterator after that generator completes,
+        so the post-loop reads below always see the final state — for both the
+        single-chunk JSON shape and the multi-chunk SSE stream.
+        """
+        try:
+            async for chunk in body_iterator:
+                yield chunk
+        finally:
+            duration = time.time() - start_time
+            tenant_label = _tenant_label(request)
+            service_id = getattr(request.state, "service_id", "") or ""
+            self._schedule_metrics(
+                path=path,
+                method=method,
+                service_type="llm",
+                tenant=tenant_label,
+                service_id=service_id,
+                status_code=status_code,
+                duration=duration,
+                billed_input=getattr(request.state, "billed_input", None),
+                billed_output=getattr(request.state, "billed_output", None),
+                model=getattr(request.state, "model", "") or "",
+            )
 
     # ------------------------------------------------------------------
     # Path-based service detection.

@@ -13,13 +13,41 @@ import pytest
 # ── Builder tests ─────────────────────────────────────────────────────────────
 
 from app.utils.metering_promql_builder import (
+    LLM_CHAT_ENDPOINT_REGEX,
     PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
     apply_time_range,
     build_base_selectors,
+    escape_label_value,
     sum_over_window,
+    sum_over_window_by,
 )
+
+
+class TestEscapeLabelValue:
+    def test_plain_value_unchanged(self):
+        assert escape_label_value("Acme Corp") == "Acme Corp"
+
+    def test_double_quote_escaped(self):
+        assert escape_label_value('Acme "Corp"') == 'Acme \\"Corp\\"'
+
+    def test_backslash_escaped(self):
+        assert escape_label_value("Acme\\Corp") == "Acme\\\\Corp"
+
+    def test_backslash_escaped_before_quote_so_result_is_not_double_escaped(self):
+        # Backslashes must be escaped FIRST. If quotes were escaped first, the
+        # backslash pass would then double the backslash the quote-escape just
+        # inserted too, over-escaping the value a PromQL parser would receive.
+        raw = "a" + "\\" + '"' + "b"  # 4 literal chars: a \ " b
+        escaped = escape_label_value(raw)
+        # Backslash doubled first (a\\"b), then the quote escaped (a\\\"b):
+        # one embedded quote, preceded by exactly 3 backslash characters.
+        expected = "a" + ("\\" * 3) + '"' + "b"
+        assert escaped == expected
+
+    def test_empty_string_unchanged(self):
+        assert escape_label_value("") == ""
 
 
 class TestBuildBaseSelectors:
@@ -56,6 +84,14 @@ class TestBuildBaseSelectors:
         sel = build_base_selectors(inference_only=False)
         assert sel.startswith("{") and sel.endswith("}")
 
+    def test_endpoint_regex_override(self):
+        sel = build_base_selectors(inference_only=True, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX)
+        assert f'{PROMETHEUS_API_PATH_LABEL}=~"{LLM_CHAT_ENDPOINT_REGEX}"' in sel
+
+    def test_endpoint_regex_ignored_when_not_inference_only(self):
+        sel = build_base_selectors(inference_only=False, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX)
+        assert PROMETHEUS_API_PATH_LABEL not in sel
+
 
 class TestSumOverWindow:
     def test_with_window_uses_increase(self):
@@ -75,6 +111,22 @@ class TestSumOverWindow:
         expr = sum_over_window("metric{}", "7d")
         assert "[7d]" in expr
         assert "offset 7d" in expr
+
+
+class TestSumOverWindowBy:
+    def test_with_window_groups_by_label(self):
+        expr = sum_over_window_by("metric{}", "model", "24h")
+        assert expr.startswith("sum by(model) (")
+        assert "increase(metric{}[24h])" in expr
+        assert "offset 24h" in expr
+
+    def test_no_window_plain_sum_by(self):
+        expr = sum_over_window_by("metric{}", "model", None)
+        assert expr == "sum by(model) (metric{})"
+
+    def test_all_window_plain_sum_by(self):
+        expr = sum_over_window_by("metric{}", "model", "all")
+        assert expr == "sum by(model) (metric{})"
 
 
 class TestApplyTimeRange:
@@ -353,6 +405,163 @@ class TestServiceBreakdown:
         for call in client.query.call_args_list:
             promql = call[0][0]
             assert 'tenant!="unknown"' in promql
+
+
+@pytest.mark.asyncio
+class TestModelBreakdown:
+    def _row(self, service_id: str, value: float):
+        return [{"metric": {"service_id": service_id}, "value": [0, str(value)]}]
+
+    def _rows(self, pairs: dict):
+        return [{"metric": {"service_id": s}, "value": [0, str(v)]} for s, v in pairs.items()]
+
+    def _repo(self, mapping: dict):
+        repo = MagicMock()
+        repo.get_names_and_models_by_service_ids = AsyncMock(return_value=mapping)
+        return repo
+
+    async def test_groups_by_service_id_and_computes_success_pct(self):
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("MH-gemma-32b", 90)
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("MH-gemma-32b", 12345)
+            return self._row("MH-gemma-32b", 100)
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({"MH-gemma-32b": ("Mahavistaar Gemma 32B", "gemma-3-27b-it")})
+        svc = MeteringService(client=client, service_repo=repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "MH-gemma-32b")
+        assert row["requests"] == 100
+        assert row["success_pct"] == 90.0
+        assert row["native_units"] == 12345.0
+        assert row["name"] == "Mahavistaar Gemma 32B"
+        assert row["model_name"] == "gemma-3-27b-it"
+
+    async def test_name_falls_back_to_service_id_when_unresolved(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("orphan-service", 10))
+        # No repo at all — e.g. DB unavailable.
+        svc = MeteringService(client=client)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "orphan-service")
+        assert row["name"] == "orphan-service"
+        assert row["model_name"] is None
+
+    async def test_name_falls_back_when_service_id_missing_from_db(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("deleted-service", 10))
+        repo = self._repo({})  # service_id not found (e.g. soft-deleted)
+        svc = MeteringService(client=client, service_repo=repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "deleted-service")
+        assert row["name"] == "deleted-service"
+        assert row["model_name"] is None
+
+    async def test_empty_service_id_dropped(self):
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return []
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return []
+            return self._rows({"": 5, "MH-gemma-32b": 10})
+
+        client.query = AsyncMock(side_effect=fake_query)
+        svc = MeteringService(client=client)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "" not in service_ids
+        assert "MH-gemma-32b" in service_ids
+
+    async def test_zero_total_gives_zero_success_pct(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("MH-gemma-32b", 0))
+        svc = MeteringService(client=client)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "MH-gemma-32b")
+        assert row["success_pct"] == 0.0
+
+    async def test_sorted_by_requests_descending(self):
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql or "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return []
+            return self._rows({"small-service": 10, "big-service": 500})
+
+        client.query = AsyncMock(side_effect=fake_query)
+        svc = MeteringService(client=client)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert [s["service_id"] for s in result["services"]] == ["big-service", "small-service"]
+
+    async def test_tenant_scoping_applied_to_all_selectors(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant="42", time_range="24h")
+
+        for call in client.query.call_args_list:
+            promql = call[0][0]
+            assert 'tenant="42"' in promql
+
+    async def test_tenant_with_quote_is_escaped_in_tokens_selector(self):
+        """The tokens_sel selector (unlike base_sel/success_sel, which go
+        through build_base_selectors) is hand-built with an f-string — it was
+        the one selector left unescaped before escape_label_value was added
+        there too."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        tenant = 'Acme "Corp"'
+        await svc.model_breakdown(tenant=tenant, time_range="24h")
+
+        tokens_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_llm_tokens_processed_sum" in call[0][0]
+        ]
+        assert len(tokens_calls) == 1
+        assert f'tenant="{escape_label_value(tenant)}"' in tokens_calls[0]
+        assert f'tenant="{tenant}"' not in tokens_calls[0]
+
+    async def test_llm_only_endpoint_selector_used(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant=None, time_range="24h")
+
+        request_calls = [
+            call[0][0] for call in client.query.call_args_list
+            if "telemetry_obsv_requests_total" in call[0][0]
+        ]
+        assert len(request_calls) == 2  # total + success
+        for promql in request_calls:
+            assert LLM_CHAT_ENDPOINT_REGEX in promql
+            assert "by(service_id)" in promql
+            assert "by(model)" not in promql
+
+    async def test_repo_not_queried_when_no_traffic(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        repo = self._repo({})
+        svc = MeteringService(client=client, service_repo=repo)
+
+        await svc.model_breakdown(tenant=None, time_range="24h")
+
+        repo.get_names_and_models_by_service_ids.assert_not_called()
 
 
 @pytest.mark.asyncio

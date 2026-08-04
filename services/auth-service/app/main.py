@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from app.core.permission_checker import PermissionChecker, set_global_endpoint_permission_map
+from app.core.permission_checker import set_global_endpoint_permission_map
 from app.core import pii_crypto
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT
@@ -27,6 +27,7 @@ from app.core.security import key_manager
 from app.dependencies.auth import init_jwt_verifier
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
+from app.services.tenant_name_cache import tenant_name_cache
 
 from ai4i_core.logging import configure_logging, RequestMiddleware
 
@@ -62,9 +63,11 @@ async def lifespan(app: FastAPI):
     init_jwt_verifier()
     await _load_api_permissions_with_retry(app)
     await role_permission_cache.start()
+    await tenant_name_cache.start()
 
     yield
 
+    await tenant_name_cache.stop()
     await role_permission_cache.stop()
     await close_redis()
     await close_database()
@@ -73,10 +76,16 @@ async def lifespan(app: FastAPI):
 
 
 def load_api_permissions(app: FastAPI) -> None:
+    """Populate the process-wide endpoint→permission map.
+
+    The single source of truth is the module-level map in
+    app.core.permission_checker (consumed via its `permission_checker`
+    singleton) — nothing is stashed on app.state. When loading fails, the map
+    stays empty and consumers fail closed via endpoint_permission_map_loaded().
+    """
     json_path = pathlib.Path(__file__).parent.parent / "api_permissions.json"
     if not json_path.exists():
         logger.info("No api_permissions.json found, skipping.")
-        app.state.permission_checker = None
         return
 
     try:
@@ -89,15 +98,11 @@ def load_api_permissions(app: FastAPI) -> None:
             for m in API_PERMISSIONS.get("apiMappings", [])
         }
 
-        checker = PermissionChecker()
-        checker._api_permission_map = endpoint_to_id
         set_global_endpoint_permission_map(endpoint_to_id)
-        app.state.permission_checker = checker
 
         logger.info("API permission mapping loaded: %d endpoints.", len(endpoint_to_id))
     except (FileNotFoundError, ValueError) as exc:
         logger.warning("Failed to load API permission mapping: %s", exc)
-        app.state.permission_checker = None
     except OSError as exc:
         logger.warning("Failed to load API permission mapping: %s", exc)
         raise
@@ -123,7 +128,6 @@ async def _load_api_permissions_with_retry(
 
     if last_exc:
         logger.error("Giving up loading API permission mapping after %d attempts: %s", max_attempts, last_exc)
-        app.state.permission_checker = None
 
 
 def create_app() -> FastAPI:

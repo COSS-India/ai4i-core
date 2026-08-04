@@ -2,6 +2,7 @@ import { METERING } from "../config/meteringConstants";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
+  modelConsumptionResponseSchema,
   overviewResponseSchema,
   serviceConsumptionResponseSchema,
   tenantConsumptionResponseSchema,
@@ -9,6 +10,7 @@ import {
 import type {
   MeteringTopN,
   MeteringWindow,
+  ModelConsumptionResponse,
   OverviewResponse,
   ServiceConsumptionResponse,
   TenantConsumptionResponse,
@@ -65,13 +67,22 @@ function buildMeteringParams(
   return params;
 }
 
+function appendTaskTypesParam(
+  params: URLSearchParams,
+  taskTypes?: string[] | null,
+): void {
+  if (taskTypes?.length) params.set("task_types", taskTypes.join(","));
+}
+
 /** GET /api/v1/metering/overview */
 export async function fetchMeteringOverview(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
+  taskTypes?: string[] | null,
 ): Promise<OverviewResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  appendTaskTypesParam(params, taskTypes);
   const { data } = await apiService.get<OverviewResponse>(
     withQuery(apiEndpoints.metering.overview, params),
     { responseSchema: overviewResponseSchema },
@@ -83,17 +94,15 @@ export async function fetchMeteringOverview(
 export async function fetchMeteringTenantConsumption(
   timeWindow: MeteringWindow,
   limit: MeteringTopN,
-  services?: string[] | null,
+  taskTypes?: string[] | null,
   tenantId?: string | null,
 ): Promise<TenantConsumptionResponse> {
   const extra: Record<string, string> = { limit: String(limit) };
-  if (services?.length) {
-    extra.services = services.join(",");
-  }
-  if (tenantId?.trim()) {
-    extra.tenant_id = tenantId.trim();
-  }
   const params = new URLSearchParams({ window: timeWindow, ...extra });
+  appendTaskTypesParam(params, taskTypes);
+  if (tenantId?.trim()) {
+    params.set("tenant_id", tenantId.trim());
+  }
   const { data } = await apiService.get<TenantConsumptionResponse>(
     withQuery(apiEndpoints.metering.tenantConsumption, params),
     { responseSchema: tenantConsumptionResponseSchema },
@@ -106,11 +115,27 @@ export async function fetchMeteringServiceConsumption(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
+  taskTypes?: string[] | null,
 ): Promise<ServiceConsumptionResponse> {
   const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  appendTaskTypesParam(params, taskTypes);
   const { data } = await apiService.get<ServiceConsumptionResponse>(
     withQuery(apiEndpoints.metering.serviceConsumption, params),
     { responseSchema: serviceConsumptionResponseSchema },
+  );
+  return data;
+}
+
+/** GET /api/v1/metering/model-consumption — LLM-only; no task_types param. */
+export async function fetchMeteringModelConsumption(
+  timeWindow: MeteringWindow,
+  ctx: MeteringContext,
+  tenantId?: string | null,
+): Promise<ModelConsumptionResponse> {
+  const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  const { data } = await apiService.get<ModelConsumptionResponse>(
+    withQuery(apiEndpoints.metering.modelConsumption, params),
+    { responseSchema: modelConsumptionResponseSchema },
   );
   return data;
 }

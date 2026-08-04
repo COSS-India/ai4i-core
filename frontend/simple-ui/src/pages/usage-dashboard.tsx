@@ -77,7 +77,7 @@ const UsageDashboardPage: React.FC = () => {
         <title>Usage Dashboard - AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Monitor service consumption, tenant activity, and platform throughput"
+          content="Monitor service consumption, model consumption, tenant activity, and platform throughput"
         />
       </Head>
 

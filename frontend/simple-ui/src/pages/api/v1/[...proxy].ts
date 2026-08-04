@@ -50,18 +50,20 @@ const PUBLIC_AUTH_PATH =
   /^\/api\/v1\/auth\/(login|register|refresh|guest|verify-email|resend-verification|forgot-password|reset-password|set-password|resend-setup-link|validate|oauth)(\/|$|\?)/;
 
 // Anonymous try-it paths: no JWT, no forward-auth.
-// Covers the inference call (/nmt/try-it) and the public service-list endpoint
-// served by platform-core under either the direct or model-management prefix.
+// Covers NMT/LLM inference try-it and the public service-list endpoint.
+// Local-dev only: skips forward-auth for anonymous try-it. Production needs an
+// APISIX public route + rate-limit rule for /api/v1/llm/try-it (and nmt) —
+// the client sessionStorage counter is advisory and easily bypassed.
 const TRY_IT_PUBLIC_PATH =
-  /^\/api\/v1\/(nmt\/try-it|(?:model-management\/)?services\/try-it-service-list)(\/|$|\?)/;
+  /^\/api\/v1\/((?:nmt|llm)\/try-it|(?:model-management\/)?services\/try-it-service-list)(\/|$|\?)/;
 
 // Identity headers the gateway/forward-auth owns. We strip any inbound copies
 // (so a client cannot spoof them) and re-inject the validated values.
 const IDENTITY_HEADERS = [
   "x-user-id",
   "x-tenant-id",
+  "x-tenant-name",
   "x-permission-ids",
-  "x-user-plan",
 ] as const;
 
 function resolveRoute(path: string): { target: string; requiresAuth: boolean } {
@@ -89,8 +91,8 @@ interface UserHeaders {
   [key: string]: string;
   "X-User-ID": string;
   "X-Tenant-ID": string;
+  "X-Tenant-Name": string;
   "X-Permission-IDs": string;
-  "X-User-Plan": string;
 }
 
 type AuthResult =
@@ -132,8 +134,8 @@ async function callAuthValidate(
       headers: {
         "X-User-ID": res.headers.get("x-user-id") ?? "",
         "X-Tenant-ID": res.headers.get("x-tenant-id") ?? "",
+        "X-Tenant-Name": res.headers.get("x-tenant-name") ?? "",
         "X-Permission-IDs": res.headers.get("x-permission-ids") ?? "",
-        "X-User-Plan": res.headers.get("x-user-plan") ?? "",
       },
     };
   } catch {

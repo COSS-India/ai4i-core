@@ -13,6 +13,8 @@ import base64
 import binascii
 import json
 import logging
+from functools import lru_cache
+from urllib.parse import quote
 
 from ai4i_core.ppu import get_inference_types
 from fastapi import APIRouter, Depends, Request, Response
@@ -21,6 +23,7 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
+from app.core.permission_checker import endpoint_permission_map_loaded, permission_checker
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
@@ -28,17 +31,29 @@ from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyRespo
 from app.schemas.token import TokenValidationResponse
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
+from app.services.tenant_name_cache import tenant_name_cache
 
-USER_PLAN_JWT: str = "P1"
-USER_PLAN_APIKEY: str = "P2"
+
+@lru_cache(maxsize=1)
+def _service_by_path() -> dict[str, dict]:
+    """Concrete request path → inference-type entry, built once from the yaml.
+
+    The gateway serves a fixed, known path set, so resolution is a single
+    exact lookup — no prefix scanning. Every path an entry serves comes from
+    the yaml itself: endpoint_pattern plus any endpoint_aliases. Unknown paths
+    (unified /api/v1/inference, try-it, audio passthrough) resolve to None.
+    """
+    table: dict[str, dict] = {}
+    for entry in get_inference_types():
+        table[entry["endpoint_pattern"]] = entry
+        for alias in entry.get("endpoint_aliases", []):
+            table[alias] = entry
+    return table
+
 
 def _resolve_service(uri: str) -> dict | None:
-    """Map X-Original-URI to its inference type entry from the bundled YAML."""
-    path = uri.split("?", 1)[0]
-    for entry in get_inference_types():
-        if path.startswith(entry["endpoint_pattern"]):
-            return entry
-    return None
+    """Map X-Original-URI to its inference type — one dict lookup."""
+    return _service_by_path().get(uri.split("?", 1)[0].rstrip("/"))
 
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
@@ -71,10 +86,12 @@ def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
     uri = request.headers.get("X-Original-URI")
     if not (method and uri):
         return False, None
-    checker = getattr(request.app.state, "permission_checker", None)
-    if checker is None:
+    # Fail closed while the endpoint→permission map hasn't loaded: "couldn't
+    # look up" (False) — NOT "public" (True, None) — so anonymous access stays
+    # denied if startup failed to load api_permissions.json.
+    if not endpoint_permission_map_loaded():
         return False, None
-    return True, checker.get_required_permission(method, uri.split("?", 1)[0])
+    return True, permission_checker.get_required_permission(method, uri.split("?", 1)[0])
 
 
 def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> bool:
@@ -87,6 +104,35 @@ def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> b
     if not looked_up:
         return True
     return required is None or required in permission_ids
+
+
+def _set_tenant_headers(response: Response, tenant_id: object) -> None:
+    """Set X-Tenant-ID (numeric id) and X-Tenant-Name (organisation) on the response.
+
+    X-Tenant-Name is what the observability middleware uses as the Prometheus
+    ``tenant`` label value; it's resolved from the in-memory tenant_name_cache
+    (no DB round trip on this hot path — see tenant_name_cache.py). Falls back
+    to the id itself on a cache miss (e.g. a tenant created moments before this
+    worker's next refresh) so the label is never empty for a real tenant.
+
+    Starlette encodes header values as latin-1, but organisation names accept
+    any Unicode letter (see _check_org_chars in schemas/tenant.py) — a name
+    with e.g. Devanagari or Tamil characters would raise UnicodeEncodeError
+    here and 500 the whole /validate call. Percent-encode it when it isn't
+    latin-1 encodable; the observability middleware decodes it back.
+    """
+    response.headers["X-Tenant-ID"] = str(tenant_id)
+    name = None
+    try:
+        name = tenant_name_cache.get_name(int(tenant_id))
+    except (TypeError, ValueError):
+        pass
+    name = name or str(tenant_id)
+    try:
+        name.encode("latin-1")
+    except UnicodeEncodeError:
+        name = quote(name, safe="")
+    response.headers["X-Tenant-Name"] = name
 
 
 def _extract_token(request: Request) -> str:
@@ -133,33 +179,54 @@ async def _validate_api_key(
 
     user_id = result.get("user_id")
     tenant_id = result.get("tenant_id")
-    if user_id:
-        response.headers["X-User-ID"] = str(user_id)
-    response.headers["X-User-Plan"] = USER_PLAN_APIKEY
-    response.headers["X-Tier-ID"] = result.get("tier_id") or ""
 
-    response.headers["X-Budget-Exhausted"] = "true" if result.get("budget-exhausted") == "1" else "false"
+    # ── PPU enforcement — decided HERE, not in APISIX ──────────────────────
+    # APISIX only forward-auths (and rate-limits); a 429 from this endpoint
+    # flows through the gateway to the client unchanged. The exhaustion flags
+    # are written onto the API-key record by the billing consumer.
+    exhausted_services = sorted(
+        k[len("quota-"):]
+        for k, v in result.items()
+        if k.startswith("quota-") and v == "1"
+    )
+    quota_header = {"X-Quota-Exhausted-Services": ",".join(exhausted_services)}
+
+    if result.get("budget-exhausted") == "1":
+        return JSONResponse(
+            status_code=429,
+            content={
+                "valid": False,
+                "error": "BUDGET_EXHAUSTED",
+                "message": "Tenant budget is exhausted for the current billing period.",
+            },
+            headers=quota_header,
+        )
 
     service = _resolve_service(request.headers.get("X-Original-URI", ""))
-    if service and service["unit"] == "requests":
-        exhausted_services = sorted(
-            k[len("quota-"):]
-            for k, v in result.items()
-            if k.startswith("quota-") and v == "1"
+    if service and service["name"] in exhausted_services:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "valid": False,
+                "error": "QUOTA_EXCEEDED",
+                "message": f"Quota exhausted for service '{service['name']}' in the current billing period.",
+                "service": service["name"],
+            },
+            headers=quota_header,
         )
-        response.headers["X-Quota-Exhausted"] = "true" if exhausted_services else "false"
-        if exhausted_services:
-            response.headers["X-Quota-Exhausted-Services"] = ",".join(exhausted_services)
-    elif service:
-        exhausted = result.get(f"quota-{service['name']}") == "1"
-        response.headers["X-Quota-Exhausted"] = "true" if exhausted else "false"
-        if exhausted:
-            response.headers["X-Quota-Exhausted-Services"] = service["name"]
+
+    if user_id:
+        response.headers["X-User-ID"] = str(user_id)
+    # No X-User-Plan header: the plan is fully derivable from X-Auth-Type
+    # (api_key ⇒ P2, jwt ⇒ P1) and nothing consumes it.
+    response.headers["X-Tier-ID"] = result.get("tier_id") or ""
+    # Informational — always set, unconditionally (empty when nothing is exhausted).
+    response.headers["X-Quota-Exhausted-Services"] = ",".join(exhausted_services)
 
     response.headers["X-Auth-Type"] = "api_key"
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
     if tenant_id:
-        response.headers["X-Tenant-ID"] = str(tenant_id)
+        _set_tenant_headers(response, tenant_id)
     return ValidateAPIKeyResponse(valid=True, user_id=user_id, permission_ids=permission_ids)
 
 
@@ -187,12 +254,11 @@ async def _validate_jwt(
 
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
-    response.headers["X-User-Plan"] = USER_PLAN_JWT
     response.headers["X-Tier-ID"] = ""
     response.headers["X-Auth-Type"] = claims.token_type
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in claims.permission_ids) + "]"
     if claims.tenant_id:
-        response.headers["X-Tenant-ID"] = str(claims.tenant_id)
+        _set_tenant_headers(response, claims.tenant_id)
     # Permission id 1 is the "admin" sentinel (only the ADMIN role holds it).
     # Forward a trusted flag so upstream services can widen scope (e.g. cross-tenant
     # trace access) without re-resolving roles or hitting the DB.

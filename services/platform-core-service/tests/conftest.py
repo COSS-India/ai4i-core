@@ -132,3 +132,9 @@ _deps_stub.ModelService = MagicMock
 _deps_stub.get_model_service = MagicMock()
 _deps_stub.ServiceService = MagicMock
 _deps_stub.get_service_service = MagicMock()
+_deps_stub.get_metering_service = MagicMock()
+
+# Stub app.core.redis (routes/metering.py's get_redis dependency) — the real
+# module pulls in ai4i_core.bootstrap.redis, which isn't stubbed here.
+_redis_stub = _conftest_stub("app.core.redis")
+_redis_stub.get_redis = MagicMock()

@@ -20,12 +20,12 @@ COPY src/ ./src/
 COPY public/ ./public/
 COPY package.json next.config.js tsconfig.json ./
 
-# Non-sensitive URL config — not credentials, safe to pass as ARG/ENV.
-ARG NEXT_PUBLIC_API_URL=""
-ARG NEXT_PUBLIC_TELEMETRY_SERVICE_URL=""
-
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-ENV NEXT_PUBLIC_TELEMETRY_SERVICE_URL=${NEXT_PUBLIC_TELEMETRY_SERVICE_URL}
+# Browser-facing URLs and ENABLED_TASK_TYPES are NO LONGER build-args.
+# They are read at runtime from the pod env / ConfigMap (see /api/config and
+# src/config/runtimeConfig.ts). Rebuild is not required to change them.
+#
+# Remaining NEXT_PUBLIC_* below are API keys still inlined at build via
+# BuildKit secrets (not ConfigMap).
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
@@ -58,6 +58,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 # Allow connections from all network interfaces (required for Docker)
 ENV HOSTNAME=0.0.0.0
+# Runtime ConfigMap keys (override per env). Prefer these names; legacy
+# NEXT_PUBLIC_* equivalents are still accepted by runtimeConfig.ts.
+# Default llm so Service Management / Usage Dashboard stay LLM-only when the
+# ConfigMap omits the key (AI4IDS-2596 / AI4IDS-2673 / AI4IDS-2689).
+ENV ENABLED_TASK_TYPES=llm
+# ENV API_URL=
+# ENV TELEMETRY_SERVICE_URL=
 
 RUN addgroup --system --gid 1001 nodejs \
  && adduser --system --uid 1001 nextjs

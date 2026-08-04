@@ -10,26 +10,21 @@ Eventual consistency: admin role-permission mutations propagate within the
 refresh window (default 60s). Multiple workers each maintain their own copy.
 """
 
-import asyncio
 import logging
-from typing import Optional
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import get_db
 from app.models.role import RolePermission
+from app.services.refreshing_cache import DEFAULT_REFRESH_INTERVAL_SECONDS, RefreshingCache
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REFRESH_INTERVAL_SECONDS = 60
 
-
-class RolePermissionCache:
+class RolePermissionCache(RefreshingCache):
     def __init__(self, refresh_interval_seconds: int = DEFAULT_REFRESH_INTERVAL_SECONDS) -> None:
+        super().__init__(refresh_interval_seconds)
         self._role_perms: dict[int, list[int]] = {}
-        self._refresh_interval = refresh_interval_seconds
-        self._task: Optional[asyncio.Task] = None
 
     def get_user_permission_ids(self, role_ids: list[int]) -> list[int]:
         """Union of permission IDs across the given roles."""
@@ -37,6 +32,9 @@ class RolePermissionCache:
         for rid in role_ids:
             out.update(self._role_perms.get(rid, []))
         return sorted(out)
+
+    def _loaded_count(self) -> int:
+        return len(self._role_perms)
 
     async def reload(self) -> None:
         """Read all role_permissions rows and rebuild the in-memory map."""
@@ -56,35 +54,6 @@ class RolePermissionCache:
             len(self._role_perms),
             sum(len(v) for v in self._role_perms.values()),
         )
-
-    async def start(self) -> None:
-        """Initial load + start the background refresh task."""
-        await self.reload()
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._refresh_loop())
-        logger.info(
-            "RolePermissionCache started: %d roles loaded; refresh interval=%ds",
-            len(self._role_perms),
-            self._refresh_interval,
-        )
-
-    async def stop(self) -> None:
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-        self._task = None
-
-    async def _refresh_loop(self) -> None:
-        while True:
-            try:
-                await asyncio.sleep(self._refresh_interval)
-                await self.reload()
-            except asyncio.CancelledError:
-                raise
-            except (OSError, SQLAlchemyError):
-                logger.exception("RolePermissionCache refresh failed (database/network issue); will retry next cycle.")
-            except Exception:
-                logger.exception("RolePermissionCache refresh failed with unexpected error; will retry next cycle.")
 
 
 # Module-level singleton — initialized in lifespan.

@@ -27,6 +27,7 @@ export const METERING = {
       OVERVIEW: "overview",
       TENANT: "tenant",
       SERVICE: "service",
+      MODEL: "model",
     },
     HEATMAP_SERVICES_ALL: "all",
     SCROLL_ROOT_MARGIN: "100px",
@@ -44,6 +45,7 @@ export const METERING = {
     OVERVIEW: "overview",
     TENANT: "tenant",
     SERVICE: "service",
+    MODEL: "model",
     USAGE_SPEND: "usage-spend",
   } as const,
   KPI: {
@@ -52,6 +54,9 @@ export const METERING = {
       SUCCESSFUL: "successful",
       FAILED: "failed",
       AVG_RPS: "avg_rps",
+    },
+    LABELS: {
+      avg_rps: "Avg RPS",
     },
     HELPERS: {
       total_requests: "across all services and tenants",
@@ -87,13 +92,16 @@ export const METERING = {
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
-    { id: "service", label: "Service Consumption" },
-    { id: "usage-spend", label: "Usage and Spend" },
+    { id: "service", label: "Service Usage" },
+    // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
+    { id: "model", label: "Model Usage" },
+    { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "service", label: "Service Consumption" },
-    { id: "usage-spend", label: "Usage and Spend" },
+    { id: "service", label: "Service Usage" },
+    { id: "model", label: "Model Usage" },
+    { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -187,12 +195,6 @@ export const METERING = {
     HEATMAP_TEXT_HIGH: "#FFFFFF",
   },
   HEATMAP: {
-    /**
-     * Only these service keys are rendered in the tenant×service heatmap.
-     * UNDO: remove ALLOWED_SERVICE_KEYS (and its filter in TenantServiceHeatmapSection)
-     * and restore the "Select services" dropdown to show all SERVICES again.
-     */
-    ALLOWED_SERVICE_KEYS: ["llm"] as const,
     SERVICES: [
       { key: "nmt", shortLabel: "NMT", displayName: "NMT" },
       { key: "asr", shortLabel: "ASR", displayName: "ASR" },
@@ -239,6 +241,7 @@ export const METERING = {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: "No tenant consumption data available.",
     SERVICE_CONSUMPTION: "No service consumption data available.",
+    MODEL_CONSUMPTION: "No model consumption data available.",
     CHART: "No data available for the selected time window.",
   },
   REFRESH: {
@@ -287,17 +290,41 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
+    // AI4IDS-2588: Model Consumption tab — per-service LLM usage from /model-consumption
+    MODEL: {
+      TITLE: "Model consumption",
+      SUBTITLE:
+        "Per-service LLM request distribution · reflects selected time window",
+      BREAKDOWN_TITLE: "Model breakdown",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across LLM services ·",
+      DONUT_PRIMARY: "All",
+      DONUT_SECONDARY: "Models",
+      MOST_USED: "Most used model",
+      HIGHEST_FAILURE: "Highest failure rate",
+      REQUESTS_SUFFIX: "requests",
+      TABLE_SERVICE: "Service",
+      TABLE_MODEL: "Model",
+      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_NATIVE: "Native consumption",
+      TABLE_SUCCESS: "Success rate %",
+      TABLE_FAILURE: "Failure rate %",
+    },
     SERVICE: {
       TITLE: "Service consumption",
       SUBTITLE:
         "Platform-wide request distribution · reflects selected time window",
       BREAKDOWN_TITLE: "Service breakdown",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Services",
       MOST_USED: "Most used service",
       HIGHEST_FAILURE: "Highest failure rate",
       REQUESTS_SUFFIX: "requests",
+      TABLE_SERVICE: "Service",
+      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_NATIVE: "Native consumption",
+      TABLE_SUCCESS: "Success rate %",
+      TABLE_FAILURE: "Failure rate %",
     },
     RANKED_SHARE: {
       HEADER_LEFT: "Request volume & share",
@@ -320,10 +347,7 @@ export const METERING = {
   } as const,
 } as const;
 
-// UNDO: use SERVICES keys when restoring the multi-service heatmap:
-// export type MeteringHeatmapServiceKey =
-//   (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 export type MeteringHeatmapServiceKey =
-  (typeof METERING.HEATMAP.ALLOWED_SERVICE_KEYS)[number];
+  (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 
 export type MeteringSubTab = (typeof METERING.SUB_TABS)[number]["id"];

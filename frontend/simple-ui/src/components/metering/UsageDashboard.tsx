@@ -36,6 +36,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     overview,
     tenantQuery,
     serviceQuery,
+    modelQuery,
     isLoading,
     isRefreshing,
     handleRefresh,
@@ -104,6 +105,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           overview={overview}
           requestVolumeSection={requestVolumeSection}
           serviceQuery={serviceQuery}
+          modelQuery={modelQuery}
           parseQueryError={parseQueryError}
           tenantId={effectiveTenantId}
           organisationLabel={organisationLabel}
@@ -122,6 +124,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           // UNDO: onHeatmapServicesChange={setTenantHeatmapServices}
           tenantQuery={tenantQuery}
           serviceQuery={serviceQuery}
+          modelQuery={modelQuery}
           parseQueryError={parseQueryError}
           scopeTenantId={scopeTenantId}
           refreshNonce={refreshNonce}
