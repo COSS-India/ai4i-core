@@ -24,30 +24,46 @@ measuring.
 Most of the stubbed entry points are LLM. They are the main reason this package
 exists.
 
-| Endpoint | Stubbed in | Body |
-|---|---|---|
-| `POST /api/v1/chat` | `OpenAIProxyService.forward` | OpenAI chat completion |
-| `POST /api/v1/chat/completions` | `OpenAIProxyService.forward` | OpenAI chat completion |
-| the same two with `"stream": true` | `OpenAIProxyService.proxy_stream` | OpenAI SSE chunk sequence |
-| `POST /api/v1/audio/transcriptions` | `OpenAIProxyService.proxy_multipart` | OpenAI speech-to-text |
-| `POST /api/v1/audio/translations` | `OpenAIProxyService.proxy_multipart` | OpenAI speech-to-text |
+| Endpoint | Stubbed in | Emits spans? | Body |
+|---|---|---|---|
+| `POST /api/v1/chat` | `OpenAIProxyService.proxy` | **no** | OpenAI chat completion |
+| `POST /api/v1/chat/completions` | `OpenAIProxyService.proxy` | **no** | OpenAI chat completion |
+| the same two with `"stream": true` | `OpenAIProxyService.proxy_traced_stream` | **no** | OpenAI SSE chunk sequence |
+| `POST /api/v1/audio/transcriptions` | `OpenAIProxyService.proxy_multipart` | model only | OpenAI speech-to-text |
+| `POST /api/v1/audio/translations` | `OpenAIProxyService.proxy_multipart` | model only | OpenAI speech-to-text |
+| the ten Triton services | `BaseTaskService._call_triton_inference` | all three | Triton KServe v2 |
 
-Every guard sits at the **innermost seam**, the method that actually talks to
-the upstream. MMS resolution, the tier gate and the upstream model-name
-injection all still run for a stubbed request; only the network call to vLLM is
-replaced.
+### Read this before trusting a load-test number
 
-That placement is deliberate and load-bearing. The guards used to sit at the top
-of `proxy_traced` / `proxy_multipart`, which returned before the `model` and
-`ai-inference` spans were ever opened. The PPU Kafka consumer bills off the
-`ai-inference` span, so every stubbed LLM request came back 200 and was silently
-unbilled, with Prometheus labelled by the fixture's literal `"stub"` model. Do
-not "optimise" a guard upwards.
+The two chat guards short-circuit **before MMS resolution, the tier gate, and
+both the `model` and `ai-inference` spans**. This is the seam position the
+release-2.2 stub branch used, restored deliberately to cut per-request work.
+
+**Stubbed LLM traffic is therefore not billed.** The PPU Kafka consumer bills
+off the `ai-inference` span; no span means no billing message, and Prometheus
+gets no model label either. A run in this configuration measures orchestrator
+and transport overhead only. It cannot be read as exercising PPU, metering, or
+quota enforcement for LLM.
+
+The Triton path is unaffected and still emits all three spans, so Triton
+services remain billed under stub mode.
+
+If you need a billing-inclusive LLM run, move the two guards back down: the
+buffered one into `forward()`, the streaming one into `proxy_stream()`. The
+tests in `tests/test_llm_stub.py` assert the current absence explicitly, so they
+will fail and tell you the behaviour changed rather than letting it drift.
+
+Measured trade, for the record: the two spans cost ~0.03 ms per request and MMS
+resolution is a dict lookup against a 300 s per-process cache. Most of the
+per-request overhead lives in the observability middleware, the `request` root
+span, and the phase timer's per-request log line, none of which this seam
+position affects. `PHASE_TIMING_ENABLED=false` is the cheapest lever there and
+needs no code change.
 
 Each transport needs its own guard because each is a separate method.
-`proxy_multipart` is not `forward`, and `proxy_stream` is not either. Guarding
-only the chat path leaves `/audio/*` on the live upstream, which is what
-happened on the earlier 2.2 stub branch, and leaves `stream: true` on it too.
+`proxy_multipart` is not `proxy`, and `proxy_traced_stream` is not either.
+Guarding only the buffered chat path leaves `/audio/*` and `stream: true` on the
+live upstream.
 
 ### Chat: `/chat` and `/chat/completions`
 
@@ -70,8 +86,10 @@ Fixture: `responses/llm_responses.py`.
 ### Streaming chat: the same routes with `"stream": true`
 
 `_run_llm_chat` sends any payload with a truthy `stream` down a different path
-(`proxy_traced_stream` → `proxy_stream`) that never touches `forward`, so it
-needs its own guard or it reaches the live model.
+(`proxy_traced_stream` → `proxy_stream`) that never touches `proxy`, so it needs
+its own guard or it reaches the live model. The guard sits at the top of
+`proxy_traced_stream`, the same depth as the buffered one, so neither transport
+pays for resolution the other skips.
 
 The stubbed stream is the **same fixture** as the buffered reply, re-expressed
 as the SSE chunk sequence a vLLM-style server would emit:
@@ -82,27 +100,24 @@ as the SSE chunk sequence a vLLM-style server would emit:
 4. a chunk with `"choices": []` carrying the fixture's `usage` block
 5. `data: [DONE]`
 
-Because both views come off one fixture, a stubbed stream bills exactly what the
-stubbed buffered call bills for the same prompt. Concatenating the deltas
-reproduces the buffered reply byte for byte.
+Concatenating the deltas reproduces the buffered reply byte for byte, and both
+views carry the same `usage` block, so a `stream: true` run stays numerically
+comparable to a `stream: false` one.
 
-**Step 4 is not optional.** `_record_stream_usage` reads the token counts off
-that chunk onto the `ai-inference` span; `traced_inference` seeds those at zero,
-and the PPU consumer skips any message whose total is zero. A stream without a
-usage chunk returns 200 and bills nothing, with no error anywhere.
+The `usage` chunk is kept even though nothing currently reads it. From this seam
+position `_record_stream_usage` never runs, so the counts go nowhere. It stays
+so the fixtures remain a faithful vLLM shape for clients, and so billing lines
+up immediately if the guard is ever moved back down into `proxy_stream`.
 
-Two consequences worth knowing before you read the numbers:
+Two things worth knowing before you read the numbers:
 
-- **The client must drain the whole stream.** The spans open lazily inside the
-  returned generator and only close when it is exhausted. A load-test client
-  that disconnects early loses the span and the bill. This is release-2.4's
-  streaming design, not a stub artifact: real traffic behaves the same way.
-- **Chunk bodies carry the fixture's `"stub"` model name**, unlike the buffered
-  stub which echoes the resolved one. Nothing observable reads it:
-  `proxy_traced_stream` sets the span and the Prometheus label from the
-  `adapter_config` name resolved in `_prepare_request` and never parses the
-  stream body for it. The lines are framed once at import and replayed, so a
+- **Chunk bodies carry the fixture's `"stub"` model name.** Nothing reads it
+  from this position. The lines are framed once at import and replayed, so a
   load test is not charged for JSON serialisation a real model host would do.
+- **Draining is no longer load-bearing for billing**, because there is no
+  billing here. It still matters for measuring realistic client behaviour: a
+  client that disconnects early stops paying the per-chunk cost the stub exists
+  to exercise.
 
 `LLM_STUB_STREAM_DELAY_MS` (default `0`) paces the chunks. Leave it at zero for
 throughput work. Raise it only when measuring something client-side, such as
