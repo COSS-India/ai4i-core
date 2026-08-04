@@ -4,8 +4,7 @@ Shared building-block schemas used by both Model and Service domains.
 
 import re
 from typing import Any, Dict, Generic, List, Optional, TypeVar
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.enums.model_management import (
@@ -258,23 +257,31 @@ class Submitter(BaseSchema):
 
 
 class LanguagePair(BaseSchema):
-    """A language, or source/target language pair, a model supports (ULCA
-    ``LanguagePair``). Leave ``targetLanguage`` unset to indicate a single
-    language rather than a pair. Scope note: only ULCA's Indic + English
-    language list is accepted — see SupportedLanguagesEnum."""
+    """A source/target language pair a model supports (ULCA ``LanguagePair``).
+    Both source and target are required, along with their language name and
+    script code. Scope note: only ULCA's Indic + English language list is
+    accepted — see SupportedLanguagesEnum."""
 
     sourceLanguage: SupportedLanguagesEnum = Field(
         ..., description="Required. ISO-639-1/2 Indic language code, or 'en'."
     )
-    sourceLanguageName: Optional[str] = Field(None, description="Optional. Human-readable name, e.g. 'Hindi'.")
-    sourceScriptCode: Optional[SupportedScriptsEnum] = Field(
-        None, description="Optional. ISO-15924 script code, e.g. 'Deva'."
+    sourceLanguageName: str = Field(..., description="Required. Human-readable name, e.g. 'Hindi'.")
+    sourceScriptCode: SupportedScriptsEnum = Field(
+        ..., description="Required. ISO-15924 script code, e.g. 'Deva'."
     )
-    targetLanguage: Optional[SupportedLanguagesEnum] = Field(
-        None, description="Optional. Omit/null for a single-language entry rather than a pair."
+    targetLanguage: SupportedLanguagesEnum = Field(
+        ..., description="Required. Target language for this pair."
     )
-    targetLanguageName: Optional[str] = Field(None, description="Optional. Human-readable name.")
-    targetScriptCode: Optional[SupportedScriptsEnum] = Field(None, description="Optional. ISO-15924 script code.")
+    targetLanguageName: str = Field(..., description="Required. Human-readable name.")
+    targetScriptCode: SupportedScriptsEnum = Field(..., description="Required. ISO-15924 script code.")
+
+    @model_validator(mode="after")
+    def _validate_language_pair(self) -> "LanguagePair":
+        if not self.sourceLanguageName.strip():
+            raise ValueError("sourceLanguageName must not be blank")
+        if not self.targetLanguageName.strip():
+            raise ValueError("targetLanguageName must not be blank")
+        return self
 
 
 # ── Training dataset ──

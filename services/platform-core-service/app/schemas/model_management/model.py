@@ -42,6 +42,7 @@ _MODEL_CREATE_EXAMPLE = {
         {
             "sourceLanguage": "en",
             "sourceLanguageName": "English",
+            "sourceScriptCode": "Latn",
             "targetLanguage": "hi",
             "targetLanguageName": "Hindi",
             "targetScriptCode": "Deva",
@@ -63,6 +64,18 @@ _MODEL_CREATE_EXAMPLE = {
         "isMultilingualEnabled": False,
         "isSyncApi": True,
         "schema": {"taskType": "translation"},
+        "adapterConfig": {
+            "version": "1.0",
+            "model_version": "1",
+            "inputs": [
+                {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
+                {"tensor": "INPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.source_language"},
+                {"tensor": "OUTPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.target_language"},
+            ],
+            "outputs": [
+                {"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "target"},
+            ],
+        },
     },
     "benchmarks": [],
     "trainingDataset": {
