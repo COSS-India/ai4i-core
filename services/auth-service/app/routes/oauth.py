@@ -49,11 +49,11 @@ router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
 def _get_allowed_redirect(uri: str) -> str | None:
     """Return a safe redirect URI if permitted by the configured allowlist, else None.
 
-    Always returns a value taken verbatim from server config
-    (``settings.oauth_allowed_redirect_uris``). Exact URI matches prefer that
-    entry; otherwise the first allowlist entry with the same origin
-    (scheme + host) is used. User input is never interpolated into the
-    returned URL, so the redirect target cannot be an open redirect.
+    Always returns a value taken verbatim from ``settings.oauth_allowed_redirect_uris``.
+    A URI is allowed when its scheme, host, and path match an allowlist entry
+    (query strings on the request are ignored for matching). User input is never
+    interpolated into the returned URL, so the redirect target cannot be an
+    open redirect.
     """
     if not uri:
         return None
@@ -61,8 +61,7 @@ def _get_allowed_redirect(uri: str) -> str | None:
     parsed = urlparse(uri)
     if parsed.scheme not in ("https", "http"):
         return None
-    # Reject credentials-in-URL and non-empty fragments; only plain http(s)
-    # origins are compared against the allowlist.
+    # Reject credentials-in-URL and non-empty fragments before allowlist compare.
     if parsed.username is not None or parsed.password is not None or parsed.fragment:
         return None
 
@@ -72,21 +71,18 @@ def _get_allowed_redirect(uri: str) -> str | None:
         return None
 
     allowed_list = [u.strip() for u in allowed.split(",") if u.strip()]
-    uri_origin = f"{parsed.scheme}://{parsed.netloc}"
-    origin_fallback: str | None = None
+    request_key = (parsed.scheme, parsed.netloc, parsed.path)
     for allowed_uri in allowed_list:
-        if uri == allowed_uri:
-            return allowed_uri  # exact match — value from server config
         allowed_parsed = urlparse(allowed_uri)
-        if (
-            origin_fallback is None
-            and uri_origin == f"{allowed_parsed.scheme}://{allowed_parsed.netloc}"
+        if request_key == (
+            allowed_parsed.scheme,
+            allowed_parsed.netloc,
+            allowed_parsed.path,
         ):
-            # Origin match: accept the request, but redirect to the allowlist
-            # entry itself (fully server-controlled), never a user-built URL.
-            origin_fallback = allowed_uri
+            return allowed_uri  # value from server config only
 
-    return origin_fallback
+    return None
+
 
 @router.get("/providers")
 async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
