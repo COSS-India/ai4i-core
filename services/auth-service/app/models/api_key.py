@@ -33,6 +33,7 @@ class APIKey(Base):
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     updated_by = Column(UUID(as_uuid=True), nullable=True)
+    cached_data = Column(JSON, nullable=True)
 
     user = relationship("User", back_populates="api_keys")
 
