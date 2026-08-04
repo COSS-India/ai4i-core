@@ -84,8 +84,6 @@ export function useServicesManagement() {
   const [existingServiceIds, setExistingServiceIds] = useState<string[]>([]);
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
   const [unitSize, setUnitSize] = useState<string>("");
-  /** Selected unit type for the form (dropdown); defaults from task type. */
-  const [unitType, setUnitType] = useState<string>("");
   const [currency, setCurrency] = useState<string>("INR");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
@@ -107,7 +105,6 @@ export function useServicesManagement() {
   const {
     taskTypeNames,
     unitByTaskType,
-    inferenceTypes,
     isLoading: isLoadingTaskTypes,
   } = useInferenceTypes();
   const didInitTaskTypeFilter = useRef(false);
@@ -443,8 +440,6 @@ export function useServicesManagement() {
   const isLlmTaskType = (formData.task_type || "").trim().toLowerCase() === "llm";
 
   const handleTaskTypeChange = (taskType: string) => {
-    const nextUnit = unitByTaskType[taskType] || "";
-    setUnitType(nextUnit);
     setFormData((prev) => ({
       ...prev,
       task_type: taskType,
@@ -509,14 +504,14 @@ export function useServicesManagement() {
               nextServiceId === prevPrefix ||
               (prevPrefix && nextServiceId.startsWith(prevPrefix))
             ) {
+              // Still on the auto-generated prefix pattern — swap prefix, keep suffix
               const suffix =
                 prevPrefix && nextServiceId.startsWith(prevPrefix)
                   ? nextServiceId.slice(prevPrefix.length)
                   : "";
               nextServiceId = `${llmPrefix}${sanitizeLlmId(suffix)}`;
-            } else {
-              nextServiceId = llmPrefix;
             }
+            // else: user hand-edited away from the previous model prefix — preserve
           }
           return {
             ...prev,
@@ -564,7 +559,6 @@ export function useServicesManagement() {
     setFormData(emptyServiceForm());
     setPricePerUnit("");
     setUnitSize("");
-    setUnitType("");
     setCurrency("INR");
     setSelectedTiers([]);
     setPreselectedModelFromQuery(null);
@@ -656,29 +650,8 @@ export function useServicesManagement() {
     }
   };
 
-  const derivedUnitType = unitByTaskType[formData.task_type || ""] || "";
-  const unitTypeOptions = useMemo(() => {
-    const fromCatalog = Array.from(
-      new Set(
-        inferenceTypes
-          .map((t) => t.unit)
-          .filter((u): u is string => !!u && u.trim() !== ""),
-      ),
-    ).sort((a, b) => a.localeCompare(b));
-    if (unitType && !fromCatalog.includes(unitType)) {
-      return [unitType, ...fromCatalog];
-    }
-    return fromCatalog;
-  }, [inferenceTypes, unitType]);
-
-  // Keep unit type in sync when task type drives a known unit and user hasn't
-  // picked a different one yet (or after task type change cleared model).
-  useEffect(() => {
-    if (!formData.task_type) return;
-    if (!unitType && derivedUnitType) {
-      setUnitType(derivedUnitType);
-    }
-  }, [formData.task_type, derivedUnitType, unitType]);
+  // Unit type is derived from task type (billing is server-driven via inference_types).
+  const unitType = unitByTaskType[formData.task_type || ""] || "";
 
   const viewServiceTaskType =
     selectedService?.model?.task?.type ||
@@ -724,7 +697,6 @@ export function useServicesManagement() {
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
-    !!unitType.trim() &&
     !!pricePerUnit.trim() &&
     !!currency.trim() &&
     isUnitSizeValid &&
@@ -801,16 +773,6 @@ export function useServicesManagement() {
         service.costPerUnit != null ? String(service.costPerUnit) : "",
       );
       setUnitSize(service.unitSize != null ? String(service.unitSize) : "");
-      const editTaskType =
-        service.model?.task?.type ||
-        service.task?.type ||
-        service.task_type ||
-        "";
-      setUnitType(
-        unitByTaskType[editTaskType] ||
-          service.billingUnitType ||
-          "",
-      );
       // Prefer tier IDs; fall back to mapping tier names via the fetched tier list
       const tierIds = service.tierIds?.length
         ? service.tierIds
@@ -1115,8 +1077,6 @@ export function useServicesManagement() {
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,
-    unitTypeOptions,
-    setUnitType,
     pricePerUnit,
     setPricePerUnit,
     unitSize,

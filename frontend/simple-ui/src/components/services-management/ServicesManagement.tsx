@@ -94,8 +94,6 @@ const ServicesManagement: React.FC = () => {
     isLoadingModels,
     filteredModelsForDropdown,
     unitType,
-    unitTypeOptions,
-    setUnitType,
     pricePerUnit,
     setPricePerUnit,
     unitSize,
@@ -419,8 +417,6 @@ const ServicesManagement: React.FC = () => {
                       isLoadingModels={isLoadingModels}
                       filteredModelsForDropdown={filteredModelsForDropdown}
                       unitType={unitType}
-                      unitTypeOptions={unitTypeOptions}
-                      onUnitTypeChange={setUnitType}
                       pricePerUnit={pricePerUnit}
                       onPricePerUnitChange={setPricePerUnit}
                       unitSize={unitSize}

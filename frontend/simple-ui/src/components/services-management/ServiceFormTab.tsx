@@ -51,8 +51,6 @@ interface ServiceFormTabProps {
   isLoadingModels: boolean;
   filteredModelsForDropdown: ModelDetails[];
   unitType: string;
-  unitTypeOptions: string[];
-  onUnitTypeChange: (value: string) => void;
   pricePerUnit: string;
   onPricePerUnitChange: (value: string) => void;
   unitSize: string;
@@ -95,8 +93,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   isLoadingModels,
   filteredModelsForDropdown,
   unitType,
-  unitTypeOptions,
-  onUnitTypeChange,
   pricePerUnit,
   onPricePerUnitChange,
   unitSize,
@@ -326,31 +322,24 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               </Text>
             </FormControl>
 
-            {/* 4. Unit Type + Unit Size (grouped dropdowns) */}
+            {/* 4. Unit Type (derived) + Unit Size */}
             <Box>
               <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={3}>
                 Unit Type &amp; Unit Size
               </Text>
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                <FormControl isRequired>
+                <FormControl>
                   <FormLabel fontWeight="semibold">Unit Type</FormLabel>
-                  <Select
+                  <Input
                     value={unitType}
-                    onChange={(e) => onUnitTypeChange(e.target.value)}
+                    isReadOnly
+                    bg="gray.50"
                     placeholder={
                       formData.task_type
-                        ? "Select unit type"
+                        ? "—"
                         : "Select a task type first"
                     }
-                    bg="white"
-                    isDisabled={!formData.task_type || unitTypeOptions.length === 0}
-                  >
-                    {unitTypeOptions.map((u) => (
-                      <option key={u} value={u}>
-                        {u}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                 </FormControl>
 
                 <FormControl isRequired>
