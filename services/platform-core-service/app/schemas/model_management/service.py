@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from app.core.config import settings
 from app.schemas.base import BaseSchema
 from app.schemas.common import BenchmarkEntry, validate_entity_name
 from app.schemas.enums.model_management import (
@@ -209,6 +210,32 @@ class ServiceUpdateRequest(BaseSchema):
                     "update other than publish/unpublish."
                 )
         return self
+
+
+class ServiceEndpointUpdateItem(BaseSchema):
+    """A single {serviceId, endpoint} pair, used by the bulk endpoint-update
+    request below."""
+
+    serviceId: str
+    endpoint: str
+
+
+class ServiceBulkEndpointUpdateRequest(BaseSchema):
+    """Request body for PATCH /services when updating multiple services'
+    endpoints in a single call: {"services": [{"serviceId", "endpoint"}, ...]}.
+
+    Distinguished from ServiceUpdateRequest by the top-level "services" key,
+    so both shapes can be accepted on the same route without ambiguity.
+
+    Bypasses ServiceUpdateRequest's billing-fields-required-together rule
+    (added for AI4IDS-2524/2527) by design: unlike that request, this shape
+    can only ever touch `endpoint`, so there is no substantive-edit case to
+    guard against here.
+    """
+
+    services: List[ServiceEndpointUpdateItem] = Field(
+        ..., min_length=1, max_length=settings.bulk_endpoint_update_max_items
+    )
 
 
 # ── Response ──
