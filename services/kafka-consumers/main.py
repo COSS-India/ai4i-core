@@ -69,11 +69,7 @@ async def main() -> None:
         logger.critical("Failed to initialise database | error=%s", exc)
         raise
 
-    logger.info(
-        "Database registry ready | count=%d registered=%s",
-        len(db_registry.names()),
-        db_registry.names(),
-    )
+    logger.info("Database ready | platform_core_db=%s", db_cfg.PLATFORM_CORE_DB)
 
     # ── Redis ──
     redis_cfg = settings.redis_settings
