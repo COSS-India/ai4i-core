@@ -21,23 +21,33 @@ measuring.
 
 ## LLM
 
-Three of the four stubbed entry points are LLM. They are the main reason this
-package exists.
+Most of the stubbed entry points are LLM. They are the main reason this package
+exists.
 
 | Endpoint | Stubbed in | Body |
 |---|---|---|
-| `POST /api/v1/chat` | `OpenAIProxyService.proxy_traced` | OpenAI chat completion |
-| `POST /api/v1/chat/completions` | `OpenAIProxyService.proxy_traced` | OpenAI chat completion |
+| `POST /api/v1/chat` | `OpenAIProxyService.forward` | OpenAI chat completion |
+| `POST /api/v1/chat/completions` | `OpenAIProxyService.forward` | OpenAI chat completion |
+| the same two with `"stream": true` | `OpenAIProxyService.proxy_stream` | OpenAI SSE chunk sequence |
 | `POST /api/v1/audio/transcriptions` | `OpenAIProxyService.proxy_multipart` | OpenAI speech-to-text |
 | `POST /api/v1/audio/translations` | `OpenAIProxyService.proxy_multipart` | OpenAI speech-to-text |
 
-Both guards short-circuit **before MMS resolution and before the upstream
-forward**, so neither platform-core nor the vLLM upstream is contacted.
+Every guard sits at the **innermost seam**, the method that actually talks to
+the upstream. MMS resolution, the tier gate and the upstream model-name
+injection all still run for a stubbed request; only the network call to vLLM is
+replaced.
 
-The audio routes need their own guard because `proxy_multipart` is a separate
-method from `proxy_traced`. Guarding only the chat path leaves `/audio/*`
-calling the live upstream, which is what happened on the earlier 2.2 stub
-branch.
+That placement is deliberate and load-bearing. The guards used to sit at the top
+of `proxy_traced` / `proxy_multipart`, which returned before the `model` and
+`ai-inference` spans were ever opened. The PPU Kafka consumer bills off the
+`ai-inference` span, so every stubbed LLM request came back 200 and was silently
+unbilled, with Prometheus labelled by the fixture's literal `"stub"` model. Do
+not "optimise" a guard upwards.
+
+Each transport needs its own guard because each is a separate method.
+`proxy_multipart` is not `forward`, and `proxy_stream` is not either. Guarding
+only the chat path leaves `/audio/*` on the live upstream, which is what
+happened on the earlier 2.2 stub branch, and leaves `stream: true` on it too.
 
 ### Chat: `/chat` and `/chat/completions`
 
@@ -56,6 +66,49 @@ billing and Prometheus labels stay populated under load. A stub without them
 would silently bill zero.
 
 Fixture: `responses/llm_responses.py`.
+
+### Streaming chat: the same routes with `"stream": true`
+
+`_run_llm_chat` sends any payload with a truthy `stream` down a different path
+(`proxy_traced_stream` → `proxy_stream`) that never touches `forward`, so it
+needs its own guard or it reaches the live model.
+
+The stubbed stream is the **same fixture** as the buffered reply, re-expressed
+as the SSE chunk sequence a vLLM-style server would emit:
+
+1. an opening `{"role": "assistant"}` delta
+2. one content delta per word, so the chunk count scales with the reply
+3. a `finish_reason: "stop"` chunk
+4. a chunk with `"choices": []` carrying the fixture's `usage` block
+5. `data: [DONE]`
+
+Because both views come off one fixture, a stubbed stream bills exactly what the
+stubbed buffered call bills for the same prompt. Concatenating the deltas
+reproduces the buffered reply byte for byte.
+
+**Step 4 is not optional.** `_record_stream_usage` reads the token counts off
+that chunk onto the `ai-inference` span; `traced_inference` seeds those at zero,
+and the PPU consumer skips any message whose total is zero. A stream without a
+usage chunk returns 200 and bills nothing, with no error anywhere.
+
+Two consequences worth knowing before you read the numbers:
+
+- **The client must drain the whole stream.** The spans open lazily inside the
+  returned generator and only close when it is exhausted. A load-test client
+  that disconnects early loses the span and the bill. This is release-2.4's
+  streaming design, not a stub artifact: real traffic behaves the same way.
+- **Chunk bodies carry the fixture's `"stub"` model name**, unlike the buffered
+  stub which echoes the resolved one. Nothing observable reads it:
+  `proxy_traced_stream` sets the span and the Prometheus label from the
+  `adapter_config` name resolved in `_prepare_request` and never parses the
+  stream body for it. The lines are framed once at import and replayed, so a
+  load test is not charged for JSON serialisation a real model host would do.
+
+`LLM_STUB_STREAM_DELAY_MS` (default `0`) paces the chunks. Leave it at zero for
+throughput work. Raise it only when measuring something client-side, such as
+time-to-first-token or render smoothness.
+
+Fixture: `responses/llm_responses.py` (`chat_completion_chunks`).
 
 ### Audio: `/audio/transcriptions` and `/audio/translations`
 
@@ -163,9 +216,9 @@ Two things worth knowing before reading the numbers:
 
 ```
 response_test/
-├── stub_dispatcher.py                    ← the flag, sizing, and all three entry points
+├── stub_dispatcher.py                    ← the flag, sizing, SSE framing, and every entry point
 ├── responses/
-│   ├── llm_responses.py                  ← chat completions
+│   ├── llm_responses.py                  ← chat completions, buffered and as SSE chunks
 │   ├── audio_transcription_responses.py  ← speech-to-text, all 5 response_formats
 │   └── *_triton_responses.py             ← one per Triton task service
 ├── base_response_test.py                 ← SMALL/MEDIUM threshold constants
@@ -179,8 +232,13 @@ to the real upstream:
 | Function | Serves |
 |---|---|
 | `get_llm_stub_response(payload)` | `/chat`, `/chat/completions` |
+| `get_llm_stream_stub(payload)` | the same two with `"stream": true` |
 | `get_audio_stub_response(files, data)` | `/audio/transcriptions`, `/audio/translations` |
 | `get_stub_response(task_name, triton_inputs)` | the ten Triton services |
+
+`get_llm_stream_stub` is sync and returns an async generator, not a coroutine:
+the caller needs a `None` check before committing to a stream, and an async
+generator cannot return a value to signal "not stubbed".
 
 The flag is checked inside the dispatcher rather than at each call site, so it
 has one home and every call site reads as a plain lookup.

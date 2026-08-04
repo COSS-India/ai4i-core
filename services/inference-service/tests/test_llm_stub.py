@@ -15,6 +15,7 @@ from response_test.responses.audio_transcription_responses import (
 from response_test.stub_dispatcher import (
     get_audio_stub_response,
     get_llm_stub_response,
+    get_llm_stream_stub,
 )
 
 
@@ -59,6 +60,39 @@ def _clear_spans(request):
 
 def _prompt_of_length(n: int) -> dict:
     return {"model": "stub", "messages": [{"role": "user", "content": "x" * n}]}
+
+
+async def _drain(stream) -> list:
+    """Consume a streaming generator to completion and return what it yielded.
+
+    proxy_traced_stream only finalises its spans and token counts once the
+    stream is fully drained, so tests must consume it rather than discard it.
+    """
+    return [chunk async for chunk in stream]
+
+
+def _events(lines: list) -> list[dict]:
+    """Parse the JSON payload out of every `data:` line except [DONE]."""
+    import json
+
+    out = []
+    for line in lines:
+        if not line.startswith("data:"):
+            continue
+        body = line[len("data:"):].strip()
+        if not body or body == "[DONE]":
+            continue
+        out.append(json.loads(body))
+    return out
+
+
+def _ai_inference_tokens(exporter) -> tuple:
+    """(input_tokens, output_tokens) off the ai-inference span the PPU bills on."""
+    for span in exporter.get_finished_spans():
+        if span.name == "ai-inference":
+            attrs = dict(span.attributes or {})
+            return attrs.get("input_tokens"), attrs.get("output_tokens")
+    raise AssertionError("no ai-inference span was emitted")
 
 
 def test_returns_none_when_mode_is_off(monkeypatch):
@@ -210,6 +244,322 @@ async def test_proxy_traced_falls_through_when_mode_is_off(monkeypatch):
 
     assert called["resolved"] == "stub"
     assert status == 404
+
+
+# ── streaming chat (SSE) ──────────────────────────────────────────────────────
+
+def test_stream_stub_returns_none_when_mode_is_off(monkeypatch):
+    """With the flag off the streaming path must reach the real upstream."""
+    monkeypatch.setattr(settings, "TRITON_STUB_MODE", False)
+
+    assert get_llm_stream_stub(_prompt_of_length(10)) is None
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_frames_sse_and_terminates_with_done(stub_mode):
+    """Lines must be framed the way proxy_stream frames real upstream lines.
+
+    One string per line with a trailing newline, blank separators between
+    events, and the stream's own [DONE] terminator — clients key off that
+    terminator rather than the connection closing.
+    """
+    lines = await _drain(get_llm_stream_stub(_prompt_of_length(10)))
+
+    assert all(line.endswith("\n") for line in lines)
+    assert lines[-2] == "data: [DONE]\n"
+    assert lines[-1] == "\n"
+    assert all(line == "\n" for line in lines[1::2])
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_opens_with_role_and_closes_with_finish_reason(stub_mode):
+    """OpenAI streaming order: role delta first, finish_reason before usage."""
+    events = _events(await _drain(get_llm_stream_stub(_prompt_of_length(10))))
+
+    assert events[0]["choices"][0]["delta"] == {"role": "assistant"}
+    assert events[-2]["choices"][0]["finish_reason"] == "stop"
+    assert all(e["object"] == "chat.completion.chunk" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_final_chunk_carries_usage(stub_mode):
+    """The usage chunk is what _record_stream_usage bills off.
+
+    Without it the ai-inference span keeps the zeros traced_inference seeds and
+    the PPU consumer skips the message, so the request returns 200 and bills
+    nothing at all.
+    """
+    events = _events(await _drain(get_llm_stream_stub(_prompt_of_length(10))))
+    usage = events[-1]["usage"]
+
+    assert events[-1]["choices"] == []
+    assert usage["prompt_tokens"] > 0
+    assert usage["completion_tokens"] > 0
+    assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
+    # Only the last chunk carries usage; an earlier one would be billed instead.
+    assert all("usage" not in e for e in events[:-1])
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_deltas_reassemble_the_buffered_content(stub_mode):
+    """A client accumulating the deltas gets the buffered stub's reply verbatim."""
+    payload = _prompt_of_length(500)
+    events = _events(await _drain(get_llm_stream_stub(payload)))
+
+    streamed = "".join(
+        e["choices"][0]["delta"].get("content", "")
+        for e in events
+        if e["choices"]
+    )
+
+    assert streamed == get_llm_stub_response(payload)["choices"][0]["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_sizes_by_prompt_length(stub_mode):
+    """Prompt length picks the same SMALL / MEDIUM / LARGE buckets as buffered."""
+    usages = []
+    for n in (10, 500, 1500):
+        events = _events(await _drain(get_llm_stream_stub(_prompt_of_length(n))))
+        usages.append(events[-1]["usage"]["completion_tokens"])
+
+    assert len(set(usages)) == 3
+    assert usages == sorted(usages)
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_chunk_count_scales_with_reply_length(stub_mode):
+    """One delta per word, so per-chunk overhead is exercised realistically.
+
+    A stub that returned the whole reply in one chunk would hide the per-chunk
+    _record_stream_usage parse that real streaming pays on every token.
+    """
+    small = _events(await _drain(get_llm_stream_stub(_prompt_of_length(10))))
+    large = _events(await _drain(get_llm_stream_stub(_prompt_of_length(1500))))
+
+    assert len(large) > len(small) * 10
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_does_not_sleep_when_delay_is_zero(stub_mode, monkeypatch):
+    """Zero delay must skip the await entirely, not await sleep(0).
+
+    sleep(0) still yields to the event loop once per chunk, which would cap
+    throughput on the default configuration for no benefit.
+    """
+    import asyncio
+
+    calls = []
+    monkeypatch.setattr(settings, "LLM_STUB_STREAM_DELAY_MS", 0)
+
+    async def _spy(seconds):
+        calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _spy)
+    await _drain(get_llm_stream_stub(_prompt_of_length(10)))
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_stream_stub_paces_events_when_delay_is_set(stub_mode, monkeypatch):
+    """A configured delay applies once per event, not once per line."""
+    import asyncio
+
+    calls = []
+    monkeypatch.setattr(settings, "LLM_STUB_STREAM_DELAY_MS", 25)
+
+    async def _spy(seconds):
+        calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _spy)
+    lines = await _drain(get_llm_stream_stub(_prompt_of_length(10)))
+
+    data_lines = [line for line in lines if line.startswith("data:")]
+    assert calls == [0.025] * len(data_lines)
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_stubs_the_upstream_but_still_resolves(stub_mode, monkeypatch):
+    """The stub replaces the upstream connection only, not the whole method.
+
+    MMS resolution, the tier gate and the include_usage injection are all
+    expected to run, matching what the buffered seam does in forward().
+    """
+    from services.llm_service import OpenAIProxyService
+
+    service = OpenAIProxyService()
+    resolved = {}
+
+    async def _resolve(service_id, path):
+        resolved["service_id"] = service_id
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _no_upstream)
+
+    kind, status, result = await service.proxy_traced_stream(
+        path="/v1/chat/completions",
+        payload={**_prompt_of_length(10), "stream": True},
+    )
+    lines = await _drain(result)
+
+    assert resolved["service_id"] == "stub"
+    assert (kind, status) == ("stream", 200)
+    assert lines[-2] == "data: [DONE]\n"
+
+
+@pytest.mark.asyncio
+async def test_stubbed_stream_emits_model_and_ai_inference_spans(
+    stub_mode, monkeypatch, span_exporter
+):
+    """Regression guard: the PPU Kafka consumer bills off the ai-inference span.
+
+    The streaming spans open lazily inside the returned generator, so a stub
+    that short-circuited proxy_traced_stream instead of proxy_stream would still
+    return 200 while emitting neither span and billing nothing.
+    """
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
+    service = OpenAIProxyService()
+
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _no_upstream)
+
+    with traced_span("request", root=True, classify_status=True):
+        _, _, result = await service.proxy_traced_stream(
+            path="/v1/chat/completions",
+            payload={**_prompt_of_length(10), "stream": True},
+        )
+        await _drain(result)
+
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
+
+    assert "model" in spans
+    assert "ai-inference" in spans
+    # Billing reads these off the ai-inference span; zero here means no revenue.
+    assert spans["ai-inference"]["input_tokens"] > 0
+    assert spans["ai-inference"]["output_tokens"] > 0
+    assert spans["ai-inference"]["service_id"] == "stub"
+    # Resolved from adapter_config, never read back from the stream body.
+    assert spans["model"]["model_name"] == "gemma-3-27b"
+
+
+@pytest.mark.asyncio
+async def test_stubbed_stream_bills_the_same_tokens_as_buffered(
+    stub_mode, monkeypatch, span_exporter
+):
+    """Streaming and buffered must bill identically for the same prompt.
+
+    Both are views of one fixture, so any divergence means a load test would
+    report different revenue depending on whether the client set stream: true.
+    """
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
+    service = OpenAIProxyService()
+
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _no_upstream)
+
+    payload = _prompt_of_length(500)
+
+    with traced_span("request", root=True, classify_status=True):
+        await service.proxy_traced(path="/v1/chat/completions", payload=dict(payload))
+    buffered = _ai_inference_tokens(span_exporter)
+
+    span_exporter.clear()
+
+    with traced_span("request", root=True, classify_status=True):
+        _, _, result = await service.proxy_traced_stream(
+            path="/v1/chat/completions", payload={**payload, "stream": True},
+        )
+        await _drain(result)
+    streamed = _ai_inference_tokens(span_exporter)
+
+    assert streamed == buffered
+    assert all(count > 0 for count in streamed)
+
+
+@pytest.mark.asyncio
+async def test_stubbed_stream_publishes_usage_to_the_metering_context_vars(
+    stub_mode, monkeypatch
+):
+    """ObservabilityMiddleware bills a stream off these, via the route's bridge.
+
+    _bridge_llm_usage_to_request copies them onto request.state after the body
+    drains, so a stream that left them unset would emit zero token metrics.
+    """
+    from ai4i_core.context import (
+        get_llm_usage_input_tokens,
+        get_llm_usage_model_name,
+        get_llm_usage_output_tokens,
+        set_llm_usage_input_tokens,
+        set_llm_usage_model_name,
+        set_llm_usage_output_tokens,
+    )
+    from services.llm_service import OpenAIProxyService
+
+    set_llm_usage_input_tokens(None)
+    set_llm_usage_output_tokens(None)
+    set_llm_usage_model_name(None)
+
+    service = OpenAIProxyService()
+
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+
+    _, _, result = await service.proxy_traced_stream(
+        path="/v1/chat/completions",
+        payload={**_prompt_of_length(10), "stream": True},
+    )
+    await _drain(result)
+
+    assert get_llm_usage_input_tokens() > 0
+    assert get_llm_usage_output_tokens() > 0
+    assert get_llm_usage_model_name() == "gemma-3-27b"
+
+
+@pytest.mark.asyncio
+async def test_proxy_stream_falls_through_when_mode_is_off(monkeypatch):
+    """With the flag off proxy_stream must still open a real connection."""
+    from services.llm_service import OpenAIProxyService
+
+    monkeypatch.setattr(settings, "TRITON_STUB_MODE", False)
+    service = OpenAIProxyService()
+    called = {}
+
+    async def _open_stream(upstream_url, payload):
+        called["url"] = upstream_url
+        raise httpx.ConnectError("unreachable")
+
+    monkeypatch.setattr(service, "open_stream", _open_stream)
+
+    kind, status, _ = await service.proxy_stream(
+        path="http://vllm.invalid/v1/chat/completions", payload=_prompt_of_length(10)
+    )
+
+    assert called["url"] == "http://vllm.invalid/v1/chat/completions"
+    assert (kind, status) == ("error", 502)
 
 
 # ── /audio/* multipart passthrough ────────────────────────────────────────────
