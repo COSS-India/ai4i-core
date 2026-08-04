@@ -75,16 +75,6 @@ class Settings(BaseSettings):
         0, ge=0, description="Delay between stubbed LLM stream chunks, in milliseconds"
     )
 
-    # Per-block phase timing. When true, each request's root span gains
-    # per-stage *_ms fields (resolve, validate, preprocess, build_payload,
-    # triton, output_convert, output_tokens, postprocess) and a human-readable
-    # "TIMING ..." line is logged per request. The fields ride the existing
-    # root span, so this adds no new spans. On by default: with the model call
-    # stubbed out these stage timings are the load test's primary signal.
-    PHASE_TIMING_ENABLED: bool = Field(
-        True, description="Emit per-stage *_ms timings and a TIMING log line per request"
-    )
-
     # OpenAI-compatible LLM proxy configuration
     # Endpoint resolution is handled via MMS (model management service) using
     # the serviceId from the request payload — no static endpoint config needed.
