@@ -7,7 +7,6 @@ from typing import Any, AsyncIterator, Dict, Optional, Tuple
 import httpx
 
 from ai4i_core.context import (
-    get_tenant_id,
     set_llm_usage_input_tokens,
     set_llm_usage_model_name,
     set_llm_usage_output_tokens,
@@ -27,42 +26,6 @@ _resolver = InferenceServerResolver()
 # Shared by the buffered, streaming and multipart paths so upstream transport
 # failures read identically in the logs whichever entry point hit them.
 _UPSTREAM_FAILED_LOG = "LLM upstream request failed (path=%s): %s"
-
-
-# Fixed input/output token count billed per stubbed LLM request. Deliberately a
-# constant rather than a setting: it is a property of the load-test rig, not
-# something an operator should be able to change per environment, and every
-# extra env var is one more thing to get wrong on a deploy. Set to 0 here to
-# bill the stub fixtures' own size-bucketed usage numbers instead.
-_STUB_BILLED_TOKENS = 10
-
-
-def _billed_tokens(input_tokens: int, output_tokens: int) -> Tuple[int, int]:
-    """
-    Token counts to bill and span, with the stub-mode override applied.
-
-    Under TRITON_STUB_MODE the counts are pinned to _STUB_BILLED_TOKENS so a
-    load test's expected PPU revenue is request count x rate x that number,
-    rather than depending on which size bucket each prompt fell into. Outside
-    stub mode, and when the constant is 0, the real upstream counts pass through
-    untouched — real billing is never rewritten by this.
-    """
-    if settings.TRITON_STUB_MODE and _STUB_BILLED_TOKENS:
-        return _STUB_BILLED_TOKENS, _STUB_BILLED_TOKENS
-    return input_tokens, output_tokens
-
-
-def _tenant_id() -> str:
-    """
-    Tenant for the ai-inference span, read straight off the ai4i_core contextvar
-    RequestMiddleware populated.
-
-    Coerced to "" because get_tenant_id() returns Optional[str] and
-    finalize_span passes values to span.set_attribute() unguarded: a None there
-    makes OpenTelemetry log an invalid-type warning per request and drop the
-    attribute entirely, which would silently strip the field PPU bills on.
-    """
-    return get_tenant_id() or ""
 
 
 class LLMProxyError(Exception):
@@ -268,7 +231,7 @@ class OpenAIProxyService:
                 # service_id and tenantId must be set explicitly: the PPU Kafka
                 # consumer reads only the ai-inference span for billing.
                 infer_attrs["service_id"] = service_id
-                infer_attrs["tenantId"] = _tenant_id()
+                infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
 
                 logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
                 try:
@@ -287,23 +250,20 @@ class OpenAIProxyService:
                     body = {"detail": message}
 
                 if isinstance(body, dict):
-                    input_tokens, output_tokens = _billed_tokens(*get_llm_usage(body))
+                    input_tokens, output_tokens = get_llm_usage(body)
                     infer_attrs["input_tokens"] = input_tokens
                     infer_attrs["output_tokens"] = output_tokens
                     infer_attrs["output_type"] = "text"
-                    # vLLM echoes the real upstream model name in the response.
-                    # Used for the Prometheus label only — the model span keeps
-                    # the adapter_config name resolved in _prepare_request, so
-                    # the span agrees with what was resolved and billed rather
-                    # than with whatever upstream chose to echo back. Matches
-                    # what proxy_traced_stream already does.
-                    upstream_model_name = body.get("model", "unknown")
+                    # vLLM echoes the real upstream model name in the response —
+                    # capture it for the model span (the client's `model` field
+                    # carried the service ID, not the upstream model name).
+                    model_attrs["model_name"] = body.get("model", "unknown")
                     # Publish to context vars so ObservabilityMiddleware can
                     # emit Prometheus token metrics without re-reading (and
                     # therefore buffering) the response body.
                     set_llm_usage_input_tokens(input_tokens)
                     set_llm_usage_output_tokens(output_tokens)
-                    set_llm_usage_model_name(upstream_model_name)
+                    set_llm_usage_model_name(model_attrs["model_name"])
 
         return status_code, body
 
@@ -478,7 +438,7 @@ class OpenAIProxyService:
                     # service_id and tenantId must be set explicitly: the PPU
                     # Kafka consumer reads only the ai-inference span for billing.
                     infer_attrs["service_id"] = service_id
-                    infer_attrs["tenantId"] = _tenant_id()
+                    infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
                     infer_attrs["output_type"] = "text"
 
                     async for line in result:
@@ -512,7 +472,7 @@ class OpenAIProxyService:
         if not (isinstance(chunk, dict) and isinstance(chunk.get("usage"), dict)):
             return
 
-        input_tokens, output_tokens = _billed_tokens(*get_llm_usage(chunk))
+        input_tokens, output_tokens = get_llm_usage(chunk)
         infer_attrs["input_tokens"] = input_tokens
         infer_attrs["output_tokens"] = output_tokens
         set_llm_usage_input_tokens(input_tokens)

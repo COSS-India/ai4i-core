@@ -12,7 +12,6 @@ from response_test.responses.audio_transcription_responses import (
     MEDIUM_AUDIO_BYTES,
     SMALL_AUDIO_BYTES,
 )
-from response_test import stub_dispatcher
 from response_test.stub_dispatcher import (
     get_audio_stub_response,
     get_llm_stub_response,
@@ -351,7 +350,7 @@ async def test_stream_stub_does_not_sleep_when_delay_is_zero(stub_mode, monkeypa
     import asyncio
 
     calls = []
-    monkeypatch.setattr(stub_dispatcher, "_STREAM_CHUNK_DELAY_S", 0.0)
+    monkeypatch.setattr(settings, "LLM_STUB_STREAM_DELAY_MS", 0)
 
     async def _spy(seconds):
         calls.append(seconds)
@@ -368,7 +367,7 @@ async def test_stream_stub_paces_events_when_delay_is_set(stub_mode, monkeypatch
     import asyncio
 
     calls = []
-    monkeypatch.setattr(stub_dispatcher, "_STREAM_CHUNK_DELAY_S", 0.025)
+    monkeypatch.setattr(settings, "LLM_STUB_STREAM_DELAY_MS", 25)
 
     async def _spy(seconds):
         calls.append(seconds)
@@ -561,232 +560,6 @@ async def test_proxy_stream_falls_through_when_mode_is_off(monkeypatch):
 
     assert called["url"] == "http://vllm.invalid/v1/chat/completions"
     assert (kind, status) == ("error", 502)
-
-
-# ── billed-token override and tenant propagation ─────────────────────────────
-
-@pytest.mark.asyncio
-async def test_stub_mode_bills_the_fixed_token_count(stub_mode, monkeypatch, span_exporter):
-    """Under stub mode both token counts are pinned to _STUB_BILLED_TOKENS.
-
-    Makes expected PPU revenue request-count x rate x that number, instead of
-    depending on which size bucket each prompt landed in. A LARGE prompt is used
-    here precisely because its fixture usage (620/210) is nothing like the
-    override, so the assertion cannot pass by accident.
-    """
-    from services import llm_service
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 10)
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-
-    with traced_span("request", root=True, classify_status=True):
-        await service.proxy_traced(
-            path="/v1/chat/completions", payload=_prompt_of_length(1500)
-        )
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["input_tokens"] == 10
-    assert spans["ai-inference"]["output_tokens"] == 10
-
-
-@pytest.mark.asyncio
-async def test_shipped_default_bills_ten(stub_mode, monkeypatch, span_exporter):
-    """Pins the constant as shipped, with no patch in play.
-
-    Every other token test patches _STUB_BILLED_TOKENS to exercise a specific
-    value, so none of them would notice the default being edited. This is what
-    the load test actually runs with, so it gets its own guard.
-    """
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-
-    with traced_span("request", root=True, classify_status=True):
-        await service.proxy_traced(
-            path="/v1/chat/completions", payload=_prompt_of_length(1500)
-        )
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["input_tokens"] == 10
-    assert spans["ai-inference"]["output_tokens"] == 10
-
-
-@pytest.mark.asyncio
-async def test_streaming_bills_the_same_fixed_count_as_buffered(
-    stub_mode, monkeypatch, span_exporter
-):
-    """The override must apply on both transports or the two diverge.
-
-    _record_stream_usage is a separate write site from proxy_traced, so it needs
-    the override too. Without it a stream:true run would bill the fixture's
-    numbers while a buffered run billed the fixed count.
-    """
-    from services import llm_service
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 10)
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-
-    with traced_span("request", root=True, classify_status=True):
-        _, _, result = await service.proxy_traced_stream(
-            path="/v1/chat/completions",
-            payload={**_prompt_of_length(1500), "stream": True},
-        )
-        await _drain(result)
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["input_tokens"] == 10
-    assert spans["ai-inference"]["output_tokens"] == 10
-
-
-@pytest.mark.asyncio
-async def test_override_of_zero_bills_the_fixture_usage(stub_mode, monkeypatch, span_exporter):
-    """Setting the override to 0 restores size-bucketed billing."""
-    from services import llm_service
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 0)
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-
-    with traced_span("request", root=True, classify_status=True):
-        await service.proxy_traced(
-            path="/v1/chat/completions", payload=_prompt_of_length(1500)
-        )
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["input_tokens"] == 620
-    assert spans["ai-inference"]["output_tokens"] == 210
-
-
-@pytest.mark.asyncio
-async def test_real_mode_bills_the_upstream_usage_untouched(monkeypatch, span_exporter):
-    """The override is gated on stub mode, so real billing is never rewritten.
-
-    This is the guard that keeps a load-test convenience from following the
-    branch into a real deployment and mis-billing every request.
-    """
-    from services import llm_service
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    monkeypatch.setattr(settings, "TRITON_STUB_MODE", False)
-    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 10)
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    async def _forward(url, payload):
-        return 200, {
-            "model": "gemma-3-27b",
-            "usage": {"prompt_tokens": 77, "completion_tokens": 88},
-        }
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-    monkeypatch.setattr(service, "forward", _forward)
-
-    with traced_span("request", root=True, classify_status=True):
-        await service.proxy_traced(
-            path="/v1/chat/completions", payload=_prompt_of_length(10)
-        )
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["input_tokens"] == 77
-    assert spans["ai-inference"]["output_tokens"] == 88
-
-
-@pytest.mark.asyncio
-async def test_tenant_id_reaches_the_span_from_the_contextvar(
-    stub_mode, monkeypatch, span_exporter
-):
-    """PPU skips any message with an empty tenant, so this field is load-bearing."""
-    from ai4i_core.context import set_tenant_id
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-    set_tenant_id("tenant-42")
-    try:
-        with traced_span("request", root=True, classify_status=True):
-            await service.proxy_traced(
-                path="/v1/chat/completions", payload=_prompt_of_length(10)
-            )
-    finally:
-        set_tenant_id("")
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["tenantId"] == "tenant-42"
-
-
-@pytest.mark.asyncio
-async def test_unset_tenant_becomes_empty_string_not_none(
-    stub_mode, monkeypatch, span_exporter
-):
-    """get_tenant_id() returns Optional[str] and finalize_span does not guard it.
-
-    A None reaches span.set_attribute(), which OpenTelemetry rejects with a
-    warning per request and drops, stripping the field PPU bills on. Coercing to
-    "" keeps the attribute present and the log quiet under load.
-    """
-    from ai4i_core.context import set_tenant_id
-    from services.llm_service import OpenAIProxyService
-    from trace.request_span import traced_span
-
-    service = OpenAIProxyService()
-
-    async def _resolve(service_id, path):
-        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
-
-    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
-    # None, not "": the contextvar defaults to None when no tenant header was
-    # injected, and that is the case the coercion exists for. Seeding "" here
-    # instead would pass whether or not the coercion is present.
-    set_tenant_id(None)
-
-    with traced_span("request", root=True, classify_status=True):
-        await service.proxy_traced(
-            path="/v1/chat/completions", payload=_prompt_of_length(10)
-        )
-
-    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
-
-    assert spans["ai-inference"]["tenantId"] == ""
 
 
 # ── /audio/* multipart passthrough ────────────────────────────────────────────
