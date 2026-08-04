@@ -104,9 +104,10 @@ Two consequences worth knowing before you read the numbers:
   stream body for it. The lines are framed once at import and replayed, so a
   load test is not charged for JSON serialisation a real model host would do.
 
-`LLM_STUB_STREAM_DELAY_MS` (default `0`) paces the chunks. Leave it at zero for
-throughput work. Raise it only when measuring something client-side, such as
-time-to-first-token or render smoothness.
+`_STREAM_CHUNK_DELAY_S` in `stub_dispatcher.py` (default `0.0`) paces the chunks.
+It is a module constant, not an env var: it describes the load-test rig, not the
+environment. Leave it at zero for throughput work. Raise it only when measuring
+something client-side, such as time-to-first-token or render smoothness.
 
 Fixture: `responses/llm_responses.py` (`chat_completion_chunks`).
 
@@ -183,11 +184,11 @@ fast, clean-looking run that measures nothing.
 
 Both by design, since the stub replaces the model call only:
 
-- **MMS resolution.** Every Triton-backed request does a real GET to
-  platform-core. TTL-cached, and it is what `resolve_ms`, `mms_http_ms` and
-  `cache_hit` measure. The LLM paths skip it entirely.
+- **MMS resolution.** Every request does a real GET to platform-core, TTL-cached
+  for `CACHE_TTL_SECONDS` (300s) per process. Both the Triton and the LLM paths
+  resolve: the guards sit below resolution, not above it.
 - **Audio and image URI downloads,** when a request passes a URI instead of
-  base64. Measured by `audio_fetch_ms`. Send base64 for zero external fetches.
+  base64. Send base64 for zero external fetches.
 
 ---
 
@@ -195,20 +196,20 @@ Both by design, since the stub replaces the model call only:
 
 ```bash
 TRITON_STUB_MODE=true      # stubs on
-PHASE_TIMING_ENABLED=true  # per-stage *_ms + TIMING log line (default)
 ```
 
 Two things worth knowing before reading the numbers:
 
 - **Discard warm-up.** The fixtures import lazily on first use, so the first
-  request after start is roughly 200 ms slower and that cost lands inside
-  `triton_ms`. Every later request is under 0.15 ms. With `WORKERS=2` you get
-  one such outlier per worker process.
-- **`KAFKA_ENABLED` is false by default.** Spans are still created and the
-  TIMING line still logs, but nothing is exported, so there is no OpenSearch
-  ingestion and no input to the PPU billing consumer. Set `KAFKA_ENABLED=true`
-  with `KAFKA_SERVER=kafka:29092` from inside a container if billing needs to
-  be exercised end to end.
+  request after start is roughly 200 ms slower. Every later request is under
+  0.15 ms. With `WORKERS=2` you get one such outlier per worker process.
+- **`KAFKA_ENABLED` is false by default.** Spans are still created but nothing
+  is exported, so there is no OpenSearch ingestion and **no input to the PPU
+  billing consumer**. Set `KAFKA_ENABLED=true` with `KAFKA_SERVER=kafka:29092`
+  from inside a container if billing needs to be exercised end to end.
+
+There is no per-stage timing built into the service. Measure from the load
+generator, or from the `total_time_ms` on the request span.
 
 ---
 

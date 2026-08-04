@@ -67,58 +67,6 @@ def compute_total_time_ms(start_time: float) -> float:
     return round((time.time() - start_time) * 1000, 2)
 
 
-# Ordered phase groups for the human-readable "TIMING" line. Sub-phases render
-# in parentheses under their parent so the line mirrors the request tree. Only
-# keys actually present are shown, so this stays correct as phases change.
-_TIMING_TOP = [
-    "resolve_ms", "validate_ms", "preprocess_ms", "run_inference_ms", "postprocess_ms",
-]
-_TIMING_SUB = {
-    "resolve_ms": ["mms_http_ms"],
-    "preprocess_ms": ["audio_fetch_ms", "audio_decode_ms"],
-    "run_inference_ms": [
-        "build_payload_ms", "input_tokens_ms", "triton_ms",
-        "output_convert_ms", "output_tokens_ms",
-    ],
-}
-
-
-def format_timing_summary(attrs: dict) -> str:
-    """Build the one-line 'TIMING ...' summary from the merged phase attrs on
-    the root request span (companion to the span JSON, for humans reading logs).
-    """
-    parts = [f"total={attrs.get('total_time_ms', 0)}ms"]
-    for key in _TIMING_TOP:
-        if key not in attrs:
-            continue
-        entry = f"{key[:-3]}={attrs[key]}"
-        subs = [f"{s[:-3]}={attrs[s]}" for s in _TIMING_SUB.get(key, []) if s in attrs]
-        if subs:
-            entry += " (" + " ".join(subs) + ")"
-        parts.append(entry)
-    if "cache_hit" in attrs:
-        parts.append(f"cache_hit={str(attrs['cache_hit']).lower()}")
-    return "TIMING " + " ".join(parts)
-
-
-def _merge_root_phases(attrs: dict, root: bool) -> None:
-    """
-    Merge collected per-block phase timings onto the root span's attrs and
-    emit the companion human-readable "TIMING ..." log line.
-
-    Only on the root span: child spans (model, ai-inference) carry their own
-    total_time_ms and must not duplicate these. Only when phases were actually
-    collected, so a disabled timer never emits a bare "TIMING total=..." line.
-    """
-    if not root:
-        return
-    from trace.phase_timer import collect_phases
-    phases = collect_phases()
-    attrs.update(phases)
-    if phases:
-        logger.info(format_timing_summary(attrs))
-
-
 @contextmanager
 def traced_span(
     span_name: str,
@@ -147,11 +95,6 @@ def traced_span(
     """
     start_time = time.time()
     context = otel_context.Context() if root else None
-    # Per-block phase timings ride the root span only, so the accumulator is
-    # reset here and merged on finalize below.
-    if root:
-        from trace.phase_timer import start_root_phases
-        start_root_phases()
 
     with tracer.start_as_current_span(span_name, context=context) as span:
         attrs: dict = {}
@@ -164,7 +107,6 @@ def traced_span(
             if classify_status:
                 attrs["status"] = "failure"
                 attrs["status_code"] = 400 if isinstance(e, ValueError) else 500
-            _merge_root_phases(attrs, root)
             finalize_span(span, attrs, error=e)
             raise
         else:
@@ -172,7 +114,6 @@ def traced_span(
             if classify_status:
                 attrs.setdefault("status", "success")
                 attrs.setdefault("status_code", 200)
-            _merge_root_phases(attrs, root)
             finalize_span(span, attrs, ok=mark_ok)
 
 
