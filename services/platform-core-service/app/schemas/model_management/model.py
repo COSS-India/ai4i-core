@@ -8,7 +8,7 @@ during migration.
 
 from typing import Any, List, Optional
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
@@ -23,7 +23,7 @@ from app.schemas.common import (
     validate_entity_name,
     validate_license,
 )
-from app.schemas.enums.model_management import DomainEnum, VersionStatusEnum
+from app.schemas.enums.model_management import DomainEnum, TaskTypeEnum, VersionStatusEnum
 
 
 # ── Create / Update ──
@@ -42,6 +42,7 @@ _MODEL_CREATE_EXAMPLE = {
         {
             "sourceLanguage": "en",
             "sourceLanguageName": "English",
+            "sourceScriptCode": "Latn",
             "targetLanguage": "hi",
             "targetLanguageName": "Hindi",
             "targetScriptCode": "Deva",
@@ -59,10 +60,27 @@ _MODEL_CREATE_EXAMPLE = {
     },
     "inferenceEndPoint": {
         "callbackUrl": "https://inference.example.com/v2/models/indictrans2-en-hi/infer",
+        "modelName": "indictrans2-en-hi",
         "inferenceApiKey": {"name": "Authorization", "value": "<your-api-key>"},
         "isMultilingualEnabled": False,
         "isSyncApi": True,
-        "schema": {"taskType": "translation"},
+        "schema": {
+            "taskType": "translation",
+            "request": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+            "response": {"output": [{"target": "string"}]},
+        },
+        "adapterConfig": {
+            "version": "1.0",
+            "model_version": "1",
+            "inputs": [
+                {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
+                {"tensor": "INPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.source_language"},
+                {"tensor": "OUTPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.target_language"},
+            ],
+            "outputs": [
+                {"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "target"},
+            ],
+        },
     },
     "benchmarks": [],
     "trainingDataset": {
@@ -74,6 +92,31 @@ _MODEL_CREATE_EXAMPLE = {
     },
     "classInstance": None,
 }
+
+_PAIR_TASK_TYPES = {TaskTypeEnum.nmt, TaskTypeEnum.transliteration, TaskTypeEnum.llm}
+
+
+def _require_full_pair(task_type: Optional[Any], languages: Optional[List[LanguagePair]]) -> None:
+    """Enforce complete language-pair fields for translation/transliteration tasks."""
+    if task_type not in _PAIR_TASK_TYPES or not languages:
+        return
+    for i, lp in enumerate(languages):
+        errors = []
+        if not lp.sourceLanguageName or not lp.sourceLanguageName.strip():
+            errors.append("sourceLanguageName")
+        if lp.sourceScriptCode is None:
+            errors.append("sourceScriptCode")
+        if lp.targetLanguage is None:
+            errors.append("targetLanguage")
+        if not lp.targetLanguageName or not lp.targetLanguageName.strip():
+            errors.append("targetLanguageName")
+        if lp.targetScriptCode is None:
+            errors.append("targetScriptCode")
+        if errors:
+            raise ValueError(
+                f"languages[{i}]: {', '.join(errors)} are required for "
+                f"task type '{task_type}'"
+            )
 
 
 class ModelCreateRequest(BaseSchema):
@@ -212,6 +255,11 @@ class ModelCreateRequest(BaseSchema):
             raise ValueError("License field is required")
         return validate_license(v)
 
+    @model_validator(mode="after")
+    def _validate_pair_languages(self) -> "ModelCreateRequest":
+        _require_full_pair(self.task.type if self.task else None, self.languages)
+        return self
+
 
 _MODEL_UPDATE_EXAMPLE = {
     "modelId": "65bca5f3baae454fdb411646432ed1a2",  # sha256("ai4bharat/indictrans2-en-hi:v1")[:32] — matches the create example above
@@ -292,6 +340,11 @@ class ModelUpdateRequest(BaseSchema):
     @classmethod
     def _validate_license(cls, v: Any) -> Any:
         return validate_license(v)
+
+    @model_validator(mode="after")
+    def _validate_pair_languages(self) -> "ModelUpdateRequest":
+        _require_full_pair(self.task.type if self.task else None, self.languages)
+        return self
 
 
 # ── View / Response ──

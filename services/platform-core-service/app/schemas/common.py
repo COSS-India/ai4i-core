@@ -4,7 +4,6 @@ Shared building-block schemas used by both Model and Service domains.
 
 import re
 from typing import Any, Dict, Generic, List, Optional, TypeVar
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
@@ -260,8 +259,9 @@ class Submitter(BaseSchema):
 class LanguagePair(BaseSchema):
     """A language, or source/target language pair, a model supports (ULCA
     ``LanguagePair``). Leave ``targetLanguage`` unset to indicate a single
-    language rather than a pair. Scope note: only ULCA's Indic + English
-    language list is accepted — see SupportedLanguagesEnum."""
+    language rather than a pair (e.g. ASR, TTS, OCR). Scope note: only
+    ULCA's Indic + English language list is accepted — see
+    SupportedLanguagesEnum."""
 
     sourceLanguage: SupportedLanguagesEnum = Field(
         ..., description="Required. ISO-639-1/2 Indic language code, or 'en'."
