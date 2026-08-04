@@ -238,15 +238,14 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         key_name: updateFormData.key_name?.trim(),
         permissions: nextPermissions,
       });
-      showToast({
-        type: "success",
-        message:
-          droppedCount > 0
-            ? droppedCount === 1
-              ? "API key updated; 1 permission no longer available was removed"
-              : `API key updated; ${droppedCount} permissions no longer available were removed`
-            : "API key has been updated successfully",
-      });
+      let message = "API key has been updated successfully";
+      if (droppedCount > 0) {
+        message =
+          droppedCount === 1
+            ? "API key updated; 1 permission no longer available was removed"
+            : `API key updated; ${droppedCount} permissions no longer available were removed`;
+      }
+      showToast({ type: "success", message });
       handleCloseUpdateModal();
       await handleFetchAllApiKeys();
     } catch (error) {
