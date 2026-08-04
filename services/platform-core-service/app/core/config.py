@@ -132,6 +132,12 @@ class CoreSettings(BaseSettings):
     # identically. See endpoint_validator._VALIDATION_MODE_THRESHOLDS.
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
+    # Async (poll-until-done) probes cap both attempts and total wall-clock
+    # time so a slow/stuck partner endpoint can't hang a create/update
+    # request indefinitely — ULCA's reference implementation polls in an
+    # unbounded `while (true)` loop, which we deliberately do not copy.
+    endpoint_validation_max_poll_attempts: int = 10
+    endpoint_validation_max_poll_wait_seconds: float = 60.0
 
     # ── External services ──
     auth_service_url: str = ""

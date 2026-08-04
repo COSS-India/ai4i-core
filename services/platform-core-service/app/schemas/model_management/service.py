@@ -77,11 +77,32 @@ class ServiceCreateRequest(BaseSchema):
     costPerUnit: float = Field(..., ge=0)
     unitSize: int
     tierIds: List[str] = Field(..., min_length=1)
+    expectedResponseSchema: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Required. A sample of what a correct response from this "
+            "endpoint looks like, e.g. "
+            '{"output": [{"target": "..."}]}. The endpoint is probed at '
+            "creation time with a task-type-appropriate sample request, and "
+            "its actual response must structurally match this shape (same "
+            "keys, same value types) or the service is rejected."
+        ),
+    )
 
     @field_validator("taskType")
     @classmethod
     def _validate_task_type(cls, v: str) -> str:
         return resolve_task_type(v)
+
+    @field_validator("expectedResponseSchema")
+    @classmethod
+    def _validate_expected_response_schema(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if not v:
+            raise ValueError(
+                "expectedResponseSchema must be a non-empty object describing "
+                "the expected response shape"
+            )
+        return v
 
     @field_validator("serviceId")
     @classmethod
@@ -151,6 +172,16 @@ class ServiceUpdateRequest(BaseSchema):
     costPerUnit: Optional[float] = Field(None, ge=0)
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
+    expectedResponseSchema: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Optional. Resend when changing `endpoint` so the new endpoint "
+            "is re-validated against a sample response shape. If omitted on "
+            "an endpoint change, the schema stored from creation (or the "
+            "last update) is reused; if none is on file, the update is "
+            "rejected."
+        ),
+    )
 
     @field_validator("taskType")
     @classmethod
@@ -158,6 +189,16 @@ class ServiceUpdateRequest(BaseSchema):
         if v is None:
             return v
         return resolve_task_type(v)
+
+    @field_validator("expectedResponseSchema")
+    @classmethod
+    def _validate_expected_response_schema(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if v is not None and not v:
+            raise ValueError(
+                "expectedResponseSchema must be a non-empty object describing "
+                "the expected response shape"
+            )
+        return v
 
     @field_validator("unitSize")
     @classmethod
@@ -240,6 +281,7 @@ class ServiceResponse(BaseSchema):
     unitRate: Optional[float] = None
     tierIds: Optional[List[str]] = None
     tierNames: Optional[List[str]] = None
+    expectedResponseSchema: Optional[Dict[str, Any]] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 

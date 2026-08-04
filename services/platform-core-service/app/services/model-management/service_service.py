@@ -6,7 +6,10 @@ Owns the rules:
 - Service names must be globally unique.
 - A service must reference an existing (model_id, model_version).
 - The endpoint URL is validated (URL format + SSRF + live probe) on
-  create/update.
+  create/update. The live probe checks both reachability and, since
+  expectedResponseSchema is required on create, that the response actually
+  matches the shape the admin declared. Sync vs. async (poll-until-done)
+  probing is decided by the referenced model's isSyncApi/asyncApiDetails.
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
@@ -81,11 +84,16 @@ class EndpointValidationFailedError(AppError):
 
 
 def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict[str, Any]:
-    """Pull task_type / request_schema / triton_schema out of a model card."""
-    schema = (model_inference_endpoint or {}).get("schema") or {}
+    """Pull request/response-schema and sync/async details out of a model card."""
+    model_inference_endpoint = model_inference_endpoint or {}
+    schema = model_inference_endpoint.get("schema") or {}
+    async_details = model_inference_endpoint.get("asyncApiDetails") or {}
     return {
         "request_schema": schema.get("request"),
         "triton_schema": (schema.get("response") or {}).get("triton"),
+        "is_sync_api": model_inference_endpoint.get("isSyncApi"),
+        "polling_url": async_details.get("pollingUrl"),
+        "poll_interval_ms": async_details.get("pollInterval"),
     }
 
 
@@ -183,12 +191,13 @@ class ServiceService:
                 code="MODEL_NOT_FOUND",
             )
 
-        # 2. Validate the endpoint (live probe + SSRF guard)
+        # 2. Validate the endpoint (live probe + SSRF guard + response shape)
         await self._validate_endpoint_for_model(
             endpoint=payload.endpoint,
             api_key=payload.api_key,
             model_inference_endpoint=model.inference_endpoint or {},
             task_type=(model.task or {}).get("type"),
+            expected_response_schema=payload.expectedResponseSchema,
         )
 
         # 3. Duplicate name check
@@ -230,6 +239,7 @@ class ServiceService:
             api_key=payload.api_key,
             health_status=jsonable_encoder(payload.healthStatus) if payload.healthStatus else {},
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
+            expected_response_schema=jsonable_encoder(payload.expectedResponseSchema),
             task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
@@ -289,11 +299,24 @@ class ServiceService:
                     f"Model '{instance.model_id}' v{instance.model_version}"
                 )
             api_key = payload.api_key or instance.api_key
+            expected_response_schema = (
+                payload.expectedResponseSchema or instance.expected_response_schema
+            )
+            if not expected_response_schema:
+                raise ValidationError(
+                    message=(
+                        "expectedResponseSchema is required when changing a "
+                        "service's endpoint (no previously stored schema was "
+                        "found to re-validate the new endpoint against)."
+                    ),
+                    code="EXPECTED_RESPONSE_SCHEMA_REQUIRED",
+                )
             await self._validate_endpoint_for_model(
                 endpoint=payload.endpoint,
                 api_key=api_key,
                 model_inference_endpoint=model.inference_endpoint or {},
                 task_type=(model.task or {}).get("type"),
+                expected_response_schema=expected_response_schema,
             )
 
         request_dict = payload.model_dump(exclude_unset=True)
@@ -318,6 +341,10 @@ class ServiceService:
             update_data["health_status"] = request_dict["healthStatus"]
         if "benchmarks" in request_dict:
             update_data["benchmarks"] = jsonable_encoder(request_dict["benchmarks"])
+        if "expectedResponseSchema" in request_dict:
+            update_data["expected_response_schema"] = jsonable_encoder(
+                request_dict["expectedResponseSchema"]
+            )
 
         if "policy" in request_dict:
             policy_obj = payload.policy
@@ -389,9 +416,10 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, isTryItDefault, policy, taskType, "
-                    "costPerUnit, unitSize, tierIds. Note: name, modelId, "
-                    "modelVersion are not updatable."
+                    "benchmarks, expectedResponseSchema, isPublished, "
+                    "isTryItDefault, policy, taskType, costPerUnit, unitSize, "
+                    "tierIds. Note: name, modelId, modelVersion are not "
+                    "updatable."
                 ),
                 code="NO_UPDATABLE_FIELDS",
             )
@@ -457,6 +485,7 @@ class ServiceService:
         api_key: Optional[str],
         model_inference_endpoint: Dict[str, Any],
         task_type: Optional[str],
+        expected_response_schema: Optional[Dict[str, Any]] = None,
     ) -> None:
         params = _extract_validation_params(model_inference_endpoint)
         result = await validate_endpoint(
@@ -469,6 +498,12 @@ class ServiceService:
             timeout=settings.endpoint_validation_timeout_seconds,
             validation_mode=settings.endpoint_validation_mode,
             skip_tls_verify=settings.endpoint_validation_skip_tls_verify,
+            expected_response_schema=expected_response_schema,
+            is_sync_api=params["is_sync_api"],
+            polling_url=params["polling_url"],
+            poll_interval_ms=params["poll_interval_ms"],
+            max_poll_attempts=settings.endpoint_validation_max_poll_attempts,
+            max_poll_wait_seconds=settings.endpoint_validation_max_poll_wait_seconds,
         )
         if not result.is_valid:
             failed_messages = [

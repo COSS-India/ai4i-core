@@ -44,6 +44,7 @@ from app.schemas.enums.model_management import (
     PolicyCostEnum,
     PolicyLatencyEnum,
 )
+from app.core.exceptions import ValidationError
 from app.schemas.model_management.service import ServicePolicy, ServiceUpdateRequest
 
 # model-management directory is hyphenated; plain imports cannot resolve it.
@@ -52,13 +53,18 @@ ServiceService = importlib.import_module(
 ).ServiceService
 
 
-def _make_service_orm(service_id: str = "svc-abc", task_type: str = None) -> MagicMock:
+def _make_service_orm(
+    service_id: str = "svc-abc",
+    task_type: str = None,
+    expected_response_schema: dict = None,
+) -> MagicMock:
     instance = MagicMock()
     instance.service_id = service_id
     instance.model_id = "model-1"
     instance.model_version = "1.0"
     instance.api_key = None
     instance.task_type = task_type
+    instance.expected_response_schema = expected_response_schema
     return instance
 
 
@@ -204,3 +210,97 @@ class TestUpdateServiceTryItDefault:
         await svc.update_service(payload, updated_by="user-1")
 
         svc._services.clear_try_it_default.assert_not_awaited()
+
+
+def _make_model_orm_with_endpoint() -> MagicMock:
+    model = MagicMock()
+    model.inference_endpoint = {}
+    model.task = {"type": "asr"}
+    return model
+
+
+class TestUpdateServiceEndpointRevalidation:
+    """AI4IDS-1844: changing `endpoint` re-validates it, and requires an
+    expectedResponseSchema (freshly supplied or previously stored) to check
+    the response against."""
+
+    @pytest.mark.asyncio
+    async def test_endpoint_change_without_any_schema_on_file_is_rejected(self) -> None:
+        svc = _make_svc()
+        svc._services.get_by_service_id = AsyncMock(
+            return_value=_make_service_orm(expected_response_schema=None)
+        )
+        svc._models.get_by_id_version = AsyncMock(return_value=_make_model_orm_with_endpoint())
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc",
+            endpoint="http://new-endpoint",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        with pytest.raises(ValidationError, match="expectedResponseSchema is required"):
+            await svc.update_service(payload, updated_by="user-1")
+
+    @pytest.mark.asyncio
+    async def test_endpoint_change_with_freshly_supplied_schema_succeeds(self) -> None:
+        svc = _make_svc()
+        svc._services.get_by_service_id = AsyncMock(
+            return_value=_make_service_orm(expected_response_schema=None)
+        )
+        svc._models.get_by_id_version = AsyncMock(return_value=_make_model_orm_with_endpoint())
+
+        captured = {}
+
+        async def _capture_validate(**kwargs):
+            captured.update(kwargs)
+
+        svc._validate_endpoint_for_model = _capture_validate  # type: ignore[method-assign]
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc",
+            endpoint="http://new-endpoint",
+            expectedResponseSchema={"output": [{"source": "test"}]},
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        assert captured["expected_response_schema"] == {"output": [{"source": "test"}]}
+        svc._services.apply_updates.assert_awaited_once()
+        svc._services.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_endpoint_change_falls_back_to_stored_schema(self) -> None:
+        svc = _make_svc()
+        svc._services.get_by_service_id = AsyncMock(
+            return_value=_make_service_orm(
+                expected_response_schema={"output": [{"source": "stored"}]}
+            )
+        )
+        svc._models.get_by_id_version = AsyncMock(return_value=_make_model_orm_with_endpoint())
+
+        captured = {}
+
+        async def _capture_validate(**kwargs):
+            captured.update(kwargs)
+
+        svc._validate_endpoint_for_model = _capture_validate  # type: ignore[method-assign]
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc",
+            endpoint="http://new-endpoint",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        assert captured["expected_response_schema"] == {"output": [{"source": "stored"}]}

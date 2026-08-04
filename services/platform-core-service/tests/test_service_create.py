@@ -87,6 +87,7 @@ _VALID_BASE = dict(
     costPerUnit=0.01,
     unitSize=1,
     tierIds=["tier-1"],
+    expectedResponseSchema={"output": [{"source": "test"}]},
 )
 
 
@@ -184,6 +185,16 @@ class TestCreateRequiredFields:
     def test_missing_unit_size_rejected(self) -> None:
         base = {k: v for k, v in _VALID_BASE.items() if k != "unitSize"}
         with pytest.raises(PydanticValidationError, match="unitSize"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_missing_expected_response_schema_rejected(self) -> None:
+        base = {k: v for k, v in _VALID_BASE.items() if k != "expectedResponseSchema"}
+        with pytest.raises(PydanticValidationError, match="expectedResponseSchema"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_empty_expected_response_schema_rejected(self) -> None:
+        base = {**_VALID_BASE, "expectedResponseSchema": {}}
+        with pytest.raises(PydanticValidationError, match="non-empty object"):
             ServiceCreateRequest(serviceId="svc-1", **base)
 
 
