@@ -15,7 +15,14 @@ class Constants:
     PPU_PRICING_CACHE_PREFIX = "ppu:svc:"
     PPU_PRICING_CACHE_TTL = 3600
     PPU_BILLED_KEY_PREFIX = "ppu:billed:"
-    PPU_BILLED_KEY_TTL = 86400
+    # Only needs to outlive the redelivery window after a consumer crash/
+    # restart (at most COMMIT_BATCH_SIZE uncommitted messages, redelivered
+    # within seconds of the consumer group rejoining) — 1h is generous
+    # headroom for that, not a full day. At high billing volume the old
+    # 86400s TTL made these dedup keys ~100% of Redis's keyspace (2M+ keys,
+    # ~40% of maxmemory), risking allkeys-lru evicting unrelated caches
+    # (auth:apikey:*, core:service:*) once memory pressure hit.
+    PPU_BILLED_KEY_TTL = 3600
 
 
 class Topics(BaseSettings):
