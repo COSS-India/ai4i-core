@@ -563,6 +563,132 @@ async def test_proxy_stream_falls_through_when_mode_is_off(monkeypatch):
     assert (kind, status) == ("error", 502)
 
 
+# ── MMS endpoint optional under stub mode ────────────────────────────────────
+
+# A published service registered without an upstream endpoint, which is the
+# normal shape for a load-test rig: no vLLM is ever contacted, so no URL gets
+# registered. This used to 503 out of _prepare_request, ahead of both spans, so
+# the request was unbilled as well as failed.
+_SERVICE_INFO_NO_ENDPOINT = {**_SERVICE_INFO, "endpoint": ""}
+
+
+@pytest.fixture
+def mms_without_endpoint(monkeypatch):
+    """Point the shared resolver at a published service that has no endpoint."""
+    from services import llm_service
+
+    async def _resolve_service(service_id):
+        return dict(_SERVICE_INFO_NO_ENDPOINT)
+
+    monkeypatch.setattr(llm_service._resolver, "resolve_service", _resolve_service)
+
+
+@pytest.mark.asyncio
+async def test_missing_mms_endpoint_serves_the_stub_with_all_spans(
+    stub_mode, mms_without_endpoint, span_exporter
+):
+    """A service with no endpoint must serve the stub, spans and billing intact.
+
+    The endpoint's only consumer is the POST the stub replaces, so requiring it
+    failed the request before the model and ai-inference spans opened, taking
+    PPU billing down with it.
+    """
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
+    with traced_span("request", root=True, classify_status=True):
+        status, body = await OpenAIProxyService().proxy_traced(
+            path="/v1/chat/completions", payload=_prompt_of_length(10)
+        )
+
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
+
+    assert status == 200
+    assert body["object"] == "chat.completion"
+    assert {"request", "model", "ai-inference"} <= set(spans)
+    assert spans["ai-inference"]["input_tokens"] > 0
+    assert spans["model"]["model_name"] == "gemma-3-27b"
+
+
+@pytest.mark.asyncio
+async def test_missing_mms_endpoint_also_streams(stub_mode, mms_without_endpoint, span_exporter):
+    """Same for stream: true, which shares _prepare_request with the buffered path."""
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
+    with traced_span("request", root=True, classify_status=True):
+        kind, status, result = await OpenAIProxyService().proxy_traced_stream(
+            path="/v1/chat/completions",
+            payload={**_prompt_of_length(10), "stream": True},
+        )
+        lines = await _drain(result)
+
+    spans = {s.name for s in span_exporter.get_finished_spans()}
+
+    assert (kind, status) == ("stream", 200)
+    assert lines[-2] == "data: [DONE]\n"
+    assert {"request", "model", "ai-inference"} <= spans
+
+
+@pytest.mark.asyncio
+async def test_missing_mms_endpoint_still_503s_with_stub_mode_off(
+    monkeypatch, mms_without_endpoint
+):
+    """Real traffic must still fail loudly: there is nothing to forward to."""
+    from services.llm_service import OpenAIProxyService
+
+    monkeypatch.setattr(settings, "TRITON_STUB_MODE", False)
+
+    status, body = await OpenAIProxyService().proxy_traced(
+        path="/v1/chat/completions", payload=_prompt_of_length(10)
+    )
+
+    assert status == 503
+    assert body == {"detail": "LLM service unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_placeholder_upstream_is_never_called(
+    stub_mode, mms_without_endpoint, monkeypatch
+):
+    """The placeholder is a tripwire, not a destination.
+
+    It uses the RFC 2606 .invalid TLD so a guard that failed to short-circuit
+    dies on DNS rather than quietly reaching a real host. Nothing should attempt
+    the POST at all.
+    """
+    from services.llm_service import OpenAIProxyService
+
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the placeholder upstream")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
+
+    status, _ = await OpenAIProxyService().proxy_traced(
+        path="/v1/chat/completions", payload=_prompt_of_length(10)
+    )
+
+    assert status == 200
+
+
+@pytest.mark.asyncio
+async def test_unpublished_service_still_404s_under_stub_mode(stub_mode, monkeypatch):
+    """Stub mode relaxes the endpoint requirement only, not publication state."""
+    from services import llm_service
+    from services.llm_service import OpenAIProxyService
+
+    async def _resolve_service(service_id):
+        return {**_SERVICE_INFO, "is_published": False}
+
+    monkeypatch.setattr(llm_service._resolver, "resolve_service", _resolve_service)
+
+    status, _ = await OpenAIProxyService().proxy_traced(
+        path="/v1/chat/completions", payload=_prompt_of_length(10)
+    )
+
+    assert status == 404
+
+
 # ── billed-token override and tenant propagation ─────────────────────────────
 
 @pytest.mark.asyncio

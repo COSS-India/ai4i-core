@@ -29,6 +29,12 @@ _resolver = InferenceServerResolver()
 _UPSTREAM_FAILED_LOG = "LLM upstream request failed (path=%s): %s"
 
 
+# Stand-in upstream for stub mode when MMS has no endpoint registered for the
+# service. Uses the RFC 2606 reserved .invalid TLD, which is guaranteed never to
+# resolve: if a stub guard ever failed to short-circuit, the request dies loudly
+# on DNS instead of quietly reaching something real.
+_STUB_UPSTREAM_PLACEHOLDER = "http://stub.invalid"
+
 # Fixed input/output token count billed per stubbed LLM request. Deliberately a
 # constant rather than a setting: it is a property of the load-test rig, not
 # something an operator should be able to change per environment, and every
@@ -113,7 +119,7 @@ class OpenAIProxyService:
         Raises:
             LookupError: service not found in MMS (→ 404)
             ConnectionError: MMS unreachable (→ 503)
-            ValueError: endpoint missing in MMS response (→ 503)
+            ValueError: endpoint missing in MMS response (→ 503, real mode only)
         """
         service_info = await _resolver.resolve_service(service_id)
 
@@ -124,9 +130,20 @@ class OpenAIProxyService:
 
         base = service_info.get("endpoint", "").strip()
         if not base:
-            raise ValueError(
-                f"No endpoint configured in MMS for service '{service_id}'"
+            # The endpoint's only consumer is the POST that the stub replaces,
+            # so under stub mode a service registered without one is fine and
+            # must not 503. Requiring it would force a load test to register a
+            # real vLLM URL for a model that is never contacted, and a blank
+            # field would fail before the spans open — no model span, no
+            # ai-inference span, no PPU billing, just a 503.
+            if not settings.TRITON_STUB_MODE:
+                raise ValueError(
+                    f"No endpoint configured in MMS for service '{service_id}'"
+                )
+            logger.info(
+                "Stub mode: service %s has no MMS endpoint, using placeholder", service_id
             )
+            base = _STUB_UPSTREAM_PLACEHOLDER
         return f"{base.rstrip('/')}{path}", service_info
 
     async def forward(self, upstream_url: str, payload: Any) -> Tuple[int, Any]:
