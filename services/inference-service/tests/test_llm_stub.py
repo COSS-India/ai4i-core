@@ -86,6 +86,13 @@ def _events(lines: list) -> list[dict]:
     return out
 
 
+def _ai_inference_tokens(exporter) -> tuple:
+    """(input_tokens, output_tokens) off the ai-inference span the PPU bills on."""
+    for span in exporter.get_finished_spans():
+        if span.name == "ai-inference":
+            attrs = dict(span.attributes or {})
+            return attrs.get("input_tokens"), attrs.get("output_tokens")
+    raise AssertionError("no ai-inference span was emitted")
 
 
 def test_returns_none_when_mode_is_off(monkeypatch):
@@ -147,74 +154,78 @@ def test_handles_missing_or_nonstring_messages(stub_mode):
 
 
 @pytest.mark.asyncio
-async def test_proxy_short_circuits_before_mms_resolution(stub_mode, monkeypatch):
-    """The guard sits in proxy(), above MMS resolution and the tier gate.
+async def test_proxy_traced_stubs_the_upstream_but_still_resolves(stub_mode, monkeypatch):
+    """The stub replaces the upstream POST only, not the whole method.
 
-    This is the release-2.2 seam position, restored to cut per-request work.
-    MMS must not be consulted at all for a stubbed request.
+    MMS resolution is expected to run: the stub sits at the innermost seam so
+    the model and ai-inference spans above it are still opened. Short-circuiting
+    higher up skips both spans and silently drops PPU billing.
     """
     from services.llm_service import OpenAIProxyService
 
     service = OpenAIProxyService()
+    resolved = {}
 
-    async def _no_resolve(*args, **kwargs):
-        raise AssertionError("stub mode must not resolve against MMS")
+    async def _resolve(service_id, path):
+        resolved["service_id"] = service_id
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
 
     async def _no_upstream(*args, **kwargs):
         raise AssertionError("stub mode must not reach the LLM upstream")
 
-    monkeypatch.setattr(service, "resolve_upstream_url", _no_resolve)
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
     monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
 
-    status, body = await service.proxy(
+    status, body = await service.proxy_traced(
         path="/v1/chat/completions", payload=_prompt_of_length(10)
     )
 
+    assert resolved["service_id"] == "stub"
     assert status == 200
     assert body["object"] == "chat.completion"
 
 
 @pytest.mark.asyncio
-async def test_stubbed_chat_emits_no_model_or_ai_inference_span(
-    stub_mode, monkeypatch, span_exporter
-):
-    """Documents the cost of the release-2.2 seam position: stubbed LLM traffic
-    is NOT billed.
+async def test_stubbed_chat_emits_model_and_ai_inference_spans(stub_mode, monkeypatch, span_exporter):
+    """Regression guard: the PPU Kafka consumer bills off the ai-inference span.
 
-    The PPU Kafka consumer bills off the ai-inference span. proxy() returns
-    above both spans, so neither is emitted and no billing message is ever
-    produced. A load test run in this configuration measures orchestrator and
-    transport overhead only, and must not be read as exercising PPU.
-
-    This asserts the absence deliberately. If someone moves the guard back down
-    into forward() to recover billing, this test fails and tells them the
-    behaviour changed rather than letting it drift silently.
+    A stub that short-circuits above these spans still returns 200, so the only
+    symptom is silently missing spans and zero billing. That is what this pins.
     """
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
     service = OpenAIProxyService()
 
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
     async def _no_upstream(*args, **kwargs):
         raise AssertionError("stub mode must not reach the LLM upstream")
 
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
     monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
 
     with traced_span("request", root=True, classify_status=True):
-        await service.proxy(
+        await service.proxy_traced(
             path="/v1/chat/completions", payload=_prompt_of_length(10)
         )
 
-    spans = {s.name for s in span_exporter.get_finished_spans()}
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
 
-    assert "request" in spans
-    assert "model" not in spans
-    assert "ai-inference" not in spans
+    assert "model" in spans
+    assert "ai-inference" in spans
+    # Billing reads these off the ai-inference span; zero here means no revenue.
+    assert spans["ai-inference"]["input_tokens"] > 0
+    assert spans["ai-inference"]["output_tokens"] > 0
+    assert spans["ai-inference"]["service_id"] == "stub"
+    # The model label must be the upstream model, not the fixture's literal.
+    assert spans["model"]["model_name"] == "gemma-3-27b"
 
 
 @pytest.mark.asyncio
-async def test_proxy_falls_through_to_proxy_traced_when_mode_is_off(monkeypatch):
-    """With the flag off proxy() must delegate, so the real path is unchanged."""
+async def test_proxy_traced_falls_through_when_mode_is_off(monkeypatch):
+    """With the flag off the real resolution path must still run."""
     from services.llm_service import OpenAIProxyService
 
     monkeypatch.setattr(settings, "TRITON_STUB_MODE", False)
@@ -227,7 +238,7 @@ async def test_proxy_falls_through_to_proxy_traced_when_mode_is_off(monkeypatch)
 
     monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
 
-    status, _ = await service.proxy(
+    status, _ = await service.proxy_traced(
         path="/v1/chat/completions", payload=_prompt_of_length(10)
     )
 
@@ -369,23 +380,25 @@ async def test_stream_stub_paces_events_when_delay_is_set(stub_mode, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_proxy_traced_stream_short_circuits_before_mms_resolution(stub_mode, monkeypatch):
-    """The streaming guard sits at the top of proxy_traced_stream.
+async def test_proxy_traced_stream_stubs_the_upstream_but_still_resolves(stub_mode, monkeypatch):
+    """The stub replaces the upstream connection only, not the whole method.
 
-    Same depth as the buffered guard in proxy(), so neither transport pays for
-    resolution the other skips. MMS must not be consulted.
+    MMS resolution, the tier gate and the include_usage injection are all
+    expected to run, matching what the buffered seam does in forward().
     """
     from services.llm_service import OpenAIProxyService
 
     service = OpenAIProxyService()
+    resolved = {}
 
-    async def _no_resolve(*args, **kwargs):
-        raise AssertionError("stub mode must not resolve against MMS")
+    async def _resolve(service_id, path):
+        resolved["service_id"] = service_id
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
 
     async def _no_upstream(*args, **kwargs):
         raise AssertionError("stub mode must not reach the LLM upstream")
 
-    monkeypatch.setattr(service, "resolve_upstream_url", _no_resolve)
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
     monkeypatch.setattr(httpx.AsyncClient, "send", _no_upstream)
 
     kind, status, result = await service.proxy_traced_stream(
@@ -394,28 +407,33 @@ async def test_proxy_traced_stream_short_circuits_before_mms_resolution(stub_mod
     )
     lines = await _drain(result)
 
+    assert resolved["service_id"] == "stub"
     assert (kind, status) == ("stream", 200)
     assert lines[-2] == "data: [DONE]\n"
 
 
 @pytest.mark.asyncio
-async def test_stubbed_stream_emits_no_model_or_ai_inference_span(
+async def test_stubbed_stream_emits_model_and_ai_inference_spans(
     stub_mode, monkeypatch, span_exporter
 ):
-    """Streaming counterpart to the buffered absence guard: also NOT billed.
+    """Regression guard: the PPU Kafka consumer bills off the ai-inference span.
 
-    proxy_traced_stream returns before it builds the generator that holds both
-    spans, so neither is emitted and _record_stream_usage never runs. Asserted
-    deliberately so a later move back down surfaces as a test change.
+    The streaming spans open lazily inside the returned generator, so a stub
+    that short-circuited proxy_traced_stream instead of proxy_stream would still
+    return 200 while emitting neither span and billing nothing.
     """
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
     service = OpenAIProxyService()
 
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
     async def _no_upstream(*args, **kwargs):
         raise AssertionError("stub mode must not reach the LLM upstream")
 
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
     monkeypatch.setattr(httpx.AsyncClient, "send", _no_upstream)
 
     with traced_span("request", root=True, classify_status=True):
@@ -425,44 +443,73 @@ async def test_stubbed_stream_emits_no_model_or_ai_inference_span(
         )
         await _drain(result)
 
-    spans = {s.name for s in span_exporter.get_finished_spans()}
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
 
-    assert "request" in spans
-    assert "model" not in spans
-    assert "ai-inference" not in spans
+    assert "model" in spans
+    assert "ai-inference" in spans
+    # Billing reads these off the ai-inference span; zero here means no revenue.
+    assert spans["ai-inference"]["input_tokens"] > 0
+    assert spans["ai-inference"]["output_tokens"] > 0
+    assert spans["ai-inference"]["service_id"] == "stub"
+    # Resolved from adapter_config, never read back from the stream body.
+    assert spans["model"]["model_name"] == "gemma-3-27b"
 
 
 @pytest.mark.asyncio
-async def test_stub_fixtures_agree_on_tokens_across_transports(stub_mode):
-    """Streaming and buffered stubs must still describe the same reply.
+async def test_stubbed_stream_bills_the_same_tokens_as_buffered(
+    stub_mode, monkeypatch, span_exporter
+):
+    """Streaming and buffered must bill identically for the same prompt.
 
-    Neither is billed from this seam position, but they remain two views of one
-    fixture. Keeping them in step means the numbers stay comparable across a
-    stream:true and stream:false run, and that billing lines up immediately if
-    the guard is ever moved back down.
+    Both are views of one fixture, so any divergence means a load test would
+    report different revenue depending on whether the client set stream: true.
     """
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
+    service = OpenAIProxyService()
+
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    async def _no_upstream(*args, **kwargs):
+        raise AssertionError("stub mode must not reach the LLM upstream")
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "post", _no_upstream)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _no_upstream)
+
     payload = _prompt_of_length(500)
 
-    buffered = get_llm_stub_response(payload)["usage"]
-    events = _events(await _drain(get_llm_stream_stub(payload)))
-    streamed = events[-1]["usage"]
+    with traced_span("request", root=True, classify_status=True):
+        await service.proxy_traced(path="/v1/chat/completions", payload=dict(payload))
+    buffered = _ai_inference_tokens(span_exporter)
+
+    span_exporter.clear()
+
+    with traced_span("request", root=True, classify_status=True):
+        _, _, result = await service.proxy_traced_stream(
+            path="/v1/chat/completions", payload={**payload, "stream": True},
+        )
+        await _drain(result)
+    streamed = _ai_inference_tokens(span_exporter)
 
     assert streamed == buffered
+    assert all(count > 0 for count in streamed)
 
 
 @pytest.mark.asyncio
-async def test_stubbed_stream_leaves_the_metering_context_vars_unset(
+async def test_stubbed_stream_publishes_usage_to_the_metering_context_vars(
     stub_mode, monkeypatch
 ):
-    """No usage reaches ObservabilityMiddleware, so token metrics stay at zero.
+    """ObservabilityMiddleware bills a stream off these, via the route's bridge.
 
-    _record_stream_usage lives inside the generator proxy_traced_stream never
-    builds for a stubbed request, so the context vars the route's
-    _bridge_llm_usage_to_request copies onto request.state are never written.
-    The counterpart of not emitting the ai-inference span.
+    _bridge_llm_usage_to_request copies them onto request.state after the body
+    drains, so a stream that left them unset would emit zero token metrics.
     """
     from ai4i_core.context import (
         get_llm_usage_input_tokens,
+        get_llm_usage_model_name,
         get_llm_usage_output_tokens,
         set_llm_usage_input_tokens,
         set_llm_usage_model_name,
@@ -476,14 +523,20 @@ async def test_stubbed_stream_leaves_the_metering_context_vars_unset(
 
     service = OpenAIProxyService()
 
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+
     _, _, result = await service.proxy_traced_stream(
         path="/v1/chat/completions",
         payload={**_prompt_of_length(10), "stream": True},
     )
     await _drain(result)
 
-    assert get_llm_usage_input_tokens() is None
-    assert get_llm_usage_output_tokens() is None
+    assert get_llm_usage_input_tokens() > 0
+    assert get_llm_usage_output_tokens() > 0
+    assert get_llm_usage_model_name() == "gemma-3-27b"
 
 
 @pytest.mark.asyncio

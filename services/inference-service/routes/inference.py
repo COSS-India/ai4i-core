@@ -482,17 +482,13 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         req_attrs["method"] = request.method
         req_attrs.update(get_context_attributes())
 
-        # proxy(), not proxy_traced(): the load-test stub guard lives in the
-        # former and short-circuits ahead of MMS resolution and both spans.
-        # With stub mode off this is a straight pass-through to proxy_traced().
-        status_code, body = await OpenAIProxyService().proxy(
+        status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
         # Same values llm_service.py already read from the vLLM `usage` block
         # onto the ai-inference span (via ai4i_core.context) — bridged here so
         # ObservabilityMiddleware reads one shared count instead of re-parsing
-        # this response body itself. A stubbed request never reaches
-        # proxy_traced, so these stay unset and the request bills zero.
+        # this response body itself.
         _bridge_llm_usage_to_request(request)
 
         if status_code >= 400:

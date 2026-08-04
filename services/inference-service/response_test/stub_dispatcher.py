@@ -7,12 +7,9 @@ gate lives here rather than at the two call sites: one switch, no duplicated
 condition, and the call sites read as a plain "stub or nothing" lookup.
 
 When it is on, BaseTaskService._call_triton_inference,
-OpenAIProxyService.proxy, OpenAIProxyService.proxy_traced_stream and
+OpenAIProxyService.forward, OpenAIProxyService.proxy_stream and
 OpenAIProxyService.proxy_multipart return a canned response picked by payload
 size instead of calling Triton or the LLM upstream.
-
-The two chat guards short-circuit ahead of MMS resolution and both billing
-spans, so stubbed LLM traffic is not billed — see response_test/README.md.
 
 Size thresholds (character length of the primary input data):
     SMALL  : < 200 chars

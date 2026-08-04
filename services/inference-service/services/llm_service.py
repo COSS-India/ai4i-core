@@ -98,6 +98,21 @@ class OpenAIProxyService:
         Body is parsed as JSON when possible, otherwise returned as
         ``{"raw": <text>}``.
         """
+        # Load-test stub mode: short-circuit the upstream POST only. Returns
+        # None unless TRITON_STUB_MODE is on, so this is inert in normal
+        # operation.
+        #
+        # This is the innermost seam, mirroring
+        # BaseTaskService._call_triton_inference. It must stay here rather than
+        # at the top of proxy_traced: the model and ai-inference spans are
+        # opened above this call, and the PPU Kafka consumer bills off the
+        # ai-inference span. Short-circuiting any higher emits neither span and
+        # silently drops billing for every stubbed LLM request.
+        from response_test.stub_dispatcher import get_llm_stub_response
+        stub = get_llm_stub_response(payload)
+        if stub is not None:
+            return 200, stub
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 upstream_url,
@@ -184,34 +199,6 @@ class OpenAIProxyService:
             payload = {**payload, "model": model_name}
 
         return url, service_id, model_name, payload
-
-    async def proxy(
-        self,
-        path: str,
-        payload: Any,
-        request: Optional[Any] = None,
-    ) -> Tuple[int, Any]:
-        """
-        Route a chat request: return the load-test stub when active, otherwise
-        delegate to proxy_traced() for MMS resolution + tier gate + forwarding.
-
-        The stub short-circuits before any MMS/upstream call, restoring the
-        seam position the release-2.2 stub branch used.
-
-        Deliberate consequence: a stubbed request produces no model span and no
-        ai-inference span, and the PPU Kafka consumer bills off the
-        ai-inference span, so stubbed LLM traffic is NOT billed and carries no
-        Prometheus model label. That is the trade this position makes in
-        exchange for skipping resolution and span work. A load test run this
-        way measures orchestrator and transport overhead only, and cannot be
-        read as exercising PPU. Move the guard back down into forward() to get
-        billing back.
-        """
-        from response_test.stub_dispatcher import get_llm_stub_response
-        stub = get_llm_stub_response(payload)
-        if stub is not None:
-            return 200, stub
-        return await self.proxy_traced(path, payload, request)
 
     async def proxy_traced(
         self,
@@ -372,6 +359,26 @@ class OpenAIProxyService:
         (vLLM/gemma server), so this passes bytes through rather than
         re-parsing and re-serializing each chunk.
         """
+        # Load-test stub mode: short-circuit the upstream connection only.
+        # Returns None unless TRITON_STUB_MODE is on, so this is inert in normal
+        # operation.
+        #
+        # Streaming counterpart to the seam in forward(), and the same
+        # substitution point the streaming unit tests patch. It must stay here
+        # rather than in proxy_traced_stream: that method opens the model and
+        # ai-inference spans inside the generator it returns, and the PPU Kafka
+        # consumer bills off the ai-inference span. Returning early from there
+        # emits neither span and silently drops billing for every stubbed
+        # stream — the same failure the buffered seam was moved down to fix.
+        #
+        # Safe despite sitting above those spans, unlike forward() which sits
+        # inside them: what goes back is a lazy generator, and proxy_traced_stream
+        # consumes it inside both spans, calling _record_stream_usage per line.
+        from response_test.stub_dispatcher import get_llm_stream_stub
+        stub = get_llm_stream_stub(payload)
+        if stub is not None:
+            return "stream", 200, stub
+
         logger.info("LLM proxy (stream) -> %s", path)
         try:
             client, response = await self.open_stream(path, payload)
@@ -405,19 +412,6 @@ class OpenAIProxyService:
         consume it to completion, not just discard it, or the ai-inference
         span used for PPU billing never gets logged.
         """
-        # Load-test stub mode: short-circuit before MMS resolution, the tier
-        # gate and both spans, matching where proxy() puts the buffered guard.
-        # Streaming has no release-2.2 precedent (it did not exist there), so
-        # this is the symmetric equivalent: the two transports short-circuit at
-        # equal depth rather than one skipping work the other pays for.
-        #
-        # Same deliberate consequence as proxy(): no model span, no
-        # ai-inference span, so stubbed streams are NOT billed. See proxy().
-        from response_test.stub_dispatcher import get_llm_stream_stub
-        stub = get_llm_stream_stub(payload)
-        if stub is not None:
-            return "stream", 200, stub
-
         try:
             url, service_id, model_name, payload = await self._prepare_request(
                 path=path, payload=payload, request=request,
