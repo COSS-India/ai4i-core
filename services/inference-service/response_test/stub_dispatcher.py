@@ -6,8 +6,9 @@ None and every caller falls through to the real upstream, which is why the
 gate lives here rather than at the two call sites: one switch, no duplicated
 condition, and the call sites read as a plain "stub or nothing" lookup.
 
-When it is on, BaseTaskService._call_triton_inference and
-OpenAIProxyService.proxy_traced return a canned response picked by payload
+When it is on, BaseTaskService._call_triton_inference,
+OpenAIProxyService.forward, OpenAIProxyService.proxy_stream and
+OpenAIProxyService.proxy_multipart return a canned response picked by payload
 size instead of calling Triton or the LLM upstream.
 
 Size thresholds (character length of the primary input data):
@@ -16,7 +17,9 @@ Size thresholds (character length of the primary input data):
     LARGE  : >= 1000 chars
 """
 
+import asyncio
 import copy
+import json
 
 from config import settings
 
@@ -75,6 +78,7 @@ from .responses.llm_responses import (
     SMALL_LLM_RESPONSE,
     MEDIUM_LLM_RESPONSE,
     LARGE_LLM_RESPONSE,
+    chat_completion_chunks,
 )
 from .responses.audio_transcription_responses import (
     SMALL_AUDIO_BYTES,
@@ -247,6 +251,77 @@ def get_llm_stub_response(payload):
     if isinstance(payload, dict) and payload.get("model"):
         body["model"] = payload["model"]
     return body
+
+
+# SSE framing for the streaming chat path. The real proxy_stream yields one
+# string per line read off the wire, blank separators included, so the stub
+# yields the same granularity rather than one blob per event.
+_SSE_EVENT_PREFIX = "data: "
+_SSE_BLANK_LINE = "\n"
+_SSE_DONE = f"{_SSE_EVENT_PREFIX}[DONE]{_SSE_BLANK_LINE}"
+
+
+def _sse_lines(chunks):
+    """Frame chunk dicts as OpenAI-spec SSE lines, terminated by [DONE]."""
+    lines = []
+    for chunk in chunks:
+        # Compact separators: vLLM does not pretty-print, and the padding would
+        # otherwise inflate every measured response body.
+        body = json.dumps(chunk, separators=(",", ":"))
+        lines.append(f"{_SSE_EVENT_PREFIX}{body}{_SSE_BLANK_LINE}")
+        lines.append(_SSE_BLANK_LINE)
+    lines.append(_SSE_DONE)
+    lines.append(_SSE_BLANK_LINE)
+    return tuple(lines)
+
+
+# Framed once at import, then replayed per request. Serialising ~200 chunks per
+# request would charge inference-service for work a real vLLM server does on
+# the model host, inflating exactly the overhead this load test exists to
+# measure. The json.loads side is deliberately left in place: that one really
+# does run in this service, inside _record_stream_usage, on every chunk.
+#
+# Consequence: the chunk bodies carry the fixture's literal "stub" model rather
+# than the resolved upstream name. Unlike the buffered path — where
+# proxy_traced overwrites the model span from body["model"], which is why
+# get_llm_stub_response has to echo it — proxy_traced_stream sets the span and
+# the Prometheus label from the adapter_config name it resolved in
+# _prepare_request and never reads the stream body, so nothing observable
+# depends on this field.
+_LLM_STREAM_STUBS = tuple(
+    _sse_lines(chat_completion_chunks(completion)) for completion in _LLM_STUBS
+)
+
+
+async def _replay(lines):
+    """Yield pre-framed SSE lines, pacing events by LLM_STUB_STREAM_DELAY_MS."""
+    delay_s = settings.LLM_STUB_STREAM_DELAY_MS / 1000
+    for line in lines:
+        # Pace per event, not per line, so the blank separator does not double
+        # the intended gap. Zero delay skips the sleep entirely rather than
+        # awaiting sleep(0), which would still yield to the event loop once per
+        # chunk and cap throughput for no reason.
+        if delay_s and line.startswith(_SSE_EVENT_PREFIX):
+            await asyncio.sleep(delay_s)
+        yield line
+
+
+def get_llm_stream_stub(payload):
+    """
+    Return an async generator of SSE lines standing in for the streaming LLM
+    upstream, or None when stub mode is off.
+
+    Streaming counterpart to get_llm_stub_response, sized off the same prompt
+    and built from the same fixture, so a stubbed stream bills exactly what the
+    stubbed buffered call would for the same request.
+
+    Sync on purpose: the caller needs a None check before committing to a
+    stream, and an async generator cannot return a value to signal "not
+    stubbed".
+    """
+    if not settings.TRITON_STUB_MODE:
+        return None
+    return _replay(_LLM_STREAM_STUBS[_classify(len(_extract_chat_prompt(payload)))])
 
 
 # Size-bucketed OpenAI speech-to-text stubs for the /audio/* multipart routes.
