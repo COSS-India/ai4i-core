@@ -46,30 +46,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
 
 
-def _is_redirect_allowed(uri: str) -> bool:
-    """Validate redirect_uri against the configured allowlist.
-
-    Prevents open-redirect / token-leakage attacks. Both exact match and
-    origin (scheme + host) match are accepted, so a single allowlist entry
-    can cover multiple paths on the same SPA origin.
-    """
-    return _get_allowed_redirect(uri) is not None
-
-
 def _get_allowed_redirect(uri: str) -> str | None:
     """Return a safe redirect URI if permitted by the configured allowlist, else None.
 
-    For exact allowlist matches the allowlist entry is returned verbatim.
-    For origin-only matches the scheme and host are taken from the allowlist
-    entry (server config) and the path from uri is appended, so the URL
-    authority is never derived from user input — only path-level control
-    remains, which cannot cause a cross-origin open redirect.
+    Always returns a value taken verbatim from server config
+    (``settings.oauth_allowed_redirect_uris``). Exact URI matches prefer that
+    entry; otherwise the first allowlist entry with the same origin
+    (scheme + host) is used. User input is never interpolated into the
+    returned URL, so the redirect target cannot be an open redirect.
     """
     if not uri:
         return None
 
     parsed = urlparse(uri)
     if parsed.scheme not in ("https", "http"):
+        return None
+    # Reject credentials-in-URL and non-empty fragments; only plain http(s)
+    # origins are compared against the allowlist.
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
         return None
 
     allowed = settings.oauth_allowed_redirect_uris
@@ -79,18 +73,20 @@ def _get_allowed_redirect(uri: str) -> str | None:
 
     allowed_list = [u.strip() for u in allowed.split(",") if u.strip()]
     uri_origin = f"{parsed.scheme}://{parsed.netloc}"
+    origin_fallback: str | None = None
     for allowed_uri in allowed_list:
         if uri == allowed_uri:
             return allowed_uri  # exact match — value from server config
         allowed_parsed = urlparse(allowed_uri)
-        if uri_origin == f"{allowed_parsed.scheme}://{allowed_parsed.netloc}":
-            # Origin match: pin scheme+host to the allowlist entry so the
-            # authority is always from server config; preserve the original
-            # path so the SPA's callback route is not lost.
-            return f"{allowed_parsed.scheme}://{allowed_parsed.netloc}{parsed.path}"
+        if (
+            origin_fallback is None
+            and uri_origin == f"{allowed_parsed.scheme}://{allowed_parsed.netloc}"
+        ):
+            # Origin match: accept the request, but redirect to the allowlist
+            # entry itself (fully server-controlled), never a user-built URL.
+            origin_fallback = allowed_uri
 
-    return None
-
+    return origin_fallback
 
 @router.get("/providers")
 async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
@@ -134,17 +130,22 @@ async def authorize(
     if not config.get("client_id") or not config.get("client_secret"):
         raise EntityNotFoundError(OAUTH_PROVIDER_UNKNOWN)
 
-    # Validate redirect_uri BEFORE persisting in state — never store an
-    # untrusted target that we'd later redirect back to.
-    if client_redirect_uri and not _is_redirect_allowed(client_redirect_uri):
-        logger.warning(LOG_WARN_OAUTH_REDIRECT_INVALID, client_redirect_uri)
-        raise AuthenticationRequiredError(OAUTH_REDIRECT_URI_INVALID)
+    # Resolve redirect_uri against the allowlist BEFORE persisting in state.
+    # Store the allowlist entry (server config), never the raw client value,
+    # so the callback redirect target cannot be influenced by user input.
+    safe_client_redirect = ""
+    if client_redirect_uri:
+        resolved = _get_allowed_redirect(client_redirect_uri)
+        if not resolved:
+            logger.warning(LOG_WARN_OAUTH_REDIRECT_INVALID, client_redirect_uri)
+            raise AuthenticationRequiredError(OAUTH_REDIRECT_URI_INVALID)
+        safe_client_redirect = resolved
 
     state = secrets.token_urlsafe(32)
     await redis_client.setex(
         f"auth:oauth_state:{state}",
         settings.oauth_state_ttl_seconds,
-        json.dumps({"provider": config["provider"], "redirect_uri": client_redirect_uri or ""}),
+        json.dumps({"provider": config["provider"], "redirect_uri": safe_client_redirect}),
     )
 
     if not settings.oauth_redirect_base_url:
@@ -222,34 +223,11 @@ async def callback(
 
     client_redirect = state_data.get("redirect_uri")
     if client_redirect:
-        # Build the redirect URL entirely from the server-config allowlist so
-        # that static analysis never sees a user-supplied value in the sink.
-        # We use client_redirect only in comparisons (not as an assigned value),
-        # so the result is always drawn from settings.oauth_allowed_redirect_uris.
-        _allowed_raw = settings.oauth_allowed_redirect_uris or ""
-        _allowed_list = [u.strip() for u in _allowed_raw.split(",") if u.strip()]
-
-        # Exact-match: find the index (an integer from enumerate — untainted),
-        # then fetch the entry by index so safe_redirect comes from the list.
-        _match_idx = next(
-            (i for i, u in enumerate(_allowed_list) if client_redirect == u),
-            None,
-        )
-        if _match_idx is not None:
-            safe_redirect = _allowed_list[_match_idx]  # value from server config
-        else:
-            # Origin match: authority comes from the allowlist entry, path from
-            # the stored redirect_uri.  Open Redirect requires controlling the
-            # authority — path-only user input cannot redirect to a new origin.
-            _parsed_cr = urlparse(client_redirect)
-            _cr_origin = f"{_parsed_cr.scheme}://{_parsed_cr.netloc}"
-            safe_redirect = None
-            for _candidate in _allowed_list:
-                _cp = urlparse(_candidate)
-                if _cr_origin == f"{_cp.scheme}://{_cp.netloc}":
-                    safe_redirect = f"{_cp.scheme}://{_cp.netloc}{_parsed_cr.path}"
-                    break
-
+        # Re-check against the allowlist at callback time. The returned value
+        # is always a verbatim entry from server config — never built from
+        # the stored client redirect_uri — so RedirectResponse cannot become
+        # an open redirect even if Redis state were tampered with.
+        safe_redirect = _get_allowed_redirect(client_redirect)
         if safe_redirect is None:
             # Allowlist may have changed between authorize and callback —
             # reject the redirect and fall back to JSON. The user keeps
