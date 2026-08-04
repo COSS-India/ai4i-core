@@ -113,6 +113,35 @@ class TestUpdateServiceEndpointsBulk:
         svc._services.apply_updates.assert_not_called()
         svc._services.commit.assert_not_called()
 
+    def test_bulk_request_accepts_max_items(self) -> None:
+        from app.schemas.model_management.service import (
+            ServiceBulkEndpointUpdateRequest,
+        )
+
+        items = [
+            {"serviceId": f"svc-{i}", "endpoint": f"http://host-{i}:8000"}
+            for i in range(50)
+        ]
+
+        request = ServiceBulkEndpointUpdateRequest(services=items)
+
+        assert len(request.services) == 50
+
+    def test_bulk_request_rejects_over_max_items(self) -> None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        from app.schemas.model_management.service import (
+            ServiceBulkEndpointUpdateRequest,
+        )
+
+        items = [
+            {"serviceId": f"svc-{i}", "endpoint": f"http://host-{i}:8000"}
+            for i in range(51)
+        ]
+
+        with pytest.raises(PydanticValidationError):
+            ServiceBulkEndpointUpdateRequest(services=items)
+
     @pytest.mark.asyncio
     async def test_single_object_update_still_requires_serviceId(self) -> None:
         """Guards the schema disambiguation: a bulk item without a

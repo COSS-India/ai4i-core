@@ -135,7 +135,7 @@ class CoreSettings(BaseSettings):
     # Cap on PATCH /services bulk endpoint-update array size. Each item runs
     # a live probe with endpoint_validation_timeout_seconds, so an unbounded
     # array can outlast a proxy timeout even with concurrent probing.
-    bulk_endpoint_update_max_items: int = 25
+    bulk_endpoint_update_max_items: int = 50
 
     # ── External services ──
     auth_service_url: str = ""
