@@ -184,11 +184,11 @@ fast, clean-looking run that measures nothing.
 
 Both by design, since the stub replaces the model call only:
 
-- **MMS resolution.** Every Triton-backed request does a real GET to
-  platform-core. TTL-cached, and it is what `resolve_ms`, `mms_http_ms` and
-  `cache_hit` measure. The LLM paths skip it entirely.
+- **MMS resolution.** Every request does a real GET to platform-core, TTL-cached
+  for `CACHE_TTL_SECONDS` (300s) per process. Both the Triton and the LLM paths
+  resolve: the guards sit below resolution, not above it.
 - **Audio and image URI downloads,** when a request passes a URI instead of
-  base64. Measured by `audio_fetch_ms`. Send base64 for zero external fetches.
+  base64. Send base64 for zero external fetches.
 
 ---
 
@@ -196,20 +196,20 @@ Both by design, since the stub replaces the model call only:
 
 ```bash
 TRITON_STUB_MODE=true      # stubs on
-PHASE_TIMING_ENABLED=true  # per-stage *_ms + TIMING log line (default)
 ```
 
 Two things worth knowing before reading the numbers:
 
 - **Discard warm-up.** The fixtures import lazily on first use, so the first
-  request after start is roughly 200 ms slower and that cost lands inside
-  `triton_ms`. Every later request is under 0.15 ms. With `WORKERS=2` you get
-  one such outlier per worker process.
-- **`KAFKA_ENABLED` is false by default.** Spans are still created and the
-  TIMING line still logs, but nothing is exported, so there is no OpenSearch
-  ingestion and no input to the PPU billing consumer. Set `KAFKA_ENABLED=true`
-  with `KAFKA_SERVER=kafka:29092` from inside a container if billing needs to
-  be exercised end to end.
+  request after start is roughly 200 ms slower. Every later request is under
+  0.15 ms. With `WORKERS=2` you get one such outlier per worker process.
+- **`KAFKA_ENABLED` is false by default.** Spans are still created but nothing
+  is exported, so there is no OpenSearch ingestion and **no input to the PPU
+  billing consumer**. Set `KAFKA_ENABLED=true` with `KAFKA_SERVER=kafka:29092`
+  from inside a container if billing needs to be exercised end to end.
+
+There is no per-stage timing built into the service. Measure from the load
+generator, or from the `total_time_ms` on the request span.
 
 ---
 
