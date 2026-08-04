@@ -17,9 +17,18 @@ import {
   NMTServiceDetailsResponse,
   LanguagePair,
 } from '../types/nmt';
-import { performTryItNMTInference, trackTryItRequest, listTryItNMTServices } from './tryItService';
+import {
+  performTryItNMTInference,
+  trackTryItRequest,
+  listTryItNMTServices,
+  selectTryItDefaultService,
+  pickLowestServiceId,
+} from './tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
 import { LANG_CODE_TO_LABEL } from '../config/constants';
+
+/** Legacy anonymous NMT demo service name (used only when no isTryItDefault is set). */
+const LEGACY_TRY_IT_NMT_SERVICE_NAME = 'indictrans-gpu-t4';
 
 /**
  * Perform NMT inference on text
@@ -195,10 +204,12 @@ function mapModelManagementServiceToNMTDetails(service: any): NMTServiceDetailsR
 async function listAnonymousNMTServices(): Promise<NMTServiceDetailsResponse[]> {
   try {
     const raw = await listTryItNMTServices();
-    const normalized = raw
-      .map(normalizeServiceToNMTDetails)
-      .filter((s) => s.name === 'indictrans-gpu-t4');
-    return dedupeByServiceId(normalized);
+    // AI4IDS-2704: prefer isTryItDefault; else legacy IndicTrans name, else lowest id
+    const selected = selectTryItDefaultService(raw, (list) =>
+      list.find((s) => s.name === LEGACY_TRY_IT_NMT_SERVICE_NAME) ??
+      pickLowestServiceId(list),
+    );
+    return dedupeByServiceId(selected.map(normalizeServiceToNMTDetails));
   } catch (error) {
     console.error('Failed to fetch try-it NMT services:', error);
     throw new Error('Failed to fetch NMT services for try-it');

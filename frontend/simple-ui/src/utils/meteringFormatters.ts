@@ -338,8 +338,24 @@ export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
 export interface ModelInsights {
   mostUsedName: string;
   mostUsedRequests: number;
-  highestFailureName: string;
-  highestFailureRate: number;
+  overallSuccessRate: number;
+  totalRequests: number;
+}
+
+/** Request-weighted overall success % from model breakdown rows. */
+function overallSuccessFromBreakdown(breakdown: ModelConsumptionRow[]): {
+  overallSuccessRate: number;
+  totalRequests: number;
+} | null {
+  const withTraffic = breakdown.filter((r) => r.requests > 0);
+  const pool = withTraffic.length ? withTraffic : breakdown;
+  const totalRequests = pool.reduce((sum, r) => sum + r.requests, 0);
+  if (!totalRequests) return null;
+  const overallSuccessRate =
+    Math.round(
+      (pool.reduce((sum, r) => sum + r.requests * r.success_pct, 0) / totalRequests) * 100,
+    ) / 100;
+  return { overallSuccessRate, totalRequests };
 }
 
 /** Model Consumption KPI row — prefers API summary, derives from breakdown when absent. */
@@ -347,32 +363,31 @@ export function deriveModelInsights(
   summary: ModelConsumptionSummary | null | undefined,
   breakdown: ModelConsumptionRow[],
 ): ModelInsights | null {
-  if (summary?.most_used && summary.highest_failure_rate) {
+  const derived = overallSuccessFromBreakdown(breakdown);
+
+  if (summary?.most_used && summary.overall_success_rate_pct != null) {
     return {
-      mostUsedName: summary.most_used.name?.trim() || summary.most_used.service_id || METERING.GRAPH.EMPTY_VALUE,
-      mostUsedRequests: summary.most_used.requests,
-      highestFailureName:
-        summary.highest_failure_rate.name?.trim() ||
-        summary.highest_failure_rate.service_id ||
+      mostUsedName:
+        summary.most_used.name?.trim() ||
+        summary.most_used.service_id ||
         METERING.GRAPH.EMPTY_VALUE,
-      highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
+      mostUsedRequests: summary.most_used.requests,
+      overallSuccessRate: summary.overall_success_rate_pct,
+      totalRequests: derived?.totalRequests ?? summary.most_used.requests,
     };
   }
-  if (!breakdown.length) return null;
+
+  if (!breakdown.length || !derived) return null;
 
   const withTraffic = breakdown.filter((r) => r.requests > 0);
   const pool = withTraffic.length ? withTraffic : breakdown;
   const mostUsed = [...pool].sort((a, b) => b.requests - a.requests)[0];
-  const highestFailure = [...pool].sort(
-    (a, b) => b.failure_rate_pct - a.failure_rate_pct,
-  )[0];
-
-  if (!mostUsed || !highestFailure) return null;
+  if (!mostUsed) return null;
 
   return {
     mostUsedName: mostUsed.name,
     mostUsedRequests: mostUsed.requests,
-    highestFailureName: highestFailure.name,
-    highestFailureRate: highestFailure.failure_rate_pct,
+    overallSuccessRate: derived.overallSuccessRate,
+    totalRequests: derived.totalRequests,
   };
 }

@@ -189,14 +189,7 @@ export const modelConsumptionSummarySchema = z.object({
     })
     .nullable()
     .optional(),
-  highest_failure_rate: z
-    .object({
-      service_id: z.string().nullable().optional(),
-      name: z.string().nullable().optional(),
-      failure_rate_pct: z.number(),
-    })
-    .nullable()
-    .optional(),
+  overall_success_rate_pct: z.number().nullable().optional(),
 });
 
 export const modelConsumptionResponseSchema = z.object({
