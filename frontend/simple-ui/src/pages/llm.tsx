@@ -39,17 +39,6 @@ const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
   label: l.label,
 }));
 
-/** Stable anonymous pick: lowest service_id so list-order churn can't flip the demo service. */
-function pickAnonymousTryItService<T extends { service_id: string }>(
-  services: T[],
-): T[] {
-  if (services.length <= 1) return services;
-  const sorted = [...services].sort((a, b) =>
-    a.service_id.localeCompare(b.service_id),
-  );
-  return sorted.slice(0, 1);
-}
-
 const LLMPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
@@ -73,13 +62,9 @@ const LLMPage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  // AI4IDS-2688: Anonymous → one deterministic service; Guest / Logged-in → full list
-  const visibleServices = useMemo(() => {
-    if (isAnonymous) {
-      return pickAnonymousTryItService(services);
-    }
-    return services;
-  }, [isAnonymous, services]);
+  // AI4IDS-2688 / AI4IDS-2704: Anonymous list is already limited to one
+  // (isTryItDefault, else lowest service_id) in listLLMServices.
+  const visibleServices = services;
 
   useEffect(() => {
     if (visibleServices.length === 0) {

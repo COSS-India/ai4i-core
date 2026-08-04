@@ -21,9 +21,32 @@ import {
 } from "../../../config/constants";
 import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
+import type { InferenceTypeItem } from "../../../services/inferenceTypesService";
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
+}
+
+/** Gate permission catalog by ENABLED_TASK_TYPES (same rules as create API key). */
+function filterPermissionsByEnabledTaskTypes(
+  permissions: Permission[],
+  taskTypeNames: string[],
+  inferenceTypes: InferenceTypeItem[],
+): Permission[] {
+  const named = [...permissions].filter((p) => p.name);
+  if (taskTypeNames.length === 0) {
+    return named.sort((a, b) => a.label.localeCompare(b.label));
+  }
+  const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+  const knownTaskTypes = new Set(
+    inferenceTypes.map((t) => t.name.trim().toLowerCase()),
+  );
+  return named
+    .filter((p) => {
+      const prefix = p.name.split(".")[0]?.toLowerCase() ?? "";
+      return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function mapKeysToAdminRows(
@@ -153,16 +176,27 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   );
 
   const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
-    if (permissions.length === 0) {
-      await loadPermissionsCatalog();
-    }
+    const catalog =
+      permissions.length === 0 ? await loadPermissionsCatalog() : permissions;
+    // Same ENABLED_TASK_TYPES gate as create / filter dropdown — only show
+    // assignable permissions (e.g. llm-only when ENABLED_TASK_TYPES=llm).
+    const allowedNames = new Set(
+      filterPermissionsByEnabledTaskTypes(catalog, taskTypeNames, inferenceTypes).map(
+        (p) => p.name,
+      ),
+    );
     setSelectedKeyForUpdate(key);
     setUpdateFormData({
       key_name: key.key_name,
-      permissions: key.permissions ?? [],
+      permissions: (key.permissions ?? []).filter((name) => allowedNames.has(name)),
     });
     setIsUpdateModalOpen(true);
   };
+
+  const permissionFilterOptions = useMemo(
+    () => filterPermissionsByEnabledTaskTypes(permissions, taskTypeNames, inferenceTypes),
+    [permissions, taskTypeNames, inferenceTypes],
+  );
 
   const handleCloseUpdateModal = () => {
     setIsUpdateModalOpen(false);
@@ -176,7 +210,11 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       showToast({ type: "error", message: "Please enter a key name" });
       return;
     }
-    if (!updateFormData.permissions?.length) {
+    const allowedNames = new Set(permissionFilterOptions.map((p) => p.name));
+    const nextPermissions = (updateFormData.permissions ?? []).filter((name) =>
+      allowedNames.has(name),
+    );
+    if (!nextPermissions.length) {
       showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
@@ -184,7 +222,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     try {
       await authService.updateApiKey(selectedKeyForUpdate.id, {
         key_name: updateFormData.key_name?.trim(),
-        permissions: updateFormData.permissions,
+        permissions: nextPermissions,
       });
       showToast({ type: "success", message: "API key has been updated successfully" });
       handleCloseUpdateModal();
@@ -269,23 +307,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
     [allApiKeys, apiKeyAccessContext, filterPermission, filterActive, keyNameSearch, permissions],
   );
-
-  const permissionFilterOptions = useMemo(() => {
-    const named = [...permissions].filter((p) => p.name);
-    if (taskTypeNames.length === 0) {
-      return named.sort((a, b) => a.label.localeCompare(b.label));
-    }
-    const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
-    const knownTaskTypes = new Set(
-      inferenceTypes.map((t) => t.name.trim().toLowerCase()),
-    );
-    return named
-      .filter((p) => {
-        const prefix = p.name.split(".")[0]?.toLowerCase() ?? "";
-        return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [permissions, taskTypeNames, inferenceTypes]);
 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;

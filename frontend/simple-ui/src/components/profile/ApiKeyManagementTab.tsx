@@ -467,7 +467,7 @@ export default function ApiKeyManagementTab({
                 <Text fontSize="sm" color="gray.600" mb={3}>
                   Select permissions for this API key
                 </Text>
-                {mgmt.permissions.length > 0 ? (
+                {mgmt.permissionFilterOptions.length > 0 ? (
                   <Box
                     borderWidth="1px"
                     borderRadius="md"
@@ -486,7 +486,7 @@ export default function ApiKeyManagementTab({
                       }
                     >
                       <SimpleGrid columns={2} spacing={3}>
-                        {mgmt.permissions.map((perm) => (
+                        {mgmt.permissionFilterOptions.map((perm) => (
                           <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
                             <Text fontSize="sm">{perm.label}</Text>
                           </Checkbox>

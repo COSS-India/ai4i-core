@@ -69,17 +69,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                 valueColor="gray.800"
               />
               <KpiCard
-                label={section.HIGHEST_FAILURE}
-                value={
-                  <HStack spacing={2}>
-                    <Box w={2} h={2} borderRadius="full" bg="pink.300" />
-                    <Text as="span" color="orange.600">
-                      {insights.highestFailureName}
-                    </Text>
-                  </HStack>
-                }
-                helper={`${insights.highestFailureRate.toFixed(2)}% ${METERING.SECTIONS.REQUEST_VOLUME.FAILURE_RATE_SUFFIX}`}
-                valueColor="gray.800"
+                label={section.OVERALL_SUCCESS}
+                value={`${insights.overallSuccessRate.toFixed(2)}%`}
+                helper={`${formatCompactNumber(insights.totalRequests, "indian")} ${section.REQUESTS_SUFFIX} · ${section.SUCCESS_RATE_SUFFIX}`}
+                valueColor="green.600"
               />
             </SimpleGrid>
           ) : null}

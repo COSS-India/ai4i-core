@@ -25,6 +25,42 @@ export interface TryItRequest {
   payload: NMTInferenceRequest;
 }
 
+type TryItSelectable = {
+  isTryItDefault?: boolean;
+  serviceId?: string;
+  service_id?: string;
+  name?: string;
+};
+
+const serviceIdOf = (service: TryItSelectable): string =>
+  service.serviceId || service.service_id || '';
+
+/**
+ * AI4IDS-2704: Prefer the service flagged `isTryItDefault`; otherwise use
+ * `fallbackPick` (today's deterministic pick) so Try-It never goes blank.
+ * Returns at most one service.
+ */
+export function selectTryItDefaultService<T extends TryItSelectable>(
+  services: T[],
+  fallbackPick: (services: T[]) => T | undefined,
+): T[] {
+  if (services.length === 0) return [];
+  const flagged = services.find((s) => s.isTryItDefault === true);
+  if (flagged) return [flagged];
+  const fallback = fallbackPick(services);
+  return fallback ? [fallback] : [];
+}
+
+/** Stable fallback when no `isTryItDefault` is set: lowest service id. */
+export function pickLowestServiceId<T extends TryItSelectable>(
+  services: T[],
+): T | undefined {
+  if (services.length === 0) return undefined;
+  return [...services].sort((a, b) =>
+    serviceIdOf(a).localeCompare(serviceIdOf(b)),
+  )[0];
+}
+
 /**
  * Fetch services for try-it (anonymous) users by task type(s).
  * Uses GET /services/try-it-service-list?task_types=...

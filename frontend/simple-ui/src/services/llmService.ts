@@ -5,7 +5,12 @@ import { apiService, apiEndpoints } from './api';
 import { chatCompletionResponseSchema } from './dto/schemas/inference';
 import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
 import { listServices } from './modelManagementService';
-import { listTryItServices, trackTryItRequest } from './tryItService';
+import {
+  listTryItServices,
+  pickLowestServiceId,
+  selectTryItDefaultService,
+  trackTryItRequest,
+} from './tryItService';
 import { getAnonymousSessionId, isAnonymousUser } from '../utils/anonymousSession';
 
 /** Model name that needs agrinet-specific chat/completions fields. */
@@ -135,13 +140,15 @@ function parseChatCompletionResponse(
 }
 
 /**
- * AI4IDS-2688: Anonymous try-it list — published LLM services (FE limits to one).
+ * AI4IDS-2688 / AI4IDS-2704: Anonymous try-it list — one service.
+ * Prefer `isTryItDefault`; else lowest service_id (previous deterministic pick).
  * GET /services/try-it-service-list?task_types=llm
  */
 async function listAnonymousLLMServices(): Promise<LLMServiceDetailsResponse[]> {
   try {
     const raw = await listTryItServices('llm');
-    return dedupeByServiceId(raw.map((s) => mapServiceToLLMDetails(s)));
+    const selected = selectTryItDefaultService(raw, pickLowestServiceId);
+    return dedupeByServiceId(selected.map((s) => mapServiceToLLMDetails(s)));
   } catch (error) {
     console.error('Failed to fetch try-it LLM services:', error);
     throw new Error('Failed to fetch LLM services for try-it');
