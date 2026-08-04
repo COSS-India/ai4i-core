@@ -65,28 +65,6 @@ class Settings(BaseSettings):
         False, description="Serve canned stub responses instead of calling Triton or the LLM upstream"
     )
 
-    # Fixed billed token count for stubbed LLM requests, input and output each.
-    # Makes expected PPU revenue arithmetic trivial during a load test: it is
-    # request count x rate x this number, instead of depending on which size
-    # bucket each prompt happened to land in.
-    #
-    # Gated on TRITON_STUB_MODE. With stub mode off the real `usage` block from
-    # upstream is billed, untouched, so this can never corrupt real billing.
-    # Set to 0 to bill the stub fixtures' own usage numbers instead.
-    LLM_STUB_BILLED_TOKENS: int = Field(
-        10, ge=0, description="Fixed input/output token count billed per stubbed LLM request"
-    )
-
-    # Pacing for the stubbed LLM SSE stream, applied per chunk. Zero by
-    # default: the load test measures this service's own per-chunk overhead, and
-    # any sleep here would cap concurrency on a delay the real model host owns,
-    # not us. Raise it only to emulate inter-token latency for a client-side
-    # measurement (time-to-first-token, render smoothness). Ignored unless
-    # TRITON_STUB_MODE is on.
-    LLM_STUB_STREAM_DELAY_MS: int = Field(
-        0, ge=0, description="Delay between stubbed LLM stream chunks, in milliseconds"
-    )
-
     # Per-block phase timing. When true, each request's root span gains
     # per-stage *_ms fields (resolve, validate, preprocess, build_payload,
     # triton, output_convert, output_tokens, postprocess) and a human-readable

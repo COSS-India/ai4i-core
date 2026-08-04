@@ -104,9 +104,10 @@ Two consequences worth knowing before you read the numbers:
   stream body for it. The lines are framed once at import and replayed, so a
   load test is not charged for JSON serialisation a real model host would do.
 
-`LLM_STUB_STREAM_DELAY_MS` (default `0`) paces the chunks. Leave it at zero for
-throughput work. Raise it only when measuring something client-side, such as
-time-to-first-token or render smoothness.
+`_STREAM_CHUNK_DELAY_S` in `stub_dispatcher.py` (default `0.0`) paces the chunks.
+It is a module constant, not an env var: it describes the load-test rig, not the
+environment. Leave it at zero for throughput work. Raise it only when measuring
+something client-side, such as time-to-first-token or render smoothness.
 
 Fixture: `responses/llm_responses.py` (`chat_completion_chunks`).
 

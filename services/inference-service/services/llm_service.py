@@ -29,19 +29,26 @@ _resolver = InferenceServerResolver()
 _UPSTREAM_FAILED_LOG = "LLM upstream request failed (path=%s): %s"
 
 
+# Fixed input/output token count billed per stubbed LLM request. Deliberately a
+# constant rather than a setting: it is a property of the load-test rig, not
+# something an operator should be able to change per environment, and every
+# extra env var is one more thing to get wrong on a deploy. Set to 0 here to
+# bill the stub fixtures' own size-bucketed usage numbers instead.
+_STUB_BILLED_TOKENS = 10
+
+
 def _billed_tokens(input_tokens: int, output_tokens: int) -> Tuple[int, int]:
     """
     Token counts to bill and span, with the stub-mode override applied.
 
-    Under TRITON_STUB_MODE the counts are pinned to LLM_STUB_BILLED_TOKENS so a
+    Under TRITON_STUB_MODE the counts are pinned to _STUB_BILLED_TOKENS so a
     load test's expected PPU revenue is request count x rate x that number,
     rather than depending on which size bucket each prompt fell into. Outside
-    stub mode, and when the setting is 0, the real upstream counts pass through
+    stub mode, and when the constant is 0, the real upstream counts pass through
     untouched — real billing is never rewritten by this.
     """
-    if settings.TRITON_STUB_MODE and settings.LLM_STUB_BILLED_TOKENS:
-        fixed = settings.LLM_STUB_BILLED_TOKENS
-        return fixed, fixed
+    if settings.TRITON_STUB_MODE and _STUB_BILLED_TOKENS:
+        return _STUB_BILLED_TOKENS, _STUB_BILLED_TOKENS
     return input_tokens, output_tokens
 
 

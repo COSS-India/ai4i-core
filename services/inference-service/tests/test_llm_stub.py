@@ -12,6 +12,7 @@ from response_test.responses.audio_transcription_responses import (
     MEDIUM_AUDIO_BYTES,
     SMALL_AUDIO_BYTES,
 )
+from response_test import stub_dispatcher
 from response_test.stub_dispatcher import (
     get_audio_stub_response,
     get_llm_stub_response,
@@ -350,7 +351,7 @@ async def test_stream_stub_does_not_sleep_when_delay_is_zero(stub_mode, monkeypa
     import asyncio
 
     calls = []
-    monkeypatch.setattr(settings, "LLM_STUB_STREAM_DELAY_MS", 0)
+    monkeypatch.setattr(stub_dispatcher, "_STREAM_CHUNK_DELAY_S", 0.0)
 
     async def _spy(seconds):
         calls.append(seconds)
@@ -367,7 +368,7 @@ async def test_stream_stub_paces_events_when_delay_is_set(stub_mode, monkeypatch
     import asyncio
 
     calls = []
-    monkeypatch.setattr(settings, "LLM_STUB_STREAM_DELAY_MS", 25)
+    monkeypatch.setattr(stub_dispatcher, "_STREAM_CHUNK_DELAY_S", 0.025)
 
     async def _spy(seconds):
         calls.append(seconds)
@@ -566,17 +567,47 @@ async def test_proxy_stream_falls_through_when_mode_is_off(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stub_mode_bills_the_fixed_token_count(stub_mode, monkeypatch, span_exporter):
-    """Under stub mode both token counts are pinned to LLM_STUB_BILLED_TOKENS.
+    """Under stub mode both token counts are pinned to _STUB_BILLED_TOKENS.
 
     Makes expected PPU revenue request-count x rate x that number, instead of
     depending on which size bucket each prompt landed in. A LARGE prompt is used
     here precisely because its fixture usage (620/210) is nothing like the
     override, so the assertion cannot pass by accident.
     """
+    from services import llm_service
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
-    monkeypatch.setattr(settings, "LLM_STUB_BILLED_TOKENS", 10)
+    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 10)
+    service = OpenAIProxyService()
+
+    async def _resolve(service_id, path):
+        return "http://vllm.invalid/v1/chat/completions", _SERVICE_INFO
+
+    monkeypatch.setattr(service, "resolve_upstream_url", _resolve)
+
+    with traced_span("request", root=True, classify_status=True):
+        await service.proxy_traced(
+            path="/v1/chat/completions", payload=_prompt_of_length(1500)
+        )
+
+    spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
+
+    assert spans["ai-inference"]["input_tokens"] == 10
+    assert spans["ai-inference"]["output_tokens"] == 10
+
+
+@pytest.mark.asyncio
+async def test_shipped_default_bills_ten(stub_mode, monkeypatch, span_exporter):
+    """Pins the constant as shipped, with no patch in play.
+
+    Every other token test patches _STUB_BILLED_TOKENS to exercise a specific
+    value, so none of them would notice the default being edited. This is what
+    the load test actually runs with, so it gets its own guard.
+    """
+    from services.llm_service import OpenAIProxyService
+    from trace.request_span import traced_span
+
     service = OpenAIProxyService()
 
     async def _resolve(service_id, path):
@@ -605,10 +636,11 @@ async def test_streaming_bills_the_same_fixed_count_as_buffered(
     the override too. Without it a stream:true run would bill the fixture's
     numbers while a buffered run billed the fixed count.
     """
+    from services import llm_service
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
-    monkeypatch.setattr(settings, "LLM_STUB_BILLED_TOKENS", 10)
+    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 10)
     service = OpenAIProxyService()
 
     async def _resolve(service_id, path):
@@ -632,10 +664,11 @@ async def test_streaming_bills_the_same_fixed_count_as_buffered(
 @pytest.mark.asyncio
 async def test_override_of_zero_bills_the_fixture_usage(stub_mode, monkeypatch, span_exporter):
     """Setting the override to 0 restores size-bucketed billing."""
+    from services import llm_service
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
-    monkeypatch.setattr(settings, "LLM_STUB_BILLED_TOKENS", 0)
+    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 0)
     service = OpenAIProxyService()
 
     async def _resolve(service_id, path):
@@ -661,11 +694,12 @@ async def test_real_mode_bills_the_upstream_usage_untouched(monkeypatch, span_ex
     This is the guard that keeps a load-test convenience from following the
     branch into a real deployment and mis-billing every request.
     """
+    from services import llm_service
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
     monkeypatch.setattr(settings, "TRITON_STUB_MODE", False)
-    monkeypatch.setattr(settings, "LLM_STUB_BILLED_TOKENS", 10)
+    monkeypatch.setattr(llm_service, "_STUB_BILLED_TOKENS", 10)
     service = OpenAIProxyService()
 
     async def _resolve(service_id, path):

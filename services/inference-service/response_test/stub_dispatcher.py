@@ -293,16 +293,24 @@ _LLM_STREAM_STUBS = tuple(
 )
 
 
+# Seconds to wait between stubbed SSE events. Zero because the load test
+# measures this service's own per-chunk overhead, and any sleep here would cap
+# concurrency on a delay the real model host owns, not us. Deliberately a
+# constant rather than a setting: it is a property of the load-test rig, not an
+# operator knob. Raise it here only to emulate inter-token latency for a
+# client-side measurement (time-to-first-token, render smoothness).
+_STREAM_CHUNK_DELAY_S = 0.0
+
+
 async def _replay(lines):
-    """Yield pre-framed SSE lines, pacing events by LLM_STUB_STREAM_DELAY_MS."""
-    delay_s = settings.LLM_STUB_STREAM_DELAY_MS / 1000
+    """Yield pre-framed SSE lines, pacing events by _STREAM_CHUNK_DELAY_S."""
     for line in lines:
         # Pace per event, not per line, so the blank separator does not double
         # the intended gap. Zero delay skips the sleep entirely rather than
         # awaiting sleep(0), which would still yield to the event loop once per
         # chunk and cap throughput for no reason.
-        if delay_s and line.startswith(_SSE_EVENT_PREFIX):
-            await asyncio.sleep(delay_s)
+        if _STREAM_CHUNK_DELAY_S and line.startswith(_SSE_EVENT_PREFIX):
+            await asyncio.sleep(_STREAM_CHUNK_DELAY_S)
         yield line
 
 
