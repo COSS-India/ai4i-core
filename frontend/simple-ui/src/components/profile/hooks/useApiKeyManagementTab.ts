@@ -185,12 +185,24 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         (p) => p.name,
       ),
     );
+    const existing = key.permissions ?? [];
+    const assignable = existing.filter((name) => allowedNames.has(name));
+    const droppedCount = existing.length - assignable.length;
     setSelectedKeyForUpdate(key);
     setUpdateFormData({
       key_name: key.key_name,
-      permissions: (key.permissions ?? []).filter((name) => allowedNames.has(name)),
+      permissions: assignable,
     });
     setIsUpdateModalOpen(true);
+    if (droppedCount > 0) {
+      showToast({
+        type: "warning",
+        message:
+          droppedCount === 1
+            ? "1 permission no longer available was removed from the selection"
+            : `${droppedCount} permissions no longer available were removed from the selection`,
+      });
+    }
   };
 
   const permissionFilterOptions = useMemo(
@@ -218,13 +230,23 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
+    const originalPermissions = selectedKeyForUpdate.permissions ?? [];
+    const droppedCount = originalPermissions.filter((name) => !allowedNames.has(name)).length;
     setIsUpdating(true);
     try {
       await authService.updateApiKey(selectedKeyForUpdate.id, {
         key_name: updateFormData.key_name?.trim(),
         permissions: nextPermissions,
       });
-      showToast({ type: "success", message: "API key has been updated successfully" });
+      showToast({
+        type: "success",
+        message:
+          droppedCount > 0
+            ? droppedCount === 1
+              ? "API key updated; 1 permission no longer available was removed"
+              : `API key updated; ${droppedCount} permissions no longer available were removed`
+            : "API key has been updated successfully",
+      });
       handleCloseUpdateModal();
       await handleFetchAllApiKeys();
     } catch (error) {
