@@ -145,7 +145,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 onChange={(e) =>
                   onInputChange(
                     "serviceId",
-                    e.target.value.replace(/[^a-zA-Z0-9/_-]/g, ""),
+                    e.target.value.replaceAll(/[^a-zA-Z0-9/_-]/g, ""),
                   )
                 }
                 placeholder="Enter service id"

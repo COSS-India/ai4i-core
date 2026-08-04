@@ -13,6 +13,7 @@ from app.core.responses import success_response
 from app.dependencies.services import ServiceService, get_service_service
 from app.schemas.enums.model_management import TaskTypeEnum
 from app.schemas.model_management.service import (
+    ServiceBulkEndpointUpdateRequest,
     ServiceCreateRequest,
     ServiceUpdateRequest,
     validate_service_id,
@@ -59,6 +60,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "endpoint",
     "taskType",
     "isPublished",
+    "isTryItDefault",
     "task",
     "languages",
     "versionStatus",
@@ -203,11 +205,20 @@ async def create_service(
 @router.patch("")
 async def update_service(
     request: Request,
-    payload: ServiceUpdateRequest,
+    payload: ServiceUpdateRequest | ServiceBulkEndpointUpdateRequest,
     svc: ServiceService = Depends(get_service_service),
 ):
-    """Update an existing service."""
+    """Update an existing service, or update multiple services' endpoints in
+    one call by sending {"services": [{"serviceId", "endpoint"}, ...]}."""
     user_id = request.headers.get("X-User-Id")
+    if isinstance(payload, ServiceBulkEndpointUpdateRequest):
+        updated_ids = await svc.update_service_endpoints(
+            payload.services, updated_by=user_id
+        )
+        return success_response(
+            data={"serviceIds": updated_ids},
+            meta={"message": f"{len(updated_ids)} service endpoint(s) updated successfully."},
+        )
     await svc.update_service(payload, updated_by=user_id)
     return success_response(
         data={"serviceId": payload.serviceId},

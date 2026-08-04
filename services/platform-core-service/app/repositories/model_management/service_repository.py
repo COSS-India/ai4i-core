@@ -172,6 +172,20 @@ class ServiceRepository:
         await self._db.flush()
         return service
 
+    async def clear_try_it_default(self, *, task_type: str, exclude_service_id: str) -> None:
+        """Unset is_try_it_default on every other service of this task_type,
+        keeping the "at most one default per task_type" invariant."""
+        await self._db.execute(
+            update(Service)
+            .where(
+                Service.task_type == task_type,
+                Service.service_id != exclude_service_id,
+                Service.is_try_it_default.is_(True),
+            )
+            .values(is_try_it_default=False)
+        )
+        await self._db.flush()
+
     async def apply_updates(self, instance: Service, data: dict) -> Service:
         for key, value in data.items():
             setattr(instance, key, value)

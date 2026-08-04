@@ -98,6 +98,7 @@ def service_to_dict(
         "benchmarks": service.benchmarks,
         "policy": dict(service.policy) if service.policy else None,
         "isPublished": bool(service.is_published),
+        "isTryItDefault": bool(service.is_try_it_default),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
         "taskType": service.task_type,

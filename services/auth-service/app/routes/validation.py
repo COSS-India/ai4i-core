@@ -14,6 +14,7 @@ import binascii
 import json
 import logging
 from functools import lru_cache
+from urllib.parse import quote
 
 from ai4i_core.ppu import get_inference_types
 from fastapi import APIRouter, Depends, Request, Response
@@ -30,6 +31,7 @@ from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyRespo
 from app.schemas.token import TokenValidationResponse
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
+from app.services.tenant_name_cache import tenant_name_cache
 
 
 @lru_cache(maxsize=1)
@@ -102,6 +104,35 @@ def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> b
     if not looked_up:
         return True
     return required is None or required in permission_ids
+
+
+def _set_tenant_headers(response: Response, tenant_id: object) -> None:
+    """Set X-Tenant-ID (numeric id) and X-Tenant-Name (organisation) on the response.
+
+    X-Tenant-Name is what the observability middleware uses as the Prometheus
+    ``tenant`` label value; it's resolved from the in-memory tenant_name_cache
+    (no DB round trip on this hot path — see tenant_name_cache.py). Falls back
+    to the id itself on a cache miss (e.g. a tenant created moments before this
+    worker's next refresh) so the label is never empty for a real tenant.
+
+    Starlette encodes header values as latin-1, but organisation names accept
+    any Unicode letter (see _check_org_chars in schemas/tenant.py) — a name
+    with e.g. Devanagari or Tamil characters would raise UnicodeEncodeError
+    here and 500 the whole /validate call. Percent-encode it when it isn't
+    latin-1 encodable; the observability middleware decodes it back.
+    """
+    response.headers["X-Tenant-ID"] = str(tenant_id)
+    name = None
+    try:
+        name = tenant_name_cache.get_name(int(tenant_id))
+    except (TypeError, ValueError):
+        pass
+    name = name or str(tenant_id)
+    try:
+        name.encode("latin-1")
+    except UnicodeEncodeError:
+        name = quote(name, safe="")
+    response.headers["X-Tenant-Name"] = name
 
 
 def _extract_token(request: Request) -> str:
@@ -195,7 +226,7 @@ async def _validate_api_key(
     response.headers["X-Auth-Type"] = "api_key"
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in permission_ids) + "]"
     if tenant_id:
-        response.headers["X-Tenant-ID"] = str(tenant_id)
+        _set_tenant_headers(response, tenant_id)
     return ValidateAPIKeyResponse(valid=True, user_id=user_id, permission_ids=permission_ids)
 
 
@@ -227,7 +258,7 @@ async def _validate_jwt(
     response.headers["X-Auth-Type"] = claims.token_type
     response.headers["X-Permission-IDS"] = "[" + ",".join(str(p) for p in claims.permission_ids) + "]"
     if claims.tenant_id:
-        response.headers["X-Tenant-ID"] = str(claims.tenant_id)
+        _set_tenant_headers(response, claims.tenant_id)
     # Permission id 1 is the "admin" sentinel (only the ADMIN role holds it).
     # Forward a trusted flag so upstream services can widen scope (e.g. cross-tenant
     # trace access) without re-resolving roles or hitting the DB.
