@@ -359,6 +359,26 @@ class OpenAIProxyService:
         (vLLM/gemma server), so this passes bytes through rather than
         re-parsing and re-serializing each chunk.
         """
+        # Load-test stub mode: short-circuit the upstream connection only.
+        # Returns None unless TRITON_STUB_MODE is on, so this is inert in normal
+        # operation.
+        #
+        # Streaming counterpart to the seam in forward(), and the same
+        # substitution point the streaming unit tests patch. It must stay here
+        # rather than in proxy_traced_stream: that method opens the model and
+        # ai-inference spans inside the generator it returns, and the PPU Kafka
+        # consumer bills off the ai-inference span. Returning early from there
+        # emits neither span and silently drops billing for every stubbed
+        # stream — the same failure the buffered seam was moved down to fix.
+        #
+        # Safe despite sitting above those spans, unlike forward() which sits
+        # inside them: what goes back is a lazy generator, and proxy_traced_stream
+        # consumes it inside both spans, calling _record_stream_usage per line.
+        from response_test.stub_dispatcher import get_llm_stream_stub
+        stub = get_llm_stream_stub(payload)
+        if stub is not None:
+            return "stream", 200, stub
+
         logger.info("LLM proxy (stream) -> %s", path)
         try:
             client, response = await self.open_stream(path, payload)
