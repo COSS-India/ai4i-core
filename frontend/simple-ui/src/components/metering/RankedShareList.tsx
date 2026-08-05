@@ -51,7 +51,14 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
               >
                 {row.formattedValue}
               </Badge>
-              <Text fontSize="sm" color="gray.500" w="52px" textAlign="right">
+              <Text
+                fontSize="sm"
+                color="gray.500"
+                minW="56px"
+                textAlign="right"
+                whiteSpace="nowrap"
+                flexShrink={0}
+              >
                 {row.percentage.toFixed(2)}%
               </Text>
             </HStack>

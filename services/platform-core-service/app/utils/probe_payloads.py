@@ -207,6 +207,41 @@ _ULCA_DUMMY_PAYLOADS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ── Expected response shapes (ULCA) ──
+
+# A ULCA-conformant response shape is a function of task_type, not
+# per-service data — mirrors _ULCA_DUMMY_PAYLOADS above, one entry per task
+# type, but for the *response* side instead of the request. Used as the
+# default for Service.expectedResponseSchema when the admin doesn't supply
+# an override.
+#
+# Deliberately light: only the envelope + the one field every conformant
+# response of that task type must carry, never optional/extra fields — a
+# real endpoint's additional fields must never trip a false rejection.
+# Task types not listed here have no well-established single response
+# contract; the shape check is simply skipped for them unless the admin
+# supplies an explicit expectedResponseSchema.
+_ULCA_EXPECTED_SHAPES: Dict[str, Dict[str, Any]] = {
+    "nmt": {"output": [{"target": "sample translated text"}]},
+    "llm": {"output": [{"target": "sample generated text"}]},
+    "transliteration": {"output": [{"target": "sample transliterated text"}]},
+    "asr": {"output": [{"source": "sample transcript"}]},
+    "ocr": {"output": [{"source": "sample extracted text"}]},
+    "ner": {"output": [{"source": "sample text"}]},
+    "language-detection": {"output": [{"langPrediction": [{"langCode": "en"}]}]},
+    "tts": {"audio": [{"audioContent": "sample-base64-audio"}]},
+}
+
+
+def get_expected_response_shape(task_type: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Built-in default response shape for *task_type*, or ``None`` if this
+    task type has no established ULCA response contract (the shape check is
+    then skipped, never guessed)."""
+    if not task_type:
+        return None
+    return _ULCA_EXPECTED_SHAPES.get(task_type.lower())
+
+
 def build_ulca_payload(
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,

@@ -87,6 +87,7 @@ _VALID_BASE = dict(
     costPerUnit=0.01,
     unitSize=1,
     tierIds=["tier-1"],
+    expectedResponseSchema={"output": [{"source": "test"}]},
 )
 
 
@@ -185,6 +186,43 @@ class TestCreateRequiredFields:
         base = {k: v for k, v in _VALID_BASE.items() if k != "unitSize"}
         with pytest.raises(PydanticValidationError, match="unitSize"):
             ServiceCreateRequest(serviceId="svc-1", **base)
+
+
+# ── expectedResponseSchema is optional; falls back to a task-type default
+# when omitted (AI4IDS-1844 PR review) — see app.utils.probe_payloads ──
+
+
+class TestExpectedResponseSchemaOptional:
+    def test_omitted_on_create_defaults_to_none(self) -> None:
+        """Not required — endpoint_validator falls back to a built-in
+        per-task-type shape (or skips the check) when this is None."""
+        base = {k: v for k, v in _VALID_BASE.items() if k != "expectedResponseSchema"}
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.expectedResponseSchema is None
+
+    def test_explicit_value_on_create_is_kept(self) -> None:
+        req = ServiceCreateRequest(serviceId="svc-1", **_VALID_BASE)
+        assert req.expectedResponseSchema == {"output": [{"source": "test"}]}
+
+    def test_empty_dict_rejected_when_explicitly_supplied(self) -> None:
+        base = {**_VALID_BASE, "expectedResponseSchema": {}}
+        with pytest.raises(PydanticValidationError, match="non-empty object"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_omitted_on_update_is_none(self) -> None:
+        req = ServiceUpdateRequest(
+            serviceId="svc-1",
+            endpoint="http://x",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+        assert req.expectedResponseSchema is None
+
+    def test_empty_dict_rejected_on_update_when_supplied(self) -> None:
+        with pytest.raises(PydanticValidationError, match="non-empty object"):
+            ServiceUpdateRequest(serviceId="svc-1", expectedResponseSchema={})
 
 
 # ── Same value validators apply on update, but fields stay optional (AI4IDS-2528/2529) ──

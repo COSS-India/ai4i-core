@@ -6,7 +6,17 @@ Owns the rules:
 - Service names must be globally unique.
 - A service must reference an existing (model_id, model_version).
 - The endpoint URL is validated (URL format + SSRF + live probe) on
-  create/update.
+  create/update, and the pollingUrl of async models gets the same SSRF
+  check before it's ever POSTed to. The live probe also checks the actual
+  response's shape: expectedResponseSchema is an optional per-service
+  override; when omitted, a built-in per-task-type default is used
+  (app/utils/probe_payloads.get_expected_response_shape), and task types
+  with no known default simply skip the shape check. Supplying a new
+  expectedResponseSchema on update — even without an endpoint change —
+  re-probes the current endpoint with it before it's stored, so a schema is
+  never persisted without having been checked against a live response.
+  Sync vs. async (poll-until-done) probing is decided by the referenced
+  model's isSyncApi/asyncApiDetails.
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
@@ -83,11 +93,16 @@ class EndpointValidationFailedError(AppError):
 
 
 def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict[str, Any]:
-    """Pull task_type / request_schema / triton_schema out of a model card."""
-    schema = (model_inference_endpoint or {}).get("schema") or {}
+    """Pull request/response-schema and sync/async details out of a model card."""
+    model_inference_endpoint = model_inference_endpoint or {}
+    schema = model_inference_endpoint.get("schema") or {}
+    async_details = model_inference_endpoint.get("asyncApiDetails") or {}
     return {
         "request_schema": schema.get("request"),
         "triton_schema": (schema.get("response") or {}).get("triton"),
+        "is_sync_api": model_inference_endpoint.get("isSyncApi"),
+        "polling_url": async_details.get("pollingUrl"),
+        "poll_interval_ms": async_details.get("pollInterval"),
     }
 
 
@@ -185,12 +200,13 @@ class ServiceService:
                 code="MODEL_NOT_FOUND",
             )
 
-        # 2. Validate the endpoint (live probe + SSRF guard)
+        # 2. Validate the endpoint (live probe + SSRF guard + response shape)
         await self._validate_endpoint_for_model(
             endpoint=payload.endpoint,
             api_key=payload.api_key,
             model_inference_endpoint=model.inference_endpoint or {},
             task_type=(model.task or {}).get("type"),
+            expected_response_schema=payload.expectedResponseSchema,
         )
 
         # 3. Duplicate name check
@@ -232,6 +248,7 @@ class ServiceService:
             api_key=payload.api_key,
             health_status=jsonable_encoder(payload.healthStatus) if payload.healthStatus else {},
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
+            expected_response_schema=jsonable_encoder(payload.expectedResponseSchema),
             task_type=payload.taskType,
             cost_per_unit=payload.costPerUnit,
             unit_size=payload.unitSize,
@@ -281,8 +298,15 @@ class ServiceService:
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
 
-        # If endpoint changes, re-validate it against the model schema
-        if payload.endpoint:
+        # Re-validate against the model schema whenever the endpoint changes,
+        # or a new expectedResponseSchema is supplied on its own — the latter
+        # is probed against the (possibly unchanged) live endpoint before
+        # being trusted/stored, so a schema is never persisted without ever
+        # having been checked against a real response. Neither field is
+        # required: with nothing supplied or on file, validate_endpoint()
+        # falls back to the task-type default shape (or skips the shape
+        # check entirely for a task type with no known default).
+        if payload.endpoint or payload.expectedResponseSchema is not None:
             model = await self._models.get_by_id_version(
                 instance.model_id, instance.model_version
             )
@@ -291,11 +315,17 @@ class ServiceService:
                     f"Model '{instance.model_id}' v{instance.model_version}"
                 )
             api_key = payload.api_key or instance.api_key
+            expected_response_schema = (
+                payload.expectedResponseSchema
+                if payload.expectedResponseSchema is not None
+                else instance.expected_response_schema
+            )
             await self._validate_endpoint_for_model(
-                endpoint=payload.endpoint,
+                endpoint=payload.endpoint or instance.endpoint,
                 api_key=api_key,
                 model_inference_endpoint=model.inference_endpoint or {},
                 task_type=(model.task or {}).get("type"),
+                expected_response_schema=expected_response_schema,
             )
 
         request_dict = payload.model_dump(exclude_unset=True)
@@ -320,6 +350,10 @@ class ServiceService:
             update_data["health_status"] = request_dict["healthStatus"]
         if "benchmarks" in request_dict:
             update_data["benchmarks"] = jsonable_encoder(request_dict["benchmarks"])
+        if "expectedResponseSchema" in request_dict:
+            update_data["expected_response_schema"] = jsonable_encoder(
+                request_dict["expectedResponseSchema"]
+            )
 
         if "policy" in request_dict:
             policy_obj = payload.policy
@@ -391,9 +425,10 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished, isTryItDefault, policy, taskType, "
-                    "costPerUnit, unitSize, tierIds. Note: name, modelId, "
-                    "modelVersion are not updatable."
+                    "benchmarks, expectedResponseSchema, isPublished, "
+                    "isTryItDefault, policy, taskType, costPerUnit, unitSize, "
+                    "tierIds. Note: name, modelId, modelVersion are not "
+                    "updatable."
                 ),
                 code="NO_UPDATABLE_FIELDS",
             )
@@ -442,12 +477,21 @@ class ServiceService:
     ) -> None:
         """Live-validate one item's new endpoint. Raises
         EndpointValidationFailedError. Safe to run concurrently with other
-        items since it makes no DB calls."""
+        items since it makes no DB calls.
+
+        ServiceEndpointUpdateItem only carries {serviceId, endpoint} — there
+        is no per-item schema override in this bulk shape — so the shape
+        check runs against whatever's already stored for that service (and
+        falls back further to the task-type default inside
+        _validate_endpoint_for_model if that's also unset), the same as a
+        single-service endpoint-only update would.
+        """
         await self._validate_endpoint_for_model(
             endpoint=item.endpoint,
             api_key=instance.api_key,
             model_inference_endpoint=model.inference_endpoint or {},
             task_type=(model.task or {}).get("type"),
+            expected_response_schema=instance.expected_response_schema,
         )
 
     async def _commit_endpoint_updates(
@@ -547,6 +591,7 @@ class ServiceService:
         api_key: Optional[str],
         model_inference_endpoint: Dict[str, Any],
         task_type: Optional[str],
+        expected_response_schema: Optional[Dict[str, Any]],
     ) -> None:
         params = _extract_validation_params(model_inference_endpoint)
         result = await validate_endpoint(
@@ -559,6 +604,12 @@ class ServiceService:
             timeout=settings.endpoint_validation_timeout_seconds,
             validation_mode=settings.endpoint_validation_mode,
             skip_tls_verify=settings.endpoint_validation_skip_tls_verify,
+            expected_response_schema=expected_response_schema,
+            is_sync_api=params["is_sync_api"],
+            polling_url=params["polling_url"],
+            poll_interval_ms=params["poll_interval_ms"],
+            max_poll_attempts=settings.endpoint_validation_max_poll_attempts,
+            max_poll_wait_seconds=settings.endpoint_validation_max_poll_wait_seconds,
         )
         if not result.is_valid:
             failed_messages = [

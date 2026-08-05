@@ -136,6 +136,12 @@ class CoreSettings(BaseSettings):
     # a live probe with endpoint_validation_timeout_seconds, so an unbounded
     # array can outlast a proxy timeout even with concurrent probing.
     bulk_endpoint_update_max_items: int = 50
+    # Async (poll-until-done) probes cap both attempts and total wall-clock
+    # time so a slow/stuck partner endpoint can't hang a create/update
+    # request indefinitely — ULCA's reference implementation polls in an
+    # unbounded `while (true)` loop, which we deliberately do not copy.
+    endpoint_validation_max_poll_attempts: int = 10
+    endpoint_validation_max_poll_wait_seconds: float = 60.0
 
     # ── External services ──
     auth_service_url: str = ""
