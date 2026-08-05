@@ -601,6 +601,7 @@ async def get_tenant_consumption(
             tenant_id=scope_tenant,
             organisation=scope_tenant_name,
             window=window,
+            task_types=service_filter,
         ),
         avg_requests_per_tenant=_avg_requests_per_tenant_cell(ranking, prev_avg),
         tenant_ranking=_tenant_ranking_rows(ranking_tenants),
