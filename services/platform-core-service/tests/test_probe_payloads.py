@@ -131,3 +131,86 @@ class TestGetExpectedResponseShape:
 
     def test_is_case_insensitive(self):
         assert get_expected_response_shape("LLM") == get_expected_response_shape("llm")
+
+
+class TestAdapterConfigModelNameOverride:
+    """adapterConfig.model_name (from the model card's InferenceEndpoint
+    column) is the authoritative real model identifier for LLM deployments
+    — schema.request.model is only a sample the admin typed in and has
+    repeatedly been found stale/wrong in practice (AI4IDS-1844 follow-up:
+    a real vLLM deployment configured with schema.request.model =
+    "google/gemma-5-E4B-it" while the actually-loaded model was
+    "google/gemma-4-31B-it", 404ing every probe until corrected). An
+    upcoming model-schema change may drop "model" from schema.request
+    entirely, so this can't just be a fallback for when schema.request
+    happens to be silent — it must always win when supplied."""
+
+    def test_model_name_overrides_a_stale_schema_request_model(self):
+        request_schema = {
+            "model": "google/gemma-5-E4B-it",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        payload = build_ulca_payload("llm", request_schema, model_name="google/gemma-4-31B-it")
+        assert payload["model"] == "google/gemma-4-31B-it"
+        assert payload["messages"] == [{"role": "user", "content": "Hello"}]
+
+    def test_model_name_is_added_even_when_request_schema_has_no_model_key(self):
+        """Forward-compatibility with the upcoming schema change: even if
+        schema.request never declared "model" at all, the probe must still
+        carry the real model name."""
+        request_schema = {"messages": [{"role": "user", "content": "Hello"}]}
+        payload = build_ulca_payload("llm", request_schema, model_name="google/gemma-4-31B-it")
+        assert payload["model"] == "google/gemma-4-31B-it"
+        assert payload["messages"] == [{"role": "user", "content": "Hello"}]
+
+    def test_model_name_used_as_the_whole_fallback_when_no_request_schema_at_all(self):
+        """No request_schema and no "model" key anywhere — but we still
+        know the real model name, so build an OpenAI-shaped payload
+        instead of falling through to the generic ULCA dummy (which has no
+        "model"/"messages" contract and would never succeed against a real
+        OpenAI-compatible server)."""
+        payload = build_ulca_payload("llm", None, model_name="google/gemma-4-31B-it")
+        assert payload == {
+            "model": "google/gemma-4-31B-it",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+    def test_no_model_name_falls_back_to_prior_behavior(self):
+        """model_name omitted entirely — existing _PRESERVE_VERBATIM_KEYS
+        behavior is unaffected (no regression for models without
+        adapterConfig.model_name configured)."""
+        request_schema = {
+            "model": "google/gemma-5-E4B-it",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        payload = build_ulca_payload("llm", request_schema, model_name=None)
+        assert payload["model"] == "google/gemma-5-E4B-it"
+
+        payload_no_schema = build_ulca_payload("llm", None, model_name=None)
+        assert payload_no_schema == {"input": [{"source": "Hello"}], "config": {}}
+
+    def test_model_name_ignored_for_non_llm_task_types(self):
+        """The override is an LLM/OpenAI-specific concept — must not leak
+        a "model" field into a translation/ASR/etc. probe payload that
+        never had one."""
+        payload = build_ulca_payload(
+            "asr", {"audio": [{"audioContent": ""}]}, model_name="google/gemma-4-31B-it"
+        )
+        assert "model" not in payload
+
+        payload_no_schema = build_ulca_payload("asr", None, model_name="google/gemma-4-31B-it")
+        assert payload_no_schema == {
+            "audio": [{"audioContent": ""}],
+            "config": {"language": {"sourceLanguage": "en"}},
+        }
+
+    def test_end_to_end_via_build_probe_payload(self):
+        request_schema = {
+            "model": "google/gemma-5-E4B-it",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        payload, kind = build_probe_payload(
+            "llm", request_schema, triton_schema=None, model_name="google/gemma-4-31B-it"
+        )
+        assert kind == "ulca"
+        assert payload["model"] == "google/gemma-4-31B-it"

@@ -280,8 +280,19 @@ def _normalize_key(key: str) -> str:
 def build_ulca_payload(
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,
+    model_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a ULCA test payload, preferring *request_schema* when present."""
+    """Build a ULCA test payload, preferring *request_schema* when present.
+
+    *model_name* is the model card's ``inferenceEndPoint.adapterConfig.model_name``
+    — the authoritative real model identifier for LLM (OpenAI-compatible)
+    deployments. ``schema.request.model`` is only a sample the admin typed
+    in and has repeatedly been found stale/wrong in practice (AI4IDS-1844
+    follow-up); *model_name* always wins for ``task_type == "llm"`` when
+    supplied, whether or not ``request_schema`` even declares a ``model``
+    key — an upcoming model-schema change may drop that key from
+    ``schema.request`` entirely, so this can't rely on it being present.
+    """
     if request_schema:
         payload: Dict[str, Any] = {}
         for key, value in request_schema.items():
@@ -297,7 +308,19 @@ def build_ulca_payload(
             else:
                 payload[key] = value
         if payload:
+            if task_type == "llm" and model_name:
+                # adapterConfig.model_name is authoritative; the sample's own
+                # "model" value (if any) is untrusted and gets overwritten,
+                # whether or not it was even present.
+                payload["model"] = model_name
             return payload
+
+    if task_type == "llm" and model_name:
+        # No usable request_schema at all, but we know the real model name —
+        # an OpenAI-shaped dummy actually has a chance of succeeding against
+        # a real OpenAI-compatible server; the generic ULCA dummy below
+        # (input/config) never will.
+        return {"model": model_name, "messages": [{"role": "user", "content": "Hello"}]}
 
     if task_type in _ULCA_DUMMY_PAYLOADS:
         return _ULCA_DUMMY_PAYLOADS[task_type]
@@ -308,9 +331,10 @@ def build_probe_payload(
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,
     triton_schema: Optional[Dict[str, Any]] = None,
+    model_name: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Return ``(payload, kind)`` where *kind* is ``"triton_v2"`` or ``"ulca"``."""
     triton_payload = build_triton_v2_payload(triton_schema)
     if triton_payload:
         return triton_payload, "triton_v2"
-    return build_ulca_payload(task_type, request_schema), "ulca"
+    return build_ulca_payload(task_type, request_schema, model_name), "ulca"
