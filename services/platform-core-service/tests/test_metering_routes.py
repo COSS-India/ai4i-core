@@ -32,6 +32,7 @@ _OrgLookupError = _metering_route_mod._OrgLookupError
 _partition_results = _metering_route_mod._partition_results
 _resolve_org = _metering_route_mod._resolve_org
 _resolve_tenant_scope = _metering_route_mod._resolve_tenant_scope
+_parse_task_types = _metering_route_mod._parse_task_types
 
 from app.services.metering_service import MeteringService
 
@@ -174,3 +175,36 @@ class TestPartitionResults:
         values, degraded = _partition_results([])
         assert values == []
         assert degraded is False
+
+
+class TestParseTaskTypes:
+    """`_parse_task_types` backs the `task_types` query param on all three
+    metering tabs — AI4IDS-2716: unsupported values (e.g. "a1c") must 422
+    instead of silently passing through to an empty result set."""
+
+    def test_none_returns_none(self):
+        assert _parse_task_types(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert _parse_task_types("") is None
+
+    def test_valid_single_value(self):
+        assert _parse_task_types("llm") == ["llm"]
+
+    def test_valid_comma_separated_values(self):
+        assert _parse_task_types("llm,nmt, asr ") == ["llm", "nmt", "asr"]
+
+    def test_case_insensitive(self):
+        assert _parse_task_types("LLM") == ["llm"]
+
+    def test_unsupported_value_raises_422(self):
+        with pytest.raises(HTTPException) as exc_info:
+            _parse_task_types("a1c")
+        assert exc_info.value.status_code == 422
+        assert "a1c" in exc_info.value.detail
+
+    def test_one_unsupported_value_among_valid_ones_still_raises_422(self):
+        with pytest.raises(HTTPException) as exc_info:
+            _parse_task_types("llm,a1c")
+        assert exc_info.value.status_code == 422
+        assert "a1c" in exc_info.value.detail
