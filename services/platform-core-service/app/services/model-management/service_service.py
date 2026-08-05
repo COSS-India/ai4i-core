@@ -97,7 +97,15 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
     model_inference_endpoint = model_inference_endpoint or {}
     schema = model_inference_endpoint.get("schema") or {}
     async_details = model_inference_endpoint.get("asyncApiDetails") or {}
-    adapter_config = model_inference_endpoint.get("adapterConfig") or {}
+    # adapter_config migration (a1f2e3d4c5b6) writes the snake_case key into
+    # this same inference_endpoint blob; inference_server_resolver.py reads
+    # both spellings for the same reason — a card stored snake_case would
+    # otherwise silently yield model_name=None here.
+    adapter_config = (
+        model_inference_endpoint.get("adapterConfig")
+        or model_inference_endpoint.get("adapter_config")
+        or {}
+    )
     return {
         "request_schema": schema.get("request"),
         "triton_schema": (schema.get("response") or {}).get("triton"),

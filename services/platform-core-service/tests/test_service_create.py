@@ -364,3 +364,37 @@ class TestCreateServiceDuplicateId:
 
         svc._services.add.assert_awaited_once()
         svc._services.commit.assert_awaited_once()
+
+
+# ── _extract_validation_params reads both adapterConfig spellings (PR review) ─
+# Migration a1f2e3d4c5b6 writes adapter_config (snake_case) into this same
+# inference_endpoint blob; inference_server_resolver.py already reads both
+# spellings for exactly that reason — a card stored snake_case must not
+# silently yield model_name=None here.
+
+
+class TestExtractValidationParamsAdapterConfigSpelling:
+    def test_camel_case_adapter_config_is_read(self) -> None:
+        params = service_service_mod._extract_validation_params(
+            {"adapterConfig": {"model_name": "google/gemma-4-31B-it"}}
+        )
+        assert params["model_name"] == "google/gemma-4-31B-it"
+
+    def test_snake_case_adapter_config_is_also_read(self) -> None:
+        params = service_service_mod._extract_validation_params(
+            {"adapter_config": {"model_name": "google/gemma-4-31B-it"}}
+        )
+        assert params["model_name"] == "google/gemma-4-31B-it"
+
+    def test_camel_case_takes_precedence_when_both_present(self) -> None:
+        params = service_service_mod._extract_validation_params(
+            {
+                "adapterConfig": {"model_name": "camel-case-value"},
+                "adapter_config": {"model_name": "snake-case-value"},
+            }
+        )
+        assert params["model_name"] == "camel-case-value"
+
+    def test_neither_spelling_present_yields_none(self) -> None:
+        params = service_service_mod._extract_validation_params({})
+        assert params["model_name"] is None

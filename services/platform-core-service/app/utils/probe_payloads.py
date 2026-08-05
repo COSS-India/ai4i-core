@@ -187,7 +187,13 @@ _ULCA_DUMMY_PAYLOADS: Dict[str, Dict[str, Any]] = {
         "config": {"language": {"sourceLanguage": "en"}, "gender": "female"},
     },
     "asr": {"audio": [{"audioContent": ""}], "config": {"language": {"sourceLanguage": "en"}}},
-    "llm": {"input": [{"source": "Hello"}], "config": {}},
+    # OpenAI chat-completions-shaped, not the ULCA input/config envelope
+    # every other entry here uses — _ULCA_EXPECTED_SHAPES["llm"] already
+    # commits the *response* side to that same OpenAI shape (see AI4IDS-1844
+    # follow-up), so the request dummy has to match or it can never
+    # round-trip against a real OpenAI-compatible server. "model" is added
+    # by build_ulca_payload below when model_name is available.
+    "llm": {"messages": [{"role": "user", "content": "Hello"}]},
     "transliteration": {
         "input": [{"source": "namaste"}],
         "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "en"}},
@@ -286,15 +292,19 @@ def build_ulca_payload(
 
     *model_name* is the model card's ``inferenceEndPoint.adapterConfig.model_name``
     — the authoritative real model identifier for LLM (OpenAI-compatible)
-    deployments. ``schema.request.model`` is only a sample the admin typed
-    in and has repeatedly been found stale/wrong in practice (AI4IDS-1844
-    follow-up); *model_name* always wins for ``task_type == "llm"`` when
-    supplied, whether or not ``request_schema`` even declares a ``model``
-    key — an upcoming model-schema change may drop that key from
-    ``schema.request`` entirely, so this can't rely on it being present.
+    deployments. ``schema.request.model`` (or ``modelName``/``modelId``/
+    ``deployment``/``engine``/... — any of ``_PRESERVE_VERBATIM_KEYS``) is
+    only a sample the admin typed in and has repeatedly been found
+    stale/wrong in practice (AI4IDS-1844 follow-up); *model_name* always
+    wins for ``task_type == "llm"`` when supplied. Whichever
+    identifier-like key the sample actually used gets overwritten in place
+    (never both an old spelling AND a new literal ``"model"`` key); a
+    sample with no such key at all — including no ``request_schema``,
+    where the built-in dummy for "llm" also has none — gets ``"model"``
+    added fresh.
     """
+    payload: Dict[str, Any] = {}
     if request_schema:
-        payload: Dict[str, Any] = {}
         for key, value in request_schema.items():
             if isinstance(value, str):
                 if _normalize_key(key) in _PRESERVE_VERBATIM_KEYS:
@@ -307,24 +317,20 @@ def build_ulca_payload(
                 payload[key] = value if value else ["test"]
             else:
                 payload[key] = value
-        if payload:
-            if task_type == "llm" and model_name:
-                # adapterConfig.model_name is authoritative; the sample's own
-                # "model" value (if any) is untrusted and gets overwritten,
-                # whether or not it was even present.
-                payload["model"] = model_name
-            return payload
+
+    if not payload:
+        # dict(...) copies the module-level template so the model_name
+        # injection below never mutates a shared _ULCA_DUMMY_PAYLOADS entry.
+        payload = dict(_ULCA_DUMMY_PAYLOADS.get(task_type, {"input": [{"source": "test"}]}))
 
     if task_type == "llm" and model_name:
-        # No usable request_schema at all, but we know the real model name —
-        # an OpenAI-shaped dummy actually has a chance of succeeding against
-        # a real OpenAI-compatible server; the generic ULCA dummy below
-        # (input/config) never will.
-        return {"model": model_name, "messages": [{"role": "user", "content": "Hello"}]}
+        model_key = next(
+            (k for k in payload if _normalize_key(k) in _PRESERVE_VERBATIM_KEYS),
+            "model",
+        )
+        payload[model_key] = model_name
 
-    if task_type in _ULCA_DUMMY_PAYLOADS:
-        return _ULCA_DUMMY_PAYLOADS[task_type]
-    return {"input": [{"source": "test"}]}
+    return payload
 
 
 def build_probe_payload(

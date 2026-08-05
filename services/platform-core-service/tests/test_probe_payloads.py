@@ -154,6 +154,26 @@ class TestAdapterConfigModelNameOverride:
         assert payload["model"] == "google/gemma-4-31B-it"
         assert payload["messages"] == [{"role": "user", "content": "Hello"}]
 
+    def test_alternate_spelling_key_is_overwritten_in_place_not_duplicated(self):
+        """PR review: a card that declares "modelName" (one of the nine
+        _PRESERVE_VERBATIM_KEYS spellings) instead of "model" must have
+        THAT key overwritten — not keep its stale value while also gaining
+        a brand-new literal "model" key, which would send two conflicting
+        identifiers and leave the wrong one in the payload."""
+        request_schema = {
+            "modelName": "google/gemma-5-E4B-it",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        payload = build_ulca_payload("llm", request_schema, model_name="google/gemma-4-31B-it")
+        assert payload["modelName"] == "google/gemma-4-31B-it"
+        assert "model" not in payload
+
+    def test_deployment_spelling_key_is_overwritten_in_place(self):
+        request_schema = {"deployment": "stale-deployment-name", "messages": []}
+        payload = build_ulca_payload("llm", request_schema, model_name="google/gemma-4-31B-it")
+        assert payload["deployment"] == "google/gemma-4-31B-it"
+        assert "model" not in payload
+
     def test_model_name_is_added_even_when_request_schema_has_no_model_key(self):
         """Forward-compatibility with the upcoming schema change: even if
         schema.request never declared "model" at all, the probe must still
@@ -187,7 +207,7 @@ class TestAdapterConfigModelNameOverride:
         assert payload["model"] == "google/gemma-5-E4B-it"
 
         payload_no_schema = build_ulca_payload("llm", None, model_name=None)
-        assert payload_no_schema == {"input": [{"source": "Hello"}], "config": {}}
+        assert payload_no_schema == {"messages": [{"role": "user", "content": "Hello"}]}
 
     def test_model_name_ignored_for_non_llm_task_types(self):
         """The override is an LLM/OpenAI-specific concept — must not leak
