@@ -14,7 +14,13 @@ from ai4i_core.context import (
 from ai4i_core.observability.utils import get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
-from trace.request_span import traced_span, traced_inference, get_context_attributes
+from trace.request_span import (
+    traced_span,
+    traced_inference,
+    traced_guardrails,
+    traced_response_formatting,
+    get_context_attributes,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -220,6 +226,12 @@ class OpenAIProxyService:
         except LLMProxyError as exc:
             return exc.status_code, exc.body
 
+        # LLM-only, hardcoded placeholder spans — see traced_guardrails/
+        # traced_response_formatting docstrings. No real check/formatting
+        # logic runs here; they exist purely to shape the trace.
+        with traced_guardrails(service_id, model_name):
+            pass
+
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
             model_attrs["model_name"] = model_name or "unknown"
@@ -264,6 +276,9 @@ class OpenAIProxyService:
                     set_llm_usage_input_tokens(input_tokens)
                     set_llm_usage_output_tokens(output_tokens)
                     set_llm_usage_model_name(model_attrs["model_name"])
+
+        with traced_response_formatting(service_id, model_attrs.get("model_name", model_name or "unknown")):
+            pass
 
         return status_code, body
 
@@ -426,6 +441,13 @@ class OpenAIProxyService:
             return "error", status_code, result
 
         async def gen() -> AsyncIterator[str]:
+            # LLM-only, hardcoded placeholder spans — see traced_guardrails/
+            # traced_response_formatting docstrings. Opened lazily inside gen(),
+            # same as model/ai-inference, so they only fire once the caller
+            # actually iterates the stream.
+            with traced_guardrails(service_id, model_name):
+                pass
+
             with traced_span("model") as model_attrs:
                 model_attrs["task_type"] = "LLM"
                 model_attrs["model_name"] = model_name or "unknown"
@@ -444,6 +466,9 @@ class OpenAIProxyService:
                     async for line in result:
                         self._record_stream_usage(line, infer_attrs)
                         yield line
+
+            with traced_response_formatting(service_id, model_attrs.get("model_name", model_name or "unknown")):
+                pass
 
         return "stream", 200, gen()
 
@@ -529,6 +554,12 @@ class OpenAIProxyService:
             data["model"] = model_name
         model = data.get("model", "")
 
+        # LLM-only, hardcoded placeholder spans — see traced_guardrails/
+        # traced_response_formatting docstrings. No real check/formatting
+        # logic runs here; they exist purely to shape the trace.
+        with traced_guardrails(service_id, model or "unknown"):
+            pass
+
         with traced_span("model") as model_attrs:
             model_attrs["task_type"] = "LLM"
             model_attrs["model_name"] = model or "unknown"
@@ -545,6 +576,8 @@ class OpenAIProxyService:
         from response_test.stub_dispatcher import get_audio_stub_response
         stub = get_audio_stub_response(files, data)
         if stub is not None:
+            with traced_response_formatting(service_id, model_attrs["model_name"]):
+                pass
             return 200, stub
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
@@ -560,9 +593,14 @@ class OpenAIProxyService:
             }
 
         try:
-            return response.status_code, response.json()
+            status_code, body = response.status_code, response.json()
         except Exception:
             # Non-JSON 200 (response_format=text) or non-JSON error body
             # — return the raw text so the route layer can decide how to
             # surface it (text/plain vs JSON-wrapped).
-            return response.status_code, response.text
+            status_code, body = response.status_code, response.text
+
+        with traced_response_formatting(service_id, model_attrs["model_name"]):
+            pass
+
+        return status_code, body

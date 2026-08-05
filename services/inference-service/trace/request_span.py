@@ -80,7 +80,8 @@ def traced_span(
     THE span-lifecycle primitive: opens a span, captures start_time, yields a
     mutable attrs dict for the caller to enrich, and finalizes with
     total_time_ms plus success/error status. Every traced section (request,
-    model, ai-inference) goes through here — never hand-roll
+    model, ai-inference, and the LLM-only guardrails/response-formatting
+    placeholders) goes through here — never hand-roll
     `start_time = time.time()` + finalize again.
 
     Args:
@@ -168,4 +169,45 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
             # get_service_pricing), not this span attribute.
             "task_type": task_name.lower(),
         })
+        yield attrs
+
+
+@contextmanager
+def traced_guardrails(service_id: str, model_name: str):
+    """
+    'guardrails' span — LLM-only, hardcoded placeholder for a future
+    input-safety check. No real computation runs here on purpose; it exists
+    so the LLM stub path exercises the same 5-span shape a real guardrails +
+    formatting pipeline would eventually produce.
+
+    root=True like "request": flat and independent of the request/model/
+    ai-inference span tree rather than nested under it. Still carries
+    correlation_id/tenantId/userId (get_context_attributes()) plus
+    service_id/model_name copied from the request/model spans, so it joins
+    the same request when viewed in observability tooling.
+    """
+    with traced_span("guardrails", root=True, classify_status=True) as attrs:
+        attrs.update(get_context_attributes())
+        attrs["service_id"] = service_id
+        attrs["model_name"] = model_name or "unknown"
+        attrs["task_type"] = "LLM"
+        attrs["check"] = "content-safety"
+        attrs["result"] = "passed"
+        yield attrs
+
+
+@contextmanager
+def traced_response_formatting(service_id: str, model_name: str):
+    """
+    'response-formatting' span — LLM-only, hardcoded placeholder for a future
+    output-shaping step. See traced_guardrails for why it's hardcoded and
+    root=True; this is its post-inference counterpart.
+    """
+    with traced_span("response-formatting", root=True, classify_status=True) as attrs:
+        attrs.update(get_context_attributes())
+        attrs["service_id"] = service_id
+        attrs["model_name"] = model_name or "unknown"
+        attrs["task_type"] = "LLM"
+        attrs["format"] = "openai-chat-completion"
+        attrs["status"] = "success"
         yield attrs

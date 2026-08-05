@@ -186,8 +186,10 @@ async def test_proxy_traced_stubs_the_upstream_but_still_resolves(stub_mode, mon
 
 
 @pytest.mark.asyncio
-async def test_stubbed_chat_emits_model_and_ai_inference_spans(stub_mode, monkeypatch, span_exporter):
-    """Regression guard: the PPU Kafka consumer bills off the ai-inference span.
+async def test_stubbed_chat_emits_all_five_spans(stub_mode, monkeypatch, span_exporter):
+    """Regression guard: the PPU Kafka consumer bills off the ai-inference span,
+    and the LLM stub path must forward all 5 spans (request, guardrails, model,
+    ai-inference, response-formatting).
 
     A stub that short-circuits above these spans still returns 200, so the only
     symptom is silently missing spans and zero billing. That is what this pins.
@@ -213,14 +215,25 @@ async def test_stubbed_chat_emits_model_and_ai_inference_spans(stub_mode, monkey
 
     spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
 
+    assert "request" in spans
+    assert "guardrails" in spans
     assert "model" in spans
     assert "ai-inference" in spans
+    assert "response-formatting" in spans
     # Billing reads these off the ai-inference span; zero here means no revenue.
     assert spans["ai-inference"]["input_tokens"] > 0
     assert spans["ai-inference"]["output_tokens"] > 0
     assert spans["ai-inference"]["service_id"] == "stub"
     # The model label must be the upstream model, not the fixture's literal.
     assert spans["model"]["model_name"] == "gemma-3-27b"
+    # Hardcoded placeholder spans still carry request-identifying fields.
+    assert spans["guardrails"]["service_id"] == "stub"
+    assert spans["guardrails"]["result"] == "passed"
+    # response-formatting is finalized after the model span updates model_name
+    # from the (stubbed) upstream response, so it must reflect that, not the
+    # pre-inference resolved value.
+    assert spans["response-formatting"]["service_id"] == "stub"
+    assert spans["response-formatting"]["model_name"] == "gemma-3-27b"
 
 
 @pytest.mark.asyncio
@@ -413,10 +426,11 @@ async def test_proxy_traced_stream_stubs_the_upstream_but_still_resolves(stub_mo
 
 
 @pytest.mark.asyncio
-async def test_stubbed_stream_emits_model_and_ai_inference_spans(
+async def test_stubbed_stream_emits_all_five_spans(
     stub_mode, monkeypatch, span_exporter
 ):
-    """Regression guard: the PPU Kafka consumer bills off the ai-inference span.
+    """Regression guard: the PPU Kafka consumer bills off the ai-inference span,
+    and the LLM stub path must forward all 5 spans on the streaming path too.
 
     The streaming spans open lazily inside the returned generator, so a stub
     that short-circuited proxy_traced_stream instead of proxy_stream would still
@@ -445,14 +459,21 @@ async def test_stubbed_stream_emits_model_and_ai_inference_spans(
 
     spans = {s.name: dict(s.attributes or {}) for s in span_exporter.get_finished_spans()}
 
+    assert "request" in spans
+    assert "guardrails" in spans
     assert "model" in spans
     assert "ai-inference" in spans
+    assert "response-formatting" in spans
     # Billing reads these off the ai-inference span; zero here means no revenue.
     assert spans["ai-inference"]["input_tokens"] > 0
     assert spans["ai-inference"]["output_tokens"] > 0
     assert spans["ai-inference"]["service_id"] == "stub"
     # Resolved from adapter_config, never read back from the stream body.
     assert spans["model"]["model_name"] == "gemma-3-27b"
+    # Hardcoded placeholder spans still carry request-identifying fields.
+    assert spans["guardrails"]["service_id"] == "stub"
+    assert spans["response-formatting"]["service_id"] == "stub"
+    assert spans["response-formatting"]["model_name"] == "gemma-3-27b"
 
 
 @pytest.mark.asyncio
@@ -642,10 +663,12 @@ def test_audio_stub_returns_deep_copy(stub_mode):
 
 
 @pytest.mark.asyncio
-async def test_proxy_multipart_stubs_the_upstream_and_still_emits_the_model_span(
+async def test_proxy_multipart_stubs_the_upstream_and_still_emits_all_five_spans(
     stub_mode, monkeypatch, span_exporter
 ):
-    """Audio stubs the upstream POST only, so the model span is still emitted."""
+    """Audio stubs the upstream POST only, so all 5 spans are still emitted
+    (request, guardrails, model, ai-inference isn't part of the audio
+    passthrough, but the LLM-only guardrails/response-formatting pair is)."""
     from services.llm_service import OpenAIProxyService
     from trace.request_span import traced_span
 
@@ -671,7 +694,13 @@ async def test_proxy_multipart_stubs_the_upstream_and_still_emits_the_model_span
 
     assert status == 200
     assert "text" in body
+    assert "request" in spans
+    assert "guardrails" in spans
+    assert "response-formatting" in spans
     assert spans["model"]["service_id"] == "llm-service-1"
+    assert spans["guardrails"]["service_id"] == "llm-service-1"
+    assert spans["response-formatting"]["service_id"] == "llm-service-1"
+    assert spans["response-formatting"]["model_name"] == "gemma-3-27b"
 
 
 @pytest.mark.asyncio
