@@ -13,7 +13,10 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { FaExchangeAlt } from "react-icons/fa";
-import type { LanguageConfigProps, LanguagePairOption } from "../../types/servicePage";
+import type {
+  LanguageConfigProps,
+  LanguagePairOption,
+} from "../../types/servicePage";
 
 const defaultPairLabel = (pair: LanguagePairOption) =>
   `${pair.sourceLanguage} → ${pair.targetLanguage}`;
@@ -61,7 +64,7 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
     const isSwapAvailable = languagePairOptions.some(
       (p) =>
         p.sourceLanguage === languagePair.targetLanguage &&
-        p.targetLanguage === languagePair.sourceLanguage
+        p.targetLanguage === languagePair.sourceLanguage,
     );
 
     const handleSwap = () => {
@@ -82,7 +85,11 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
       <Stack spacing={4}>
         <HStack spacing={4} align="end">
           <FormControl flex={1}>
-            <FormLabel className="dview-service-try-option-title" fontSize="sm" fontWeight="semibold">
+            <FormLabel
+              className="dview-service-try-option-title"
+              fontSize="sm"
+              fontWeight="semibold"
+            >
               Languages
             </FormLabel>
             <Select
@@ -118,7 +125,11 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
   if (mode === "source-only") {
     return (
       <FormControl>
-        <FormLabel className="dview-service-try-option-title" fontSize="sm" fontWeight="semibold">
+        <FormLabel
+          className="dview-service-try-option-title"
+          fontSize="sm"
+          fontWeight="semibold"
+        >
           Language{" "}
           <Text as="span" color="red.500">
             *
@@ -145,7 +156,11 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
       <VStack spacing={4} align="stretch">
         <HStack spacing={4} align="end">
           <FormControl flex={1}>
-            <FormLabel fontSize="sm" fontWeight="semibold" className="dview-service-try-option-title">
+            <FormLabel
+              fontSize="sm"
+              fontWeight="semibold"
+              className="dview-service-try-option-title"
+            >
               Source Language{" "}
               <Text as="span" color="red.500">
                 *
@@ -174,7 +189,11 @@ const LanguageConfig: React.FC<LanguageConfigProps> = ({
             colorScheme="orange"
           />
           <FormControl flex={1}>
-            <FormLabel fontSize="sm" fontWeight="semibold" className="dview-service-try-option-title">
+            <FormLabel
+              fontSize="sm"
+              fontWeight="semibold"
+              className="dview-service-try-option-title"
+            >
               Target Language{" "}
               <Text as="span" color="red.500">
                 *
