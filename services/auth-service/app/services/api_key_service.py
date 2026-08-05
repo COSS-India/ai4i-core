@@ -17,6 +17,7 @@ Effective key status (no separate DB status column):
 import logging
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
@@ -27,6 +28,7 @@ from sqlalchemy import text
 from ai4i_core.ppu import get_inference_types
 
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.models.tenant import Tenant, TenantStatus
@@ -40,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 _HEX_KEY_RE = re.compile(r"[0-9a-f]{32}")
 _USERS_PAGE_SIZE = 500
+
+# Ad hoc, short-lived session for validate_api_key's DB fallback — opened only
+# on an actual Redis miss, independent of any repository injected into a
+# given APIKeyService instance. Wraps the same session factory/rollback logic
+# FastAPI's own Depends(get_db) uses; borrows a connection from the app's one
+# already-initialized engine, not a separate pool.
+_open_db_session = asynccontextmanager(get_db)
 
 
 class APIKeyService:
@@ -134,14 +143,47 @@ class APIKeyService:
             return {}
         return await self._repo.get_permission_names_by_ids(list(all_ids))
 
+    @staticmethod
+    def _compute_cache_ttl(db_key: APIKey) -> int:
+        """Seconds until ``db_key`` expires, or the configured default TTL
+        when it never expires. Never negative."""
+        if db_key.expires_at:
+            return max(0, int((db_key.expires_at - datetime.now(timezone.utc)).total_seconds()))
+        return int(timedelta(days=settings.api_key_expire_days).total_seconds())
+
+    @staticmethod
+    def _build_cache_payload(
+        db_key: APIKey, tenant_id: Optional[str], extra_fields: Optional[dict] = None
+    ) -> dict:
+        """The canonical Redis-hash shape for an API key — defined once so
+        every writer (create, refresh, DB-fallback rehydrate) stays in sync."""
+        return {
+            "api_key": db_key.api_key,
+            "permissions": db_key.permissions or [],
+            "user_id": str(db_key.user_id),
+            "tenant_id": tenant_id,
+            **(extra_fields or {}),
+        }
+
+    @staticmethod
+    async def _persist_cache_snapshot(
+        repo: APIKeyRepository, db_key: APIKey, payload: dict
+    ) -> None:
+        """Mirror ``payload`` (minus transient billing flags) onto
+        ``api_key.cached_data`` so a future Redis miss can repopulate the
+        cache without rejoining users/tenants."""
+        snapshot = {
+            k: v
+            for k, v in payload.items()
+            if k != "budget-exhausted" and not k.startswith("quota-")
+        }
+        await repo.update(db_key, {"cached_data": snapshot})
+        await repo.commit()
+
     async def _refresh_redis_cache(
         self, db_key: APIKey, tenant_id: Optional[str]
     ) -> None:
-        expires_at = db_key.expires_at
-        if expires_at:
-            ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
-        else:
-            ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
+        ttl = self._compute_cache_ttl(db_key)
         if ttl <= 0:
             return
         existing = await self._cache.get_api_key_cache(db_key.api_key)
@@ -150,17 +192,9 @@ class APIKeyService:
             for k, v in (existing or {}).items()
             if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
         }
-        await self._cache.set_api_key_cache(
-            db_key.api_key,
-            ttl,
-            {
-                "api_key": db_key.api_key,
-                "permissions": db_key.permissions or [],
-                "user_id": str(db_key.user_id),
-                "tenant_id": tenant_id,
-                **preserved,
-            },
-        )
+        payload = self._build_cache_payload(db_key, tenant_id, preserved)
+        await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
+        await self._persist_cache_snapshot(self._repo, db_key, payload)
 
     async def evict_keys_for_user(self, user_id: UUID) -> None:
         """Remove Redis entries for all keys owned by ``user_id``. No DB writes."""
@@ -475,38 +509,94 @@ class APIKeyService:
         await self._repo.commit()
 
         if owner_active:
-            await self._cache.set_api_key_cache(
-                raw_key,
-                ttl,
-                {
-                    "api_key": raw_key,
-                    "permissions": permission_ids,
-                    "user_id": str(user_id),
-                    "tenant_id": tenant_id,
-                    "tier_id": tier_id,
-                },
-            )
+            payload = self._build_cache_payload(api_key, tenant_id, {"tier_id": tier_id})
+            await self._cache.set_api_key_cache(raw_key, ttl, payload)
+            await self._persist_cache_snapshot(self._repo, api_key, payload)
 
         logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
         return raw_key, api_key
 
+    @staticmethod
+    def _is_cache_entry_invalid(cached: dict) -> bool:
+        """True for a negatively-cached (tombstoned) token."""
+        return cached.get("is_already_invalid") == "1" if isinstance(cached, dict) else False
+
+    @staticmethod
+    def _shape_validation_result(payload: dict) -> dict:
+        return {
+            **payload,
+            "valid": True,
+            "permission_ids": payload.get("permissions", []),
+        }
+
+    @staticmethod
+    async def _get_api_key_from_db(repo: APIKeyRepository, token: str) -> Optional[APIKey]:
+        """DB fallback for a Redis miss. ``repo`` eager-loads user/tenant so
+        eligibility can be checked without further queries."""
+        return await repo.get_by_api_key_if_valid(token)
+
+    def _is_key_eligible(self, db_key: APIKey) -> bool:
+        """Beyond is_active/expiry (already filtered in the DB query): the
+        owning user and tenant must still allow API-key authentication."""
+        if db_key.user is None:
+            logger.warning(
+                "API key %s has no owning user row; treating as ineligible", db_key.api_key
+            )
+            return False
+        return self.user_may_use_api_keys(db_key.user, db_key.user.tenant)
+
+    async def _rehydrate_cache_from_db(self, db_key: APIKey) -> dict:
+        """Repopulate Redis for an eligible key found on a cache miss —
+        verbatim from its persisted ``cached_data`` snapshot, the only source
+        of truth for this path (write-through: cached_data is kept in sync on
+        every create/update; never synthesized here — the PPU tier lookup it
+        can carry isn't safe to redo on this hot path)."""
+        if not db_key.cached_data:
+            raise InvalidAPIKeyError()
+        payload = db_key.cached_data
+        ttl = self._compute_cache_ttl(db_key)
+        if ttl <= 0:
+            return payload
+        await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
+        return payload
+
+    async def _tombstone_invalid_token(self, token: str) -> None:
+        """Negative-cache a token confirmed absent/ineligible, so repeat
+        requests fail fast from Redis instead of re-querying the DB."""
+        await self._cache.set_api_key_cache(
+            token, settings.invalid_api_key_cache_ttl_seconds, {"is_already_invalid": "1"}
+        )
+
+    async def _resolve_from_db_or_tombstone(self, token: str) -> dict:
+        """Owns the DB session for the whole miss-handling flow — opened here
+        lazily (only on an actual cache miss), not injected via the
+        constructor, so the validation hot path never carries a DB
+        dependency unless one is genuinely needed."""
+        async with _open_db_session() as session:
+            repo = APIKeyRepository(session)
+            db_key = await self._get_api_key_from_db(repo, token)
+            if db_key is None or not self._is_key_eligible(db_key):
+                await self._tombstone_invalid_token(token)
+                raise InvalidAPIKeyError()
+            return await self._rehydrate_cache_from_db(db_key)
+
     async def validate_api_key(self, token: str) -> dict:
         """
-        Validate a hex API key. Redis-only — zero DB calls.
-        Raises InvalidAPIKeyError when the key is absent from Redis (revoked or never existed).
+        Validate a hex API key. Redis-first: a cache hit is zero-DB. On a
+        miss, falls back to Postgres to repopulate the cache; a token that's
+        absent or no longer eligible is negatively cached before raising.
         """
         if not self._is_api_key(token):
             return {"valid": False, "message": "Invalid API key format."}
 
         cached = await self._cache.get_api_key_cache(token)
-        if cached is None:
-            raise InvalidAPIKeyError()
+        if cached is not None:
+            if self._is_cache_entry_invalid(cached):
+                raise InvalidAPIKeyError()
+            return self._shape_validation_result(cached)
 
-        return {
-            **cached,
-            "valid": True,
-            "permission_ids": cached.get("permissions", []),
-        }
+        payload = await self._resolve_from_db_or_tombstone(token)
+        return self._shape_validation_result(payload)
 
     async def revoke_api_key(
         self,

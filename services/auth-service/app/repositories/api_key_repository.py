@@ -10,6 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.models.api_key import APIKey
 from app.models.role import Permission
@@ -40,6 +41,22 @@ class APIKeyRepository(BaseRepository):
             select(APIKey).where(APIKey.api_key == api_key_value)
         )
         return result.scalar_one_or_none()
+
+    async def get_by_api_key_if_valid(self, api_key_value: str) -> Optional[APIKey]:
+        """Validation-hot-path lookup: eager-loads user and user.tenant in one
+        query so the caller can check owner/tenant eligibility with zero
+        further queries. Filters is_active/expiry here; owner/tenant
+        eligibility itself stays a service-layer concern."""
+        result = await self._db.execute(
+            select(APIKey)
+            .options(joinedload(APIKey.user).joinedload(User.tenant))
+            .where(
+                APIKey.api_key == api_key_value,
+                APIKey.is_active.is_(True),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+            )
+        )
+        return result.unique().scalar_one_or_none()
 
     async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
         if not permission_ids:
@@ -81,6 +98,28 @@ class APIKeyRepository(BaseRepository):
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def list_active_without_cached_data(
+        self, after_id: int = 0, limit: int = 500
+    ) -> list[APIKey]:
+        """Active, non-expired keys still missing their cached_data snapshot —
+        keyset-paginated on id (not offset): the backfill mutates cached_data
+        as it goes, which would make an offset-based page skip rows on the
+        next query since the filtered set shrinks underneath it. Eager-loads
+        user/tenant for the eligibility check and payload backfill."""
+        result = await self._db.execute(
+            select(APIKey)
+            .options(joinedload(APIKey.user).joinedload(User.tenant))
+            .where(
+                APIKey.id > after_id,
+                APIKey.is_active.is_(True),
+                APIKey.cached_data.is_(None),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+            )
+            .order_by(APIKey.id)
+            .limit(limit)
+        )
+        return list(result.unique().scalars().all())
 
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(
