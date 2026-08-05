@@ -6,6 +6,7 @@ Uses a single Redis logical DB; keys are distinguished by prefix.
 
 import json
 import logging
+import time
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 # Redis key pattern: auth:apikey:{api_key}
 # Defined once here — no other file should construct this key manually.
 REDIS_API_KEY_PREFIX = "auth:apikey:"
+
+# Redis key pattern: auth:logout:{user_id} -> unix timestamp of last logout.
+# Access tokens issued before this timestamp are considered revoked.
+REDIS_LOGOUT_PREFIX = "auth:logout:"
 
 
 class CacheService(_BaseCacheService):
@@ -52,6 +57,19 @@ class CacheService(_BaseCacheService):
     async def delete_api_key_cache(self, api_key: str) -> None:
         """Immediately invalidate an API key — used on revocation."""
         await self._redis.delete(f"{REDIS_API_KEY_PREFIX}{api_key}")
+
+    async def set_logout_timestamp(self, user_id: str, ttl_seconds: int) -> None:
+        """Record a global logout for user_id. Tokens with iat before this are revoked.
+
+        TTL matches the access-token lifetime — once it elapses, any token
+        issued before the logout has expired on its own anyway.
+        """
+        await self._redis.setex(f"{REDIS_LOGOUT_PREFIX}{user_id}", ttl_seconds, str(time.time()))
+
+    async def get_logout_timestamp(self, user_id: str) -> Optional[float]:
+        """Return the unix timestamp of the user's last logout, or None if none/expired."""
+        value = await self._redis.get(f"{REDIS_LOGOUT_PREFIX}{user_id}")
+        return float(value) if value else None
 
     async def patch_api_key_cache_field(self, api_key: str, field: str, value: str) -> bool:
         """Update a single field on an existing API key hash. No-op if key is absent from Redis."""
