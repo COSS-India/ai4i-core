@@ -97,12 +97,29 @@ def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict
     model_inference_endpoint = model_inference_endpoint or {}
     schema = model_inference_endpoint.get("schema") or {}
     async_details = model_inference_endpoint.get("asyncApiDetails") or {}
+    # adapter_config migration (a1f2e3d4c5b6) writes the snake_case key into
+    # this same inference_endpoint blob; inference_server_resolver.py reads
+    # both spellings for the same reason — a card stored snake_case would
+    # otherwise silently yield model_name=None here.
+    adapter_config = (
+        model_inference_endpoint.get("adapterConfig")
+        or model_inference_endpoint.get("adapter_config")
+        or {}
+    )
     return {
         "request_schema": schema.get("request"),
         "triton_schema": (schema.get("response") or {}).get("triton"),
         "is_sync_api": model_inference_endpoint.get("isSyncApi"),
         "polling_url": async_details.get("pollingUrl"),
         "poll_interval_ms": async_details.get("pollInterval"),
+        # Authoritative real model identifier for LLM (OpenAI-compatible)
+        # deployments — schema.request.model is only a sample the admin
+        # typed in and has repeatedly been found stale/wrong in practice
+        # (AI4IDS-1844 follow-up); the probe payload builder prefers this
+        # over anything in schema.request. An upcoming model-schema change
+        # is expected to drop "model" from schema.request entirely, so this
+        # is the durable source going forward, not a fallback.
+        "model_name": adapter_config.get("model_name"),
     }
 
 
@@ -610,6 +627,7 @@ class ServiceService:
             poll_interval_ms=params["poll_interval_ms"],
             max_poll_attempts=settings.endpoint_validation_max_poll_attempts,
             max_poll_wait_seconds=settings.endpoint_validation_max_poll_wait_seconds,
+            model_name=params["model_name"],
         )
         if not result.is_valid:
             failed_messages = [

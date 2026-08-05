@@ -278,6 +278,7 @@ async def test_inference(
     validation_mode: str = "lenient",
     skip_tls_verify: bool = False,
     triton_schema: Optional[Dict[str, Any]] = None,
+    model_name: Optional[str] = None,
 ) -> Tuple[ValidationDetail, Optional[Any], str]:
     """POST a probe payload and check the response status.
 
@@ -287,12 +288,14 @@ async def test_inference(
     ignore it on failure. *payload_kind* ("ulca" or "triton_v2", from
     ``build_probe_payload``) tells the caller whether the built-in
     per-task-type default response shape even applies — it's a ULCA
-    convention and never matches a raw Triton response.
+    convention and never matches a raw Triton response. *model_name* is the
+    model card's authoritative ``adapterConfig.model_name`` (see
+    ``build_ulca_payload``).
     """
     fail_threshold = _VALIDATION_MODE_THRESHOLDS.get(
         validation_mode, _VALIDATION_MODE_THRESHOLDS["lenient"]
     )
-    payload, payload_kind = build_probe_payload(task_type, request_schema, triton_schema)
+    payload, payload_kind = build_probe_payload(task_type, request_schema, triton_schema, model_name)
     headers = _build_probe_headers(api_key)
 
     safe_endpoint = sanitize_url_for_log(endpoint)
@@ -361,6 +364,7 @@ async def test_inference_async(
     triton_schema: Optional[Dict[str, Any]] = None,
     max_poll_attempts: int = 10,
     max_poll_wait_seconds: float = 60.0,
+    model_name: Optional[str] = None,
 ) -> Tuple[ValidationDetail, Optional[Any], str]:
     """Submit a probe request, then poll *polling_url* until the async job
     completes (HTTP 200), fails, or the poll budget runs out.
@@ -383,7 +387,7 @@ async def test_inference_async(
     Returns ``(detail, parsed_json_body, payload_kind)`` — see
     ``test_inference`` for what *payload_kind* is used for by the caller.
     """
-    payload, payload_kind = build_probe_payload(task_type, request_schema, triton_schema)
+    payload, payload_kind = build_probe_payload(task_type, request_schema, triton_schema, model_name)
     headers = _build_probe_headers(api_key)
     safe_endpoint = sanitize_url_for_log(endpoint)
     safe_polling_url = sanitize_url_for_log(polling_url)
@@ -492,6 +496,7 @@ async def validate_endpoint(
     poll_interval_ms: Optional[int] = None,
     max_poll_attempts: int = 10,
     max_poll_wait_seconds: float = 60.0,
+    model_name: Optional[str] = None,
 ) -> EndpointValidationResult:
     """Run all validation levels against an inference endpoint.
 
@@ -514,6 +519,12 @@ async def validate_endpoint(
     Triton-backed service that doesn't hand-supply a schema). Task types
     with no known ULCA default, and every Triton-backed probe without an
     explicit override, simply skip this check.
+
+    *model_name* is the model card's ``inferenceEndPoint.adapterConfig.model_name``
+    — for ``task_type == "llm"`` this is the authoritative real model
+    identifier and always overrides/fills the probe payload's ``model``
+    field, regardless of what (if anything) ``schema.request`` itself
+    declares (see ``build_ulca_payload``).
     """
     details: List[ValidationDetail] = []
 
@@ -548,6 +559,7 @@ async def validate_endpoint(
                 triton_schema=triton_schema,
                 max_poll_attempts=max_poll_attempts,
                 max_poll_wait_seconds=max_poll_wait_seconds,
+                model_name=model_name,
             )
         else:
             inference_result, response_body, payload_kind = await test_inference(
@@ -559,6 +571,7 @@ async def validate_endpoint(
                 validation_mode=validation_mode,
                 skip_tls_verify=skip_tls_verify,
                 triton_schema=triton_schema,
+                model_name=model_name,
             )
         details.append(inference_result)
         logger.info(

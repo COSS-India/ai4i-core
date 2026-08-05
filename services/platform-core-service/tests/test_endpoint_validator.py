@@ -43,7 +43,8 @@ class _FakeAsyncClient:
 
     def __init__(self, responses):
         self._responses = list(responses)
-        self.post_calls = []
+        self.post_calls = []  # list of URLs, in order
+        self.post_bodies = []  # list of json bodies, in order
 
     async def __aenter__(self):
         return self
@@ -53,6 +54,7 @@ class _FakeAsyncClient:
 
     async def post(self, url, json=None, headers=None, timeout=None):
         self.post_calls.append(url)
+        self.post_bodies.append(json)
         return self._responses.pop(0)
 
 
@@ -565,6 +567,31 @@ class TestTaskTypeDefaultShape:
             task_type="llm",
         )
         assert result.is_valid is False
+
+    @pytest.mark.asyncio
+    async def test_model_name_from_adapter_config_reaches_the_actual_probe_body(self, monkeypatch):
+        """End-to-end: validate_endpoint's model_name param (sourced from
+        the model card's adapterConfig.model_name) must land in the real
+        outgoing request body's "model" field, overriding a stale
+        schema.request.model sample — the exact AI4IDS-1844 follow-up bug."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient(
+            [_FakeResponse(200, json_body={"choices": [{"message": {"content": "hi"}}]})]
+        )
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/v1/chat/completions",
+            task_type="llm",
+            request_schema={
+                "model": "google/gemma-5-E4B-it",  # stale sample
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            model_name="google/gemma-4-31B-it",  # authoritative
+        )
+
+        assert result.is_valid is True
+        assert client.post_bodies[0]["model"] == "google/gemma-4-31B-it"
 
     @pytest.mark.asyncio
     async def test_explicit_override_wins_over_default(self, monkeypatch):
