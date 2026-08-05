@@ -4,17 +4,20 @@ Two-level validation for inference endpoints.
   Level 1 — URL format check (synchronous, always runs)
   Level 2 — Live inference probe (async, task-type-aware payload)
              - sync endpoints: single POST, checked for reachability and
-               (when an expected response schema is supplied) response shape
+               (when an expected response schema is available) response shape
              - async endpoints: POST to submit, then poll a separate
                pollingUrl until the job completes, fails, or the poll
                budget runs out
 
-Both levels also enforce SSRF protection: the hostname must resolve to a
-publicly-routable IP (no private/loopback/link-local/etc. addresses).
+Both the endpoint and — for async models — the pollingUrl are subject to
+SSRF protection: the hostname must resolve to a publicly-routable IP (no
+private/loopback/link-local/etc. addresses). Neither host gets a live
+network call until it has passed this check.
 """
 
 import asyncio
 import logging
+import time
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -22,7 +25,7 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import BaseModel
 
-from app.utils.probe_payloads import build_probe_payload
+from app.utils.probe_payloads import build_probe_payload, get_expected_response_shape
 from app.utils.security import (
     is_safe_host,
     json_body_for_log,
@@ -107,6 +110,36 @@ def validate_url_format(url: str) -> ValidationDetail:
         )
 
 
+async def _check_host_is_safe(url: str, *, label: str) -> List[ValidationDetail]:
+    """Run the URL-format + SSRF check against *url*, returning the
+    ValidationDetail entries produced (one if the format check fails, two —
+    format then SSRF — if it passes). Any FAILED entry means *url* must not
+    be probed.
+
+    *label* ("Endpoint" / "Polling endpoint") only affects the SSRF-block
+    message text: with ``label="Endpoint"`` the message is byte-identical
+    to the pre-existing single-endpoint check, so this refactor doesn't
+    change that message for the primary endpoint; a non-primary URL (the
+    async pollingUrl) gets its own label folded in instead.
+    """
+    details: List[ValidationDetail] = [validate_url_format(url)]
+    if details[0].status == ValidationStatus.FAILED:
+        return details
+    hostname = urlparse(url).hostname or ""
+    if not await is_safe_host(hostname):
+        details.append(
+            ValidationDetail(
+                level=ValidationLevel.URL_FORMAT,
+                status=ValidationStatus.FAILED,
+                message=(
+                    f"{label} host is not allowed for probing (SSRF protection). "
+                    f"Blocked hostname: '{hostname or '(empty)'}'"
+                ),
+            )
+        )
+    return details
+
+
 # ── Level 2 — Response shape matching ──
 
 
@@ -167,7 +200,9 @@ def _shape_mismatch(actual: Any, expected: Any, path: str = "response") -> Optio
 
 
 def validate_response_shape(response_body: Any, expected_schema: Dict[str, Any]) -> ValidationDetail:
-    """Compare a parsed JSON response against an admin-supplied sample shape."""
+    """Compare a parsed JSON response against a sample expected shape —
+    either an admin-supplied override or the task-type default (see
+    ``get_expected_response_shape``)."""
     mismatch = _shape_mismatch(response_body, expected_schema)
     if mismatch:
         return ValidationDetail(
@@ -180,6 +215,40 @@ def validate_response_shape(response_body: Any, expected_schema: Dict[str, Any])
         status=ValidationStatus.PASSED,
         message="Response matched the expected schema.",
     )
+
+
+# ── Shared result/error helpers (keeps the two probes below DRY) ──
+
+
+def _infer_pass(message: str, body: Optional[Any] = None) -> Tuple[ValidationDetail, Optional[Any]]:
+    return (
+        ValidationDetail(level=ValidationLevel.INFERENCE, status=ValidationStatus.PASSED, message=message),
+        body,
+    )
+
+
+def _infer_fail(message: str) -> Tuple[ValidationDetail, None]:
+    return (
+        ValidationDetail(level=ValidationLevel.INFERENCE, status=ValidationStatus.FAILED, message=message),
+        None,
+    )
+
+
+def _transport_error_message(exc: Exception, url: str, timeout: float, *, prefix: str = "Inference") -> str:
+    """Translate a transport-layer exception into the same message text
+    regardless of which probe (sync/async) raised it."""
+    if isinstance(exc, httpx.ConnectError):
+        return f"Could not connect to endpoint: {url}"
+    if isinstance(exc, httpx.TimeoutException):
+        return f"Request timed out after {timeout}s: {url}"
+    return f"{prefix} test error: {exc}"
+
+
+def _build_probe_headers(api_key: Optional[str]) -> Dict[str, str]:
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 # ── Level 2 — Live inference probe (sync) ──
@@ -198,13 +267,6 @@ def validate_response_shape(response_body: Any, expected_schema: Dict[str, Any])
 # Response *content* is no longer trusted just because the status passed —
 # see validate_response_shape, applied by the orchestrator below.
 _VALIDATION_MODE_THRESHOLDS: Dict[str, int] = {"lenient": 500, "strict": 500}
-
-
-def _build_probe_headers(api_key: Optional[str]) -> Dict[str, str]:
-    headers: Dict[str, str] = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
 
 
 async def test_inference(
@@ -266,57 +328,19 @@ async def test_inference(
         )
 
         if response.status_code < fail_threshold:
-            return (
-                ValidationDetail(
-                    level=ValidationLevel.INFERENCE,
-                    status=ValidationStatus.PASSED,
-                    message=(
-                        f"Inference endpoint is reachable and responded with "
-                        f"HTTP {response.status_code} ({payload_kind} payload)."
-                    ),
-                ),
+            return _infer_pass(
+                f"Inference endpoint is reachable and responded with "
+                f"HTTP {response.status_code} ({payload_kind} payload).",
                 response_json,
             )
 
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=(
-                    f"Inference endpoint returned HTTP {response.status_code} "
-                    f"(validation_mode={validation_mode}): "
-                    f"{truncate_for_log(body_for_log, max_len=500)}"
-                ),
-            ),
-            None,
-        )
-    except httpx.ConnectError:
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=f"Could not connect to endpoint: {endpoint}",
-            ),
-            None,
-        )
-    except httpx.TimeoutException:
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=f"Request timed out after {timeout}s: {endpoint}",
-            ),
-            None,
+        return _infer_fail(
+            f"Inference endpoint returned HTTP {response.status_code} "
+            f"(validation_mode={validation_mode}): "
+            f"{truncate_for_log(body_for_log, max_len=500)}"
         )
     except Exception as exc:
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=f"Inference test error: {exc}",
-            ),
-            None,
-        )
+        return _infer_fail(_transport_error_message(exc, endpoint, timeout))
 
 
 # ── Level 2 — Live inference probe (async / polling) ──
@@ -341,10 +365,17 @@ async def test_inference_async(
     Mirrors ULCA's ``validateAsyncUrl``: POST the sample payload to
     *endpoint*, then repeatedly re-POST whatever JSON body came back to
     *polling_url* every ``poll_interval_ms`` until it returns 200 (done) or
-    a non-202 failure. Bounded by both ``max_poll_attempts`` and
-    ``max_poll_wait_seconds`` (whichever is hit first) — unlike the
-    reference implementation's unbounded loop, a stuck partner endpoint
-    cannot hang this check forever.
+    a non-202 failure.
+
+    Bounded by both ``max_poll_attempts`` and ``max_poll_wait_seconds`` —
+    the latter is a real wall-clock deadline (tracked via ``time.monotonic``)
+    that covers the submit call, every sleep, *and* every poll HTTP call
+    (each request's own timeout is capped to whatever's left of the budget),
+    so a slow/stuck endpoint can't hold the caller past the configured
+    budget no matter how long any individual HTTP call takes. Unlike the
+    reference implementation's unbounded ``while(true)`` loop, this always
+    returns within ``max_poll_wait_seconds`` (plus the setup/parse overhead
+    outside the timed calls).
     """
     payload, payload_kind = build_probe_payload(task_type, request_schema, triton_schema)
     headers = _build_probe_headers(api_key)
@@ -352,22 +383,22 @@ async def test_inference_async(
     safe_polling_url = sanitize_url_for_log(polling_url)
     interval_s = max((poll_interval_ms or 1000) / 1000.0, 0.1)
 
+    deadline = time.monotonic() + max_poll_wait_seconds
+
+    def _remaining() -> float:
+        return deadline - time.monotonic()
+
     try:
-        async with httpx.AsyncClient(timeout=timeout, verify=not skip_tls_verify) as client:
-            submit_response = await client.post(endpoint, json=payload, headers=headers)
+        async with httpx.AsyncClient(verify=not skip_tls_verify) as client:
+            submit_timeout = min(timeout, max(_remaining(), 0.001))
+            submit_response = await client.post(
+                endpoint, json=payload, headers=headers, timeout=submit_timeout
+            )
 
             if submit_response.status_code >= 500:
-                return (
-                    ValidationDetail(
-                        level=ValidationLevel.INFERENCE,
-                        status=ValidationStatus.FAILED,
-                        message=(
-                            f"Async endpoint returned HTTP "
-                            f"{submit_response.status_code} on submit "
-                            f"({payload_kind} payload)."
-                        ),
-                    ),
-                    None,
+                return _infer_fail(
+                    f"Async endpoint returned HTTP {submit_response.status_code} "
+                    f"on submit ({payload_kind} payload)."
                 )
 
             try:
@@ -375,95 +406,51 @@ async def test_inference_async(
             except Exception:
                 poll_body = {}
 
-            elapsed = 0.0
             for attempt in range(1, max_poll_attempts + 1):
-                if elapsed >= max_poll_wait_seconds:
+                remaining = _remaining()
+                if remaining <= 0:
                     break
-                slept = min(interval_s, max_poll_wait_seconds - elapsed)
-                await asyncio.sleep(slept)
-                elapsed += slept
+                await asyncio.sleep(min(interval_s, remaining))
+                remaining = _remaining()
+                if remaining <= 0:
+                    break
 
-                poll_response = await client.post(polling_url, json=poll_body, headers=headers)
+                try:
+                    poll_response = await client.post(
+                        polling_url,
+                        json=poll_body,
+                        headers=headers,
+                        timeout=min(timeout, max(remaining, 0.001)),
+                    )
+                except httpx.TimeoutException:
+                    break  # budget exhausted mid-request — falls to the timeout message below
+
                 if poll_response.status_code == 202:
                     continue
                 if poll_response.status_code == 200:
                     try:
                         final_body = poll_response.json()
                     except Exception as exc:
-                        return (
-                            ValidationDetail(
-                                level=ValidationLevel.INFERENCE,
-                                status=ValidationStatus.FAILED,
-                                message=(
-                                    "Async endpoint's polled result was not "
-                                    f"valid JSON: {exc}"
-                                ),
-                            ),
-                            None,
+                        return _infer_fail(
+                            f"Async endpoint's polled result was not valid JSON: {exc}"
                         )
-                    return (
-                        ValidationDetail(
-                            level=ValidationLevel.INFERENCE,
-                            status=ValidationStatus.PASSED,
-                            message=(
-                                f"Async endpoint completed after {attempt} "
-                                f"poll(s) ({payload_kind} payload)."
-                            ),
-                        ),
+                    return _infer_pass(
+                        f"Async endpoint completed after {attempt} poll(s) "
+                        f"({payload_kind} payload).",
                         final_body,
                     )
-                return (
-                    ValidationDetail(
-                        level=ValidationLevel.INFERENCE,
-                        status=ValidationStatus.FAILED,
-                        message=(
-                            f"Polling {safe_polling_url} returned HTTP "
-                            f"{poll_response.status_code}."
-                        ),
-                    ),
-                    None,
+                return _infer_fail(
+                    f"Polling {safe_polling_url} returned HTTP "
+                    f"{poll_response.status_code}."
                 )
 
-            return (
-                ValidationDetail(
-                    level=ValidationLevel.INFERENCE,
-                    status=ValidationStatus.FAILED,
-                    message=(
-                        f"Async endpoint {safe_endpoint} did not complete "
-                        f"within {max_poll_wait_seconds}s "
-                        f"({max_poll_attempts} poll attempts against "
-                        f"{safe_polling_url})."
-                    ),
-                ),
-                None,
+            return _infer_fail(
+                f"Async endpoint {safe_endpoint} did not complete within "
+                f"{max_poll_wait_seconds}s ({max_poll_attempts} poll attempts "
+                f"against {safe_polling_url})."
             )
-    except httpx.ConnectError:
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=f"Could not connect to endpoint: {endpoint}",
-            ),
-            None,
-        )
-    except httpx.TimeoutException:
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=f"Request timed out after {timeout}s: {endpoint}",
-            ),
-            None,
-        )
     except Exception as exc:
-        return (
-            ValidationDetail(
-                level=ValidationLevel.INFERENCE,
-                status=ValidationStatus.FAILED,
-                message=f"Async inference test error: {exc}",
-            ),
-            None,
-        )
+        return _infer_fail(_transport_error_message(exc, endpoint, timeout, prefix="Async inference"))
 
 
 # ── Orchestrator ──
@@ -490,34 +477,37 @@ async def validate_endpoint(
 
     Dispatches to the async (poll-until-done) probe when the model declares
     ``isSyncApi=False`` and a ``pollingUrl``; otherwise runs the sync probe.
-    When *expected_response_schema* is supplied and the probe is reachable,
-    the actual response is also checked structurally against it.
+    The ``pollingUrl`` host goes through the same URL-format + SSRF check as
+    *endpoint* before any request is made to it — a model card cannot use
+    an internal ``pollingUrl`` to route platform-core's outbound probe
+    around the SSRF guard.
+
+    The actual response is checked structurally against
+    *expected_response_schema* when supplied, else against the built-in
+    default for *task_type* (see ``get_expected_response_shape``) — task
+    types with no known default simply skip this check.
     """
     details: List[ValidationDetail] = []
 
-    url_result = validate_url_format(endpoint)
-    details.append(url_result)
-    if url_result.status == ValidationStatus.FAILED:
-        return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
-
-    parsed = urlparse(endpoint)
-    hostname = parsed.hostname or ""
-    if not await is_safe_host(hostname):
-        details.append(
-            ValidationDetail(
-                level=ValidationLevel.URL_FORMAT,
-                status=ValidationStatus.FAILED,
-                message=(
-                    "Endpoint host is not allowed for probing (SSRF protection). "
-                    f"Blocked hostname: '{hostname or '(empty)'}'"
-                ),
-            )
-        )
+    endpoint_checks = await _check_host_is_safe(endpoint, label="Endpoint")
+    details.extend(endpoint_checks)
+    if any(d.status == ValidationStatus.FAILED for d in endpoint_checks):
         return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
 
     if run_inference_test and task_type:
         use_async = is_sync_api is False and bool(polling_url)
+
         if use_async:
+            # The pollingUrl comes from the model card, not the service's own
+            # (already-checked) endpoint — a model registered with a safe
+            # endpoint but an internal pollingUrl must not let platform-core
+            # issue an internal POST during the poll loop. Same check, same
+            # fail-closed behavior, applied here before any request to it.
+            polling_checks = await _check_host_is_safe(polling_url, label="Polling endpoint")
+            details.extend(polling_checks)
+            if any(d.status == ValidationStatus.FAILED for d in polling_checks):
+                return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
+
             inference_result, response_body = await test_inference_async(
                 endpoint=endpoint,
                 polling_url=polling_url,
@@ -552,8 +542,9 @@ async def validate_endpoint(
             inference_result.message,
         )
 
-        if inference_result.status == ValidationStatus.PASSED and expected_response_schema:
-            shape_result = validate_response_shape(response_body, expected_response_schema)
+        effective_expected_schema = expected_response_schema or get_expected_response_shape(task_type)
+        if inference_result.status == ValidationStatus.PASSED and effective_expected_schema:
+            shape_result = validate_response_shape(response_body, effective_expected_schema)
             details.append(shape_result)
             logger.info(
                 "Response-shape validation [%s] for %s: %s",

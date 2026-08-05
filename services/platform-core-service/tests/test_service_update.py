@@ -44,7 +44,6 @@ from app.schemas.enums.model_management import (
     PolicyCostEnum,
     PolicyLatencyEnum,
 )
-from app.core.exceptions import ValidationError
 from app.schemas.model_management.service import ServicePolicy, ServiceUpdateRequest
 
 # model-management directory is hyphenated; plain imports cannot resolve it.
@@ -57,6 +56,7 @@ def _make_service_orm(
     service_id: str = "svc-abc",
     task_type: str = None,
     expected_response_schema: dict = None,
+    endpoint: str = "http://existing-endpoint",
 ) -> MagicMock:
     instance = MagicMock()
     instance.service_id = service_id
@@ -65,6 +65,7 @@ def _make_service_orm(
     instance.api_key = None
     instance.task_type = task_type
     instance.expected_response_schema = expected_response_schema
+    instance.endpoint = endpoint
     return instance
 
 
@@ -220,17 +221,28 @@ def _make_model_orm_with_endpoint() -> MagicMock:
 
 
 class TestUpdateServiceEndpointRevalidation:
-    """AI4IDS-1844: changing `endpoint` re-validates it, and requires an
-    expectedResponseSchema (freshly supplied or previously stored) to check
-    the response against."""
+    """AI4IDS-1844: changing `endpoint` re-validates it. expectedResponseSchema
+    is optional throughout (PR review) — with nothing supplied or on file,
+    _validate_endpoint_for_model still gets called (with None), and
+    validate_endpoint() itself falls back to a task-type default rather
+    than the caller having to enforce a required-field error."""
 
     @pytest.mark.asyncio
-    async def test_endpoint_change_without_any_schema_on_file_is_rejected(self) -> None:
+    async def test_endpoint_change_without_any_schema_on_file_still_validates(self) -> None:
+        """No hard rejection anymore — the None just flows through; the
+        task-type default (or "skip the check") lives inside validate_endpoint."""
         svc = _make_svc()
         svc._services.get_by_service_id = AsyncMock(
             return_value=_make_service_orm(expected_response_schema=None)
         )
         svc._models.get_by_id_version = AsyncMock(return_value=_make_model_orm_with_endpoint())
+
+        captured = {}
+
+        async def _capture_validate(**kwargs):
+            captured.update(kwargs)
+
+        svc._validate_endpoint_for_model = _capture_validate  # type: ignore[method-assign]
 
         payload = ServiceUpdateRequest(
             serviceId="svc-abc",
@@ -241,8 +253,80 @@ class TestUpdateServiceEndpointRevalidation:
             tierIds=["tier-1"],
         )
 
-        with pytest.raises(ValidationError, match="expectedResponseSchema is required"):
-            await svc.update_service(payload, updated_by="user-1")
+        await svc.update_service(payload, updated_by="user-1")
+
+        assert captured["expected_response_schema"] is None
+        assert captured["endpoint"] == "http://new-endpoint"
+        svc._services.apply_updates.assert_awaited_once()
+        svc._services.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_expected_response_schema_alone_triggers_revalidation(self) -> None:
+        """Supplying a new schema WITHOUT changing `endpoint` must still
+        probe the current (unchanged) endpoint before storing it — a
+        schema is never persisted without having been checked against a
+        live response (PR review)."""
+        svc = _make_svc()
+        svc._services.get_by_service_id = AsyncMock(
+            return_value=_make_service_orm(
+                expected_response_schema=None, endpoint="http://existing-endpoint"
+            )
+        )
+        svc._models.get_by_id_version = AsyncMock(return_value=_make_model_orm_with_endpoint())
+
+        captured = {}
+
+        async def _capture_validate(**kwargs):
+            captured.update(kwargs)
+
+        svc._validate_endpoint_for_model = _capture_validate  # type: ignore[method-assign]
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc",
+            expectedResponseSchema={"output": [{"source": "new schema"}]},
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        # Probed against the EXISTING endpoint, since payload.endpoint was never set.
+        assert captured["endpoint"] == "http://existing-endpoint"
+        assert captured["expected_response_schema"] == {"output": [{"source": "new schema"}]}
+        svc._services.apply_updates.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_neither_endpoint_nor_schema_supplied_skips_revalidation(self) -> None:
+        """A plain field update (e.g. serviceDescription) with no endpoint
+        and no expectedResponseSchema must not trigger a live probe at all."""
+        svc = _make_svc()
+        svc._services.get_by_service_id = AsyncMock(
+            return_value=_make_service_orm(expected_response_schema=None)
+        )
+        probe_called = False
+
+        async def _fail_if_called(**_kwargs):
+            nonlocal probe_called
+            probe_called = True
+
+        svc._validate_endpoint_for_model = _fail_if_called  # type: ignore[method-assign]
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc",
+            serviceDescription="new description",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        await svc.update_service(payload, updated_by="user-1")
+
+        # get_by_id_version is legitimately called later for the cache
+        # refresh — the thing that must NOT happen is the live probe.
+        assert probe_called is False
 
     @pytest.mark.asyncio
     async def test_endpoint_change_with_freshly_supplied_schema_succeeds(self) -> None:

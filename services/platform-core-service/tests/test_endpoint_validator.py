@@ -9,6 +9,9 @@ Covers:
 - validate_endpoint orchestrator: end-to-end is_valid outcome for each case.
 """
 
+import asyncio
+import time
+
 import pytest
 
 from app.utils import endpoint_validator as ev
@@ -40,6 +43,7 @@ class _FakeAsyncClient:
 
     def __init__(self, responses):
         self._responses = list(responses)
+        self.post_calls = []
 
     async def __aenter__(self):
         return self
@@ -47,7 +51,8 @@ class _FakeAsyncClient:
     async def __aexit__(self, *_exc):
         return False
 
-    async def post(self, url, json=None, headers=None):
+    async def post(self, url, json=None, headers=None, timeout=None):
+        self.post_calls.append(url)
         return self._responses.pop(0)
 
 
@@ -61,8 +66,22 @@ class _RaisingAsyncClient:
     async def __aexit__(self, *_exc):
         return False
 
-    async def post(self, url, json=None, headers=None):
+    async def post(self, url, json=None, headers=None, timeout=None):
         raise self._exc
+
+
+class _AssertNeverCalledAsyncClient:
+    """Used to prove a code path never constructs/uses an HTTP client at
+    all — e.g. an SSRF-blocked host must short-circuit before any request."""
+
+    async def __aenter__(self):
+        raise AssertionError("no HTTP client should have been constructed")
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def post(self, *_args, **_kwargs):
+        raise AssertionError("no HTTP request should have been made")
 
 
 def _patch_client(monkeypatch, client) -> None:
@@ -325,6 +344,218 @@ class TestValidateEndpointOrchestrator:
             expected_response_schema={"output": [{"source": "hi"}]},
         )
         assert result.is_valid is False
+
+
+# ── Polling-URL SSRF guard (PR review: was bypassable via the poll channel) ─
+
+
+class TestPollingUrlSsrfGuard:
+    @pytest.mark.asyncio
+    async def test_internal_polling_url_is_blocked_before_any_request(self, monkeypatch):
+        """A model card with a safe public endpoint but an internal
+        pollingUrl must not let platform-core issue an internal POST — the
+        polling host gets the same SSRF check as the main endpoint, and
+        _AssertNeverCalledAsyncClient proves no HTTP client is even
+        constructed once it's blocked."""
+
+        async def _safe_except_polling_host(hostname):
+            return hostname != "169.254.169.254"
+
+        monkeypatch.setattr(ev, "is_safe_host", _safe_except_polling_host)
+        _patch_client(monkeypatch, _AssertNeverCalledAsyncClient())
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/submit",
+            task_type="asr",
+            expected_response_schema={"output": [{"source": "hi"}]},
+            is_sync_api=False,
+            polling_url="http://169.254.169.254/poll",
+            poll_interval_ms=10,
+        )
+
+        assert result.is_valid is False
+        blocked = [d for d in result.details if "Polling endpoint host is not allowed" in d.message]
+        assert blocked, [d.message for d in result.details]
+
+    @pytest.mark.asyncio
+    async def test_polled_status_is_never_leaked_when_polling_host_is_blocked(self, monkeypatch):
+        """The failure must come from the SSRF check itself, not from
+        actually polling the internal host and echoing its response status
+        back to the caller (the second half of the review comment: this
+        must not become a reachability/status oracle for internal hosts)."""
+
+        async def _safe_except_polling_host(hostname):
+            return hostname != "internal.example"
+
+        monkeypatch.setattr(ev, "is_safe_host", _safe_except_polling_host)
+        _patch_client(monkeypatch, _AssertNeverCalledAsyncClient())
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/submit",
+            task_type="asr",
+            expected_response_schema={"output": [{"source": "hi"}]},
+            is_sync_api=False,
+            polling_url="http://internal.example/poll",
+            poll_interval_ms=10,
+        )
+
+        assert result.is_valid is False
+        assert not any("returned HTTP" in d.message for d in result.details)
+
+    @pytest.mark.asyncio
+    async def test_safe_polling_url_is_unaffected(self, monkeypatch):
+        """Sanity check: the new check doesn't block a legitimately public
+        pollingUrl — same as before this fix."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient(
+                [
+                    _FakeResponse(200, json_body={"requestId": "job-1"}),
+                    _FakeResponse(200, json_body={"output": [{"source": "done"}]}),
+                ]
+            ),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/submit",
+            task_type="asr",
+            expected_response_schema={"output": [{"source": "hi"}]},
+            is_sync_api=False,
+            polling_url="http://model.example.com/poll",
+            poll_interval_ms=10,
+        )
+        assert result.is_valid is True
+
+
+# ── Task-type default response shape (PR review: shape is a function of ──
+# ── task_type, not a mandatory per-service admin input) ─────────────────
+
+
+class TestTaskTypeDefaultShape:
+    @pytest.mark.asyncio
+    async def test_default_shape_applied_when_none_supplied(self, monkeypatch):
+        """No expected_response_schema passed at all — validate_endpoint
+        still checks the built-in ASR default."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient([_FakeResponse(200, json_body={"nothing": "useful"})]),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="asr",
+        )
+        assert result.is_valid is False
+        shape_details = [d for d in result.details if d.level == ev.ValidationLevel.RESPONSE_SHAPE]
+        assert shape_details and shape_details[0].status == ValidationStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_default_shape_passes_for_conformant_response(self, monkeypatch):
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient([_FakeResponse(200, json_body={"output": [{"source": "hello"}]})]),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="asr",
+        )
+        assert result.is_valid is True
+
+    @pytest.mark.asyncio
+    async def test_explicit_override_wins_over_default(self, monkeypatch):
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient([_FakeResponse(200, json_body={"custom": [{"field": "x"}]})]),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="asr",
+            expected_response_schema={"custom": [{"field": "sample"}]},
+        )
+        assert result.is_valid is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_task_type_skips_shape_check_entirely(self, monkeypatch):
+        """No built-in default for this task type and no override supplied
+        — the shape check is skipped, not guessed; reachability alone
+        determines validity."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient([_FakeResponse(200, json_body={"anything": "goes"})]),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="speaker-diarization",
+        )
+        assert result.is_valid is True
+        assert not any(d.level == ev.ValidationLevel.RESPONSE_SHAPE for d in result.details)
+
+
+# ── Async poll wall-clock bound (PR review: only sleep time was bounded) ────
+
+
+class _SlowPollAsyncClient:
+    """Each poll call blocks for `delay_s` unless the caller passes a
+    shorter timeout, in which case it raises like httpx would when a
+    request exceeds its own timeout — used to prove each poll's own
+    per-call timeout is capped to the remaining wall-clock budget."""
+
+    def __init__(self, delay_s: float, submit_body: dict):
+        self._delay_s = delay_s
+        self._submit_body = submit_body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def post(self, url, json=None, headers=None, timeout=None):
+        if "submit" in url:
+            return _FakeResponse(200, json_body=self._submit_body)
+        if timeout is not None and timeout < self._delay_s:
+            import httpx
+
+            raise httpx.TimeoutException("simulated slow poll exceeded its budget")
+        await asyncio.sleep(0)
+        return _FakeResponse(202)
+
+
+class TestAsyncPollWallClockBound:
+    @pytest.mark.asyncio
+    async def test_per_call_timeout_is_capped_to_remaining_budget(self, monkeypatch):
+        """Regression: previously only sleep time counted toward
+        max_poll_wait_seconds, so a poll endpoint whose individual HTTP
+        calls hang could hold the request for roughly
+        (max_poll_attempts * timeout) regardless of the configured budget.
+        Each poll's own request timeout must be capped to whatever's left
+        of max_poll_wait_seconds, so a call that would take longer than the
+        remaining budget fails fast instead of hanging the whole probe."""
+        _patch_client(
+            monkeypatch,
+            _SlowPollAsyncClient(delay_s=5.0, submit_body={"requestId": "job-1"}),
+        )
+        start = time.monotonic()
+        detail, body = await ev.test_inference_async(
+            endpoint="http://model.example.com/submit",
+            polling_url="http://model.example.com/poll",
+            poll_interval_ms=10,
+            task_type="asr",
+            timeout=15.0,
+            max_poll_attempts=10,
+            max_poll_wait_seconds=0.5,
+        )
+        elapsed = time.monotonic() - start
+
+        assert detail.status == ValidationStatus.FAILED
+        assert body is None
+        # Must return close to the 0.5s budget — well under the 5s
+        # simulated per-call delay, and nowhere near the old bug's worst
+        # case of max_poll_attempts * timeout (~150s with these defaults).
+        assert elapsed < 3.0
 
 
 async def _async_true(_hostname):

@@ -6,10 +6,17 @@ Owns the rules:
 - Service names must be globally unique.
 - A service must reference an existing (model_id, model_version).
 - The endpoint URL is validated (URL format + SSRF + live probe) on
-  create/update. The live probe checks both reachability and, since
-  expectedResponseSchema is required on create, that the response actually
-  matches the shape the admin declared. Sync vs. async (poll-until-done)
-  probing is decided by the referenced model's isSyncApi/asyncApiDetails.
+  create/update, and the pollingUrl of async models gets the same SSRF
+  check before it's ever POSTed to. The live probe also checks the actual
+  response's shape: expectedResponseSchema is an optional per-service
+  override; when omitted, a built-in per-task-type default is used
+  (app/utils/probe_payloads.get_expected_response_shape), and task types
+  with no known default simply skip the shape check. Supplying a new
+  expectedResponseSchema on update — even without an endpoint change —
+  re-probes the current endpoint with it before it's stored, so a schema is
+  never persisted without having been checked against a live response.
+  Sync vs. async (poll-until-done) probing is decided by the referenced
+  model's isSyncApi/asyncApiDetails.
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
@@ -291,8 +298,15 @@ class ServiceService:
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
 
-        # If endpoint changes, re-validate it against the model schema
-        if payload.endpoint:
+        # Re-validate against the model schema whenever the endpoint changes,
+        # or a new expectedResponseSchema is supplied on its own — the latter
+        # is probed against the (possibly unchanged) live endpoint before
+        # being trusted/stored, so a schema is never persisted without ever
+        # having been checked against a real response. Neither field is
+        # required: with nothing supplied or on file, validate_endpoint()
+        # falls back to the task-type default shape (or skips the shape
+        # check entirely for a task type with no known default).
+        if payload.endpoint or payload.expectedResponseSchema is not None:
             model = await self._models.get_by_id_version(
                 instance.model_id, instance.model_version
             )
@@ -302,19 +316,12 @@ class ServiceService:
                 )
             api_key = payload.api_key or instance.api_key
             expected_response_schema = (
-                payload.expectedResponseSchema or instance.expected_response_schema
+                payload.expectedResponseSchema
+                if payload.expectedResponseSchema is not None
+                else instance.expected_response_schema
             )
-            if not expected_response_schema:
-                raise ValidationError(
-                    message=(
-                        "expectedResponseSchema is required when changing a "
-                        "service's endpoint (no previously stored schema was "
-                        "found to re-validate the new endpoint against)."
-                    ),
-                    code="EXPECTED_RESPONSE_SCHEMA_REQUIRED",
-                )
             await self._validate_endpoint_for_model(
-                endpoint=payload.endpoint,
+                endpoint=payload.endpoint or instance.endpoint,
                 api_key=api_key,
                 model_inference_endpoint=model.inference_endpoint or {},
                 task_type=(model.task or {}).get("type"),
@@ -470,12 +477,21 @@ class ServiceService:
     ) -> None:
         """Live-validate one item's new endpoint. Raises
         EndpointValidationFailedError. Safe to run concurrently with other
-        items since it makes no DB calls."""
+        items since it makes no DB calls.
+
+        ServiceEndpointUpdateItem only carries {serviceId, endpoint} — there
+        is no per-item schema override in this bulk shape — so the shape
+        check runs against whatever's already stored for that service (and
+        falls back further to the task-type default inside
+        _validate_endpoint_for_model if that's also unset), the same as a
+        single-service endpoint-only update would.
+        """
         await self._validate_endpoint_for_model(
             endpoint=item.endpoint,
             api_key=instance.api_key,
             model_inference_endpoint=model.inference_endpoint or {},
             task_type=(model.task or {}).get("type"),
+            expected_response_schema=instance.expected_response_schema,
         )
 
     async def _commit_endpoint_updates(
@@ -575,7 +591,7 @@ class ServiceService:
         api_key: Optional[str],
         model_inference_endpoint: Dict[str, Any],
         task_type: Optional[str],
-        expected_response_schema: Optional[Dict[str, Any]] = None,
+        expected_response_schema: Optional[Dict[str, Any]],
     ) -> None:
         params = _extract_validation_params(model_inference_endpoint)
         result = await validate_endpoint(

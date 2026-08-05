@@ -59,6 +59,33 @@ def validate_service_id(v: str) -> str:
     return v
 
 
+def validate_expected_response_schema(
+    v: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Shared by Create/Update: None is fine (falls back to the built-in
+    per-task-type default — see app.utils.probe_payloads), but an explicitly
+    supplied schema must be a non-empty object."""
+    if v is not None and not v:
+        raise ValueError(
+            "expectedResponseSchema must be a non-empty object describing "
+            "the expected response shape"
+        )
+    return v
+
+
+_EXPECTED_RESPONSE_SCHEMA_DESCRIPTION = (
+    "Optional. A sample of what a correct response from this endpoint "
+    'looks like, e.g. {"output": [{"target": "..."}]}. The endpoint is '
+    "probed with a task-type-appropriate sample request, and its actual "
+    "response must structurally match this shape (same keys, same value "
+    "types) or the service is rejected. When omitted, a built-in default "
+    "shape for the model's task type is used instead (see "
+    "app.utils.probe_payloads.get_expected_response_shape); task types with "
+    "no known default simply skip this check. Supply this to override the "
+    "default or to validate a custom/non-ULCA response contract."
+)
+
+
 class ServiceCreateRequest(BaseSchema):
     """Request body for POST /services."""
 
@@ -78,16 +105,8 @@ class ServiceCreateRequest(BaseSchema):
     costPerUnit: float = Field(..., ge=0)
     unitSize: int
     tierIds: List[str] = Field(..., min_length=1)
-    expectedResponseSchema: Dict[str, Any] = Field(
-        ...,
-        description=(
-            "Required. A sample of what a correct response from this "
-            "endpoint looks like, e.g. "
-            '{"output": [{"target": "..."}]}. The endpoint is probed at '
-            "creation time with a task-type-appropriate sample request, and "
-            "its actual response must structurally match this shape (same "
-            "keys, same value types) or the service is rejected."
-        ),
+    expectedResponseSchema: Optional[Dict[str, Any]] = Field(
+        None, description=_EXPECTED_RESPONSE_SCHEMA_DESCRIPTION
     )
 
     @field_validator("taskType")
@@ -97,13 +116,10 @@ class ServiceCreateRequest(BaseSchema):
 
     @field_validator("expectedResponseSchema")
     @classmethod
-    def _validate_expected_response_schema(cls, v: Dict[str, Any]) -> Dict[str, Any]:
-        if not v:
-            raise ValueError(
-                "expectedResponseSchema must be a non-empty object describing "
-                "the expected response shape"
-            )
-        return v
+    def _validate_expected_response_schema(
+        cls, v: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        return validate_expected_response_schema(v)
 
     @field_validator("serviceId")
     @classmethod
@@ -176,11 +192,12 @@ class ServiceUpdateRequest(BaseSchema):
     expectedResponseSchema: Optional[Dict[str, Any]] = Field(
         None,
         description=(
-            "Optional. Resend when changing `endpoint` so the new endpoint "
-            "is re-validated against a sample response shape. If omitted on "
-            "an endpoint change, the schema stored from creation (or the "
-            "last update) is reused; if none is on file, the update is "
-            "rejected."
+            _EXPECTED_RESPONSE_SCHEMA_DESCRIPTION
+            + " Supplying this on its own (without an `endpoint` change) "
+            "still re-validates it against the current live endpoint before "
+            "it's stored, so a schema is never persisted without having been "
+            "checked against a real response. Omitting it on an `endpoint` "
+            "change reuses the schema on file (or the task-type default)."
         ),
     )
 
@@ -193,13 +210,10 @@ class ServiceUpdateRequest(BaseSchema):
 
     @field_validator("expectedResponseSchema")
     @classmethod
-    def _validate_expected_response_schema(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if v is not None and not v:
-            raise ValueError(
-                "expectedResponseSchema must be a non-empty object describing "
-                "the expected response shape"
-            )
-        return v
+    def _validate_expected_response_schema(
+        cls, v: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        return validate_expected_response_schema(v)
 
     @field_validator("unitSize")
     @classmethod

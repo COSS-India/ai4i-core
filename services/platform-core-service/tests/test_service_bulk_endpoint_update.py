@@ -46,13 +46,14 @@ ServiceService = _service_service_module.ServiceService
 EndpointValidationFailedError = _service_service_module.EndpointValidationFailedError
 
 
-def _make_service_orm(service_id: str) -> MagicMock:
+def _make_service_orm(service_id: str, expected_response_schema: dict = None) -> MagicMock:
     instance = MagicMock()
     instance.service_id = service_id
     instance.model_id = "model-1"
     instance.model_version = "1.0"
     instance.api_key = None
     instance.tier_ids = []
+    instance.expected_response_schema = expected_response_schema
     return instance
 
 
@@ -182,6 +183,31 @@ class TestUpdateServiceEndpointsBulk:
         svc._services.apply_updates.assert_not_called()
         svc._services.commit.assert_not_called()
         svc._services.rollback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bulk_update_probes_with_each_service_stored_schema(self) -> None:
+        """PR review: _probe_endpoint_update_item was passing no
+        expected_response_schema at all, silently skipping the shape check
+        on every bulk endpoint update. Must thread instance.expected_response_schema
+        through, per item — not share one value across the batch."""
+        instances = {
+            "svc-a": _make_service_orm("svc-a", expected_response_schema={"output": [{"source": "a"}]}),
+            "svc-b": _make_service_orm("svc-b", expected_response_schema=None),
+        }
+        svc = _make_svc(instances)
+        items = [
+            ServiceEndpointUpdateItem(serviceId="svc-a", endpoint="http://host-a:8000"),
+            ServiceEndpointUpdateItem(serviceId="svc-b", endpoint="http://host-b:8000"),
+        ]
+
+        await svc.update_service_endpoints(items, updated_by="user-1")
+
+        calls_by_endpoint = {
+            call.kwargs["endpoint"]: call.kwargs["expected_response_schema"]
+            for call in svc._validate_endpoint_for_model.await_args_list
+        }
+        assert calls_by_endpoint["http://host-a:8000"] == {"output": [{"source": "a"}]}
+        assert calls_by_endpoint["http://host-b:8000"] is None
 
     @pytest.mark.asyncio
     async def test_bulk_update_commit_failure_rolls_back_batch(self) -> None:
