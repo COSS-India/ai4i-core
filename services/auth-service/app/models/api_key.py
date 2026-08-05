@@ -4,8 +4,8 @@ APIKey ORM model.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -14,6 +14,9 @@ from app.models import Base
 
 class APIKey(Base):
     __tablename__ = "api_key"
+    __table_args__ = (
+        Index("ix_api_key_cached_data_gin", "cached_data", postgresql_using="gin"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     user_id = Column(
@@ -33,7 +36,7 @@ class APIKey(Base):
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     updated_by = Column(UUID(as_uuid=True), nullable=True)
-    cached_data = Column(JSON, nullable=True)
+    cached_data = Column(JSONB, nullable=True)
 
     user = relationship("User", back_populates="api_keys")
 

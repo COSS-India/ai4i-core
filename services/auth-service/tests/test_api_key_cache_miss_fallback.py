@@ -283,6 +283,21 @@ class TestRefreshAndCreatePersistCachedData:
         repo.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_refresh_redis_cache_preserves_tier_id_from_existing_cached_data(self) -> None:
+        """tier_id can only be correctly computed at create_api_key time (a
+        platform-core PPU lookup) — a refresh must carry it forward from
+        cached_data, not drop it, even when Redis itself was evicted (so
+        there's no existing hash to read tier_id from there either)."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value=None)
+        key = _api_key(cached_data={"api_key": _TOKEN, "tier_id": "tier-A", "permissions": [1]})
+        await svc._refresh_redis_cache(key, "1")
+        written = cache.set_api_key_cache.await_args.args[2]
+        assert written["tier_id"] == "tier-A"
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert persisted["tier_id"] == "tier-A"
+
+    @pytest.mark.asyncio
     async def test_refresh_redis_cache_zero_ttl_skips_persist(self) -> None:
         svc, repo, cache = _service()
         expired = _api_key(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))

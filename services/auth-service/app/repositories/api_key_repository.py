@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import cast, func, or_, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -120,6 +121,76 @@ class APIKeyRepository(BaseRepository):
             .limit(limit)
         )
         return list(result.unique().scalars().all())
+
+    async def patch_cached_data_field_for_tenant(
+        self, tenant_id: int, field: str, value: str
+    ) -> int:
+        """Set one top-level field inside cached_data for every active,
+        non-expired, already-backfilled key belonging to tenant_id's users —
+        a single UPDATE ... FROM, not a per-key round trip. Keys with no
+        cached_data snapshot yet are skipped (nothing to patch until the
+        backfill/an update populates one). Returns rows touched.
+
+        Mirrors the same field this call's Redis counterpart
+        (CacheService.patch_api_key_cache_field) writes, so budget/quota
+        flags survive a cache eviction instead of resetting on rehydrate.
+        """
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.user_id == User.id,
+                User.tenant_id == tenant_id,
+                APIKey.is_active.is_(True),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+                APIKey.cached_data.isnot(None),
+            )
+            .values(
+                cached_data=func.jsonb_set(
+                    APIKey.cached_data, cast([field], ARRAY(TEXT)), func.to_jsonb(value)
+                )
+            )
+        )
+        return result.rowcount
+
+    async def remove_cached_data_fields_for_tenant(
+        self, tenant_id: int, fields: list[str]
+    ) -> int:
+        """Remove multiple top-level fields from cached_data for every active,
+        non-expired, already-backfilled key belonging to tenant_id's users —
+        one UPDATE ... FROM. Mirrors CacheService.delete_api_key_cache_fields."""
+        if not fields:
+            return 0
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.user_id == User.id,
+                User.tenant_id == tenant_id,
+                APIKey.is_active.is_(True),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+                APIKey.cached_data.isnot(None),
+            )
+            .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
+        )
+        return result.rowcount
+
+    async def remove_cached_data_fields_globally(self, fields: list[str]) -> int:
+        """Remove multiple top-level fields from cached_data across every
+        active, non-expired, already-backfilled key in every tenant — one
+        UPDATE, no per-page pagination needed (unlike the Redis side, which
+        must chunk for pipelining). Used by the monthly quota-reset cron.
+        Mirrors CacheService.delete_api_key_cache_fields_bulk."""
+        if not fields:
+            return 0
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.is_active.is_(True),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+                APIKey.cached_data.isnot(None),
+            )
+            .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
+        )
+        return result.rowcount
 
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(
