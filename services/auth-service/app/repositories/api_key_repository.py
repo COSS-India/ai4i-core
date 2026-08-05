@@ -43,6 +43,22 @@ class APIKeyRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _active_key_conditions(*, require_cached_data: Optional[bool] = None) -> list:
+        """Shared is_active/expiry predicate for every 'still-usable key'
+        query, optionally combined with a cached_data presence/absence
+        filter. ``require_cached_data``: None = don't filter on it, True =
+        require present, False = require absent."""
+        conditions = [
+            APIKey.is_active.is_(True),
+            or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+        ]
+        if require_cached_data is True:
+            conditions.append(APIKey.cached_data.isnot(None))
+        elif require_cached_data is False:
+            conditions.append(APIKey.cached_data.is_(None))
+        return conditions
+
     async def get_by_api_key_if_valid(self, api_key_value: str) -> Optional[APIKey]:
         """Validation-hot-path lookup: eager-loads user and user.tenant in one
         query so the caller can check owner/tenant eligibility with zero
@@ -51,11 +67,7 @@ class APIKeyRepository(BaseRepository):
         result = await self._db.execute(
             select(APIKey)
             .options(joinedload(APIKey.user).joinedload(User.tenant))
-            .where(
-                APIKey.api_key == api_key_value,
-                APIKey.is_active.is_(True),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
-            )
+            .where(APIKey.api_key == api_key_value, *self._active_key_conditions())
         )
         return result.unique().scalar_one_or_none()
 
@@ -90,10 +102,7 @@ class APIKeyRepository(BaseRepository):
         to issue one query per user to reach the same keys."""
         result = await self._db.execute(
             select(APIKey)
-            .where(
-                APIKey.is_active.is_(True),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
-            )
+            .where(*self._active_key_conditions())
             .order_by(APIKey.id)
             .offset(offset)
             .limit(limit)
@@ -113,9 +122,7 @@ class APIKeyRepository(BaseRepository):
             .options(joinedload(APIKey.user).joinedload(User.tenant))
             .where(
                 APIKey.id > after_id,
-                APIKey.is_active.is_(True),
-                APIKey.cached_data.is_(None),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+                *self._active_key_conditions(require_cached_data=False),
             )
             .order_by(APIKey.id)
             .limit(limit)
@@ -140,9 +147,7 @@ class APIKeyRepository(BaseRepository):
             .where(
                 APIKey.user_id == User.id,
                 User.tenant_id == tenant_id,
-                APIKey.is_active.is_(True),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
-                APIKey.cached_data.isnot(None),
+                *self._active_key_conditions(require_cached_data=True),
             )
             .values(
                 cached_data=func.jsonb_set(
@@ -165,9 +170,7 @@ class APIKeyRepository(BaseRepository):
             .where(
                 APIKey.user_id == User.id,
                 User.tenant_id == tenant_id,
-                APIKey.is_active.is_(True),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
-                APIKey.cached_data.isnot(None),
+                *self._active_key_conditions(require_cached_data=True),
             )
             .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
         )
@@ -183,11 +186,7 @@ class APIKeyRepository(BaseRepository):
             return 0
         result = await self._db.execute(
             update(APIKey)
-            .where(
-                APIKey.is_active.is_(True),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
-                APIKey.cached_data.isnot(None),
-            )
+            .where(*self._active_key_conditions(require_cached_data=True))
             .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
         )
         return result.rowcount
