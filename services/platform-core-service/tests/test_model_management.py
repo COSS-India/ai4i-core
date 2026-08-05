@@ -523,6 +523,7 @@ class TestServiceServiceCreate:
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
+            expectedResponseSchema={"output": [{"source": "test"}]},
         )
         with pytest.raises(VE):
             await svc.create_service(payload, created_by="user-1")
@@ -551,6 +552,7 @@ class TestServiceServiceCreate:
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
+            expectedResponseSchema={"output": [{"source": "test"}]},
         )
         # Endpoint validation is also triggered; mock it out.
         with pytest.raises(DupErr):
