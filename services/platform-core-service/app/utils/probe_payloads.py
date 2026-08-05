@@ -207,13 +207,12 @@ _ULCA_DUMMY_PAYLOADS: Dict[str, Dict[str, Any]] = {
 }
 
 
-# ── Expected response shapes (ULCA) ──
+# ── Expected response shapes (default per task type) ──
 
-# A ULCA-conformant response shape is a function of task_type, not
-# per-service data — mirrors _ULCA_DUMMY_PAYLOADS above, one entry per task
-# type, but for the *response* side instead of the request. Used as the
-# default for Service.expectedResponseSchema when the admin doesn't supply
-# an override.
+# The default response shape a service's live probe is checked against
+# when the admin doesn't supply an explicit expectedResponseSchema override
+# — mirrors _ULCA_DUMMY_PAYLOADS above, one entry per task type, but for the
+# *response* side instead of the request.
 #
 # Deliberately light: only the envelope + the one field every conformant
 # response of that task type must carry, never optional/extra fields — a
@@ -221,9 +220,17 @@ _ULCA_DUMMY_PAYLOADS: Dict[str, Dict[str, Any]] = {
 # Task types not listed here have no well-established single response
 # contract; the shape check is simply skipped for them unless the admin
 # supplies an explicit expectedResponseSchema.
+#
+# "llm" is deliberately NOT a ULCA output/target envelope like the other
+# entries: real-world LLM deployments (vLLM, TGI, OpenAI, Azure OpenAI,
+# Anthropic-compatible gateways, ...) are overwhelmingly OpenAI
+# chat-completions-shaped, not ULCA-wrapped — defaulting to ULCA's shape
+# here would reject the common case rather than the exception (see
+# AI4IDS-1844 follow-up: a real vLLM deployment returning
+# {"choices": [{"message": {"content": "..."}}]}).
 _ULCA_EXPECTED_SHAPES: Dict[str, Dict[str, Any]] = {
     "nmt": {"output": [{"target": "sample translated text"}]},
-    "llm": {"output": [{"target": "sample generated text"}]},
+    "llm": {"choices": [{"message": {"content": "sample generated text"}}]},
     "transliteration": {"output": [{"target": "sample transliterated text"}]},
     "asr": {"output": [{"source": "sample transcript"}]},
     "ocr": {"output": [{"source": "sample extracted text"}]},
@@ -242,6 +249,34 @@ def get_expected_response_shape(task_type: Optional[str]) -> Optional[Dict[str, 
     return _ULCA_EXPECTED_SHAPES.get(task_type.lower())
 
 
+# Top-level request_schema keys whose sample value is a real identifier a
+# strict server validates against a known/allowed value — not free-text the
+# server just echoes or transcribes. Blindly overwriting these with a
+# generic placeholder makes the probe request itself invalid before the
+# response even matters (discovered against a real OpenAI-compatible vLLM
+# deployment: sending {"model": "test", ...} 404s with "The model `test`
+# does not exist" — the endpoint is live and correct, but every probe fails
+# because of the placeholder, not the endpoint). These are sent verbatim
+# from the model card's configured sample instead of being replaced.
+_PRESERVE_VERBATIM_KEYS = frozenset(
+    {
+        "model",
+        "modelname",
+        "modelid",
+        "modelversion",
+        "deployment",
+        "deploymentname",
+        "deploymentid",
+        "engine",
+        "engineid",
+    }
+)
+
+
+def _normalize_key(key: str) -> str:
+    return key.strip().lower().replace("-", "").replace("_", "")
+
+
 def build_ulca_payload(
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,
@@ -251,7 +286,10 @@ def build_ulca_payload(
         payload: Dict[str, Any] = {}
         for key, value in request_schema.items():
             if isinstance(value, str):
-                payload[key] = "test"
+                if _normalize_key(key) in _PRESERVE_VERBATIM_KEYS:
+                    payload[key] = value
+                else:
+                    payload[key] = "test"
             elif isinstance(value, dict):
                 payload[key] = value
             elif isinstance(value, list):

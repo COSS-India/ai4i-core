@@ -518,6 +518,55 @@ class TestTaskTypeDefaultShape:
         assert result.is_valid is True
 
     @pytest.mark.asyncio
+    async def test_llm_default_matches_a_real_openai_style_chat_completion(self, monkeypatch):
+        """The llm default is OpenAI chat-completions-shaped, not ULCA —
+        a real vLLM/OpenAI-compatible response (with plenty of extra
+        fields the shape matcher must ignore) should pass with NO
+        expectedResponseSchema supplied at all."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        real_vllm_response = {
+            "id": "chatcmpl-887eb644ca6e8de9",
+            "object": "chat.completion",
+            "created": 1785927105,
+            "model": "google/gemma-4-31B-it",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello! How can I help you today?",
+                        "refusal": None,
+                    },
+                    "logprobs": None,
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 14, "total_tokens": 24, "completion_tokens": 10},
+        }
+        _patch_client(monkeypatch, _FakeAsyncClient([_FakeResponse(200, json_body=real_vllm_response)]))
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/v1/chat/completions",
+            task_type="llm",
+        )
+        assert result.is_valid is True
+
+    @pytest.mark.asyncio
+    async def test_llm_default_rejects_a_ulca_shaped_response(self, monkeypatch):
+        """Inverse of the above: a ULCA-shaped {"output": [...]}"} response
+        (the OLD default) must now FAIL against the llm default, since a
+        conformant response no longer looks like that."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient([_FakeResponse(200, json_body={"output": [{"target": "hi"}]})]),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="llm",
+        )
+        assert result.is_valid is False
+
+    @pytest.mark.asyncio
     async def test_explicit_override_wins_over_default(self, monkeypatch):
         monkeypatch.setattr(ev, "is_safe_host", _async_true)
         _patch_client(
