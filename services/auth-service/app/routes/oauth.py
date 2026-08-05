@@ -16,7 +16,7 @@ import json
 import logging
 import re
 import secrets
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
@@ -49,11 +49,11 @@ router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
 def _get_allowed_redirect(uri: str) -> str | None:
     """Return a safe redirect URI if permitted by the configured allowlist, else None.
 
-    Always returns a value taken verbatim from ``settings.oauth_allowed_redirect_uris``.
-    A URI is allowed when its scheme, host, and path match an allowlist entry
-    (query strings on the request are ignored for matching). User input is never
-    interpolated into the returned URL, so the redirect target cannot be an
-    open redirect.
+    Always returns a bare callback URL built only from the matching allowlist
+    entry's scheme, host, and path (never query/fragment, never user input).
+    Matching is byte-exact on those three components — trailing slash, host
+    case, and explicit default ports must match the SPA and the env value.
+    Query strings on the request are ignored for matching.
     """
     if not uri:
         return None
@@ -74,12 +74,25 @@ def _get_allowed_redirect(uri: str) -> str | None:
     request_key = (parsed.scheme, parsed.netloc, parsed.path)
     for allowed_uri in allowed_list:
         allowed_parsed = urlparse(allowed_uri)
+        if allowed_parsed.scheme not in ("https", "http"):
+            continue
         if request_key == (
             allowed_parsed.scheme,
             allowed_parsed.netloc,
             allowed_parsed.path,
         ):
-            return allowed_uri  # value from server config only
+            # Bare URL from server config only — strip query/fragment so the
+            # callback can safely append ?code=... without producing entry?x=1?code=.
+            return urlunparse(
+                (
+                    allowed_parsed.scheme,
+                    allowed_parsed.netloc,
+                    allowed_parsed.path,
+                    "",
+                    "",
+                    "",
+                )
+            )
 
     return None
 

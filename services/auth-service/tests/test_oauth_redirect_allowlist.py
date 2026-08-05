@@ -27,7 +27,7 @@ class TestGetAllowedRedirect:
 
     def test_query_string_still_matches_same_path(self, monkeypatch):
         """Query on the request must not block a path match; returned URL is
-        the allowlist entry (no client query)."""
+        the bare allowlist entry (no client query)."""
         monkeypatch.setattr(
             "app.routes.oauth.settings.oauth_allowed_redirect_uris",
             _ALLOWLIST,
@@ -35,6 +35,46 @@ class TestGetAllowedRedirect:
         assert (
             _get_allowed_redirect("https://app.example.com/auth/callback?next=/home")
             == "https://app.example.com/auth/callback"
+        )
+
+    def test_allowlist_query_stripped_from_return(self, monkeypatch):
+        """Allowlist entries must not carry query into the redirect target —
+        otherwise callback builds entry?x=1?code=... and the SPA loses code."""
+        monkeypatch.setattr(
+            "app.routes.oauth.settings.oauth_allowed_redirect_uris",
+            "https://app.example.com/auth/callback?x=1",
+        )
+        assert (
+            _get_allowed_redirect("https://app.example.com/auth/callback")
+            == "https://app.example.com/auth/callback"
+        )
+
+    def test_trailing_slash_mismatch_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.routes.oauth.settings.oauth_allowed_redirect_uris",
+            _ALLOWLIST,
+        )
+        assert (
+            _get_allowed_redirect("https://app.example.com/auth/callback/") is None
+        )
+
+    def test_host_case_mismatch_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.routes.oauth.settings.oauth_allowed_redirect_uris",
+            _ALLOWLIST,
+        )
+        assert (
+            _get_allowed_redirect("https://App.Example.com/auth/callback") is None
+        )
+
+    def test_explicit_default_port_mismatch_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.routes.oauth.settings.oauth_allowed_redirect_uris",
+            _ALLOWLIST,
+        )
+        assert (
+            _get_allowed_redirect("https://app.example.com:443/auth/callback")
+            is None
         )
 
     def test_same_origin_different_path_rejected(self, monkeypatch):
