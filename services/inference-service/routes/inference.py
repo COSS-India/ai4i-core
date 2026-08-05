@@ -591,13 +591,13 @@ async def chat_completions(
 @router.post(
     "/chat",
     summary="LLM Chat",
-    description="Forwards the request to the upstream LLM at /v1/chat",
+    description="Forwards the request to the upstream LLM at /v1/chat/completions",
 )
 async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
 ) -> Response:
-    return await _run_llm_chat(request, payload, path="/v1/chat")
+    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

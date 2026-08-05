@@ -98,11 +98,14 @@ const ServicesManagement: React.FC = () => {
     setPricePerUnit,
     unitSize,
     setUnitSize,
+    currency,
+    setCurrency,
     selectedTiers,
     toggleTier,
     availableTiers,
     isCreateFormModelSelected,
     canCreateService,
+    isLlmTaskType,
     serviceIdError,
     isSubmitting,
     handleSubmit,
@@ -418,11 +421,14 @@ const ServicesManagement: React.FC = () => {
                       onPricePerUnitChange={setPricePerUnit}
                       unitSize={unitSize}
                       onUnitSizeChange={setUnitSize}
+                      currency={currency}
+                      onCurrencyChange={setCurrency}
                       selectedTiers={selectedTiers}
                       onToggleTier={toggleTier}
                       availableTiers={availableTiers}
                       isCreateFormModelSelected={isCreateFormModelSelected}
                       canCreateService={canCreateService}
+                      isLlmTaskType={isLlmTaskType}
                       serviceIdError={serviceIdError}
                       isSubmitting={isSubmitting}
                       onSubmit={handleSubmit}

@@ -175,11 +175,8 @@ export interface ModelConsumptionSummary {
     name?: string | null;
     requests: number;
   } | null;
-  highest_failure_rate?: {
-    service_id?: string | null;
-    name?: string | null;
-    failure_rate_pct: number;
-  } | null;
+  /** Request-weighted success across all models with traffic. */
+  overall_success_rate_pct?: number | null;
 }
 
 /** GET /api/v1/metering/model-consumption — no throughput/request_volume. */

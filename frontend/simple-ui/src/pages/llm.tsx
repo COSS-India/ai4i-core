@@ -34,20 +34,16 @@ import {
 } from "../services/tryItService";
 
 const pageDefaults = getServicePageDefaults("llm");
-const languageOptions = LLM_SUPPORTED_LANGUAGES.map((l) => ({
-  code: l.code,
-  label: l.label,
-}));
 
-/** Stable anonymous pick: lowest service_id so list-order churn can't flip the demo service. */
-function pickAnonymousTryItService<T extends { service_id: string }>(
-  services: T[],
-): T[] {
-  if (services.length <= 1) return services;
-  const sorted = [...services].sort((a, b) =>
-    a.service_id.localeCompare(b.service_id),
-  );
-  return sorted.slice(0, 1);
+function resolveTargetsForSource(
+  pairs: Array<{ source: string; target: string }>,
+  flatTargets: string[],
+  source: string
+): string[] {
+  const paired = source
+    ? Array.from(new Set(pairs.filter((p) => p.source === source).map((p) => p.target)))
+    : [];
+  return paired.length > 0 ? paired : flatTargets;
 }
 
 const LLMPage: React.FC = () => {
@@ -61,6 +57,8 @@ const LLMPage: React.FC = () => {
   );
 
   const isAnonymous = !authLoading && !isAuthenticated;
+  const getLanguageLabel = (code: string): string =>
+    LLM_SUPPORTED_LANGUAGES.find((l) => l.code === code)?.label ?? code;
 
   const {
     data: services = [],
@@ -73,13 +71,9 @@ const LLMPage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  // AI4IDS-2688: Anonymous → one deterministic service; Guest / Logged-in → full list
-  const visibleServices = useMemo(() => {
-    if (isAnonymous) {
-      return pickAnonymousTryItService(services);
-    }
-    return services;
-  }, [isAnonymous, services]);
+  // AI4IDS-2688 / AI4IDS-2704: Anonymous list is already limited to one
+  // (isTryItDefault, else lowest service_id) in listLLMServices.
+  const visibleServices = services;
 
   useEffect(() => {
     if (visibleServices.length === 0) {
@@ -104,6 +98,11 @@ const LLMPage: React.FC = () => {
   );
   const modelName = selectedService?.name ?? "";
   const selectedServiceId = selectedService?.service_id ?? "";
+
+  const selectedServiceHasNoLanguages =
+    !!selectedService &&
+    (selectedService.supported_source_languages.length === 0 ||
+      selectedService.supported_target_languages.length === 0);
 
   const {
     inputLanguage,
@@ -134,6 +133,50 @@ const LLMPage: React.FC = () => {
     () => mapToServiceOptions(visibleServices),
     [visibleServices]
   );
+
+  const sourceLanguageOptions = useMemo(
+    () =>
+      (selectedService?.supported_source_languages ?? []).map((code) => ({
+        code,
+        label: getLanguageLabel(code),
+      })),
+    [selectedService]
+  );
+  const targetLanguageOptions = useMemo(() => {
+    const pairs = selectedService?.language_pairs ?? [];
+    const flatTargets = selectedService?.supported_target_languages ?? [];
+    const codes = resolveTargetsForSource(pairs, flatTargets, inputLanguage);
+    return codes.map((code) => ({ code, label: getLanguageLabel(code) }));
+  }, [selectedService, inputLanguage]);
+
+  const sourceCodes = useMemo(
+    () => new Set(sourceLanguageOptions.map((o) => o.code)),
+    [sourceLanguageOptions]
+  );
+  const targetCodes = useMemo(
+    () => new Set(targetLanguageOptions.map((o) => o.code)),
+    [targetLanguageOptions]
+  );
+
+  useEffect(() => {
+    if (inputLanguage && !sourceCodes.has(inputLanguage)) setInputLanguage("");
+    if (outputLanguage && !targetCodes.has(outputLanguage)) setOutputLanguage("");
+  }, [
+    sourceCodes,
+    targetCodes,
+    inputLanguage,
+    outputLanguage,
+    setInputLanguage,
+    setOutputLanguage,
+  ]);
+
+  const canSwap = useMemo(() => {
+    if (!sourceCodes.has(outputLanguage)) return false;
+    const pairs = selectedService?.language_pairs ?? [];
+    const flatTargets = selectedService?.supported_target_languages ?? [];
+    const targetsFromSwappedSource = resolveTargetsForSource(pairs, flatTargets, outputLanguage);
+    return targetsFromSwappedSource.includes(inputLanguage);
+  }, [sourceCodes, selectedService, outputLanguage, inputLanguage]);
 
   const anonymousRateLimitReached =
     isAnonymous && remainingRequests <= 0;
@@ -223,6 +266,16 @@ const LLMPage: React.FC = () => {
       banner={pageBanner}
       requestPanel={
         <RequestContainer
+          topSlot={
+            selectedServiceHasNoLanguages ? (
+              <Alert status="warning" borderRadius="md">
+                <AlertIcon />
+                <AlertDescription fontSize="sm">
+                  This service has no source or target languages configured.
+                </AlertDescription>
+              </Alert>
+            ) : undefined
+          }
           serviceDropdown={{
             label: "LLM Service",
             value: serviceId,
@@ -240,9 +293,10 @@ const LLMPage: React.FC = () => {
             targetLanguage: outputLanguage,
             onSourceChange: setInputLanguage,
             onTargetChange: setOutputLanguage,
-            sourceOptions: languageOptions,
-            targetOptions: languageOptions,
+            sourceOptions: sourceLanguageOptions,
+            targetOptions: targetLanguageOptions,
             onSwap: swapLanguages,
+            swapDisabled: !canSwap,
             disabled: fetching || !serviceId || anonymousRateLimitReached,
           }}
           inputType="text"
@@ -279,7 +333,7 @@ const LLMPage: React.FC = () => {
                 requestWordCount={requestWordCount}
                 responseWordCount={responseWordCount}
                 responseTime={Number(requestTime)}
-                onSwapTexts={swapLanguages}
+                onSwapTexts={canSwap ? swapLanguages : undefined}
               />
             ) : undefined
           }

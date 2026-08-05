@@ -365,6 +365,8 @@ export interface ServiceResponse {
   benchmarks?: Record<string, unknown> | null;
   policy?: Record<string, unknown> | ServicePolicy | null;
   isPublished: boolean;
+  /** When true, anonymous Try-It should prefer this service for its task type. */
+  isTryItDefault?: boolean;
   publishedAt?: string | null;
   unpublishedAt?: string | null;
   createdBy?: string | null;
@@ -464,6 +466,8 @@ export interface ServiceUpdateRequest {
   healthStatus?: string | ServiceStatus;
   benchmarks?: Record<string, unknown>;
   isPublished?: boolean;
+  /** Mark this service as the anonymous Try-It default for its task type. */
+  isTryItDefault?: boolean;
   policy?: ServicePolicy;
   taskType?: string;
   costPerUnit?: number;

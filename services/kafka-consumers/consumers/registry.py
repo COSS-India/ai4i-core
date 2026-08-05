@@ -17,9 +17,13 @@ def kafka_listener(topic: str):
 class KafkaRegistry:
     """Routes each incoming Kafka message to its registered async handler.
 
-    On success, the offset is committed. On failure, the exception propagates
-    so the caller can log it; the offset is left uncommitted and the message
-    will be redelivered on restart.
+    Committing the offset is the caller's responsibility (see main.py's
+    batched commit) — dispatch() only runs the handler, so a batch of
+    messages can share one commit instead of one broker round-trip each.
+    On failure, the exception propagates so the caller can log it and skip
+    committing; the offset is left behind and the message is redelivered on
+    restart (handlers must already be safe to reprocess for this reason —
+    see the Redis dedup check in payperuse_consumer/handler.py).
     """
 
     def __init__(self, topic_registry: dict) -> None:
@@ -28,6 +32,5 @@ class KafkaRegistry:
     def topics(self) -> list[str]:
         return list(self.handlers.keys())
 
-    async def dispatch(self, topic: str, msg, consumer) -> None:
+    async def dispatch(self, topic: str, msg) -> None:
         await self.handlers[topic](msg)
-        await consumer.commit(message=msg)
