@@ -3,7 +3,7 @@ Shared building-block schemas used by both Model and Service domains.
 """
 
 import re
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Generic, List, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
@@ -80,139 +80,6 @@ class TaskSpecLenient(BaseSchema):
                     return member.value
             return v
         return v
-
-
-# ── Inference endpoint schema (model definition, not the live endpoint URL) ──
-
-
-class InferenceApiKey(BaseModel):
-    """Auth header expected by the model's callback URL (ULCA ``inferenceApiKey``)."""
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
-
-    name: str = Field(
-        default="Authorization",
-        description="Optional. Header name the callback URL expects the API key under. Defaults to 'Authorization' if omitted.",
-    )
-    value: str = Field(
-        ...,
-        description="Required (if inferenceApiKey is provided at all). The API key/token value sent in that header. Masked as '[REDACTED]' on every read (GET/list) — resend the real value on updates, never the redacted sentinel.",
-    )
-
-
-class AsyncApiDetails(BaseModel):
-    """Polling details for async inference (ULCA ``AsyncApiDetails``).
-
-    ``asyncApiSchema``/``asyncApiPollingSchema`` are task-specific request/
-    response contracts validated by the inference service, so they stay a
-    flexible passthrough here rather than a fully modeled discriminated union.
-    """
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
-
-    pollingUrl: str = Field(..., description="Required. Endpoint to poll for async inference status.")
-    pollInterval: int = Field(..., description="Required. Polling interval in milliseconds.")
-    asyncApiSchema: Optional[Dict[str, Any]] = Field(
-        None, description="Optional. Task-specific async request/response schema."
-    )
-    asyncApiPollingSchema: Optional[Dict[str, Any]] = Field(
-        None, description="Optional. Task-specific polling response schema."
-    )
-
-
-class InferenceEndPoint(BaseModel):
-    """Model-level inference endpoint metadata (ULCA ``InferenceAPIEndPoint``).
-
-    The ``schema`` JSON key is aliased to ``endpoint_schema`` in Python to
-    avoid shadowing Pydantic v2's ``BaseModel.schema`` class method. Its
-    task-specific request/response contract is validated by the inference
-    service, not the model registry, so it stays a flexible passthrough dict
-    here rather than a fully modeled discriminated union.
-    """
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True,
-        extra="allow",
-        json_schema_extra={
-            "example": {
-                "callbackUrl": "https://inference.example.com/v2/models/indictrans2-en-hi/infer",
-                "inferenceApiKey": {"name": "Authorization", "value": "<your-api-key>"},
-                "isMultilingualEnabled": False,
-                "schema": {"taskType": "translation"},
-                "isSyncApi": True,
-            }
-        },
-    )
-
-    callbackUrl: str = Field(
-        ...,
-        description="Required. The live URL this model's inference requests are POSTed to.",
-    )
-    inferenceApiKey: Optional[InferenceApiKey] = Field(
-        None,
-        description="Optional. Only needed if callbackUrl requires an API key/auth header to invoke.",
-    )
-    isMultilingualEnabled: bool = Field(
-        default=False,
-        description="Optional, default: false. True if this callbackUrl itself can handle multiple languages without extra config.",
-    )
-    endpoint_schema: Dict[str, Any] = Field(
-        ...,
-        alias="schema",
-        description=(
-            "Required. Task-specific inference request/response contract "
-            "(e.g. {\"taskType\": \"translation\", ...}). Validated by the "
-            "inference service at call time, not by the model registry — "
-            "pass {} if you don't need to declare one up front."
-        ),
-    )
-    isSyncApi: Optional[bool] = Field(
-        None,
-        description="Optional. True if inference is synchronous; false means the model is async and asyncApiDetails should be provided.",
-    )
-    asyncApiDetails: Optional[AsyncApiDetails] = Field(
-        None, description="Optional. Required in practice only when isSyncApi is false."
-    )
-    adapter_config: Optional[Dict[str, Any]] = Field(
-        None,
-        alias="adapterConfig",
-        description="Optional. Platform-specific Triton I/O tensor mapping — not part of the ULCA spec.",
-    )
-
-
-class InferenceEndPointPatch(BaseModel):
-    """Partial-update variant of :class:`InferenceEndPoint` for PATCH /models.
-
-    ``update_model`` deep-merges only the keys the caller actually sent into
-    the existing stored endpoint (see ``ModelService.update_model``), so a
-    PATCH that touches only e.g. ``adapterConfig`` or
-    ``isMultilingualEnabled`` must not be forced to also resend
-    ``callbackUrl``/``schema``. Those two stay required on the create-time
-    :class:`InferenceEndPoint`; here every field is optional.
-    """
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
-
-    callbackUrl: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
-    inferenceApiKey: Optional[InferenceApiKey] = Field(
-        None,
-        description=(
-            "Optional — omit to leave unchanged. Never resend the "
-            "'[REDACTED]' value returned by GET; that sentinel is stripped "
-            "before merge and won't overwrite the stored secret, but "
-            "sending the real value here does update it."
-        ),
-    )
-    isMultilingualEnabled: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
-    endpoint_schema: Optional[Dict[str, Any]] = Field(
-        None, alias="schema", description="Optional — omit to leave unchanged."
-    )
-    isSyncApi: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
-    asyncApiDetails: Optional[AsyncApiDetails] = Field(None, description="Optional — omit to leave unchanged.")
-    adapter_config: Optional[Dict[str, Any]] = Field(
-        None, alias="adapterConfig", description="Optional — omit to leave unchanged."
-    )
 
 
 # ── Submitter / team ──

@@ -30,22 +30,6 @@ def _deep_merge(existing: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, 
     return merged
 
 
-def _strip_redacted_api_key_value(ep_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Guard the PATCH deep-merge against the GET-path redaction sentinel.
-
-    model_to_dict/serializers.py masks inferenceApiKey.value to
-    REDACTED_VALUE on read. A client that GETs a model and PATCHes the
-    endpoint object straight back — a common echo-back pattern — would
-    otherwise have _deep_merge write that sentinel over the real stored
-    secret. Drop the "value" key here when it's the sentinel so _deep_merge
-    leaves the existing real value untouched (it only overwrites keys
-    actually present in the update)."""
-    api_key = ep_dict.get("inferenceApiKey")
-    if isinstance(api_key, dict) and api_key.get("value") == REDACTED_VALUE:
-        api_key = {k: v for k, v in api_key.items() if k != "value"}
-        ep_dict = {**ep_dict, "inferenceApiKey": api_key}
-    return ep_dict
-
 from fastapi.encoders import jsonable_encoder
 
 from app.core.config import settings
@@ -60,7 +44,7 @@ from app.repositories.model_management.service_repository import ServiceReposito
 from app.schemas.enums.model_management import VersionStatusEnum
 from app.schemas.model_management.model import ModelCreateRequest, ModelUpdateRequest
 from app.services.cache_service import CacheService
-from .serializers import REDACTED_VALUE, model_to_dict
+from .serializers import model_to_dict
 from app.utils.hashing import generate_model_id
 
 logger = logging.getLogger(__name__)
@@ -199,6 +183,13 @@ class ModelService:
 
         encoded = jsonable_encoder(payload)
         model_id = generate_model_id(payload.name, payload.version)
+
+        inference_endpoint: Dict[str, Any] = {}
+        if encoded.get("adapterConfig") is not None:
+            inference_endpoint["adapterConfig"] = encoded["adapterConfig"]
+        if encoded.get("schema") is not None:
+            inference_endpoint["schema"] = encoded["schema"]
+
         instance = Model(
             model_id=model_id,
             version=encoded["version"],
@@ -213,7 +204,7 @@ class ModelService:
             license=encoded.get("license"),
             license_url=encoded.get("licenseUrl"),
             domain=encoded.get("domain") or [],
-            inference_endpoint=encoded.get("inferenceEndPoint") or {},
+            inference_endpoint=inference_endpoint,
             benchmarks=encoded.get("benchmarks") or [],
             submitter=encoded.get("submitter") or {},
             training_dataset=encoded.get("trainingDataset") or {},
@@ -291,6 +282,7 @@ class ModelService:
         # PATCH semantics
         request_dict = payload.model_dump(exclude_unset=True)
         update_data: Dict[str, Any] = {}
+        ep_field_updates: Dict[str, Any] = {}
 
         if payload.versionStatus is not None:
             new_status = VersionStatus(payload.versionStatus.value)
@@ -325,13 +317,10 @@ class ModelService:
                 continue
             if key == "refUrl":
                 update_data["ref_url"] = value
-            elif key == "inferenceEndPoint":
-                existing_ep = instance.inference_endpoint or {}
-                ep_dict = payload.inferenceEndPoint.model_dump(
-                    by_alias=True, exclude_unset=True, exclude_none=True
-                )
-                ep_dict = _strip_redacted_api_key_value(ep_dict)
-                update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(ep_dict))
+            elif key == "adapterConfig":
+                ep_field_updates["adapterConfig"] = jsonable_encoder(value)
+            elif key == "endpoint_schema":
+                ep_field_updates["schema"] = jsonable_encoder(value)
             elif key in ("task", "languages", "domain", "benchmarks", "submitter", "trainingDataset"):
                 target_key = "training_dataset" if key == "trainingDataset" else key
                 update_data[target_key] = jsonable_encoder(value)
@@ -345,6 +334,16 @@ class ModelService:
                 update_data["license_url"] = value
             else:
                 update_data[key] = value
+
+        if ep_field_updates:
+            existing_ep = dict(instance.inference_endpoint or {})
+            if "adapterConfig" in ep_field_updates:
+                existing_ep["adapterConfig"] = _deep_merge(
+                    existing_ep.get("adapterConfig") or {}, ep_field_updates["adapterConfig"]
+                )
+            if "schema" in ep_field_updates:
+                existing_ep["schema"] = ep_field_updates["schema"]
+            update_data["inference_endpoint"] = existing_ep
 
         if updated_by is not None:
             update_data["updated_by"] = updated_by
