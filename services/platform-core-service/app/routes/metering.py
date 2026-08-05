@@ -41,7 +41,7 @@ from app.schemas.metering import (
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import WINDOW_STEP
+from app.utils.metering_promql_builder import SERVICE_BREAKDOWN_CONFIG, WINDOW_STEP
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,37 @@ def _caller_role_label(request: Request) -> str:
     if _ROLE_TENANT_ADMIN in ids:
         return "tenant_admin"
     return "unknown"
+
+
+# Task types the metering endpoints know how to filter/breakdown by — the same
+# set service_breakdown() and build_task_type_selector() key off of. Anything
+# outside this set can never match a real service, so letting it through used
+# to silently produce an empty result set (200 OK, service_breakdown: []) instead
+# of telling the caller their filter was wrong.
+_VALID_TASK_TYPES = frozenset(SERVICE_BREAKDOWN_CONFIG)
+
+
+def _parse_task_types(task_types: Optional[str]) -> Optional[list[str]]:
+    """Parse the comma-separated ``task_types`` query param and validate each
+    value against `_VALID_TASK_TYPES`.
+
+    Raises 422 on any unsupported value (e.g. a typo like "a1c") instead of
+    silently accepting it — matching the documented OpenAPI contract, same as
+    WindowParam above.
+    """
+    if not task_types:
+        return None
+    values = [s.strip().lower() for s in task_types.split(",") if s.strip()]
+    unknown = sorted(set(values) - _VALID_TASK_TYPES)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unsupported task_types value(s): {', '.join(unknown)}. "
+                f"Allowed: {', '.join(sorted(_VALID_TASK_TYPES))}."
+            ),
+        )
+    return values
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -470,7 +501,8 @@ async def get_overview(
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     task_types: Optional[str] = Query(
         None, description="Comma-separated task types to scope KPIs, the request-volume "
-        "chart, and usage concentration to (e.g. llm,nmt)."
+        "chart, and usage concentration to (e.g. llm,nmt). Unsupported values are "
+        "rejected with 422."
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
@@ -479,11 +511,11 @@ async def get_overview(
 
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
-    task_type_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
+    task_type_filter = _parse_task_types(task_types)
 
     cache_key = (
         f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"
-        f"{_caller_role_label(request)}:{task_types or 'all'}"
+        f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -545,8 +577,8 @@ async def get_tenant_consumption(
     tenant_id: Optional[int] = Query(None, ge=1, description="Scope to a single tenant (admin only)"),
     task_types: Optional[str] = Query(
         None,
-        pattern=r"^[a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*$",
-        description="Comma-separated task types for the heatmap columns (default: all)",
+        description="Comma-separated task types for the heatmap columns (default: all). "
+        "Unsupported values are rejected with 422.",
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
@@ -566,10 +598,11 @@ async def get_tenant_consumption(
     # query that Scope.tenant_id would still report as tenant-scoped.
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, True)
 
-    service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
+    task_type_filter = _parse_task_types(task_types)
 
     cache_key = (
-        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant_name or 'all'}:{task_types or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"{','.join(task_type_filter) if task_type_filter else 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -578,7 +611,7 @@ async def get_tenant_consumption(
     results = await asyncio.gather(
         svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
         svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=service_filter, tenant=scope_tenant_name
+            limit=limit, time_range=window, services=task_type_filter, tenant=scope_tenant_name
         ),
         svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
         return_exceptions=True,
@@ -601,7 +634,7 @@ async def get_tenant_consumption(
             tenant_id=scope_tenant,
             organisation=scope_tenant_name,
             window=window,
-            task_types=service_filter,
+            task_types=task_type_filter,
         ),
         avg_requests_per_tenant=_avg_requests_per_tenant_cell(ranking, prev_avg),
         tenant_ranking=_tenant_ranking_rows(ranking_tenants),
@@ -625,7 +658,8 @@ async def get_service_consumption(
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
     task_types: Optional[str] = Query(
-        None, description="Comma-separated task types to include (frontend allowlist)."
+        None, description="Comma-separated task types to include (frontend allowlist). "
+        "Unsupported values are rejected with 422."
     ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
@@ -634,15 +668,18 @@ async def get_service_consumption(
 
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
-    service_filter = [s.strip() for s in task_types.split(",") if s.strip()] if task_types else None
+    task_type_filter = _parse_task_types(task_types)
 
-    cache_key = f"metering:service-consumption:v2:{window}:{scope_tenant_name or 'all'}:{task_types or 'all'}:{_caller_role_label(request)}"
+    cache_key = (
+        f"metering:service-consumption:v2:{window}:{scope_tenant_name or 'all'}:"
+        f"{','.join(task_type_filter) if task_type_filter else 'all'}:{_caller_role_label(request)}"
+    )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
 
     results = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=service_filter),
+        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
@@ -655,7 +692,10 @@ async def get_service_consumption(
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     response = ServiceConsumptionResponse(
-        scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
+        scope=Scope(
+            role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org,
+            window=window, task_types=task_type_filter,
+        ),
         summary=summary,
         service_breakdown=[
             ServiceRow(

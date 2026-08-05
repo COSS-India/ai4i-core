@@ -82,9 +82,10 @@ def build_task_type_selector(task_types: list[str] | None) -> str | None:
     Reverses ENDPOINT_TO_TASK for tasks with a non-standard endpoint (e.g. "llm" ->
     /api/v1/chat, /api/v1/chat/completions) and falls back to the standard
     /api/v1/{task}/inference pattern (hyphenated, matching SERVICE_BREAKDOWN_CONFIG's
-    underscore-separated keys) for everything else. An unrecognized task type simply
-    yields a pattern that matches no endpoint (lenient — no validation error), matching
-    this API's existing lenient task_types= parsing.
+    underscore-separated keys) for everything else. Callers are expected to have
+    already rejected unrecognized task types (see `_parse_task_types` in
+    routes/metering.py, which 422s on anything outside SERVICE_BREAKDOWN_CONFIG)
+    before reaching this helper.
 
     Returns None when task_types is falsy, so callers can skip the selector entirely.
     """
@@ -266,6 +267,14 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
         "native_metric": "telemetry_obsv_speaker_diarization_minutes_processed_sum",
+        "native_extra_labels": None,
+        "round_2dp": True,
+    },
+    "language_diarization": {
+        "display_name": "Language Diarization",
+        "metering_unit": "Audio minutes processed",
+        "native_unit_suffix": "min",
+        "native_metric": "telemetry_obsv_language_diarization_minutes_processed_sum",
         "native_extra_labels": None,
         "round_2dp": True,
     },
