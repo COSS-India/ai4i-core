@@ -244,8 +244,15 @@ async def _validate_jwt(
     except JWTVerificationError:
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID", "message": "Token is invalid."})
 
-    if claims.token_id and await check_token_revocation(
-        claims.token_id, claims.token_type, cache_svc,
+    # Not gated on claims.token_id: access tokens carry `jti`, not `token_id`
+    # (only api_key tokens set token_id) — the global-logout check below keys
+    # off user_id/issued_at instead, so it must run for access tokens too.
+    if await check_token_revocation(
+        claims.token_id,
+        claims.token_type,
+        cache_svc,
+        user_id=str(claims.user_id) if claims.user_id else None,
+        issued_at=claims.raw.get("iat"),
     ):
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED", "message": "Token has been revoked."})
 

@@ -67,14 +67,29 @@ async def check_token_revocation(
     token_id: str,
     token_type: str | None,
     cache_service: CacheService,
+    user_id: str | None = None,
+    issued_at: float | None = None,
 ) -> bool:
     """
-    Generic revocation check. Currently only api_key tokens are tracked;
-    other token types are considered non-revocable here.
+    Generic revocation check. api_key tokens are checked against the
+    per-key cache; other token types are revoked by global logout — i.e.
+    issued before the user's last logout timestamp.
     """
     if token_type == "api_key":
         return await _check_api_key_revocation(token_id, cache_service)
+    if user_id and issued_at is not None:
+        return await _check_logout_revocation(user_id, issued_at, cache_service)
     return False
+
+
+async def _check_logout_revocation(
+    user_id: str,
+    issued_at: float,
+    cache_service: CacheService,
+) -> bool:
+    """A token is revoked if it was issued before the user's last logout."""
+    logout_ts = await cache_service.get_logout_timestamp(user_id)
+    return logout_ts is not None and issued_at < logout_ts
 
 
 async def _check_api_key_revocation(

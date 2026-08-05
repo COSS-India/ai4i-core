@@ -17,7 +17,7 @@ from app.dependencies.auth import (
     get_current_user_id,
     get_optional_current_user,
 )
-from app.dependencies.services import get_auth_service
+from app.dependencies.services import get_auth_service, get_cache_service
 from app.models.user import User
 from app.schemas.auth import (
     ForgotPasswordRequest,
@@ -36,6 +36,7 @@ from app.schemas.auth import (
     VerifyEmailRequest,
 )
 from app.services.auth_service import AuthService
+from app.services.cache_service import CacheService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -182,8 +183,14 @@ async def refresh_token(
 async def logout(
     user_id: UUID = Depends(get_current_user_id),
     svc: AuthService = Depends(get_auth_service),
+    cache_svc: CacheService = Depends(get_cache_service),
 ):
     await svc.logout(user_id=user_id)
+    # Global logout: any access token issued before now is rejected by
+    # /auth/validate's revocation check, regardless of its 60-min TTL.
+    await cache_svc.set_logout_timestamp(
+        str(user_id), ttl_seconds=settings.access_token_expire_minutes * 60
+    )
     return LogoutResponse(message="Logged out successfully.", logged_out=True)
 
 
