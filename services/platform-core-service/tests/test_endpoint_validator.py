@@ -143,16 +143,36 @@ class TestTestInferenceSync:
             monkeypatch,
             _FakeAsyncClient([_FakeResponse(200, json_body={"output": [{"source": "x"}]})]),
         )
-        detail, body = await ev.test_inference(
+        detail, body, kind = await ev.test_inference(
             endpoint="http://model.example.com/infer", task_type="asr"
         )
         assert detail.status == ValidationStatus.PASSED
         assert body == {"output": [{"source": "x"}]}
+        assert kind == "ulca"
+
+    @pytest.mark.asyncio
+    async def test_triton_schema_reports_triton_v2_kind(self, monkeypatch):
+        """build_probe_payload switches to a Triton V2 payload whenever the
+        model card carries schema.response.triton — the caller (orchestrator)
+        needs this to know a ULCA default shape must never apply."""
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient(
+                [_FakeResponse(200, json_body={"model_name": "m", "outputs": []})]
+            ),
+        )
+        detail, body, kind = await ev.test_inference(
+            endpoint="http://model.example.com/infer",
+            task_type="asr",
+            triton_schema={"inputs": [{"name": "AUDIO", "datatype": "BYTES", "shape": [1]}]},
+        )
+        assert detail.status == ValidationStatus.PASSED
+        assert kind == "triton_v2"
 
     @pytest.mark.asyncio
     async def test_5xx_fails_without_body(self, monkeypatch):
         _patch_client(monkeypatch, _FakeAsyncClient([_FakeResponse(503, text="down")]))
-        detail, body = await ev.test_inference(
+        detail, body, kind = await ev.test_inference(
             endpoint="http://model.example.com/infer", task_type="asr"
         )
         assert detail.status == ValidationStatus.FAILED
@@ -163,7 +183,7 @@ class TestTestInferenceSync:
         import httpx
 
         _patch_client(monkeypatch, _RaisingAsyncClient(httpx.ConnectError("refused")))
-        detail, body = await ev.test_inference(
+        detail, body, kind = await ev.test_inference(
             endpoint="http://unreachable.example.com/infer", task_type="asr"
         )
         assert detail.status == ValidationStatus.FAILED
@@ -175,7 +195,7 @@ class TestTestInferenceSync:
         import httpx
 
         _patch_client(monkeypatch, _RaisingAsyncClient(httpx.TimeoutException("slow")))
-        detail, body = await ev.test_inference(
+        detail, body, kind = await ev.test_inference(
             endpoint="http://slow.example.com/infer", task_type="asr", timeout=5.0
         )
         assert detail.status == ValidationStatus.FAILED
@@ -200,7 +220,7 @@ class TestTestInferenceAsync:
                 ]
             ),
         )
-        detail, body = await ev.test_inference_async(
+        detail, body, kind = await ev.test_inference_async(
             endpoint="http://model.example.com/submit",
             polling_url="http://model.example.com/poll",
             poll_interval_ms=10,
@@ -214,7 +234,7 @@ class TestTestInferenceAsync:
     @pytest.mark.asyncio
     async def test_submit_5xx_fails_immediately(self, monkeypatch):
         _patch_client(monkeypatch, _FakeAsyncClient([_FakeResponse(500)]))
-        detail, body = await ev.test_inference_async(
+        detail, body, kind = await ev.test_inference_async(
             endpoint="http://model.example.com/submit",
             polling_url="http://model.example.com/poll",
             poll_interval_ms=10,
@@ -222,6 +242,41 @@ class TestTestInferenceAsync:
         )
         assert detail.status == ValidationStatus.FAILED
         assert "submit" in detail.message
+        assert body is None
+
+    @pytest.mark.asyncio
+    async def test_poll_connect_error_names_polling_url_not_submit_endpoint(self, monkeypatch):
+        """PR review: a ConnectError on the POLL call must name polling_url
+        in the message, not endpoint (the submit URL) — they can be
+        different hosts, and misattributing this makes the error
+        misleading for whoever's debugging it."""
+
+        class _FailOnPollClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def post(self, url, json=None, headers=None, timeout=None):
+                if "submit" in url:
+                    return _FakeResponse(200, json_body={"requestId": "job-1"})
+                import httpx
+
+                raise httpx.ConnectError("refused")
+
+        _patch_client(monkeypatch, _FailOnPollClient())
+
+        detail, body, kind = await ev.test_inference_async(
+            endpoint="http://model.example.com/submit",
+            polling_url="http://poll-host.example.com/poll",
+            poll_interval_ms=10,
+            task_type="asr",
+        )
+
+        assert detail.status == ValidationStatus.FAILED
+        assert "poll-host.example.com" in detail.message
+        assert "model.example.com/submit" not in detail.message
         assert body is None
 
     @pytest.mark.asyncio
@@ -235,7 +290,7 @@ class TestTestInferenceAsync:
                 ]
             ),
         )
-        detail, body = await ev.test_inference_async(
+        detail, body, kind = await ev.test_inference_async(
             endpoint="http://model.example.com/submit",
             polling_url="http://model.example.com/poll",
             poll_interval_ms=10,
@@ -252,7 +307,7 @@ class TestTestInferenceAsync:
         responses += [_FakeResponse(202) for _ in range(20)]
         _patch_client(monkeypatch, _FakeAsyncClient(responses))
 
-        detail, body = await ev.test_inference_async(
+        detail, body, kind = await ev.test_inference_async(
             endpoint="http://model.example.com/submit",
             polling_url="http://model.example.com/poll",
             poll_interval_ms=100,
@@ -493,6 +548,77 @@ class TestTaskTypeDefaultShape:
         assert result.is_valid is True
         assert not any(d.level == ev.ValidationLevel.RESPONSE_SHAPE for d in result.details)
 
+    @pytest.mark.asyncio
+    async def test_triton_backed_service_skips_ulca_default_shape(self, monkeypatch):
+        """PR review regression: build_probe_payload sends a Triton V2
+        payload whenever triton_schema is set (inferenceServerType
+        defaults to "triton"), and a real Triton server answers with
+        {"model_name": ..., "outputs": [...]} — no "output" key at all.
+        The ULCA default must NOT apply here, or every Triton-backed
+        service without a hand-supplied schema would fail creation."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient(
+                [_FakeResponse(200, json_body={"model_name": "asr-model", "outputs": []})]
+            ),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="asr",
+            triton_schema={"inputs": [{"name": "AUDIO", "datatype": "BYTES", "shape": [1]}]},
+            # expected_response_schema intentionally omitted, like a
+            # pre-existing service / the bulk endpoint-update path.
+        )
+        assert result.is_valid is True
+        assert not any(d.level == ev.ValidationLevel.RESPONSE_SHAPE for d in result.details)
+
+    @pytest.mark.asyncio
+    async def test_triton_backed_service_still_honors_explicit_override(self, monkeypatch):
+        """An admin-supplied expected_response_schema still applies even
+        for a Triton-backed probe — only the built-in ULCA *default* is
+        gated on payload_kind, not an explicit override."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient(
+                [_FakeResponse(200, json_body={"model_name": "asr-model", "outputs": []})]
+            ),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/infer",
+            task_type="asr",
+            triton_schema={"inputs": [{"name": "AUDIO", "datatype": "BYTES", "shape": [1]}]},
+            expected_response_schema={"model_name": "sample", "outputs": []},
+        )
+        assert result.is_valid is True
+        shape_details = [d for d in result.details if d.level == ev.ValidationLevel.RESPONSE_SHAPE]
+        assert shape_details and shape_details[0].status == ValidationStatus.PASSED
+
+    @pytest.mark.asyncio
+    async def test_triton_backed_async_service_also_skips_ulca_default(self, monkeypatch):
+        """Same gating must apply on the async/polling path, not just sync."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(
+            monkeypatch,
+            _FakeAsyncClient(
+                [
+                    _FakeResponse(200, json_body={"requestId": "job-1"}),
+                    _FakeResponse(200, json_body={"model_name": "asr-model", "outputs": []}),
+                ]
+            ),
+        )
+        result = await validate_endpoint(
+            endpoint="http://model.example.com/submit",
+            task_type="asr",
+            triton_schema={"inputs": [{"name": "AUDIO", "datatype": "BYTES", "shape": [1]}]},
+            is_sync_api=False,
+            polling_url="http://model.example.com/poll",
+            poll_interval_ms=10,
+        )
+        assert result.is_valid is True
+        assert not any(d.level == ev.ValidationLevel.RESPONSE_SHAPE for d in result.details)
+
 
 # ── Async poll wall-clock bound (PR review: only sleep time was bounded) ────
 
@@ -539,7 +665,7 @@ class TestAsyncPollWallClockBound:
             _SlowPollAsyncClient(delay_s=5.0, submit_body={"requestId": "job-1"}),
         )
         start = time.monotonic()
-        detail, body = await ev.test_inference_async(
+        detail, body, kind = await ev.test_inference_async(
             endpoint="http://model.example.com/submit",
             polling_url="http://model.example.com/poll",
             poll_interval_ms=10,

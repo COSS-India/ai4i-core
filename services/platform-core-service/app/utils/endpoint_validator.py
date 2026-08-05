@@ -278,13 +278,16 @@ async def test_inference(
     validation_mode: str = "lenient",
     skip_tls_verify: bool = False,
     triton_schema: Optional[Dict[str, Any]] = None,
-) -> Tuple[ValidationDetail, Optional[Any]]:
+) -> Tuple[ValidationDetail, Optional[Any], str]:
     """POST a probe payload and check the response status.
 
-    Returns ``(detail, parsed_json_body)``. *parsed_json_body* is only
-    populated when the transport-level check passed — callers should treat
-    it as the value to run a response-shape check against, and ignore it on
-    failure.
+    Returns ``(detail, parsed_json_body, payload_kind)``. *parsed_json_body*
+    is only populated when the transport-level check passed — callers
+    should treat it as the value to run a response-shape check against, and
+    ignore it on failure. *payload_kind* ("ulca" or "triton_v2", from
+    ``build_probe_payload``) tells the caller whether the built-in
+    per-task-type default response shape even applies — it's a ULCA
+    convention and never matches a raw Triton response.
     """
     fail_threshold = _VALIDATION_MODE_THRESHOLDS.get(
         validation_mode, _VALIDATION_MODE_THRESHOLDS["lenient"]
@@ -332,15 +335,15 @@ async def test_inference(
                 f"Inference endpoint is reachable and responded with "
                 f"HTTP {response.status_code} ({payload_kind} payload).",
                 response_json,
-            )
+            ) + (payload_kind,)
 
         return _infer_fail(
             f"Inference endpoint returned HTTP {response.status_code} "
             f"(validation_mode={validation_mode}): "
             f"{truncate_for_log(body_for_log, max_len=500)}"
-        )
+        ) + (payload_kind,)
     except Exception as exc:
-        return _infer_fail(_transport_error_message(exc, endpoint, timeout))
+        return _infer_fail(_transport_error_message(exc, endpoint, timeout)) + (payload_kind,)
 
 
 # ── Level 2 — Live inference probe (async / polling) ──
@@ -358,7 +361,7 @@ async def test_inference_async(
     triton_schema: Optional[Dict[str, Any]] = None,
     max_poll_attempts: int = 10,
     max_poll_wait_seconds: float = 60.0,
-) -> Tuple[ValidationDetail, Optional[Any]]:
+) -> Tuple[ValidationDetail, Optional[Any], str]:
     """Submit a probe request, then poll *polling_url* until the async job
     completes (HTTP 200), fails, or the poll budget runs out.
 
@@ -376,6 +379,9 @@ async def test_inference_async(
     reference implementation's unbounded ``while(true)`` loop, this always
     returns within ``max_poll_wait_seconds`` (plus the setup/parse overhead
     outside the timed calls).
+
+    Returns ``(detail, parsed_json_body, payload_kind)`` — see
+    ``test_inference`` for what *payload_kind* is used for by the caller.
     """
     payload, payload_kind = build_probe_payload(task_type, request_schema, triton_schema)
     headers = _build_probe_headers(api_key)
@@ -399,7 +405,7 @@ async def test_inference_async(
                 return _infer_fail(
                     f"Async endpoint returned HTTP {submit_response.status_code} "
                     f"on submit ({payload_kind} payload)."
-                )
+                ) + (payload_kind,)
 
             try:
                 poll_body: Any = submit_response.json()
@@ -424,6 +430,16 @@ async def test_inference_async(
                     )
                 except httpx.TimeoutException:
                     break  # budget exhausted mid-request — falls to the timeout message below
+                except Exception as exc:
+                    # Attribute failures on THIS call to polling_url, not the
+                    # submit endpoint — a bare `except Exception` at the
+                    # function's outer scope would otherwise report a
+                    # polling-host ConnectError as if `endpoint` had failed.
+                    return _infer_fail(
+                        _transport_error_message(
+                            exc, polling_url, timeout, prefix="Async inference"
+                        )
+                    ) + (payload_kind,)
 
                 if poll_response.status_code == 202:
                     continue
@@ -433,24 +449,28 @@ async def test_inference_async(
                     except Exception as exc:
                         return _infer_fail(
                             f"Async endpoint's polled result was not valid JSON: {exc}"
-                        )
+                        ) + (payload_kind,)
                     return _infer_pass(
                         f"Async endpoint completed after {attempt} poll(s) "
                         f"({payload_kind} payload).",
                         final_body,
-                    )
+                    ) + (payload_kind,)
                 return _infer_fail(
                     f"Polling {safe_polling_url} returned HTTP "
                     f"{poll_response.status_code}."
-                )
+                ) + (payload_kind,)
 
             return _infer_fail(
                 f"Async endpoint {safe_endpoint} did not complete within "
                 f"{max_poll_wait_seconds}s ({max_poll_attempts} poll attempts "
                 f"against {safe_polling_url})."
-            )
+            ) + (payload_kind,)
     except Exception as exc:
-        return _infer_fail(_transport_error_message(exc, endpoint, timeout, prefix="Async inference"))
+        # Anything raised before the poll loop (client construction, the
+        # submit call itself) genuinely is about `endpoint`.
+        return _infer_fail(
+            _transport_error_message(exc, endpoint, timeout, prefix="Async inference")
+        ) + (payload_kind,)
 
 
 # ── Orchestrator ──
@@ -483,9 +503,17 @@ async def validate_endpoint(
     around the SSRF guard.
 
     The actual response is checked structurally against
-    *expected_response_schema* when supplied, else against the built-in
-    default for *task_type* (see ``get_expected_response_shape``) — task
-    types with no known default simply skip this check.
+    *expected_response_schema* when supplied — regardless of payload kind,
+    since an explicit override is a deliberate admin choice. Absent that,
+    it falls back to the built-in default for *task_type* (see
+    ``get_expected_response_shape``), but ONLY when the probe actually sent
+    a ULCA-style payload (``build_probe_payload`` returns "triton_v2"
+    whenever the model card carries ``schema.response.triton`` — a raw
+    Triton response like ``{"model_name": ..., "outputs": [...]}`` has no
+    ULCA "output" envelope and would never match, incorrectly failing every
+    Triton-backed service that doesn't hand-supply a schema). Task types
+    with no known ULCA default, and every Triton-backed probe without an
+    explicit override, simply skip this check.
     """
     details: List[ValidationDetail] = []
 
@@ -508,7 +536,7 @@ async def validate_endpoint(
             if any(d.status == ValidationStatus.FAILED for d in polling_checks):
                 return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
 
-            inference_result, response_body = await test_inference_async(
+            inference_result, response_body, payload_kind = await test_inference_async(
                 endpoint=endpoint,
                 polling_url=polling_url,
                 poll_interval_ms=poll_interval_ms,
@@ -522,7 +550,7 @@ async def validate_endpoint(
                 max_poll_wait_seconds=max_poll_wait_seconds,
             )
         else:
-            inference_result, response_body = await test_inference(
+            inference_result, response_body, payload_kind = await test_inference(
                 endpoint=endpoint,
                 task_type=task_type,
                 request_schema=request_schema,
@@ -534,15 +562,17 @@ async def validate_endpoint(
             )
         details.append(inference_result)
         logger.info(
-            "Endpoint validation [%s] for %s (task=%s, async=%s): %s",
+            "Endpoint validation [%s] for %s (task=%s, async=%s, payload=%s): %s",
             inference_result.status.value,
             endpoint,
             task_type,
             use_async,
+            payload_kind,
             inference_result.message,
         )
 
-        effective_expected_schema = expected_response_schema or get_expected_response_shape(task_type)
+        default_shape = get_expected_response_shape(task_type) if payload_kind == "ulca" else None
+        effective_expected_schema = expected_response_schema or default_shape
         if inference_result.status == ValidationStatus.PASSED and effective_expected_schema:
             shape_result = validate_response_shape(response_body, effective_expected_schema)
             details.append(shape_result)
