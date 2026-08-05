@@ -270,6 +270,14 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "native_extra_labels": None,
         "round_2dp": True,
     },
+    "language_diarization": {
+        "display_name": "Language Diarization",
+        "metering_unit": "Audio minutes processed",
+        "native_unit_suffix": "min",
+        "native_metric": "telemetry_obsv_language_diarization_minutes_processed_sum",
+        "native_extra_labels": None,
+        "round_2dp": True,
+    },
     "audio_language_detection": {
         "display_name": "Audio Language Detection",
         "metering_unit": "Audio minutes processed",
