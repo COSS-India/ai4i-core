@@ -140,6 +140,67 @@ async def _check_host_is_safe(url: str, *, label: str) -> List[ValidationDetail]
     return details
 
 
+# ── LLM-only: auto-attach the OpenAI chat-completions path ──
+
+# For task_type == "llm" the admin supplies just host:port (no path) — every
+# other task type's endpoint is a full URL the admin fully controls, and is
+# used exactly as given. This is a validation-time-only convenience: the
+# stored Service.endpoint stays whatever the admin typed; only the URL the
+# live probe actually POSTs to gets this appended.
+#
+# inference-service's LlmService.resolve_upstream_url builds the real
+# upstream URL the same way — base.rstrip('/') + path — unconditionally,
+# with no guard against the base already carrying the path. If the admin
+# stores endpoint="http://host:8080/v1/chat/completions", production
+# double-appends and 404s on ".../v1/chat/completions/v1/chat/completions".
+# _resolve_probe_endpoint mirrors that exactly so the probe fails the same
+# way a misconfigured stored endpoint would — but _llm_endpoint_has_extra_path
+# catches it first with a clear message, instead of letting a broken config
+# validate green and only fail later in production.
+_LLM_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+
+
+def _llm_endpoint_has_extra_path(endpoint: str, task_type: Optional[str]) -> Optional[ValidationDetail]:
+    """Reject an LLM endpoint that already carries the inference path.
+
+    For task_type == "llm" the admin must supply host:port only; the path
+    is attached automatically, both by the probe below and by
+    inference-service at real call time. An endpoint that already includes
+    it would be double-appended in production and 404 — fail validation
+    here, fast and with a clear message, rather than silently stripping or
+    ignoring it (which would validate green and defer the failure to
+    production). Returns None when there's nothing to reject.
+    """
+    if task_type != "llm":
+        return None
+    if endpoint.rstrip("/").endswith(_LLM_CHAT_COMPLETIONS_PATH):
+        return ValidationDetail(
+            level=ValidationLevel.URL_FORMAT,
+            status=ValidationStatus.FAILED,
+            message=(
+                "For LLM services, endpoint must be host:port only, with no "
+                f"path — '{_LLM_CHAT_COMPLETIONS_PATH}' is attached "
+                f"automatically. Got: '{endpoint}', which already includes "
+                "the path and would be double-appended at inference time."
+            ),
+        )
+    return None
+
+
+def _resolve_probe_endpoint(endpoint: str, task_type: Optional[str]) -> str:
+    """Return the URL the live probe should actually POST to.
+
+    Mirrors inference-service's LlmService.resolve_upstream_url exactly —
+    always appends for task_type == "llm", with no guard against *endpoint*
+    already carrying the path. Callers must run _llm_endpoint_has_extra_path
+    first to reject that misconfiguration explicitly, rather than relying on
+    this to silently correct or double-append it.
+    """
+    if task_type != "llm":
+        return endpoint
+    return endpoint.rstrip("/") + _LLM_CHAT_COMPLETIONS_PATH
+
+
 # ── Level 2 — Response shape matching ──
 
 
@@ -525,6 +586,17 @@ async def validate_endpoint(
     identifier and always overrides/fills the probe payload's ``model``
     field, regardless of what (if anything) ``schema.request`` itself
     declares (see ``build_ulca_payload``).
+
+    For ``task_type == "llm"`` specifically, *endpoint* is expected to be
+    just ``host:port`` — the admin does not supply the inference path — so
+    the actual probe POSTs to *endpoint* with ``/v1/chat/completions``
+    appended (see ``_resolve_probe_endpoint``). Every other task type's
+    endpoint is used exactly as given, and the SSRF/format check below
+    always runs against the admin-supplied value, not the resolved one
+    (the hostname is identical either way). An LLM *endpoint* that already
+    carries that path is rejected outright (see
+    ``_llm_endpoint_has_extra_path``) rather than silently accepted — that
+    exact stored value would double-append and 404 at real inference time.
     """
     details: List[ValidationDetail] = []
 
@@ -532,6 +604,13 @@ async def validate_endpoint(
     details.extend(endpoint_checks)
     if any(d.status == ValidationStatus.FAILED for d in endpoint_checks):
         return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
+
+    extra_path_check = _llm_endpoint_has_extra_path(endpoint, task_type)
+    if extra_path_check:
+        details.append(extra_path_check)
+        return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
+
+    probe_endpoint = _resolve_probe_endpoint(endpoint, task_type)
 
     if run_inference_test and task_type:
         use_async = is_sync_api is False and bool(polling_url)
@@ -548,7 +627,7 @@ async def validate_endpoint(
                 return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
 
             inference_result, response_body, payload_kind = await test_inference_async(
-                endpoint=endpoint,
+                endpoint=probe_endpoint,
                 polling_url=polling_url,
                 poll_interval_ms=poll_interval_ms,
                 task_type=task_type,
@@ -563,7 +642,7 @@ async def validate_endpoint(
             )
         else:
             inference_result, response_body, payload_kind = await test_inference(
-                endpoint=endpoint,
+                endpoint=probe_endpoint,
                 task_type=task_type,
                 request_schema=request_schema,
                 api_key=api_key,
@@ -577,7 +656,7 @@ async def validate_endpoint(
         logger.info(
             "Endpoint validation [%s] for %s (task=%s, async=%s, payload=%s): %s",
             inference_result.status.value,
-            endpoint,
+            probe_endpoint,
             task_type,
             use_async,
             payload_kind,
@@ -592,7 +671,7 @@ async def validate_endpoint(
             logger.info(
                 "Response-shape validation [%s] for %s: %s",
                 shape_result.status.value,
-                endpoint,
+                probe_endpoint,
                 shape_result.message,
             )
     elif run_inference_test:
