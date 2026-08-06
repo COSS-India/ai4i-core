@@ -44,19 +44,17 @@ class APIKeyRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _active_key_conditions(*, require_cached_data: Optional[bool] = None) -> list:
+    def _active_key_conditions(*, require_cached_data: bool = False) -> list:
         """Shared is_active/expiry predicate for every 'still-usable key'
-        query, optionally combined with a cached_data presence/absence
-        filter. ``require_cached_data``: None = don't filter on it, True =
-        require present, False = require absent."""
+        query, optionally requiring a cached_data snapshot to be present
+        (the tenant/global cached_data patch-and-remove writers only touch
+        already-backfilled rows)."""
         conditions = [
             APIKey.is_active.is_(True),
             or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
         ]
-        if require_cached_data is True:
+        if require_cached_data:
             conditions.append(APIKey.cached_data.isnot(None))
-        elif require_cached_data is False:
-            conditions.append(APIKey.cached_data.is_(None))
         return conditions
 
     async def get_by_api_key_if_valid(self, api_key_value: str) -> Optional[APIKey]:
@@ -109,26 +107,6 @@ class APIKeyRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def list_active_without_cached_data(
-        self, after_id: int = 0, limit: int = 500
-    ) -> list[APIKey]:
-        """Active, non-expired keys still missing their cached_data snapshot —
-        keyset-paginated on id (not offset): the backfill mutates cached_data
-        as it goes, which would make an offset-based page skip rows on the
-        next query since the filtered set shrinks underneath it. Eager-loads
-        user/tenant for the eligibility check and payload backfill."""
-        result = await self._db.execute(
-            select(APIKey)
-            .options(joinedload(APIKey.user).joinedload(User.tenant))
-            .where(
-                APIKey.id > after_id,
-                *self._active_key_conditions(require_cached_data=False),
-            )
-            .order_by(APIKey.id)
-            .limit(limit)
-        )
-        return list(result.unique().scalars().all())
-
     async def patch_cached_data_field_for_tenant(
         self, tenant_id: int, field: str, value: str
     ) -> int:
@@ -176,20 +154,53 @@ class APIKeyRepository(BaseRepository):
         )
         return result.rowcount
 
-    async def remove_cached_data_fields_globally(self, fields: list[str]) -> int:
+    async def remove_cached_data_fields_globally(
+        self, fields: list[str], *, batch_size: int = 1000
+    ) -> int:
         """Remove multiple top-level fields from cached_data across every
-        active, non-expired, already-backfilled key in every tenant — one
-        UPDATE, no per-page pagination needed (unlike the Redis side, which
-        must chunk for pipelining). Used by the monthly quota-reset cron.
-        Mirrors CacheService.delete_api_key_cache_fields_bulk."""
+        active, non-expired, already-backfilled key in every tenant. Used by
+        the monthly quota-reset cron. Commits per batch and returns the total
+        rows touched.
+
+        Keyset-paginated (id > last_id) rather than a single table-wide UPDATE:
+        at lakhs-of-keys scale one statement would hold row locks on every
+        matching row for its whole duration — blocking concurrent
+        billing/create writes to cached_data — build one oversized
+        transaction (WAL bloat, vacuum stall, replica lag), and risk a
+        statement_timeout rolling back the entire reset. Each batch locks only
+        ~batch_size rows briefly then commits; the ``-`` operator is
+        idempotent, so a mid-run failure resumes cleanly on the next run. This
+        is the one repository method that commits on its own — batching is
+        meaningless otherwise. Mirrors CacheService.delete_api_key_cache_fields_bulk."""
         if not fields:
             return 0
-        result = await self._db.execute(
-            update(APIKey)
-            .where(*self._active_key_conditions(require_cached_data=True))
-            .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
-        )
-        return result.rowcount
+        total = 0
+        last_id = 0
+        while True:
+            ids = (
+                await self._db.execute(
+                    select(APIKey.id)
+                    .where(
+                        APIKey.id > last_id,
+                        *self._active_key_conditions(require_cached_data=True),
+                    )
+                    .order_by(APIKey.id)
+                    .limit(batch_size)
+                )
+            ).scalars().all()
+            if not ids:
+                break
+            result = await self._db.execute(
+                update(APIKey)
+                .where(APIKey.id.in_(ids))
+                .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
+            )
+            await self.commit()
+            total += result.rowcount
+            last_id = ids[-1]
+            if len(ids) < batch_size:
+                break
+        return total
 
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(

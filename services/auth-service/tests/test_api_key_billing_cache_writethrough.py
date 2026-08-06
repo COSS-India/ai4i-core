@@ -10,7 +10,7 @@ DB-fallback source of truth validate_api_key rehydrates from on a miss) —
 this locks in that both now stay in sync.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -18,6 +18,7 @@ from ai4i_core.ppu import get_inference_types
 
 from app.models.api_key import APIKey
 from app.models.user import User
+from app.repositories.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
 
 _INFERENCE_FIELDS = [f"quota-{entry['name']}" for entry in get_inference_types()]
@@ -119,7 +120,9 @@ class TestResetAllQuotaFields:
         await svc.reset_all_quota_fields()
         cache.delete_api_key_cache_fields_bulk.assert_awaited_once_with([key.api_key], _INFERENCE_FIELDS)
         repo.remove_cached_data_fields_globally.assert_awaited_once_with(_INFERENCE_FIELDS)
-        repo.commit.assert_awaited_once()
+        # No trailing service-level commit: remove_cached_data_fields_globally now
+        # commits per batch internally (keyset-paginated).
+        repo.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_repo_skips(self) -> None:
@@ -127,3 +130,54 @@ class TestResetAllQuotaFields:
         svc = APIKeyService(None, cache)
         await svc.reset_all_quota_fields()
         cache.delete_api_key_cache_fields_bulk.assert_not_awaited()
+
+
+class TestRemoveCachedDataFieldsGloballyBatching:
+    """The monthly-cron cached_data clear must keyset-paginate with a commit
+    per batch, not one table-wide UPDATE — see remove_cached_data_fields_globally."""
+
+    @staticmethod
+    def _select_result(ids: list[int]) -> MagicMock:
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = ids
+        return r
+
+    @staticmethod
+    def _update_result(rowcount: int) -> MagicMock:
+        r = MagicMock()
+        r.rowcount = rowcount
+        return r
+
+    @pytest.mark.asyncio
+    async def test_paginates_by_id_and_commits_each_batch(self) -> None:
+        db = AsyncMock()
+        # batch 1: ids [1,2] (== batch_size, keep going); batch 2: ids [3] (short, stop).
+        db.execute = AsyncMock(
+            side_effect=[
+                self._select_result([1, 2]), self._update_result(2),
+                self._select_result([3]), self._update_result(1),
+            ]
+        )
+        repo = APIKeyRepository(db)
+
+        total = await repo.remove_cached_data_fields_globally(["quota-nmt"], batch_size=2)
+
+        assert total == 3                      # rowcounts accumulated across batches
+        assert db.commit.await_count == 2      # one commit per batch, not one at the end
+        assert db.execute.await_count == 4     # (select + update) x 2 batches
+
+    @pytest.mark.asyncio
+    async def test_empty_fields_is_a_noop(self) -> None:
+        db = AsyncMock()
+        repo = APIKeyRepository(db)
+        assert await repo.remove_cached_data_fields_globally([]) == 0
+        db.execute.assert_not_awaited()
+        db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_matching_keys_does_nothing(self) -> None:
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[self._select_result([])])
+        repo = APIKeyRepository(db)
+        assert await repo.remove_cached_data_fields_globally(["quota-nmt"]) == 0
+        db.commit.assert_not_awaited()

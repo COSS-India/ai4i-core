@@ -393,8 +393,10 @@ class APIKeyService:
         (delete_api_key_cache_fields_bulk) instead of one HDEL per key. This
         was previously one DB query per user plus one serial HDEL per key,
         which doesn't scale to a large (lakhs-of-keys) tenant population. The
-        cached_data side is a single set-based UPDATE afterward (no per-page
-        pagination needed there — only the Redis pipeline requires chunking).
+        cached_data side is likewise cleared in id-keyset batches
+        (remove_cached_data_fields_globally), each its own transaction, so
+        neither side holds table-wide locks or builds one oversized
+        transaction.
         """
         if self._repo is None:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
@@ -411,8 +413,8 @@ class APIKeyService:
             if len(keys) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
+        # Commits per batch internally (keyset-paginated); no trailing commit needed.
         await self._repo.remove_cached_data_fields_globally(inference_fields)
-        await self._repo.commit()
 
     async def set_quota_exhausted_for_tenant(
         self, tenant_id: int, inference_name: str
