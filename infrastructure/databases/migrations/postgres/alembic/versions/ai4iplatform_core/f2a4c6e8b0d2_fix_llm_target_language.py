@@ -27,22 +27,34 @@ down_revision: Union[str, None] = '021f3168f9c8'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
+LLM_LANG_INFO = [
+    ("hi", "Hindi", "Deva"),
+    ("en", "English", "Latn"),
+    ("ta", "Tamil", "Taml"),
+    ("te", "Telugu", "Telu"),
+    ("bn", "Bengali", "Beng"),
+    ("mr", "Marathi", "Deva"),
+    ("gu", "Gujarati", "Gujr"),
+    ("kn", "Kannada", "Knda"),
+    ("ml", "Malayalam", "Mlym"),
+    ("pa", "Punjabi", "Guru"),
+    ("or", "Odia", "Orya"),
+]
+
+# Any-to-any: every supported language can target every other supported
+# language (the LLM is a general multilingual chat model, not restricted to
+# same-language responses), including the same-language case.
 LLM_LANGUAGES = [
-    {"sourceLanguage": "hi", "sourceLanguageName": "Hindi", "sourceScriptCode": "Deva", "targetLanguage": "hi", "targetLanguageName": "Hindi", "targetScriptCode": "Deva"},
-    {"sourceLanguage": "en", "sourceLanguageName": "English", "sourceScriptCode": "Latn", "targetLanguage": "en", "targetLanguageName": "English", "targetScriptCode": "Latn"},
-    {"sourceLanguage": "ta", "sourceLanguageName": "Tamil", "sourceScriptCode": "Taml", "targetLanguage": "ta", "targetLanguageName": "Tamil", "targetScriptCode": "Taml"},
-    {"sourceLanguage": "te", "sourceLanguageName": "Telugu", "sourceScriptCode": "Telu", "targetLanguage": "te", "targetLanguageName": "Telugu", "targetScriptCode": "Telu"},
-    {"sourceLanguage": "bn", "sourceLanguageName": "Bengali", "sourceScriptCode": "Beng", "targetLanguage": "bn", "targetLanguageName": "Bengali", "targetScriptCode": "Beng"},
-    {"sourceLanguage": "mr", "sourceLanguageName": "Marathi", "sourceScriptCode": "Deva", "targetLanguage": "mr", "targetLanguageName": "Marathi", "targetScriptCode": "Deva"},
-    {"sourceLanguage": "gu", "sourceLanguageName": "Gujarati", "sourceScriptCode": "Gujr", "targetLanguage": "gu", "targetLanguageName": "Gujarati", "targetScriptCode": "Gujr"},
-    {"sourceLanguage": "kn", "sourceLanguageName": "Kannada", "sourceScriptCode": "Knda", "targetLanguage": "kn", "targetLanguageName": "Kannada", "targetScriptCode": "Knda"},
-    {"sourceLanguage": "ml", "sourceLanguageName": "Malayalam", "sourceScriptCode": "Mlym", "targetLanguage": "ml", "targetLanguageName": "Malayalam", "targetScriptCode": "Mlym"},
-    {"sourceLanguage": "pa", "sourceLanguageName": "Punjabi", "sourceScriptCode": "Guru", "targetLanguage": "pa", "targetLanguageName": "Punjabi", "targetScriptCode": "Guru"},
-    {"sourceLanguage": "or", "sourceLanguageName": "Odia", "sourceScriptCode": "Orya", "targetLanguage": "or", "targetLanguageName": "Odia", "targetScriptCode": "Orya"},
+    {
+        "sourceLanguage": src_code, "sourceLanguageName": src_name, "sourceScriptCode": src_script,
+        "targetLanguage": tgt_code, "targetLanguageName": tgt_name, "targetScriptCode": tgt_script,
+    }
+    for src_code, src_name, src_script in LLM_LANG_INFO
+    for tgt_code, tgt_name, tgt_script in LLM_LANG_INFO
 ]
 
 # Previous source-only shape, kept so downgrade() can restore it exactly.
-LLM_LANGUAGES_OLD = [{"sourceLanguage": l["sourceLanguage"]} for l in LLM_LANGUAGES]
+LLM_LANGUAGES_OLD = [{"sourceLanguage": code} for code, _, _ in LLM_LANG_INFO]
 
 LLM_ADAPTER_CONFIG = {
     "model_name": "google/gemma-4-31B-it",
