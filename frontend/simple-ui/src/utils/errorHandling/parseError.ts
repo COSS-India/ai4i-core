@@ -406,7 +406,27 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     const messages: string[] = [];
 
     if (responseData !== undefined) {
-      messages.push(...extractMessagesFromValue(responseData));
+      const detail =
+        typeof responseData === 'object' &&
+        responseData !== null &&
+        !Array.isArray(responseData) &&
+        typeof (responseData as Record<string, unknown>).detail === 'object' &&
+        (responseData as Record<string, unknown>).detail !== null &&
+        !Array.isArray((responseData as Record<string, unknown>).detail)
+          ? ((responseData as Record<string, unknown>).detail as Record<string, unknown>)
+          : null;
+      if (
+        detail?.code === 'ENDPOINT_VALIDATION_ERROR' &&
+        typeof detail.details === 'string'
+      ) {
+        const message =
+          typeof detail.message === 'string'
+            ? detail.message
+            : 'Service endpoint validation failed.';
+        messages.push(`${message} ${detail.details}`);
+      } else {
+        messages.push(...extractMessagesFromValue(responseData));
+      }
     }
 
     const errorMessage = (error as Error | undefined)?.message;
