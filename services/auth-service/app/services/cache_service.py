@@ -31,7 +31,13 @@ class CacheService(_BaseCacheService):
         super().__init__(redis)
 
     async def set_api_key_cache(self, api_key: str, ttl_seconds: int, data: dict) -> None:
-        """Store api_key metadata as a Redis hash. TTL set atomically via pipeline."""
+        """Store api_key metadata as a Redis hash. TTL set atomically via pipeline.
+
+        HSET is additive — it never clears a field just because ``data`` omits it. Every
+        caller here is writing a fresh, valid payload, which is incompatible with a
+        leftover is_already_invalid="1" tombstone from a prior miss, so that field is
+        explicitly cleared too, unless ``data`` itself is the tombstone write.
+        """
         mapping = dict(data)
         if "permissions" in mapping and not isinstance(mapping["permissions"], str):
             mapping["permissions"] = json.dumps(mapping["permissions"])
@@ -39,6 +45,8 @@ class CacheService(_BaseCacheService):
         key = f"{REDIS_API_KEY_PREFIX}{api_key}"
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(key, mapping=mapping)
+            if "is_already_invalid" not in mapping:
+                await pipe.hdel(key, "is_already_invalid")
             await pipe.expire(key, ttl_seconds)
             await pipe.execute()
 
