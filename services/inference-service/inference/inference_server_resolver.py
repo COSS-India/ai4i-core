@@ -126,8 +126,21 @@ class InferenceServerResolver:
             schema = model_block.get("schema") or {}
 
             base_endpoint = data.get("endpoint", "").rstrip("/")
+
             model_name = schema.get("model_name", "")
-            endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
+            # data.taskType is unset on some legacy service records; fall back
+            # to the nested model.task.type, which is always populated.
+            task_type = data.get("taskType") or (model_block.get("task") or {}).get("type")
+            # LLM services are OpenAI-compatible — the caller appends a path
+            # like /v1/chat/completions, so the base must stay bare here.
+            # Only Triton-native task types get the /v2/models/.../infer template.
+            if model_name and task_type != "llm":
+                endpoint = f"{base_endpoint}/v2/models/{model_name}/infer"
+            else:
+                endpoint = base_endpoint
+
+            #model_name = schema.get("model_name", "")
+            #endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
 
             # adapter_config can be at data level or at model top-level
             adapter_config = (
