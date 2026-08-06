@@ -147,17 +147,58 @@ async def _check_host_is_safe(url: str, *, label: str) -> List[ValidationDetail]
 # used exactly as given. This is a validation-time-only convenience: the
 # stored Service.endpoint stays whatever the admin typed; only the URL the
 # live probe actually POSTs to gets this appended.
+#
+# inference-service's LlmService.resolve_upstream_url builds the real
+# upstream URL the same way — base.rstrip('/') + path — unconditionally,
+# with no guard against the base already carrying the path. If the admin
+# stores endpoint="http://host:8080/v1/chat/completions", production
+# double-appends and 404s on ".../v1/chat/completions/v1/chat/completions".
+# _resolve_probe_endpoint mirrors that exactly so the probe fails the same
+# way a misconfigured stored endpoint would — but _llm_endpoint_has_extra_path
+# catches it first with a clear message, instead of letting a broken config
+# validate green and only fail later in production.
 _LLM_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
 
+def _llm_endpoint_has_extra_path(endpoint: str, task_type: Optional[str]) -> Optional[ValidationDetail]:
+    """Reject an LLM endpoint that already carries the inference path.
+
+    For task_type == "llm" the admin must supply host:port only; the path
+    is attached automatically, both by the probe below and by
+    inference-service at real call time. An endpoint that already includes
+    it would be double-appended in production and 404 — fail validation
+    here, fast and with a clear message, rather than silently stripping or
+    ignoring it (which would validate green and defer the failure to
+    production). Returns None when there's nothing to reject.
+    """
+    if task_type != "llm":
+        return None
+    if endpoint.rstrip("/").endswith(_LLM_CHAT_COMPLETIONS_PATH):
+        return ValidationDetail(
+            level=ValidationLevel.URL_FORMAT,
+            status=ValidationStatus.FAILED,
+            message=(
+                "For LLM services, endpoint must be host:port only, with no "
+                f"path — '{_LLM_CHAT_COMPLETIONS_PATH}' is attached "
+                f"automatically. Got: '{endpoint}', which already includes "
+                "the path and would be double-appended at inference time."
+            ),
+        )
+    return None
+
+
 def _resolve_probe_endpoint(endpoint: str, task_type: Optional[str]) -> str:
-    """Return the URL the live probe should actually POST to."""
+    """Return the URL the live probe should actually POST to.
+
+    Mirrors inference-service's LlmService.resolve_upstream_url exactly —
+    always appends for task_type == "llm", with no guard against *endpoint*
+    already carrying the path. Callers must run _llm_endpoint_has_extra_path
+    first to reject that misconfiguration explicitly, rather than relying on
+    this to silently correct or double-append it.
+    """
     if task_type != "llm":
         return endpoint
-    trimmed = endpoint.rstrip("/")
-    if trimmed.endswith(_LLM_CHAT_COMPLETIONS_PATH):
-        return trimmed  # admin already included it — don't double-append
-    return trimmed + _LLM_CHAT_COMPLETIONS_PATH
+    return endpoint.rstrip("/") + _LLM_CHAT_COMPLETIONS_PATH
 
 
 # ── Level 2 — Response shape matching ──
@@ -552,13 +593,21 @@ async def validate_endpoint(
     appended (see ``_resolve_probe_endpoint``). Every other task type's
     endpoint is used exactly as given, and the SSRF/format check below
     always runs against the admin-supplied value, not the resolved one
-    (the hostname is identical either way).
+    (the hostname is identical either way). An LLM *endpoint* that already
+    carries that path is rejected outright (see
+    ``_llm_endpoint_has_extra_path``) rather than silently accepted — that
+    exact stored value would double-append and 404 at real inference time.
     """
     details: List[ValidationDetail] = []
 
     endpoint_checks = await _check_host_is_safe(endpoint, label="Endpoint")
     details.extend(endpoint_checks)
     if any(d.status == ValidationStatus.FAILED for d in endpoint_checks):
+        return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
+
+    extra_path_check = _llm_endpoint_has_extra_path(endpoint, task_type)
+    if extra_path_check:
+        details.append(extra_path_check)
         return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
 
     probe_endpoint = _resolve_probe_endpoint(endpoint, task_type)
