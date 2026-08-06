@@ -14,7 +14,6 @@ def _base_create(**overrides):
         description="A test model used for automated unit testing.",
         refUrl="http://example.com/model",
         task={"type": "nmt"},
-        languages=[{"sourceLanguage": "en"}],
         license="mit",
         domain=["general"],
         submitter={"name": "Test User"},

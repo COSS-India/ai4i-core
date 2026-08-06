@@ -271,7 +271,7 @@ export interface ModelCreateRequest {
   license: License;
   licenseUrl?: string;
   domain: Domain[];
-  adapterConfig: Record<string, unknown>;
+  adapterConfig?: Record<string, unknown>;
   schema?: Record<string, unknown>;
   callbackUrl?: string;
   inferenceApiKey?: { name: string; value: string };

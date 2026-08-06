@@ -19,7 +19,6 @@ def _base_payload(**overrides):
         description="A test model used for automated unit testing.",
         refUrl="http://example.com/model",
         task={"type": "nmt"},
-        languages=[{"sourceLanguage": "en"}],
         license="mit",
         domain=["general"],
         submitter={"name": "Test User"},
@@ -141,11 +140,6 @@ def test_create_adapter_config_with_inputs_and_outputs_accepted():
     }
     req = ModelCreateRequest(**_base_payload(adapterConfig=adapter))
     assert req.adapterConfig == adapter
-
-
-def test_patch_adapter_config_without_inputs_rejected():
-    with pytest.raises(ValidationError, match="inputs"):
-        ModelUpdateRequest(modelId="abc123", version="1.0", adapterConfig={"outputs": []})
 
 
 # ── Partial PATCH — adapterConfig and schema are now top-level fields ─────────

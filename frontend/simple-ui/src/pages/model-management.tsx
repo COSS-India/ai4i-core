@@ -299,7 +299,14 @@ const ModelManagementPage: React.FC = () => {
       licenseUrl: "https://opensource.org/licenses/MIT",
       domain: ["general"],
       adapterConfig: {
-        model_name: "google/gemma-4-31B-it",
+        version: "1.0",
+        model_name: "example-model",
+        inputs: [
+          { tensor: "INPUT_TEXT", dtype: "BYTES", shape: [-1, 1], value_path: "input.source" },
+        ],
+        outputs: [
+          { tensor: "OUTPUT_TEXT", dtype: "BYTES", maps_to: "target" },
+        ],
       },
       schema: {
         request: {
@@ -312,7 +319,7 @@ const ModelManagementPage: React.FC = () => {
           ],
         },
         response: {},
-        model_name: null,
+        model_name: "example-model",
         modelProcessingType: null,
       },
       callbackUrl: "https://inference.example.com/v2/models/example-model/infer",
@@ -484,12 +491,25 @@ const ModelManagementPage: React.FC = () => {
       errors.push("trainingDataset.description is required and must be a non-empty string");
     }
 
-    if (data.adapterConfig != null && typeof data.adapterConfig !== "object") {
-      errors.push("adapterConfig must be an object when provided");
+    if (data.adapterConfig != null) {
+      if (typeof data.adapterConfig !== "object" || Array.isArray(data.adapterConfig)) {
+        errors.push("adapterConfig must be an object when provided");
+      } else {
+        if (!Array.isArray((data.adapterConfig as Record<string, unknown>).inputs)) {
+          errors.push("adapterConfig.inputs is required and must be an array");
+        }
+        if (!Array.isArray((data.adapterConfig as Record<string, unknown>).outputs)) {
+          errors.push("adapterConfig.outputs is required and must be an array");
+        }
+      }
     }
 
-    if (data.schema != null && (typeof data.schema !== "object" || Array.isArray(data.schema))) {
-      errors.push("schema must be an object when provided");
+    if (data.schema != null) {
+      if (typeof data.schema !== "object" || Array.isArray(data.schema)) {
+        errors.push("schema must be an object when provided");
+      } else if (!(data.schema as Record<string, unknown>).model_name) {
+        errors.push("schema.model_name is required");
+      }
     }
 
     if (!data.submitter || typeof data.submitter !== "object" || !data.submitter.name) {

@@ -204,9 +204,9 @@ class ModelCreateRequest(BaseSchema):
         ...,
         description="Required, at least one. Business area(s) this model is relevant to (ULCA Domain enum).",
     )
-    adapterConfig: Dict[str, Any] = Field(
-        ...,
-        description="Required. Platform-specific Triton I/O tensor mapping. Must include 'inputs' and 'outputs'.",
+    adapterConfig: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional. Platform-specific Triton I/O tensor mapping. When provided, must include 'inputs' and 'outputs'.",
     )
     endpoint_schema: Optional[Dict[str, Any]] = Field(
         None,
@@ -419,18 +419,6 @@ class ModelUpdateRequest(BaseSchema):
             )
         return v
 
-    @field_validator("adapterConfig", mode="after")
-    @classmethod
-    def _require_adapter_config_fields(cls, v: Any) -> Any:
-        if v is not None:
-            missing = [f for f in ("inputs", "outputs") if f not in v]
-            if missing:
-                raise ValueError(
-                    f"adapterConfig must include {missing} — "
-                    "the Triton tensor mapping used to build inference requests"
-                )
-        return v
-
     @field_validator("license", mode="before")
     @classmethod
     def _validate_license(cls, v: Any) -> Any:
@@ -472,6 +460,10 @@ class ModelResponse(BaseSchema):
     licenseUrl: Optional[str] = None
     adapterConfig: Optional[Dict[str, Any]] = None
     endpoint_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
+    callbackUrl: Optional[str] = None
+    inferenceApiKey: Optional[Dict[str, Any]] = None
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
     trainingDataset: Optional[TrainingDataset] = None

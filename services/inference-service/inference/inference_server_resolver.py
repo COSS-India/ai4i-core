@@ -123,7 +123,7 @@ class InferenceServerResolver:
         if "success" in raw and "data" in raw:
             data = raw["data"]
             model_block = data.get("model") or {}
-            schema = model_block.get("schema", {})
+            schema = model_block.get("schema") or {}
 
             base_endpoint = data.get("endpoint", "").rstrip("/")
             model_name = schema.get("model_name", "")

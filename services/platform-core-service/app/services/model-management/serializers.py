@@ -25,6 +25,12 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
+def _mask_api_key(key: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not key:
+        return key
+    return {**key, "value": "***"}
+
+
 def model_to_dict(model: Model) -> Dict[str, Any]:
     """Serialize a Model ORM row to the API response shape."""
     ep = model.inference_endpoint or {}
@@ -45,6 +51,10 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "licenseUrl": model.license_url,
         "adapterConfig": ep.get("adapterConfig") or ep.get("adapter_config"),
         "schema": ep.get("schema"),
+        "callbackUrl": ep.get("callbackUrl"),
+        "inferenceApiKey": _mask_api_key(ep.get("inferenceApiKey")),
+        "isSyncApi": ep.get("isSyncApi"),
+        "asyncApiDetails": ep.get("asyncApiDetails"),
         "source": model.ref_url or "",
         "task": model.task or {},
         "trainingDataset": model.training_dataset or None,
