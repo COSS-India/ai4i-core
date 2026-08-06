@@ -266,7 +266,11 @@ class TestValidateAPIKeyCacheMissDBFallback:
 
 class TestRefreshAndCreatePersistCachedData:
     @pytest.mark.asyncio
-    async def test_refresh_redis_cache_persists_snapshot_minus_billing_flags(self) -> None:
+    async def test_refresh_redis_cache_persists_billing_flags_preserved_from_redis(self) -> None:
+        """Fix for cached_data_billing_flag_analysis.md, Q1: billing flags preserved
+        from the live Redis hash must also land in cached_data, not just Redis — a
+        prior version of this method stripped them here unconditionally, which this
+        test used to lock in (see git history) before the fix."""
         svc, repo, cache = _service()
         cache.get_api_key_cache = AsyncMock(
             return_value={"budget-exhausted": "1", "quota-nmt": "1", "tier_id": "old"}
@@ -277,10 +281,46 @@ class TestRefreshAndCreatePersistCachedData:
         assert written["budget-exhausted"] == "1"
         assert written["quota-nmt"] == "1"
         persisted = repo.update.await_args.args[1]["cached_data"]
-        assert "budget-exhausted" not in persisted
-        assert "quota-nmt" not in persisted
+        assert persisted["budget-exhausted"] == "1"
+        assert persisted["quota-nmt"] == "1"
         assert persisted["tenant_id"] == "1"
         repo.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_redis_cache_no_longer_diverges_from_redis_for_an_exhausted_key(self) -> None:
+        """Fix for cached_data_billing_flag_analysis.md, Q1. Redis has quota-nmt=1
+        (preserved from the live hash); cached_data already had it too from an
+        earlier billing patch. Both must end up agreeing after the refresh — no more
+        silent divergence between the two stores."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value={"quota-nmt": "1", "tier_id": "old"})
+        key = _api_key(
+            cached_data={"api_key": _TOKEN, "quota-nmt": "1", "tenant_id": "1", "tier_id": "old"}
+        )
+        await svc._refresh_redis_cache(key, "1")
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["quota-nmt"] == "1"
+        assert persisted["quota-nmt"] == "1"     # no longer diverges from Redis
+
+    @pytest.mark.asyncio
+    async def test_refresh_redis_cache_carries_a_billing_flag_forward_from_cached_data_alone(self) -> None:
+        """The case the fix is actually for: Redis has nothing to preserve (cold/
+        evicted hash), but cached_data already holds a billing flag from an earlier
+        direct write (patch_cached_data_field_for_tenant, via the PPU billing flow).
+        A refresh triggered by something unrelated (a permission edit, a tenant
+        reactivation) must not erase it just because Redis's own state has nothing to
+        contribute."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value=None)  # Redis cold
+        key = _api_key(
+            cached_data={"api_key": _TOKEN, "budget-exhausted": "1", "tenant_id": "1"}
+        )
+        await svc._refresh_redis_cache(key, "1")
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["budget-exhausted"] == "1"
+        assert persisted["budget-exhausted"] == "1"
 
     @pytest.mark.asyncio
     async def test_refresh_redis_cache_preserves_tier_id_from_existing_cached_data(self) -> None:
