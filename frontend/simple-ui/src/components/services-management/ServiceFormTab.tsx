@@ -295,7 +295,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </FormControl>
 
             {/* Service Description */}
-            <FormControl isRequired>
+            <FormControl>
               <FormLabel fontWeight="semibold">Service Description</FormLabel>
               <Textarea
                 value={formData.serviceDescription || ""}
@@ -314,11 +314,17 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               <Input
                 value={formData.endpoint || ""}
                 onChange={(e) => onInputChange("endpoint", e.target.value)}
-                placeholder="Enter endpoint URL, e.g. http://localhost:8088"
+                placeholder={
+                  isLlmTaskType
+                    ? "e.g. http://host:port"
+                    : "Enter endpoint URL, e.g. http://localhost:8088"
+                }
                 bg="white"
               />
               <Text fontSize="xs" color="gray.500" mt={1}>
-                Enter the full HTTP endpoint where this service is hosted.
+                {isLlmTaskType
+                  ? "Enter the model host URL (host:port only)."
+                  : "Enter the full HTTP endpoint where this service is hosted."}
               </Text>
             </FormControl>
 
