@@ -343,7 +343,7 @@ const ModelManagementPage: React.FC = () => {
           createdOn: "2025-01-15T10:00:00.000Z",
           languages: {
             sourceLanguage: "hi",
-            targetLanguage: "hi",
+            targetLanguage: "en",
           },
           score: [
             {
