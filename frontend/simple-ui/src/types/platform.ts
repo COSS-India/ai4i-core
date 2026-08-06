@@ -355,7 +355,6 @@ export interface ServiceResponse {
   apiKey?: string | null;
   healthStatus?: ServiceStatus | null;
   benchmarks?: Record<string, unknown> | null;
-  expectedResponseSchema?: Record<string, unknown> | null;
   policy?: Record<string, unknown> | ServicePolicy | null;
   isPublished: boolean;
   /** When true, anonymous Try-It should prefer this service for its task type. */
@@ -435,7 +434,7 @@ export type Service = ServiceListItem & ServiceLegacyFields;
 
 export interface ServiceCreateRequest {
   name: string;
-  serviceDescription?: string;
+  serviceDescription: string;
   hardwareDescription: string;
   modelId: string;
   modelVersion: string;
@@ -445,7 +444,6 @@ export interface ServiceCreateRequest {
   sslVerify?: boolean;
   healthStatus?: ServiceStatus;
   benchmarks?: Record<string, unknown>;
-  expectedResponseSchema?: Record<string, unknown> | null;
   isPublished?: boolean;
 }
 
@@ -459,7 +457,6 @@ export interface ServiceUpdateRequest {
   sslVerify?: boolean;
   healthStatus?: string | ServiceStatus;
   benchmarks?: Record<string, unknown>;
-  expectedResponseSchema?: Record<string, unknown> | null;
   isPublished?: boolean;
   /** Mark this service as the anonymous Try-It default for its task type. */
   isTryItDefault?: boolean;

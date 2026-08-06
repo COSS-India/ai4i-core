@@ -575,20 +575,15 @@ export function useServicesManagement() {
     try {
       if (editingService) {
         // Edit mode: PATCH only the fields the edit form allows changing
-        const updateData: Partial<Service> = {
+        await updateService({
           serviceId: editingService.serviceId || editingService.service_id,
           serviceDescription: formData.serviceDescription,
+          endpoint: formData.endpoint,
           task_type: formData.task_type,
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds: selectedTiers,
-        };
-        const storedEndpoint =
-          editingService.endpoint || editingService.endpoint_url || "";
-        if (formData.endpoint !== storedEndpoint) {
-          updateData.endpoint = formData.endpoint;
-        }
-        await updateService(updateData);
+        });
 
         showToast({
           type: "success",
@@ -698,6 +693,7 @@ export function useServicesManagement() {
   const canCreateService =
     hasRequiredServiceIdentity &&
     !serviceIdExists &&
+    !!formData.serviceDescription?.trim() &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&

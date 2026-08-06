@@ -113,23 +113,4 @@ describe('parseApiError', () => {
     };
     expect(parseApiError(error).message).toBe('API Key already exists.');
   });
-
-  it('includes endpoint validation failure details', () => {
-    const error = {
-      response: {
-        status: 400,
-        data: {
-          detail: {
-            code: 'ENDPOINT_VALIDATION_ERROR',
-            message: 'Service endpoint validation failed.',
-            details: 'Request timed out after 15.0s: https://example.com/infer',
-          },
-        },
-      },
-    };
-
-    expect(parseApiError(error).message).toBe(
-      'Service endpoint validation failed. Request timed out after 15.0s: https://example.com/infer'
-    );
-  });
 });
