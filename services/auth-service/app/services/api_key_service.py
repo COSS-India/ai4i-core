@@ -205,10 +205,13 @@ class APIKeyService:
         if ttl <= 0:
             return
         existing = await self._cache.get_api_key_cache(db_key.api_key)
+        # No value filter: a live "0" is evidence too — filtering to v == "1"
+        # would let a stale "1" in cached_data win the merge below and
+        # resurrect a cleared budget-exhausted flag into both stores.
         preserved_from_redis = {
             k: v
             for k, v in (existing or {}).items()
-            if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
+            if k == "budget-exhausted" or k.startswith("quota-")
         }
         # cached_data's own billing state is the base (covers a cold/evicted Redis
         # hash with nothing to preserve); Redis's live state, if any, overrides it —

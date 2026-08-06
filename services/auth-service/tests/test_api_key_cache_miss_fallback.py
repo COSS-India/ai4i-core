@@ -323,6 +323,25 @@ class TestRefreshAndCreatePersistCachedData:
         assert persisted["budget-exhausted"] == "1"
 
     @pytest.mark.asyncio
+    async def test_refresh_redis_cache_live_redis_zero_overrides_stale_cached_data_one(self) -> None:
+        """The override direction: Redis's live budget-exhausted="0" (a clear that
+        reached Redis but whose cached_data patch failed/hasn't landed) must win over
+        the stale "1" still in cached_data — not the other way around. Filtering the
+        Redis side to v == "1" would discard the "0" as evidence, resurrect the
+        exhausted flag into both stores on an unrelated refresh, and re-block a
+        tenant whose budget was already cleared."""
+        svc, repo, cache = _service()
+        cache.get_api_key_cache = AsyncMock(return_value={"budget-exhausted": "0"})
+        key = _api_key(
+            cached_data={"api_key": _TOKEN, "budget-exhausted": "1", "tenant_id": "1"}
+        )
+        await svc._refresh_redis_cache(key, "1")
+        written = cache.set_api_key_cache.await_args.args[2]
+        persisted = repo.update.await_args.args[1]["cached_data"]
+        assert written["budget-exhausted"] == "0"    # Redis's clear wins
+        assert persisted["budget-exhausted"] == "0"  # both stores converge on "0"
+
+    @pytest.mark.asyncio
     async def test_refresh_redis_cache_preserves_tier_id_from_existing_cached_data(self) -> None:
         """tier_id can only be correctly computed at create_api_key time (a
         platform-core PPU lookup) — a refresh must carry it forward from
