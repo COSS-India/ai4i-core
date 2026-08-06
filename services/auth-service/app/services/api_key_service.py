@@ -165,10 +165,7 @@ class APIKeyService:
             **(extra_fields or {}),
         }
 
-    @staticmethod
-    async def _persist_cache_snapshot(
-        repo: APIKeyRepository, db_key: APIKey, payload: dict
-    ) -> None:
+    async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
         """Mirror ``payload`` (minus transient billing flags) onto
         ``api_key.cached_data`` so a future Redis miss can repopulate the
         cache without rejoining users/tenants."""
@@ -177,8 +174,8 @@ class APIKeyService:
             for k, v in payload.items()
             if k != "budget-exhausted" and not k.startswith("quota-")
         }
-        await repo.update(db_key, {"cached_data": snapshot})
-        await repo.commit()
+        await self._repo.update(db_key, {"cached_data": snapshot})
+        await self._repo.commit()
 
     @staticmethod
     def _preserved_tier_id(db_key: APIKey) -> dict:
@@ -205,7 +202,7 @@ class APIKeyService:
             db_key, tenant_id, {**self._preserved_tier_id(db_key), **preserved}
         )
         await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
-        await self._persist_cache_snapshot(self._repo, db_key, payload)
+        await self._persist_cache_snapshot(db_key, payload)
 
     async def _persist_current_state_to_cached_data(
         self, db_key: APIKey, tenant_id: Optional[str]
@@ -218,7 +215,7 @@ class APIKeyService:
         the DB snapshot updates, since the key must not become servable
         again just because its details changed."""
         payload = self._build_cache_payload(db_key, tenant_id, self._preserved_tier_id(db_key))
-        await self._persist_cache_snapshot(self._repo, db_key, payload)
+        await self._persist_cache_snapshot(db_key, payload)
 
     async def evict_keys_for_user(self, user_id: UUID) -> None:
         """Remove Redis entries for all keys owned by ``user_id``. No DB writes."""
@@ -550,7 +547,7 @@ class APIKeyService:
         if owner_active:
             payload = self._build_cache_payload(api_key, tenant_id, {"tier_id": tier_id})
             await self._cache.set_api_key_cache(raw_key, ttl, payload)
-            await self._persist_cache_snapshot(self._repo, api_key, payload)
+            await self._persist_cache_snapshot(api_key, payload)
 
         logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
         return raw_key, api_key
