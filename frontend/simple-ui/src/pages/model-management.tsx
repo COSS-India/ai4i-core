@@ -80,7 +80,8 @@ type Model = ModelDetails & {
   languages: NonNullable<ModelDetails["languages"]>;
   domain: string[];
   license: string;
-  inferenceEndPoint: NonNullable<ModelDetails["inferenceEndPoint"]>;
+  adapterConfig?: Record<string, unknown> | null;
+  schema?: Record<string, unknown> | null;
   source: string;
   task: NonNullable<ModelDetails["task"]>;
 };
@@ -297,32 +298,37 @@ const ModelManagementPage: React.FC = () => {
       license: "mit",
       licenseUrl: "https://opensource.org/licenses/MIT",
       domain: ["general"],
-      inferenceEndPoint: {
-        callbackUrl: "https://inference.example.com/v2/models/sample-llm/infer",
-        adapterConfig: {
-          model_name: "google/gemma-4-31B-it",
-        },
-        inferenceApiKey: {
-          name: "Authorization",
-          value: "<your-api-key>",
-        },
-        isMultilingualEnabled: false,
-        isSyncApi: true,
-        schema: {
-          request: {
-            model: "google/gemma-5-E4B-it",
-            messages: [
-              {
-                role: "user",
-                content: "Hello",
-              },
-            ],
-          },
-          response: {},
-          model_name: null,
-          modelProcessingType: null,
-        },
+      adapterConfig: {
+        version: "1.0",
+        model_name: "example-model",
+        inputs: [
+          { tensor: "INPUT_TEXT", dtype: "BYTES", shape: [-1, 1], value_path: "input.source" },
+        ],
+        outputs: [
+          { tensor: "OUTPUT_TEXT", dtype: "BYTES", maps_to: "target" },
+        ],
       },
+      schema: {
+        request: {
+          model: "google/gemma-5-E4B-it",
+          messages: [
+            {
+              role: "user",
+              content: "Hello",
+            },
+          ],
+        },
+        response: {},
+        model_name: "example-model",
+        modelProcessingType: null,
+      },
+      callbackUrl: "https://inference.example.com/v2/models/example-model/infer",
+      inferenceApiKey: {
+        name: "Authorization",
+        value: "<your-api-key>",
+      },
+      isSyncApi: true,
+      asyncApiDetails: null,
       trainingDataset: {
         description:
           "Sample training dataset description for the example LLM model registration.",
@@ -485,50 +491,24 @@ const ModelManagementPage: React.FC = () => {
       errors.push("trainingDataset.description is required and must be a non-empty string");
     }
 
-    if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== "object") {
-      errors.push("inferenceEndPoint is required and must be an object");
-    } else {
-      const ep = data.inferenceEndPoint;
-      if (!ep.callbackUrl || typeof ep.callbackUrl !== "string" || ep.callbackUrl.trim() === "") {
-        errors.push("inferenceEndPoint.callbackUrl is required");
-      }
-      if (ep.schema == null || typeof ep.schema !== "object" || Array.isArray(ep.schema)) {
-        errors.push("inferenceEndPoint.schema is required and must be an object ({} is valid)");
-      }
-      if (ep.inferenceApiKey != null) {
-        if (typeof ep.inferenceApiKey !== "object") {
-          errors.push("inferenceEndPoint.inferenceApiKey must be an object");
-        } else if (
-          !ep.inferenceApiKey.value ||
-          typeof ep.inferenceApiKey.value !== "string" ||
-          ep.inferenceApiKey.value === MODEL_API_KEY_REDACTED
-        ) {
-          errors.push(
-            "inferenceEndPoint.inferenceApiKey.value must be a real API key (do not use [REDACTED])"
-          );
+    if (data.adapterConfig != null) {
+      if (typeof data.adapterConfig !== "object" || Array.isArray(data.adapterConfig)) {
+        errors.push("adapterConfig must be an object when provided");
+      } else {
+        if (!Array.isArray((data.adapterConfig as Record<string, unknown>).inputs)) {
+          errors.push("adapterConfig.inputs is required and must be an array");
+        }
+        if (!Array.isArray((data.adapterConfig as Record<string, unknown>).outputs)) {
+          errors.push("adapterConfig.outputs is required and must be an array");
         }
       }
-      if (ep.isSyncApi === false) {
-        if (!ep.asyncApiDetails || typeof ep.asyncApiDetails !== "object") {
-          errors.push(
-            "inferenceEndPoint.asyncApiDetails is required when isSyncApi is false"
-          );
-        } else {
-          if (
-            !ep.asyncApiDetails.pollingUrl ||
-            typeof ep.asyncApiDetails.pollingUrl !== "string"
-          ) {
-            errors.push("inferenceEndPoint.asyncApiDetails.pollingUrl is required");
-          }
-          if (
-            ep.asyncApiDetails.pollInterval == null ||
-            typeof ep.asyncApiDetails.pollInterval !== "number"
-          ) {
-            errors.push(
-              "inferenceEndPoint.asyncApiDetails.pollInterval is required (milliseconds)"
-            );
-          }
-        }
+    }
+
+    if (data.schema != null) {
+      if (typeof data.schema !== "object" || Array.isArray(data.schema)) {
+        errors.push("schema must be an object when provided");
+      } else if (!(data.schema as Record<string, unknown>).model_name) {
+        errors.push("schema.model_name is required");
       }
     }
 
@@ -691,17 +671,9 @@ const ModelManagementPage: React.FC = () => {
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
-      // Ensure task field is properly initialized; never seed API key with [REDACTED]
-      const inferenceEndPoint = model.inferenceEndPoint
-        ? {
-            ...model.inferenceEndPoint,
-            inferenceApiKey: undefined,
-          }
-        : undefined;
       setUpdateFormData({
         ...(model as unknown as Partial<Model>),
         task: { type: model.task?.type ?? model.task_type ?? model.taskType ?? "" },
-        inferenceEndPoint: inferenceEndPoint as Model["inferenceEndPoint"],
       });
       setIsViewingModel(true);
       setActiveTab(viewTabIndex);
@@ -726,20 +698,6 @@ const ModelManagementPage: React.FC = () => {
     try {
       // Never include `name` — API returns 422 NAME_NOT_UPDATABLE.
       // Read source (not refUrl) from GET; send as refUrl on write.
-      // Omit inferenceApiKey unless the user entered a new (non-redacted) value.
-      const ep = updateFormData.inferenceEndPoint;
-      let inferenceEndPoint: ModelUpdateRequest["inferenceEndPoint"] | undefined;
-      if (ep) {
-        const { inferenceApiKey, ...epRest } = ep;
-        inferenceEndPoint = { ...epRest };
-        if (
-          inferenceApiKey?.value &&
-          inferenceApiKey.value !== MODEL_API_KEY_REDACTED
-        ) {
-          inferenceEndPoint.inferenceApiKey = inferenceApiKey;
-        }
-      }
-
       const updateData: ModelUpdateRequest = {
         modelId: selectedModel.modelId,
         version: selectedModel.version,
@@ -753,7 +711,8 @@ const ModelManagementPage: React.FC = () => {
         isLangDetectionEnabled: updateFormData.isLangDetectionEnabled,
         isMultilingual: updateFormData.isMultilingual,
         trainingDataset: updateFormData.trainingDataset ?? undefined,
-        inferenceEndPoint,
+        adapterConfig: updateFormData.adapterConfig ?? undefined,
+        schema: updateFormData.schema ?? undefined,
       };
 
       await updateModel(updateData);
@@ -767,12 +726,7 @@ const ModelManagementPage: React.FC = () => {
       await fetchModels();
       const updatedModel = await getModelById(selectedModel.modelId);
       setSelectedModel(updatedModel as unknown as Model);
-      setUpdateFormData({
-        ...(updatedModel as unknown as Partial<Model>),
-        inferenceEndPoint: updatedModel.inferenceEndPoint
-          ? { ...updatedModel.inferenceEndPoint, inferenceApiKey: undefined }
-          : undefined,
-      } as Partial<Model>);
+      setUpdateFormData(updatedModel as unknown as Partial<Model>);
       setIsEditingModel(false);
     } catch (error) {
       const { message } = parseError(error);
@@ -1199,9 +1153,10 @@ const ModelManagementPage: React.FC = () => {
                               <Text fontSize="xs" color="blue.600">
                                 name (5–100 chars, no spaces), version, description (25–1000 chars),
                                 task.type, license (closed enum), domain (closed enum, ≥1),
-                                trainingDataset.{"{description}"}, inferenceEndPoint.{"{callbackUrl, schema}"},
+                                trainingDataset.{"{description}"},
                                 submitter.name. Optional: refUrl, languages (Indic + English codes only),
-                                licenseUrl, isLangDetectionEnabled, isMultilingual, benchmarks.
+                                licenseUrl, isLangDetectionEnabled, isMultilingual,
+                                adapterConfig, schema, benchmarks.
                                 modelId is auto-generated from name:version. Do not send submittedOn/updatedOn
                                 unless you intend to override — they are server-set by default.
                               </Text>
@@ -1574,31 +1529,25 @@ const ModelManagementPage: React.FC = () => {
                               </Box>
                             ) : null}
 
-                            {selectedModel.inferenceEndPoint ? (
+                            {selectedModel.adapterConfig ? (
                               <Box>
                                 <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Inference endpoint
+                                  Adapter config
                                 </Text>
-                                <Text fontSize="md">
-                                  {selectedModel.inferenceEndPoint.callbackUrl || "—"}
+                                <Text fontSize="sm" fontFamily="mono" whiteSpace="pre-wrap">
+                                  {JSON.stringify(selectedModel.adapterConfig, null, 2)}
                                 </Text>
-                                <HStack spacing={3} mt={2} flexWrap="wrap">
-                                  <Badge fontSize="sm" colorScheme="gray" p={2}>
-                                    {selectedModel.inferenceEndPoint.isSyncApi === false
-                                      ? "Async"
-                                      : "Sync"}
-                                  </Badge>
-                                  {selectedModel.inferenceEndPoint.isMultilingualEnabled ? (
-                                    <Badge fontSize="sm" colorScheme="purple" p={2}>
-                                      Multilingual inference
-                                    </Badge>
-                                  ) : null}
-                                  {selectedModel.inferenceEndPoint.inferenceApiKey ? (
-                                    <Badge fontSize="sm" colorScheme="orange" p={2}>
-                                      API key configured
-                                    </Badge>
-                                  ) : null}
-                                </HStack>
+                              </Box>
+                            ) : null}
+
+                            {selectedModel.schema ? (
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Schema
+                                </Text>
+                                <Text fontSize="sm" fontFamily="mono" whiteSpace="pre-wrap">
+                                  {JSON.stringify(selectedModel.schema, null, 2)}
+                                </Text>
                               </Box>
                             ) : null}
                           </VStack>

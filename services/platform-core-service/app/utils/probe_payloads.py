@@ -187,7 +187,13 @@ _ULCA_DUMMY_PAYLOADS: Dict[str, Dict[str, Any]] = {
         "config": {"language": {"sourceLanguage": "en"}, "gender": "female"},
     },
     "asr": {"audio": [{"audioContent": ""}], "config": {"language": {"sourceLanguage": "en"}}},
-    "llm": {"input": [{"source": "Hello"}], "config": {}},
+    # OpenAI chat-completions-shaped, not the ULCA input/config envelope
+    # every other entry here uses — _ULCA_EXPECTED_SHAPES["llm"] already
+    # commits the *response* side to that same OpenAI shape (see AI4IDS-1844
+    # follow-up), so the request dummy has to match or it can never
+    # round-trip against a real OpenAI-compatible server. "model" is added
+    # by build_ulca_payload below when model_name is available.
+    "llm": {"messages": [{"role": "user", "content": "Hello"}]},
     "transliteration": {
         "input": [{"source": "namaste"}],
         "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "en"}},
@@ -280,10 +286,25 @@ def _normalize_key(key: str) -> str:
 def build_ulca_payload(
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,
+    model_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a ULCA test payload, preferring *request_schema* when present."""
+    """Build a ULCA test payload, preferring *request_schema* when present.
+
+    *model_name* is the model card's ``inferenceEndPoint.adapterConfig.model_name``
+    — the authoritative real model identifier for LLM (OpenAI-compatible)
+    deployments. ``schema.request.model`` (or ``modelName``/``modelId``/
+    ``deployment``/``engine``/... — any of ``_PRESERVE_VERBATIM_KEYS``) is
+    only a sample the admin typed in and has repeatedly been found
+    stale/wrong in practice (AI4IDS-1844 follow-up); *model_name* always
+    wins for ``task_type == "llm"`` when supplied. Whichever
+    identifier-like key the sample actually used gets overwritten in place
+    (never both an old spelling AND a new literal ``"model"`` key); a
+    sample with no such key at all — including no ``request_schema``,
+    where the built-in dummy for "llm" also has none — gets ``"model"``
+    added fresh.
+    """
+    payload: Dict[str, Any] = {}
     if request_schema:
-        payload: Dict[str, Any] = {}
         for key, value in request_schema.items():
             if isinstance(value, str):
                 if _normalize_key(key) in _PRESERVE_VERBATIM_KEYS:
@@ -296,21 +317,30 @@ def build_ulca_payload(
                 payload[key] = value if value else ["test"]
             else:
                 payload[key] = value
-        if payload:
-            return payload
 
-    if task_type in _ULCA_DUMMY_PAYLOADS:
-        return _ULCA_DUMMY_PAYLOADS[task_type]
-    return {"input": [{"source": "test"}]}
+    if not payload:
+        # dict(...) copies the module-level template so the model_name
+        # injection below never mutates a shared _ULCA_DUMMY_PAYLOADS entry.
+        payload = dict(_ULCA_DUMMY_PAYLOADS.get(task_type, {"input": [{"source": "test"}]}))
+
+    if task_type == "llm" and model_name:
+        model_key = next(
+            (k for k in payload if _normalize_key(k) in _PRESERVE_VERBATIM_KEYS),
+            "model",
+        )
+        payload[model_key] = model_name
+
+    return payload
 
 
 def build_probe_payload(
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,
     triton_schema: Optional[Dict[str, Any]] = None,
+    model_name: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Return ``(payload, kind)`` where *kind* is ``"triton_v2"`` or ``"ulca"``."""
     triton_payload = build_triton_v2_payload(triton_schema)
     if triton_payload:
         return triton_payload, "triton_v2"
-    return build_ulca_payload(task_type, request_schema), "ulca"
+    return build_ulca_payload(task_type, request_schema, model_name), "ulca"

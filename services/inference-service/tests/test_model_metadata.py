@@ -26,10 +26,8 @@ MOCK_MMS_RESPONSE = {
             "classInstance": "TextDefaultModel",
             "submitter": {"name": "IndicTrans"},
             "languages": [{"sourceLanguage": "en", "targetLanguage": "hi"}],
-            "inferenceEndPoint": {
-                "schema": {"model_name": "agrinet-model"},
-                "adapter_config": {"outputs": []},
-            },
+            "schema": {"model_name": "agrinet-model"},
+            "adapterConfig": {"outputs": []},
         },
     },
 }
@@ -44,6 +42,8 @@ async def test_normalize_mms_response_extracts_model_metadata():
     assert normalized["model_version"] == "1.0"
     assert normalized["model_provider"] == "IndicTrans"
     assert normalized["language"] == [{"sourceLanguage": "en", "targetLanguage": "hi"}]
+    # model.schema.model_name drives the Triton URL path
+    assert normalized["endpoint"] == "http://3.109.103.63:8080/v2/models/agrinet-model/infer"
 
 
 async def test_normalize_mms_response_defaults_when_submitter_missing():

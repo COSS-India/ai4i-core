@@ -291,8 +291,11 @@ async def validate_token(
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
 
-    DB is only acquired for the API-key branch; JWT and anonymous paths never
-    open a connection, keeping the gateway hot path as cheap as possible.
+    No DB dependency is declared on this route at all — it's the gateway
+    forward-auth hot path, hit on every request. On a Redis miss, the API-key
+    branch opens its own short-lived DB session internally (see
+    APIKeyService._resolve_from_db_or_tombstone) instead of one being wired
+    in here for every call.
     """
     token = _extract_token(request)
     if not token:
@@ -303,6 +306,5 @@ async def validate_token(
     if is_jwt_strict(token):
         return await _validate_jwt(token, request, response, cache_svc)
 
-    # API key path — validates against Redis cache only, no DB needed
     api_key_svc = APIKeyService(None, cache_svc)
     return await _validate_api_key(token, request, response, api_key_svc)

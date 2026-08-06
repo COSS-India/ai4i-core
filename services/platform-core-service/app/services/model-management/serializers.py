@@ -25,29 +25,15 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
-# Public (no leading underscore): model_service.update_model imports this to
-# guard the PATCH deep-merge against a client echoing a GET response back —
-# see _strip_redacted_api_key_value there.
-REDACTED_VALUE = "[REDACTED]"
-
-
-def _redact_inference_endpoint(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Mask ``inferenceApiKey.value`` before it leaves the service.
-
-    That value is the auth header/token for the model's callback URL, stored
-    verbatim in ``mm_models.inference_endpoint`` JSONB. Without this, any
-    caller able to read the model card (GET /models, list) gets the secret
-    back — a token leak on a multi-tenant platform."""
-    if not isinstance(raw, dict):
-        return raw
-    api_key = raw.get("inferenceApiKey")
-    if isinstance(api_key, dict) and api_key.get("value"):
-        raw = {**raw, "inferenceApiKey": {**api_key, "value": REDACTED_VALUE}}
-    return raw
+def _mask_api_key(key: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not key:
+        return key
+    return {**key, "value": "***"}
 
 
 def model_to_dict(model: Model) -> Dict[str, Any]:
     """Serialize a Model ORM row to the API response shape."""
+    ep = model.inference_endpoint or {}
     return {
         "modelId": model.model_id,
         "name": model.name,
@@ -63,7 +49,12 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "submitter": model.submitter,
         "license": model.license,
         "licenseUrl": model.license_url,
-        "inferenceEndPoint": _redact_inference_endpoint(model.inference_endpoint),
+        "adapterConfig": ep.get("adapterConfig") or ep.get("adapter_config"),
+        "schema": ep.get("schema"),
+        "callbackUrl": ep.get("callbackUrl"),
+        "inferenceApiKey": _mask_api_key(ep.get("inferenceApiKey")),
+        "isSyncApi": ep.get("isSyncApi"),
+        "asyncApiDetails": ep.get("asyncApiDetails"),
         "source": model.ref_url or "",
         "task": model.task or {},
         "trainingDataset": model.training_dataset or None,

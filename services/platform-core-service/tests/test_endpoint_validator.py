@@ -43,7 +43,8 @@ class _FakeAsyncClient:
 
     def __init__(self, responses):
         self._responses = list(responses)
-        self.post_calls = []
+        self.post_calls = []  # list of URLs, in order
+        self.post_bodies = []  # list of json bodies, in order
 
     async def __aenter__(self):
         return self
@@ -53,6 +54,7 @@ class _FakeAsyncClient:
 
     async def post(self, url, json=None, headers=None, timeout=None):
         self.post_calls.append(url)
+        self.post_bodies.append(json)
         return self._responses.pop(0)
 
 
@@ -545,7 +547,7 @@ class TestTaskTypeDefaultShape:
         }
         _patch_client(monkeypatch, _FakeAsyncClient([_FakeResponse(200, json_body=real_vllm_response)]))
         result = await validate_endpoint(
-            endpoint="http://model.example.com/v1/chat/completions",
+            endpoint="http://model.example.com",
             task_type="llm",
         )
         assert result.is_valid is True
@@ -565,6 +567,31 @@ class TestTaskTypeDefaultShape:
             task_type="llm",
         )
         assert result.is_valid is False
+
+    @pytest.mark.asyncio
+    async def test_model_name_from_adapter_config_reaches_the_actual_probe_body(self, monkeypatch):
+        """End-to-end: validate_endpoint's model_name param (sourced from
+        the model card's adapterConfig.model_name) must land in the real
+        outgoing request body's "model" field, overriding a stale
+        schema.request.model sample — the exact AI4IDS-1844 follow-up bug."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient(
+            [_FakeResponse(200, json_body={"choices": [{"message": {"content": "hi"}}]})]
+        )
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com",
+            task_type="llm",
+            request_schema={
+                "model": "google/gemma-5-E4B-it",  # stale sample
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            model_name="google/gemma-4-31B-it",  # authoritative
+        )
+
+        assert result.is_valid is True
+        assert client.post_bodies[0]["model"] == "google/gemma-4-31B-it"
 
     @pytest.mark.asyncio
     async def test_explicit_override_wins_over_default(self, monkeypatch):
@@ -731,6 +758,159 @@ class TestAsyncPollWallClockBound:
         # simulated per-call delay, and nowhere near the old bug's worst
         # case of max_poll_attempts * timeout (~150s with these defaults).
         assert elapsed < 3.0
+
+
+# ── LLM-only endpoint path auto-append ──────────────────────────────────────
+# For taskType "llm" the admin supplies just host:port, not the inference
+# path — the live probe must attach /v1/chat/completions internally.
+# Every other task type's endpoint is used exactly as given.
+
+
+class TestResolveProbeEndpoint:
+    def test_llm_host_port_gets_path_appended(self):
+        assert (
+            ev._resolve_probe_endpoint("http://model.example.com:8080", "llm")
+            == "http://model.example.com:8080/v1/chat/completions"
+        )
+
+    def test_llm_trailing_slash_does_not_produce_double_slash(self):
+        assert (
+            ev._resolve_probe_endpoint("http://model.example.com:8080/", "llm")
+            == "http://model.example.com:8080/v1/chat/completions"
+        )
+
+    def test_endpoint_already_carrying_the_path_gets_double_appended(self):
+        """PR review: this function mirrors inference-service's
+        LlmService.resolve_upstream_url exactly (base.rstrip('/') + path,
+        unconditionally) — it must NOT guard against *endpoint* already
+        carrying the path. Rejecting that misconfiguration up front is
+        _llm_endpoint_has_extra_path's job (see TestLlmEndpointExtraPath
+        below), not this function's — silently correcting it here would
+        make a broken stored config validate green and only fail later in
+        production, where the real upstream-URL builder double-appends the
+        same way."""
+        endpoint = "http://model.example.com:8080/v1/chat/completions"
+        assert (
+            ev._resolve_probe_endpoint(endpoint, "llm")
+            == "http://model.example.com:8080/v1/chat/completions/v1/chat/completions"
+        )
+
+    def test_non_llm_task_types_are_never_modified(self):
+        endpoint = "http://model.example.com:9000"
+        for task_type in ["asr", "nmt", "tts", "ocr", "ner", None]:
+            assert ev._resolve_probe_endpoint(endpoint, task_type) == endpoint
+
+
+# ── _llm_endpoint_has_extra_path: reject a stored path instead of silently
+# accepting it (PR review) — a service configured with endpoint already
+# including /v1/chat/completions would double-append and 404 at real
+# inference time, since inference-service's LlmService.resolve_upstream_url
+# builds the upstream the same unconditional way.
+
+
+class TestLlmEndpointExtraPath:
+    def test_endpoint_with_the_path_is_rejected(self):
+        detail = ev._llm_endpoint_has_extra_path(
+            "http://model.example.com:8080/v1/chat/completions", "llm"
+        )
+        assert detail is not None
+        assert detail.status == ValidationStatus.FAILED
+        assert "host:port only" in detail.message
+
+    def test_endpoint_with_the_path_and_trailing_slash_is_rejected(self):
+        detail = ev._llm_endpoint_has_extra_path(
+            "http://model.example.com:8080/v1/chat/completions/", "llm"
+        )
+        assert detail is not None
+        assert detail.status == ValidationStatus.FAILED
+
+    def test_bare_host_port_is_not_rejected(self):
+        assert ev._llm_endpoint_has_extra_path("http://model.example.com:8080", "llm") is None
+
+    def test_non_llm_task_type_is_never_rejected_even_with_the_same_path(self):
+        """The path is only meaningful for llm — a non-llm service that
+        happens to end in /v1/chat/completions is nobody's business here."""
+        detail = ev._llm_endpoint_has_extra_path(
+            "http://model.example.com:8080/v1/chat/completions", "asr"
+        )
+        assert detail is None
+
+    @pytest.mark.asyncio
+    async def test_validate_endpoint_rejects_it_without_any_network_call(self, monkeypatch):
+        """End-to-end: must fail fast, before constructing any HTTP client
+        — proven via a client double that raises if touched at all."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        _patch_client(monkeypatch, _AssertNeverCalledAsyncClient())
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080/v1/chat/completions",
+            task_type="llm",
+        )
+
+        assert result.is_valid is False
+        assert any("host:port only" in d.message for d in result.details)
+
+
+class TestLlmEndpointAutoAppendEndToEnd:
+    @pytest.mark.asyncio
+    async def test_bare_host_port_probe_actually_hits_the_appended_path(self, monkeypatch):
+        """End-to-end: validate_endpoint must POST to the appended path,
+        not the bare host:port the admin actually supplied."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient(
+            [_FakeResponse(200, json_body={"choices": [{"message": {"content": "hi"}}]})]
+        )
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080",
+            task_type="llm",
+        )
+
+        assert result.is_valid is True
+        assert client.post_calls == ["http://model.example.com:8080/v1/chat/completions"]
+
+    @pytest.mark.asyncio
+    async def test_non_llm_bare_host_port_is_posted_to_unmodified(self, monkeypatch):
+        """Regression guard: this is an llm-only convenience — every other
+        task type's endpoint must be hit exactly as configured, even if it
+        also happens to be a bare host:port with no path."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient([_FakeResponse(200, json_body={"output": [{"source": "hi"}]})])
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080",
+            task_type="asr",
+        )
+
+        assert result.is_valid is True
+        assert client.post_calls == ["http://model.example.com:8080"]
+
+    @pytest.mark.asyncio
+    async def test_async_llm_submit_call_also_gets_the_path_appended(self, monkeypatch):
+        """The same auto-append applies to the async (poll-until-done)
+        submit call — pollingUrl itself is untouched."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient(
+            [
+                _FakeResponse(200, json_body={"requestId": "job-1"}),
+                _FakeResponse(200, json_body={"choices": [{"message": {"content": "done"}}]}),
+            ]
+        )
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080",
+            task_type="llm",
+            is_sync_api=False,
+            polling_url="http://model.example.com:8080/poll",
+            poll_interval_ms=10,
+        )
+
+        assert result.is_valid is True
+        assert client.post_calls[0] == "http://model.example.com:8080/v1/chat/completions"
+        assert client.post_calls[1] == "http://model.example.com:8080/poll"
 
 
 async def _async_true(_hostname):

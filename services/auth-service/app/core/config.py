@@ -84,6 +84,10 @@ class AuthSettings(BaseSettings):
         default=365,
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
+    # Negative-cache TTL (seconds) for tokens confirmed absent/ineligible on a
+    # Redis miss — short so a later tenant/user reactivation isn't blocked by
+    # a stale tombstone.
+    invalid_api_key_cache_ttl_seconds: int = 1 * 24 * 60 * 60
 
     # ── PII field encryption (email / phone at rest) ──
     # Base64- or hex-encoded AES-SIV key (decodes to 32, 48, or 64 bytes; use
@@ -212,7 +216,6 @@ class AuthSettings(BaseSettings):
 
 
 settings = AuthSettings()
-
 
 # Hand the PII encryption key to the crypto module so the SQLAlchemy encrypted
 # column types can source it from settings (pydantic loads .env into settings,
