@@ -10,6 +10,12 @@ migration patches the already-seeded "llm" row and its service in place
 (fresh envs still get the old seeders unchanged, but this backfills any DB
 that already ran them).
 
+Also re-applies server_default='false' on mm_services.is_try_it_default:
+f4a6c8e0b2d4 dropped it under the assumption the ORM model only declared a
+Python-side default, but the ORM model (app/models/service.py) does declare
+server_default="false" — dropping it there was itself the bug, and this
+migration corrects it back to match the model.
+
 Revision ID: f2a4c6e8b0d2
 Revises: 021f3168f9c8
 Create Date: 2026-08-06 00:00:00.000000
@@ -60,8 +66,8 @@ LLM_ADAPTER_CONFIG = {
     "model_name": "google/gemma-4-31B-it",
     "inputs": [
         {"dtype": "BYTES", "shape": [1, 1], "tensor": "INPUT_TEXT", "value_path": "input.source"},
-        {"dtype": "BYTES", "shape": [1, 1], "tensor": "INPUT_LANGUAGE_ID", "value_path": "request.config.language.sourceLanguage"},
-        {"dtype": "BYTES", "shape": [1, 1], "tensor": "OUTPUT_LANGUAGE_ID", "value_path": "request.config.language.targetLanguage"},
+        {"dtype": "BYTES", "shape": [1, 1], "tensor": "INPUT_LANGUAGE_ID", "value_path": "request.config.language.source_language"},
+        {"dtype": "BYTES", "shape": [1, 1], "tensor": "OUTPUT_LANGUAGE_ID", "value_path": "request.config.language.target_language"},
     ],
     "outputs": [{"dtype": "BYTES", "tensor": "OUTPUT_TEXT", "maps_to": "target"}],
     "version": "1.0", "model_version": "1",
@@ -87,13 +93,24 @@ def upgrade() -> None:
                     true
                 ),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE name = 'llm'
+            WHERE name = 'llm' AND version = '1.0.0' AND inference_endpoint IS NOT NULL
         """),
         {
             "languages": json.dumps(LLM_LANGUAGES),
             "request_language": json.dumps({"sourceLanguage": "hi", "targetLanguage": "hi"}),
             "adapter_config": json.dumps(LLM_ADAPTER_CONFIG),
         },
+    )
+
+    # Preserve the "at most one default per task_type" invariant that
+    # ServiceRepository.clear_try_it_default enforces on the API path — raw
+    # SQL bypasses it, so clear any other llm service's flag first.
+    conn.execute(
+        sa.text("""
+            UPDATE mm_services
+            SET is_try_it_default = false
+            WHERE task_type = 'llm' AND name <> 'llm-indic-prod'
+        """),
     )
 
     conn.execute(
@@ -119,14 +136,10 @@ def downgrade() -> None:
         sa.text("""
             UPDATE mm_models
             SET languages = CAST(:languages AS jsonb),
-                inference_endpoint = jsonb_set(
-                    inference_endpoint - 'adapterConfig',
-                    '{schema,request,config}',
-                    '{}'::jsonb,
-                    true
-                ),
+                inference_endpoint = (inference_endpoint - 'adapterConfig')
+                    #- '{schema,request,config,language}',
                 updated_at = CURRENT_TIMESTAMP
-            WHERE name = 'llm'
+            WHERE name = 'llm' AND version = '1.0.0' AND inference_endpoint IS NOT NULL
         """),
         {"languages": json.dumps(LLM_LANGUAGES_OLD)},
     )
