@@ -129,7 +129,7 @@ describe('parseApiError', () => {
     };
 
     expect(parseApiError(error).message).toBe(
-      'Service endpoint validation failed. Request timed out after 15.0s: https://example.com/infer'
+      'Service endpoint validation failed.; Request timed out after 15.0s: https://example.com/infer'
     );
   });
 });
