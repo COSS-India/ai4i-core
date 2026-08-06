@@ -36,8 +36,8 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
-    /** Tenant Admin lands on Usage and Spend (not legacy My Usage overview). */
-    TENANT_SUB_TAB: "usage-spend" as const,
+    /** AI4IDS-2719: Tenant Admin lands on Overview (same as Adopter Admin). */
+    TENANT_SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
   },

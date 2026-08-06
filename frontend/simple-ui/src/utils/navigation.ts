@@ -1,7 +1,7 @@
 import { TABS } from "../config/constants";
 import { METERING } from "../config/meteringConstants";
 import authService from "../services/authService";
-import { canAccessUsageDashboard, getMeteringRoleViewConfig } from "./rbac";
+import { canAccessUsageDashboard } from "./rbac";
 
 export const APP_HOME_PATH = "/";
 export const USAGE_DASHBOARD_PATH = `/${TABS.usageDashboard}`;
@@ -20,7 +20,7 @@ export function getUsageDashboardOverviewPath(): string {
   return getUsageDashboardPath(METERING.SUB_TAB.OVERVIEW);
 }
 
-/** Role-aware post-login destination (Usage Dashboard when permitted, else services home). */
+/** Role-aware post-login destination (Usage Dashboard Overview when permitted, else services home). */
 export function getDefaultLandingPath(roles?: string[]): string {
   // Previous default: always land on services home.
   // return APP_HOME_PATH;
@@ -30,11 +30,6 @@ export function getDefaultLandingPath(roles?: string[]): string {
     return APP_HOME_PATH;
   }
 
-  const { defaultView } = getMeteringRoleViewConfig(effectiveRoles);
-  const tab =
-    defaultView === "tenant"
-      ? METERING.DEFAULTS.TENANT_SUB_TAB
-      : METERING.DEFAULTS.SUB_TAB;
-
-  return getUsageDashboardPath(tab);
+  // AI4IDS-2719: all Usage Dashboard roles (incl. Tenant Admin) land on Overview.
+  return getUsageDashboardOverviewPath();
 }
