@@ -43,7 +43,7 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "submitter": model.submitter,
         "license": model.license,
         "licenseUrl": model.license_url,
-        "adapterConfig": ep.get("adapterConfig"),
+        "adapterConfig": ep.get("adapterConfig") or ep.get("adapter_config"),
         "schema": ep.get("schema"),
         "source": model.ref_url or "",
         "task": model.task or {},

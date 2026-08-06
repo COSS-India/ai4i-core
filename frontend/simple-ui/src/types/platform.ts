@@ -271,8 +271,17 @@ export interface ModelCreateRequest {
   license: License;
   licenseUrl?: string;
   domain: Domain[];
-  adapterConfig?: Record<string, unknown>;
+  adapterConfig: Record<string, unknown>;
   schema?: Record<string, unknown>;
+  callbackUrl?: string;
+  inferenceApiKey?: { name: string; value: string };
+  isSyncApi?: boolean;
+  asyncApiDetails?: {
+    pollingUrl: string;
+    pollInterval: number;
+    asyncApiSchema?: Record<string, unknown>;
+    asyncApiPollingSchema?: Record<string, unknown>;
+  } | null;
   trainingDataset: TrainingDataset;
   classInstance?: string;
   benchmarks?: Benchmark[];
@@ -295,6 +304,15 @@ export interface ModelUpdateRequest {
   domain?: Domain[];
   adapterConfig?: Record<string, unknown>;
   schema?: Record<string, unknown>;
+  callbackUrl?: string;
+  inferenceApiKey?: { name: string; value: string };
+  isSyncApi?: boolean;
+  asyncApiDetails?: {
+    pollingUrl: string;
+    pollInterval: number;
+    asyncApiSchema?: Record<string, unknown>;
+    asyncApiPollingSchema?: Record<string, unknown>;
+  } | null;
   trainingDataset?: TrainingDataset;
   classInstance?: string;
   benchmarks?: Benchmark[];

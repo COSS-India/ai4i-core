@@ -3,7 +3,7 @@ Shared building-block schemas used by both Model and Service domains.
 """
 
 import re
-from typing import Any, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
@@ -80,6 +80,36 @@ class TaskSpecLenient(BaseSchema):
                     return member.value
             return v
         return v
+
+
+# ── Inference endpoint supporting types ──
+
+
+class InferenceApiKey(BaseModel):
+    """Auth header expected by the model's callback URL."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
+
+    name: str = Field(
+        default="Authorization",
+        description="Header name the callback URL expects the API key under. Defaults to 'Authorization'.",
+    )
+    value: str = Field(..., description="The API key/token value sent in that header.")
+
+
+class AsyncApiDetails(BaseModel):
+    """Polling details for async inference (ULCA AsyncApiDetails)."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="ignore")
+
+    pollingUrl: str = Field(..., description="Required. Endpoint to poll for async inference status.")
+    pollInterval: int = Field(..., description="Required. Polling interval in milliseconds.")
+    asyncApiSchema: Optional[Dict[str, Any]] = Field(
+        None, description="Optional. Task-specific async request/response schema."
+    )
+    asyncApiPollingSchema: Optional[Dict[str, Any]] = Field(
+        None, description="Optional. Task-specific polling response schema."
+    )
 
 
 # ── Submitter / team ──

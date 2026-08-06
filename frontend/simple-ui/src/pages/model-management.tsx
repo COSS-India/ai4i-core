@@ -315,6 +315,13 @@ const ModelManagementPage: React.FC = () => {
         model_name: null,
         modelProcessingType: null,
       },
+      callbackUrl: "https://inference.example.com/v2/models/example-model/infer",
+      inferenceApiKey: {
+        name: "Authorization",
+        value: "<your-api-key>",
+      },
+      isSyncApi: true,
+      asyncApiDetails: null,
       trainingDataset: {
         description:
           "Sample training dataset description for the example LLM model registration.",

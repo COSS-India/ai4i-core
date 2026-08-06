@@ -78,7 +78,7 @@ def upgrade() -> None:
     for model_name, (output_adds, response_block) in ADAPTER_ADDITIONS.items():
         row = conn.execute(
             sa.text(
-                "SELECT inference_endpoint->'adapter_config' "
+                "SELECT inference_endpoint->'adapterConfig' "
                 "FROM mm_models WHERE name = :name"
             ),
             {"name": model_name},
@@ -86,7 +86,7 @@ def upgrade() -> None:
         if row is None or row[0] is None:
             # Model absent in this environment (e.g. partial registrations) —
             # nothing to shape; the service cannot resolve it anyway.
-            print(f"  SKIP {model_name}: no mm_models row / adapter_config")
+            print(f"  SKIP {model_name}: no mm_models row / adapterConfig")
             continue
 
         adapter = row[0] if isinstance(row[0], dict) else json.loads(row[0])
@@ -94,7 +94,7 @@ def upgrade() -> None:
         for idx, adds in output_adds.items():
             if idx >= len(outputs):
                 raise RuntimeError(
-                    f"{model_name}: adapter_config has {len(outputs)} outputs, "
+                    f"{model_name}: adapterConfig has {len(outputs)} outputs, "
                     f"expected index {idx} — refusing to seed mismatched config"
                 )
             outputs[idx].update(adds)
@@ -104,7 +104,7 @@ def upgrade() -> None:
         result = conn.execute(
             sa.text(
                 "UPDATE mm_models SET inference_endpoint = "
-                "jsonb_set(inference_endpoint, '{adapter_config}', "
+                "jsonb_set(inference_endpoint, '{adapterConfig}', "
                 "CAST(:cfg AS jsonb)) WHERE name = :name"
             ),
             {"cfg": json.dumps(adapter), "name": model_name},
@@ -122,7 +122,7 @@ def downgrade() -> None:
     for model_name, (output_adds, _response_block) in ADAPTER_ADDITIONS.items():
         row = conn.execute(
             sa.text(
-                "SELECT inference_endpoint->'adapter_config' "
+                "SELECT inference_endpoint->'adapterConfig' "
                 "FROM mm_models WHERE name = :name"
             ),
             {"name": model_name},
@@ -141,7 +141,7 @@ def downgrade() -> None:
         conn.execute(
             sa.text(
                 "UPDATE mm_models SET inference_endpoint = "
-                "jsonb_set(inference_endpoint, '{adapter_config}', "
+                "jsonb_set(inference_endpoint, '{adapterConfig}', "
                 "CAST(:cfg AS jsonb)) WHERE name = :name"
             ),
             {"cfg": json.dumps(adapter), "name": model_name},

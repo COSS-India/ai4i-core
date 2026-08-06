@@ -185,10 +185,9 @@ class ModelService:
         model_id = generate_model_id(payload.name, payload.version)
 
         inference_endpoint: Dict[str, Any] = {}
-        if encoded.get("adapterConfig") is not None:
-            inference_endpoint["adapterConfig"] = encoded["adapterConfig"]
-        if encoded.get("schema") is not None:
-            inference_endpoint["schema"] = encoded["schema"]
+        for _ep_key in ("adapterConfig", "schema", "callbackUrl", "inferenceApiKey", "isSyncApi", "asyncApiDetails"):
+            if encoded.get(_ep_key) is not None:
+                inference_endpoint[_ep_key] = encoded[_ep_key]
 
         instance = Model(
             model_id=model_id,
@@ -321,6 +320,8 @@ class ModelService:
                 ep_field_updates["adapterConfig"] = jsonable_encoder(value)
             elif key == "endpoint_schema":
                 ep_field_updates["schema"] = jsonable_encoder(value)
+            elif key in ("callbackUrl", "inferenceApiKey", "isSyncApi", "asyncApiDetails"):
+                ep_field_updates[key] = jsonable_encoder(value)
             elif key in ("task", "languages", "domain", "benchmarks", "submitter", "trainingDataset"):
                 target_key = "training_dataset" if key == "trainingDataset" else key
                 update_data[target_key] = jsonable_encoder(value)
@@ -338,11 +339,18 @@ class ModelService:
         if ep_field_updates:
             existing_ep = dict(instance.inference_endpoint or {})
             if "adapterConfig" in ep_field_updates:
-                existing_ep["adapterConfig"] = _deep_merge(
-                    existing_ep.get("adapterConfig") or {}, ep_field_updates["adapterConfig"]
+                existing_adapter = (
+                    existing_ep.get("adapterConfig")
+                    or existing_ep.get("adapter_config")
+                    or {}
                 )
+                existing_ep["adapterConfig"] = _deep_merge(existing_adapter, ep_field_updates["adapterConfig"])
+                existing_ep.pop("adapter_config", None)
             if "schema" in ep_field_updates:
                 existing_ep["schema"] = ep_field_updates["schema"]
+            for _direct_key in ("callbackUrl", "inferenceApiKey", "isSyncApi", "asyncApiDetails"):
+                if _direct_key in ep_field_updates:
+                    existing_ep[_direct_key] = ep_field_updates[_direct_key]
             update_data["inference_endpoint"] = existing_ep
 
         if updated_by is not None:
