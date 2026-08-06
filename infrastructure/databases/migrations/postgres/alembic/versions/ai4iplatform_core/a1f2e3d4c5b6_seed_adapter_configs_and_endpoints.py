@@ -152,13 +152,13 @@ def upgrade() -> None:
 
     nmt_endpoint = os.getenv("TRITON_ENDPOINT_NMT", "")
 
-    # ── 1. Inject adapter_config into inference_endpoint for each model ──
+    # ── 1. Inject adapterConfig into inference_endpoint for each model ──
     for model_name, adapter_config in ADAPTER_CONFIGS.items():
         conn.execute(
             sa.text("""
                 UPDATE mm_models
                 SET inference_endpoint = inference_endpoint ||
-                    jsonb_build_object('adapter_config', CAST(:adapter_config AS jsonb))
+                    jsonb_build_object('adapterConfig', CAST(:adapter_config AS jsonb))
                 WHERE name = :model_name
             """),
             {
@@ -226,12 +226,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
 
-    # Remove adapter_config from inference_endpoint
+    # Remove adapterConfig from inference_endpoint
     for model_name in ADAPTER_CONFIGS:
         conn.execute(
             sa.text("""
                 UPDATE mm_models
-                SET inference_endpoint = inference_endpoint - 'adapter_config'
+                SET inference_endpoint = inference_endpoint - 'adapterConfig'
                 WHERE name = :model_name
             """),
             {"model_name": model_name},

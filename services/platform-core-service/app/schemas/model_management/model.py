@@ -6,15 +6,15 @@ model-management-service so that consumers (gateway, frontends) do not break
 during migration.
 """
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
+    AsyncApiDetails,
     Benchmark,
-    InferenceEndPoint,
-    InferenceEndPointPatch,
+    InferenceApiKey,
     LanguagePair,
     Submitter,
     TaskSpec,
@@ -58,29 +58,30 @@ _MODEL_CREATE_EXAMPLE = {
         "aboutMe": "Open-source Indic NLP initiative at IIT Madras.",
         "team": [{"name": "AI4Bharat Research Team"}],
     },
-    "inferenceEndPoint": {
-        "callbackUrl": "https://inference.example.com/v2/models/indictrans2-en-hi/infer",
-        "modelName": "indictrans2-en-hi",
-        "inferenceApiKey": {"name": "Authorization", "value": "<your-api-key>"},
-        "isMultilingualEnabled": False,
-        "isSyncApi": True,
-        "schema": {
-            "taskType": "translation",
-            "request": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
-            "response": {"output": [{"target": "string"}]},
-        },
-        "adapterConfig": {
-            "version": "1.0",
-            "model_version": "1",
-            "inputs": [
-                {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
-                {"tensor": "INPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.source_language"},
-                {"tensor": "OUTPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.target_language"},
-            ],
-            "outputs": [
-                {"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "target"},
-            ],
-        },
+    "adapterConfig": {
+        "version": "1.0",
+        "model_version": "1",
+        "inputs": [
+            {"tensor": "INPUT_TEXT", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"},
+            {"tensor": "INPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.source_language"},
+            {"tensor": "OUTPUT_LANGUAGE_ID", "dtype": "BYTES", "shape": [-1, 1], "value_path": "request.config.language.target_language"},
+        ],
+        "outputs": [
+            {"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "target"},
+        ],
+    },
+    "schema": {
+        "taskType": "translation",
+        "request": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+        "response": {"output": [{"target": "string"}]},
+        "model_name": "indictrans2-en-hi",
+    },
+    "callbackUrl": "https://inference.example.com/v2/models/indictrans2-en-hi/infer",
+    "inferenceApiKey": {"name": "Authorization", "value": "<your-api-key>"},
+    "isSyncApi": True,
+    "asyncApiDetails": {
+        "pollingUrl": "https://inference.example.com/v2/poll",
+        "pollInterval": 1000,
     },
     "benchmarks": [],
     "trainingDataset": {
@@ -127,7 +128,7 @@ class ModelCreateRequest(BaseSchema):
     Value" tab for a full worked ULCA-conformant payload.
     """
 
-    model_config = ConfigDict(json_schema_extra={"example": _MODEL_CREATE_EXAMPLE})
+    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _MODEL_CREATE_EXAMPLE})
 
     version: str = Field(
         ...,
@@ -203,13 +204,35 @@ class ModelCreateRequest(BaseSchema):
         ...,
         description="Required, at least one. Business area(s) this model is relevant to (ULCA Domain enum).",
     )
-    inferenceEndPoint: InferenceEndPoint = Field(
-        ...,
+    adapterConfig: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional. Platform-specific Triton I/O tensor mapping. When provided, must include 'inputs' and 'outputs'.",
+    )
+    endpoint_schema: Optional[Dict[str, Any]] = Field(
+        None,
+        alias="schema",
         description=(
-            "Required. The model's inference endpoint metadata (the model "
-            "card) — callbackUrl and schema are themselves required; see "
-            "InferenceEndPoint."
+            "Optional. Task-specific inference request/response contract "
+            "(e.g. {\"taskType\": \"translation\", \"model_name\": \"...\"}). "
+            "The nested ``model_name`` key is used by the inference service "
+            "to construct the Triton URL."
         ),
+    )
+    callbackUrl: Optional[str] = Field(
+        None,
+        description="Optional. The live URL inference requests are POSTed to.",
+    )
+    inferenceApiKey: Optional[InferenceApiKey] = Field(
+        None,
+        description="Optional. Auth header expected by callbackUrl.",
+    )
+    isSyncApi: Optional[bool] = Field(
+        None,
+        description="Optional. True if inference is synchronous; False means async — asyncApiDetails should also be provided.",
+    )
+    asyncApiDetails: Optional[AsyncApiDetails] = Field(
+        None,
+        description="Optional. Required when isSyncApi is False. Provides pollingUrl and pollInterval for async validation.",
     )
     benchmarks: List[Benchmark] = Field(
         default_factory=list, description="Optional, default: []. Performance benchmark entries for this model."
@@ -222,6 +245,39 @@ class ModelCreateRequest(BaseSchema):
         description="Required. Metadata describing the dataset used to train this model (at minimum a description).",
     )
     classInstance: Optional[str] = Field(None, description="Optional. Internal platform classification tag.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_inference_end_point(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "inferenceEndPoint" in values:
+            raise ValueError(
+                "'inferenceEndPoint' was removed. "
+                "Use top-level fields instead: 'adapterConfig', 'schema', "
+                "'callbackUrl', 'inferenceApiKey', 'isSyncApi', 'asyncApiDetails'."
+            )
+        return values
+
+    @field_validator("endpoint_schema", mode="after")
+    @classmethod
+    def _require_model_name_in_schema(cls, v: Any) -> Any:
+        if v is not None and "model_name" not in v:
+            raise ValueError(
+                "schema must include 'model_name' — the Triton model identifier "
+                "used to construct the inference URL (e.g. 'indictrans2-en-hi')"
+            )
+        return v
+
+    @field_validator("adapterConfig", mode="after")
+    @classmethod
+    def _require_adapter_config_fields(cls, v: Any) -> Any:
+        if v is not None:
+            missing = [f for f in ("inputs", "outputs") if f not in v]
+            if missing:
+                raise ValueError(
+                    f"adapterConfig must include {missing} — "
+                    "the Triton tensor mapping used to build inference requests"
+                )
+        return v
 
     @field_validator("version", mode="before")
     @classmethod
@@ -271,11 +327,14 @@ _MODEL_UPDATE_EXAMPLE = {
     "license": "cc-by-4.0",
     "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
     "isMultilingual": True,
-    # Partial inferenceEndPoint update: only the keys below are merged into
-    # the stored endpoint — callbackUrl/schema don't need to be resent.
-    "inferenceEndPoint": {
-        "isMultilingualEnabled": True,
-        "adapterConfig": {"version": "2"},
+    # Partial updates: only the keys sent are merged — omit any field to leave it unchanged.
+    "adapterConfig": {"version": "2"},
+    "callbackUrl": "https://inference.example.com/v2/models/indictrans2-en-hi/infer",
+    "inferenceApiKey": {"name": "Authorization", "value": "<your-api-key>"},
+    "isSyncApi": False,
+    "asyncApiDetails": {
+        "pollingUrl": "https://inference.example.com/v2/poll",
+        "pollInterval": 1000,
     },
     "trainingDataset": {
         "description": (
@@ -292,11 +351,10 @@ class ModelUpdateRequest(BaseSchema):
 
     modelId + version identify the target and are the only fields required;
     every other field is optional — omit any field to leave it unchanged.
-    See the "Example Value" tab for a realistic partial update, including
-    the inferenceEndPoint partial-merge pattern.
+    See the "Example Value" tab for a realistic partial update.
     """
 
-    model_config = ConfigDict(json_schema_extra={"example": _MODEL_UPDATE_EXAMPLE})
+    model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _MODEL_UPDATE_EXAMPLE})
 
     modelId: str = Field(..., description="Required. Identifies the model to update, together with version.")
     version: Optional[str] = Field(
@@ -322,19 +380,44 @@ class ModelUpdateRequest(BaseSchema):
         None, max_length=500, description="Optional — omit to leave unchanged. Max 500 characters."
     )
     domain: Optional[List[DomainEnum]] = Field(None, description="Optional — omit to leave unchanged.")
-    inferenceEndPoint: Optional[InferenceEndPointPatch] = Field(
+    adapterConfig: Optional[Dict[str, Any]] = Field(
         None,
-        description=(
-            "Optional — omit to leave unchanged. Partial update: only the "
-            "keys you send are merged into the stored endpoint, so you "
-            "don't need to resend callbackUrl/schema to change e.g. just "
-            "adapterConfig."
-        ),
+        description="Optional — omit to leave unchanged. Sent keys are deep-merged into the stored adapterConfig.",
     )
+    endpoint_schema: Optional[Dict[str, Any]] = Field(
+        None,
+        alias="schema",
+        description="Optional — omit to leave unchanged. Replaces the stored schema entirely when provided.",
+    )
+    callbackUrl: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
+    inferenceApiKey: Optional[InferenceApiKey] = Field(None, description="Optional — omit to leave unchanged.")
+    isSyncApi: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
+    asyncApiDetails: Optional[AsyncApiDetails] = Field(None, description="Optional — omit to leave unchanged.")
     benchmarks: Optional[List[Benchmark]] = Field(None, description="Optional — omit to leave unchanged.")
     submitter: Optional[Submitter] = Field(None, description="Optional — omit to leave unchanged.")
     trainingDataset: Optional[TrainingDataset] = Field(None, description="Optional — omit to leave unchanged.")
     classInstance: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_inference_end_point(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "inferenceEndPoint" in values:
+            raise ValueError(
+                "'inferenceEndPoint' was removed. "
+                "Use top-level fields instead: 'adapterConfig', 'schema', "
+                "'callbackUrl', 'inferenceApiKey', 'isSyncApi', 'asyncApiDetails'."
+            )
+        return values
+
+    @field_validator("endpoint_schema", mode="after")
+    @classmethod
+    def _require_model_name_in_schema(cls, v: Any) -> Any:
+        if v is not None and "model_name" not in v:
+            raise ValueError(
+                "schema must include 'model_name' — the Triton model identifier "
+                "used to construct the inference URL (e.g. 'indictrans2-en-hi')"
+            )
+        return v
 
     @field_validator("license", mode="before")
     @classmethod
@@ -359,6 +442,8 @@ class ModelViewRequest(BaseSchema):
 class ModelResponse(BaseSchema):
     """Single-model response shape (preserves model-management camelCase)."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     modelId: str
     name: str
     version: str
@@ -373,7 +458,12 @@ class ModelResponse(BaseSchema):
     submitter: Optional[Submitter] = None
     license: Optional[str] = None
     licenseUrl: Optional[str] = None
-    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    adapterConfig: Optional[Dict[str, Any]] = None
+    endpoint_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
+    callbackUrl: Optional[str] = None
+    inferenceApiKey: Optional[Dict[str, Any]] = None
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
     trainingDataset: Optional[TrainingDataset] = None
