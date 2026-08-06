@@ -140,6 +140,26 @@ async def _check_host_is_safe(url: str, *, label: str) -> List[ValidationDetail]
     return details
 
 
+# ── LLM-only: auto-attach the OpenAI chat-completions path ──
+
+# For task_type == "llm" the admin supplies just host:port (no path) — every
+# other task type's endpoint is a full URL the admin fully controls, and is
+# used exactly as given. This is a validation-time-only convenience: the
+# stored Service.endpoint stays whatever the admin typed; only the URL the
+# live probe actually POSTs to gets this appended.
+_LLM_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+
+
+def _resolve_probe_endpoint(endpoint: str, task_type: Optional[str]) -> str:
+    """Return the URL the live probe should actually POST to."""
+    if task_type != "llm":
+        return endpoint
+    trimmed = endpoint.rstrip("/")
+    if trimmed.endswith(_LLM_CHAT_COMPLETIONS_PATH):
+        return trimmed  # admin already included it — don't double-append
+    return trimmed + _LLM_CHAT_COMPLETIONS_PATH
+
+
 # ── Level 2 — Response shape matching ──
 
 
@@ -525,6 +545,14 @@ async def validate_endpoint(
     identifier and always overrides/fills the probe payload's ``model``
     field, regardless of what (if anything) ``schema.request`` itself
     declares (see ``build_ulca_payload``).
+
+    For ``task_type == "llm"`` specifically, *endpoint* is expected to be
+    just ``host:port`` — the admin does not supply the inference path — so
+    the actual probe POSTs to *endpoint* with ``/v1/chat/completions``
+    appended (see ``_resolve_probe_endpoint``). Every other task type's
+    endpoint is used exactly as given, and the SSRF/format check below
+    always runs against the admin-supplied value, not the resolved one
+    (the hostname is identical either way).
     """
     details: List[ValidationDetail] = []
 
@@ -532,6 +560,8 @@ async def validate_endpoint(
     details.extend(endpoint_checks)
     if any(d.status == ValidationStatus.FAILED for d in endpoint_checks):
         return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
+
+    probe_endpoint = _resolve_probe_endpoint(endpoint, task_type)
 
     if run_inference_test and task_type:
         use_async = is_sync_api is False and bool(polling_url)
@@ -548,7 +578,7 @@ async def validate_endpoint(
                 return EndpointValidationResult(is_valid=False, endpoint=endpoint, details=details)
 
             inference_result, response_body, payload_kind = await test_inference_async(
-                endpoint=endpoint,
+                endpoint=probe_endpoint,
                 polling_url=polling_url,
                 poll_interval_ms=poll_interval_ms,
                 task_type=task_type,
@@ -563,7 +593,7 @@ async def validate_endpoint(
             )
         else:
             inference_result, response_body, payload_kind = await test_inference(
-                endpoint=endpoint,
+                endpoint=probe_endpoint,
                 task_type=task_type,
                 request_schema=request_schema,
                 api_key=api_key,
@@ -577,7 +607,7 @@ async def validate_endpoint(
         logger.info(
             "Endpoint validation [%s] for %s (task=%s, async=%s, payload=%s): %s",
             inference_result.status.value,
-            endpoint,
+            probe_endpoint,
             task_type,
             use_async,
             payload_kind,
@@ -592,7 +622,7 @@ async def validate_endpoint(
             logger.info(
                 "Response-shape validation [%s] for %s: %s",
                 shape_result.status.value,
-                endpoint,
+                probe_endpoint,
                 shape_result.message,
             )
     elif run_inference_test:

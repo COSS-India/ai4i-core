@@ -760,6 +760,103 @@ class TestAsyncPollWallClockBound:
         assert elapsed < 3.0
 
 
+# ── LLM-only endpoint path auto-append ──────────────────────────────────────
+# For taskType "llm" the admin supplies just host:port, not the inference
+# path — the live probe must attach /v1/chat/completions internally.
+# Every other task type's endpoint is used exactly as given.
+
+
+class TestResolveProbeEndpoint:
+    def test_llm_host_port_gets_path_appended(self):
+        assert (
+            ev._resolve_probe_endpoint("http://model.example.com:8080", "llm")
+            == "http://model.example.com:8080/v1/chat/completions"
+        )
+
+    def test_llm_trailing_slash_does_not_produce_double_slash(self):
+        assert (
+            ev._resolve_probe_endpoint("http://model.example.com:8080/", "llm")
+            == "http://model.example.com:8080/v1/chat/completions"
+        )
+
+    def test_llm_endpoint_already_carrying_the_path_is_not_double_appended(self):
+        """Defensive: if the admin includes the path despite not being
+        asked to, don't produce .../v1/chat/completions/v1/chat/completions."""
+        endpoint = "http://model.example.com:8080/v1/chat/completions"
+        assert ev._resolve_probe_endpoint(endpoint, "llm") == endpoint
+        assert (
+            ev._resolve_probe_endpoint(endpoint + "/", "llm")
+            == endpoint
+        )
+
+    def test_non_llm_task_types_are_never_modified(self):
+        endpoint = "http://model.example.com:9000"
+        for task_type in ["asr", "nmt", "tts", "ocr", "ner", None]:
+            assert ev._resolve_probe_endpoint(endpoint, task_type) == endpoint
+
+
+class TestLlmEndpointAutoAppendEndToEnd:
+    @pytest.mark.asyncio
+    async def test_bare_host_port_probe_actually_hits_the_appended_path(self, monkeypatch):
+        """End-to-end: validate_endpoint must POST to the appended path,
+        not the bare host:port the admin actually supplied."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient(
+            [_FakeResponse(200, json_body={"choices": [{"message": {"content": "hi"}}]})]
+        )
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080",
+            task_type="llm",
+        )
+
+        assert result.is_valid is True
+        assert client.post_calls == ["http://model.example.com:8080/v1/chat/completions"]
+
+    @pytest.mark.asyncio
+    async def test_non_llm_bare_host_port_is_posted_to_unmodified(self, monkeypatch):
+        """Regression guard: this is an llm-only convenience — every other
+        task type's endpoint must be hit exactly as configured, even if it
+        also happens to be a bare host:port with no path."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient([_FakeResponse(200, json_body={"output": [{"source": "hi"}]})])
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080",
+            task_type="asr",
+        )
+
+        assert result.is_valid is True
+        assert client.post_calls == ["http://model.example.com:8080"]
+
+    @pytest.mark.asyncio
+    async def test_async_llm_submit_call_also_gets_the_path_appended(self, monkeypatch):
+        """The same auto-append applies to the async (poll-until-done)
+        submit call — pollingUrl itself is untouched."""
+        monkeypatch.setattr(ev, "is_safe_host", _async_true)
+        client = _FakeAsyncClient(
+            [
+                _FakeResponse(200, json_body={"requestId": "job-1"}),
+                _FakeResponse(200, json_body={"choices": [{"message": {"content": "done"}}]}),
+            ]
+        )
+        _patch_client(monkeypatch, client)
+
+        result = await validate_endpoint(
+            endpoint="http://model.example.com:8080",
+            task_type="llm",
+            is_sync_api=False,
+            polling_url="http://model.example.com:8080/poll",
+            poll_interval_ms=10,
+        )
+
+        assert result.is_valid is True
+        assert client.post_calls[0] == "http://model.example.com:8080/v1/chat/completions"
+        assert client.post_calls[1] == "http://model.example.com:8080/poll"
+
+
 async def _async_true(_hostname):
     return True
 
