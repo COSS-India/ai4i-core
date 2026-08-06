@@ -30,6 +30,7 @@ export function getDefaultLandingPath(roles?: string[]): string {
     return APP_HOME_PATH;
   }
 
+  // AI4IDS-2719: TENANT_SUB_TAB is Overview (same as Adopter Admin).
   const { defaultView } = getMeteringRoleViewConfig(effectiveRoles);
   const tab =
     defaultView === "tenant"

@@ -91,7 +91,7 @@ class ServiceCreateRequest(BaseSchema):
 
     serviceId: str
     name: str
-    serviceDescription: str
+    serviceDescription: Optional[str] = None
     hardwareDescription: str
     modelId: str
     modelVersion: str

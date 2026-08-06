@@ -245,8 +245,6 @@ export const updateService = async (
       apiPayload = {
         serviceId: serviceData.serviceId || serviceData.service_id,
         name: serviceData.name,
-        serviceDescription:
-          serviceData.serviceDescription || serviceData.description,
         hardwareDescription: serviceData.hardwareDescription,
         publishedOn: serviceData.publishedOn,
         modelId: serviceData.modelId || serviceData.model_id,
@@ -254,6 +252,13 @@ export const updateService = async (
         endpoint: serviceData.endpoint || serviceData.endpoint_url,
         api_key: serviceData.api_key || serviceData.apiKey,
       };
+
+      // Preserve empty string so admins can clear an existing description.
+      if ("serviceDescription" in serviceData) {
+        apiPayload.serviceDescription = serviceData.serviceDescription;
+      } else if ("description" in serviceData) {
+        apiPayload.serviceDescription = serviceData.description;
+      }
 
       // Add billing/pricing fields if provided (mirrors createService)
       if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;

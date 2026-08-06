@@ -3,7 +3,7 @@
  * Never throws — returns an empty array when nothing readable is found.
  */
 
-const MESSAGE_KEYS = ['message', 'error', 'detail', 'title', 'description', 'error_msg', 'msg'] as const;
+const MESSAGE_KEYS = ['message', 'error', 'detail', 'title', 'description', 'error_msg', 'msg', 'details'] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
