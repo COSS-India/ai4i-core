@@ -126,6 +126,19 @@ class TokenRefreshResponse(BaseSchema):
     expires_in: int
 
 
+class ChangePasswordResponse(BaseSchema):
+    """Keeps the pre-existing `message` field so old consumers of this
+    endpoint are unaffected, and adds a fresh token pair alongside it so the
+    caller's own client can stay logged in without depending on a guessed
+    refresh token (see change_password in auth_service.py)."""
+
+    message: str = "Password changed successfully."
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
 class LogoutResponse(BaseSchema):
     message: str
     logged_out: bool

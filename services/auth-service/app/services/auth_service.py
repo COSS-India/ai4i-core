@@ -39,7 +39,7 @@ from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
-from app.schemas.auth import LoginResponse, TokenRefreshResponse
+from app.schemas.auth import ChangePasswordResponse, LoginResponse, TokenRefreshResponse
 from app.services.auth_email_templates import (
     render_password_changed,
     render_password_reset,
@@ -522,7 +522,7 @@ class AuthService:
         new_password: str,
         confirm_password: str,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> LoginResponse:
+    ) -> ChangePasswordResponse:
         password_manager.validate_and_confirm(new_password, confirm_password)
 
         creds = await self._credentials.get_by_user_id(user.id)
@@ -560,7 +560,7 @@ class AuthService:
         )
         logger.info("Password changed for user id=%s; all other sessions revoked, fresh token pair issued", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
-        return login_response
+        return ChangePasswordResponse(**login_response.model_dump())
 
     # ── Email Activation: Set Password ──
 

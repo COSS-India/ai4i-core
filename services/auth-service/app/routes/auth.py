@@ -20,6 +20,7 @@ from app.dependencies.auth import (
 from app.dependencies.services import get_auth_service, get_cache_service
 from app.models.user import User
 from app.schemas.auth import (
+    ChangePasswordResponse,
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
@@ -192,7 +193,7 @@ async def logout(
     return LogoutResponse(message="Logged out successfully.", logged_out=True)
 
 
-@router.post("/change-password", response_model=LoginResponse)
+@router.post("/change-password", response_model=ChangePasswordResponse)
 async def change_password(
     body: PasswordChangeRequest,
     background_tasks: BackgroundTasks,

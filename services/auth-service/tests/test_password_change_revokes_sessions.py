@@ -71,7 +71,10 @@ class TestChangePasswordRevokesSessions:
 
         svc._cache.revoke_all_sessions.assert_awaited_once_with(str(user.id))
         # The caller gets a fresh pair back directly — no dependence on
-        # guessing which DB-stored refresh token belongs to them.
+        # guessing which DB-stored refresh token belongs to them. `message`
+        # is kept so pre-existing consumers of this endpoint's old
+        # {message}-only response shape don't break.
+        assert result.message
         assert result.access_token == "new-access-token"
         assert result.refresh_token == "new-refresh-token"
         svc._refresh_tokens.upsert.assert_awaited_once_with(user.id, "new-refresh-token")
