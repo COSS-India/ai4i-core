@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.config import settings
 from app.routes.auth import logout
 from app.services.cache_service import REDIS_LOGOUT_PREFIX
 
@@ -22,9 +21,7 @@ class TestLogoutRoute:
         response = await logout(user_id=user_id, svc=svc, cache_svc=cache_svc)
 
         svc.logout.assert_awaited_once_with(user_id=user_id)
-        cache_svc.set_logout_timestamp.assert_awaited_once_with(
-            str(user_id), ttl_seconds=settings.access_token_expire_minutes * 60
-        )
+        cache_svc.revoke_all_sessions.assert_awaited_once_with(str(user_id))
         assert response.logged_out is True
 
     async def test_logout_key_matches_validation_lookup_key(self):
@@ -37,5 +34,5 @@ class TestLogoutRoute:
 
         await logout(user_id=user_id, svc=svc, cache_svc=cache_svc)
 
-        written_user_id = cache_svc.set_logout_timestamp.call_args.args[0]
+        written_user_id = cache_svc.revoke_all_sessions.call_args.args[0]
         assert f"{REDIS_LOGOUT_PREFIX}{written_user_id}" == f"{REDIS_LOGOUT_PREFIX}{user_id}"

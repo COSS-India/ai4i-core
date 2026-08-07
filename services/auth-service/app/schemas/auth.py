@@ -69,7 +69,6 @@ class PasswordChangeRequest(BaseSchema):
     current_password: str
     new_password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
-    current_refresh_token: str | None = None
 
 
 class SetPasswordRequest(BaseSchema):

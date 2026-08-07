@@ -188,28 +188,24 @@ async def logout(
     await svc.logout(user_id=user_id)
     # Global logout: any access token issued before now is rejected by
     # /auth/validate's revocation check, regardless of its 60-min TTL.
-    await cache_svc.set_logout_timestamp(
-        str(user_id), ttl_seconds=settings.access_token_expire_minutes * 60
-    )
+    await cache_svc.revoke_all_sessions(str(user_id))
     return LogoutResponse(message="Logged out successfully.", logged_out=True)
 
 
-@router.post("/change-password")
+@router.post("/change-password", response_model=LoginResponse)
 async def change_password(
     body: PasswordChangeRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: AuthService = Depends(get_auth_service),
 ):
-    await svc.change_password(
+    return await svc.change_password(
         user=current_user,
         current_password=body.current_password,
         new_password=body.new_password,
         confirm_password=body.confirm_password,
-        current_refresh_token=body.current_refresh_token,
         background_tasks=background_tasks,
     )
-    return success_response(data={"message": "Password changed successfully."})
 
 
 # ── Email activation ──
