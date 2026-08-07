@@ -5,7 +5,6 @@ import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
-import roleService from "../../../services/roleService";
 import { showError } from "../../../utils/errorHandler";
 import {
   collectTenantContactEmails,
@@ -61,7 +60,7 @@ import {
   resolveDefaultOrgFormRole,
 } from "../../../utils/defaultTenant";
 import {
-  enrichDefaultOrgTenantUsers,
+  enrichDefaultOrgTenantUser,
   syncDefaultOrgUserRole,
 } from "../../../utils/defaultOrgUserRoles";
 import type { TenantAssignableRole } from "../../../types/tenant";
@@ -324,13 +323,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const loadTenantUsersForTenant = async (
     tenantId: string,
   ): Promise<TenantUserView[]> => {
+    // Roles for default org are fetched lazily on view/edit (avoid N+1).
     const res = await tenantService.listUsers(tenantId);
-    let users = normalizeTenantUserRoles(res.users ?? []);
-    const tenant = resolveTenantById(tenantId);
-    if (tenant && isDefaultTenant(tenant)) {
-      users = await enrichDefaultOrgTenantUsers(users);
-    }
-    return users;
+    return normalizeTenantUserRoles(res.users ?? []);
   };
 
   const handleFetchTenantUsers = async (tenantIdOverride?: string) => {
@@ -902,9 +897,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         role: apiRole,
       });
       if (isDefaultOrg && userForm.role !== DEFAULT_TENANT_USER_ROLE) {
-        await syncDefaultOrgUserRole(created.user_id, userForm.role, [
-          DEFAULT_TENANT_USER_ROLE,
-        ]);
+        try {
+          await syncDefaultOrgUserRole(created.user_id, userForm.role, [
+            DEFAULT_TENANT_USER_ROLE,
+          ]);
+        } catch (syncErr) {
+          console.error("Failed to apply default-org role after create:", syncErr);
+          showToast({
+            type: "warning",
+            message:
+              "User was created as User, but the selected role could not be applied. Edit the user to retry.",
+          });
+          closeUserModal();
+          await refreshTenantAndUserLists(tenantId);
+          return;
+        }
       }
       showToast({
         type: "success",
@@ -1010,8 +1017,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setTenantDetailSubTab("overview");
   };
 
-  const handleViewUser = (u: TenantUserView) => {
-    setViewUserDetail(normalizeTenantUserRow(u));
+  const handleViewUser = async (u: TenantUserView) => {
+    let row = normalizeTenantUserRow(u);
+    if (isDefaultTenantUsersView) row = await enrichDefaultOrgTenantUser(row);
+    setViewUserDetail(row);
     setIsViewUserModalOpen(true);
   };
 
@@ -1136,7 +1145,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserForm.phone_number,
   ]);
 
-  // ----- Status update -----
+  // UI-only; server enforcement: AI4IDS-2750.
   const handleOpenTenantStatus = (t: TenantView, newStatus: TenantStatus) => {
     if (
       isDefaultTenant(t) &&
@@ -1343,29 +1352,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         );
 
       let role: TenantUserFormRole = DEFAULT_TENANT_USER_ROLE;
-      let currentRoles: string[] | undefined;
+      let editRow: TenantUserView = unmasked;
       if (editingDefaultOrg) {
-        try {
-          const { roles } = await roleService.getUserRoles(unmasked.user_id);
-          currentRoles = roles.map((r) => r.trim().toUpperCase()).filter(Boolean);
-          const resolved = resolveDefaultOrgFormRole(
-            currentRoles,
-            unmasked.role,
-          );
-          if (isDefaultOrgUserRole(resolved) || resolved === "ADMIN") {
-            role = resolved as TenantUserFormRole;
-          } else {
-            role = DEFAULT_TENANT_USER_ROLE;
-          }
-        } catch {
-          const fallback = String(unmasked.role ?? "")
-            .trim()
-            .toUpperCase();
-          role =
-            isDefaultOrgUserRole(fallback) || fallback === "ADMIN"
-              ? (fallback as TenantUserFormRole)
-              : DEFAULT_TENANT_USER_ROLE;
-        }
+        editRow = await enrichDefaultOrgTenantUser(unmasked);
+        const resolved = resolveDefaultOrgFormRole(editRow.roles, editRow.role);
+        role =
+          isDefaultOrgUserRole(resolved) || resolved === "ADMIN"
+            ? (resolved as TenantUserFormRole)
+            : DEFAULT_TENANT_USER_ROLE;
+        editRow = { ...editRow, role };
       } else {
         const normalizedRole = (
           unmasked.role ??
@@ -1379,11 +1374,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
             ? "TENANT ADMIN"
             : DEFAULT_TENANT_USER_ROLE;
       }
-      setEditUserRow(
-        editingDefaultOrg && currentRoles
-          ? { ...unmasked, roles: currentRoles, role }
-          : unmasked,
-      );
+      setEditUserRow(editRow);
       setEditUserForm({
         tenant_id: tenantId,
         user_id: unmasked.user_id,

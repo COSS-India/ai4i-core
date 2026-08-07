@@ -65,13 +65,12 @@ export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST =
 
 export const DEFAULT_ORG_USER_FORM_ROLE_OPTIONS = DEFAULT_ORG_USER_ROLE_OPTIONS;
 
-/** Roles replaced when normalizing a default-org user to User / Moderator / Guest. */
+/** Roles replaced when syncing to User / Moderator / Guest (ADMIN excluded). */
 export const DEFAULT_ORG_MANAGED_ROLES = [
   "USER",
   "MODERATOR",
   "GUEST",
   "TENANT ADMIN",
-  "ADMIN",
 ] as const;
 
 const PLATFORM_ROLE_LABELS: Record<string, string> = {

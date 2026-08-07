@@ -29,7 +29,6 @@ import {
   Input,
   InputGroup,
   InputLeftAddon,
-  InputLeftElement,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -37,7 +36,6 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
-  Portal,
   Select,
   SimpleGrid,
   Tab,
@@ -80,7 +78,6 @@ import {
   ChevronDownIcon,
   DeleteIcon,
   EditIcon,
-  SearchIcon,
   ViewIcon,
 } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
@@ -95,6 +92,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
+import TierSelect from "./TierSelect";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import {
   TENANT,
@@ -112,7 +110,6 @@ import {
   isDefaultTenant,
 } from "../../utils/defaultTenant";
 import type { TenantUserView, TenantView } from "../../types/tenant";
-import type { Tier } from "../../types/tierManagement";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
 
@@ -183,23 +180,6 @@ function getTenantAvatarBg(name: string): string {
   return AVATAR_COLORS[sum % AVATAR_COLORS.length];
 }
 
-function tierOptionLabel(
-  tier: Pick<Tier, "id" | "name">,
-  serviceMappingsReady: boolean,
-  tierIdsWithServices: Set<string>,
-): string {
-  const hasServices = tierIdsWithServices.has(String(tier.id));
-  return serviceMappingsReady && !hasServices
-    ? `${tier.name} (no services mapped)`
-    : tier.name;
-}
-
-function filterTiersBySearch(tiers: Tier[], search: string): Tier[] {
-  const q = search.trim().toLowerCase();
-  if (!q) return tiers;
-  return tiers.filter((tier) => (tier.name || "").toLowerCase().includes(q));
-}
-
 export default function TenantManagementTab({
   isActive = false,
 }: TenantManagementTabProps) {
@@ -240,7 +220,6 @@ export default function TenantManagementTab({
     null,
   );
   const [assignTierId, setAssignTierId] = useState("");
-  const [assignTierSearch, setAssignTierSearch] = useState("");
   const [assignBudget, setAssignBudget] = useState("");
   const [assignEffectiveFrom, setAssignEffectiveFrom] = useState("");
   const [assignEffectiveTo, setAssignEffectiveTo] = useState("");
@@ -299,7 +278,6 @@ export default function TenantManagementTab({
     useState<TenantTierAssignment | null>(null);
   const [manageTenant, setManageTenant] = useState<TenantView | null>(null);
   const [manageTierId, setManageTierId] = useState("");
-  const [manageTierSearch, setManageTierSearch] = useState("");
   const [originalTierId, setOriginalTierId] = useState("");
   const [manageBudget, setManageBudget] = useState(0);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
@@ -308,15 +286,6 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
-
-  const filteredAssignTiers = useMemo(
-    () => filterTiersBySearch(tierOptions, assignTierSearch),
-    [tierOptions, assignTierSearch],
-  );
-  const filteredManageTiers = useMemo(
-    () => filterTiersBySearch(tierOptions, manageTierSearch),
-    [tierOptions, manageTierSearch],
-  );
 
   const userFormRoleOptions = useMemo(() => {
     const tenantId =
@@ -372,7 +341,6 @@ export default function TenantManagementTab({
     setManageTenant(null);
 
     setManageTierId("");
-    setManageTierSearch("");
     setOriginalTierId("");
     setIsEditingTier(false);
 
@@ -455,7 +423,6 @@ export default function TenantManagementTab({
   const handleOpenAssignTier = (t: TenantView) => {
     setAssignTierTenant(t);
     setAssignTierId("");
-    setAssignTierSearch("");
     setAssignBudget("");
     setAssignEffectiveFrom("");
     setAssignEffectiveTo("");
@@ -467,7 +434,6 @@ export default function TenantManagementTab({
     if (isAssigning) return;
     onAssignTierClose();
     setAssignTierTenant(null);
-    setAssignTierSearch("");
     setAssignEffectiveFrom("");
     setAssignEffectiveTo("");
     setAssignTierError(null);
@@ -610,7 +576,6 @@ export default function TenantManagementTab({
 
   const handleCancelTierEdit = () => {
     setManageTierId(originalTierId);
-    setManageTierSearch("");
     setIsEditingTier(false);
   };
 
@@ -2157,99 +2122,22 @@ export default function TenantManagementTab({
                 <FormLabel fontWeight="semibold" fontSize="sm">
                   Tier
                 </FormLabel>
-                <Menu
-                  matchWidth
-                  onClose={() => setAssignTierSearch("")}
-                >
-                  <MenuButton
-                    as={Button}
-                    type="button"
-                    rightIcon={<ChevronDownIcon />}
-                    w="full"
-                    maxW="full"
-                    textAlign="left"
-                    fontWeight="normal"
-                    variant="outline"
-                    bg="white"
-                    borderColor={
-                      selectedTierHasNoServices ? "red.500" : "inherit"
-                    }
-                    _hover={{ borderColor: "gray.300" }}
-                    fontSize="sm"
-                    justifyContent="space-between"
-                    size="sm"
-                    isDisabled={isAssigning}
-                  >
-                    <Text as="span" isTruncated display="block" minW={0}>
-                      {assignTierId
-                        ? tierOptionLabel(
-                            tierOptions.find(
-                              (t) => String(t.id) === String(assignTierId),
-                            ) ?? { id: assignTierId, name: assignTierId },
-                            serviceMappingsReady,
-                            tierIdsWithServices,
-                          )
-                        : "Select a tier"}
-                    </Text>
-                  </MenuButton>
-                  <Portal>
-                    <MenuList maxH="320px" overflow="hidden" p={0} zIndex={1500}>
-                      <Box
-                        px={3}
-                        py={2}
-                        borderBottomWidth="1px"
-                        borderColor="gray.100"
-                      >
-                        <InputGroup size="sm">
-                          <InputLeftElement pointerEvents="none">
-                            <SearchIcon color="gray.400" />
-                          </InputLeftElement>
-                          <Input
-                            placeholder="Search tiers..."
-                            value={assignTierSearch}
-                            onChange={(e) => setAssignTierSearch(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => e.stopPropagation()}
-                            bg="white"
-                          />
-                        </InputGroup>
-                      </Box>
-                      <Box maxH="240px" overflowY="auto" py={1}>
-                        {filteredAssignTiers.length === 0 ? (
-                          <Text px={3} py={2} fontSize="sm" color="gray.500">
-                            {tierOptions.length === 0
-                              ? "No tiers available"
-                              : "No tiers match your search"}
-                          </Text>
-                        ) : (
-                          filteredAssignTiers.map((t) => (
-                            <MenuItem
-                              key={t.id}
-                              onClick={() => {
-                                const nextId = String(t.id);
-                                setAssignTierId(nextId);
-                                if (
-                                  serviceMappingsReady &&
-                                  !tierIdsWithServices.has(nextId)
-                                ) {
-                                  setAssignTierError(TIER_NO_SERVICES_MSG);
-                                } else {
-                                  setAssignTierError(null);
-                                }
-                              }}
-                            >
-                              {tierOptionLabel(
-                                t,
-                                serviceMappingsReady,
-                                tierIdsWithServices,
-                              )}
-                            </MenuItem>
-                          ))
-                        )}
-                      </Box>
-                    </MenuList>
-                  </Portal>
-                </Menu>
+                <TierSelect
+                  value={assignTierId}
+                  onChange={(id) => {
+                    setAssignTierId(id);
+                    setAssignTierError(
+                      serviceMappingsReady && !tierIdsWithServices.has(id)
+                        ? TIER_NO_SERVICES_MSG
+                        : null,
+                    );
+                  }}
+                  tierOptions={tierOptions}
+                  serviceMappingsReady={serviceMappingsReady}
+                  tierIdsWithServices={tierIdsWithServices}
+                  isDisabled={isAssigning}
+                  isInvalid={selectedTierHasNoServices}
+                />
               </FormControl>
 
               <FormControl isRequired isInvalid={isBudgetInvalid}>
@@ -2379,102 +2267,16 @@ export default function TenantManagementTab({
                     </HStack>
                   ) : (
                     <HStack align="flex-start">
-                      <Menu
-                        matchWidth
-                        onClose={() => setManageTierSearch("")}
-                      >
-                        <MenuButton
-                          as={Button}
-                          type="button"
-                          rightIcon={<ChevronDownIcon />}
-                          flex={1}
-                          maxW="full"
-                          textAlign="left"
-                          fontWeight="normal"
-                          variant="outline"
-                          bg="white"
-                          _hover={{ borderColor: "gray.300" }}
-                          fontSize="sm"
-                          justifyContent="space-between"
-                          size="sm"
-                        >
-                          <Text as="span" isTruncated display="block" minW={0}>
-                            {manageTierId
-                              ? tierOptionLabel(
-                                  tierOptions.find(
-                                    (t) =>
-                                      String(t.id) === String(manageTierId),
-                                  ) ?? {
-                                    id: manageTierId,
-                                    name: selectedTierName || manageTierId,
-                                  },
-                                  serviceMappingsReady,
-                                  tierIdsWithServices,
-                                )
-                              : "Select a tier"}
-                          </Text>
-                        </MenuButton>
-                        <Portal>
-                          <MenuList
-                            maxH="320px"
-                            overflow="hidden"
-                            p={0}
-                            zIndex={1500}
-                          >
-                            <Box
-                              px={3}
-                              py={2}
-                              borderBottomWidth="1px"
-                              borderColor="gray.100"
-                            >
-                              <InputGroup size="sm">
-                                <InputLeftElement pointerEvents="none">
-                                  <SearchIcon color="gray.400" />
-                                </InputLeftElement>
-                                <Input
-                                  placeholder="Search tiers..."
-                                  value={manageTierSearch}
-                                  onChange={(e) =>
-                                    setManageTierSearch(e.target.value)
-                                  }
-                                  onClick={(e) => e.stopPropagation()}
-                                  onKeyDown={(e) => e.stopPropagation()}
-                                  bg="white"
-                                />
-                              </InputGroup>
-                            </Box>
-                            <Box maxH="240px" overflowY="auto" py={1}>
-                              {filteredManageTiers.length === 0 ? (
-                                <Text
-                                  px={3}
-                                  py={2}
-                                  fontSize="sm"
-                                  color="gray.500"
-                                >
-                                  {tierOptions.length === 0
-                                    ? "No tiers available"
-                                    : "No tiers match your search"}
-                                </Text>
-                              ) : (
-                                filteredManageTiers.map((tier) => (
-                                  <MenuItem
-                                    key={tier.id}
-                                    onClick={() =>
-                                      setManageTierId(String(tier.id))
-                                    }
-                                  >
-                                    {tierOptionLabel(
-                                      tier,
-                                      serviceMappingsReady,
-                                      tierIdsWithServices,
-                                    )}
-                                  </MenuItem>
-                                ))
-                              )}
-                            </Box>
-                          </MenuList>
-                        </Portal>
-                      </Menu>
+                      <TierSelect
+                        value={manageTierId}
+                        onChange={setManageTierId}
+                        tierOptions={tierOptions}
+                        serviceMappingsReady={serviceMappingsReady}
+                        tierIdsWithServices={tierIdsWithServices}
+                        fallbackName={selectedTierName || manageTierId}
+                        isInvalid={manageTierHasNoServices}
+                        flex={1}
+                      />
 
                       <Button
                         size="sm"
