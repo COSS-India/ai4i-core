@@ -184,13 +184,15 @@ class TestRemoveCachedDataFieldsGloballyBatching:
 
 
 class TestRevokeWhileExhausted:
-    """See cached_data_billing_flag_analysis.md, Q2: revoke_by_obj never touches
-    cached_data, so a stale budget-exhausted/quota-* flag can persist there after
-    revocation. Reasoned harmless (is_active=False makes the row permanently
-    unreachable via get_by_api_key_if_valid's SQL filter), but that reasoning had no
-    test until now. Proves the two things revoke_by_obj is actually responsible for —
+    """revoke_by_obj never touches cached_data, so a stale budget-exhausted/quota-*
+    flag can persist there after revocation. That's harmless: get_by_api_key_if_valid
+    hard-filters is_active.is_(True) in SQL, so once is_active flips to False this row
+    can never be returned by the DB-fallback lookup again, making cached_data's
+    content permanently inert regardless of what it holds. That reasoning had no test
+    until now. Proves the two things revoke_by_obj is actually responsible for —
     Redis fully cleared, is_active flipped False — and confirms cached_data is left
-    untouched (the documented, accepted behavior), not silently scrubbed by accident.
+    untouched (the intended behavior, relying on the SQL filter above rather than an
+    explicit clear), not silently scrubbed by accident.
     """
 
     @staticmethod
