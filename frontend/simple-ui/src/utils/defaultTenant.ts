@@ -45,19 +45,68 @@ export function isDefaultTenant(tenant: { organisation?: string | null }): boole
   return isDefaultTenantOrg(tenant.organisation);
 }
 
-/** Role filter options for Default Tenant user list (Tenant Management). */
-export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
-  { value: "ADMIN", label: "Admin" },
+/**
+ * Default Organisation roles in Tenant Management (AI4IDS-2735).
+ * Assignable via role API (not tenant-user role field, which only accepts
+ * USER | TENANT ADMIN). Tenant Admin is never offered for default org.
+ */
+export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "MODERATOR", label: "Moderator" },
   { value: "GUEST", label: "Guest" },
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
 ] as const;
+
+export type DefaultOrgUserRole =
+  (typeof DEFAULT_ORG_USER_ROLE_OPTIONS)[number]["value"];
+
+/** Role filter + create/edit options for Default Organisation users. */
+export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST =
+  DEFAULT_ORG_USER_ROLE_OPTIONS;
+
+export const DEFAULT_ORG_USER_FORM_ROLE_OPTIONS = DEFAULT_ORG_USER_ROLE_OPTIONS;
+
+/** Roles replaced when syncing to User / Moderator / Guest (ADMIN excluded). */
+export const DEFAULT_ORG_MANAGED_ROLES = [
+  "USER",
+  "MODERATOR",
+  "GUEST",
+  "TENANT ADMIN",
+] as const;
+
+const PLATFORM_ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Admin",
+  USER: "User",
+  MODERATOR: "Moderator",
+  GUEST: "Guest",
+  "TENANT ADMIN": "Tenant Admin",
+};
+
+export function isDefaultOrgUserRole(role: string): role is DefaultOrgUserRole {
+  const normalized = role.trim().toUpperCase();
+  return (DEFAULT_ORG_USER_ROLE_OPTIONS as ReadonlyArray<{ value: string }>).some(
+    (o) => o.value === normalized,
+  );
+}
 
 export function formatPlatformRoleLabel(role: string): string {
   const normalized = role.trim().toUpperCase();
-  const match = DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST.find((o) => o.value === normalized);
-  return match?.label ?? role;
+  return PLATFORM_ROLE_LABELS[normalized] ?? role;
+}
+
+/**
+ * Pick the primary role to show/edit for a default-org user.
+ * Prefers User / Moderator / Guest; falls back to the first role returned.
+ */
+export function resolveDefaultOrgFormRole(
+  roles: string[] | undefined | null,
+  fallbackRole?: string | null,
+): string {
+  const normalized = (roles?.length ? roles : fallbackRole ? [fallbackRole] : [])
+    .map((r) => r.trim().toUpperCase())
+    .filter(Boolean);
+  const preferred = normalized.find((r) => isDefaultOrgUserRole(r));
+  if (preferred) return preferred;
+  return normalized[0] || "USER";
 }
 
 /** Map tenant user rows for Profile → Roles picker (auth `User` shape). */

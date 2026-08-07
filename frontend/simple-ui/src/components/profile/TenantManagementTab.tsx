@@ -92,6 +92,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
+import TierSelect from "./TierSelect";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import {
   TENANT,
@@ -104,6 +105,10 @@ import {
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
+import {
+  DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
+  isDefaultTenant,
+} from "../../utils/defaultTenant";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -281,6 +286,53 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
+
+  const userFormRoleOptions = useMemo(() => {
+    const tenantId =
+      tm.lockedUserFormTenantId ?? tm.userForm.tenant_id?.trim() ?? "";
+    const selected = tm.tenants.find((t) => t.tenant_id === tenantId);
+    if (selected && isDefaultTenant(selected)) {
+      return DEFAULT_ORG_USER_FORM_ROLE_OPTIONS;
+    }
+    return TENANT_USER_ROLE_OPTIONS;
+  }, [tm.lockedUserFormTenantId, tm.userForm.tenant_id, tm.tenants]);
+
+  const editUserRoleOptions = useMemo((): ReadonlyArray<{
+    value: string;
+    label: string;
+  }> => {
+    const tenant = tm.tenants.find(
+      (t) => t.tenant_id === tm.editUserForm.tenant_id,
+    );
+    const isDefaultOrg =
+      (tenant && isDefaultTenant(tenant)) ||
+      (tm.tenantDetailView && isDefaultTenant(tm.tenantDetailView)) ||
+      tm.isDefaultTenantUsersView;
+    if (!isDefaultOrg) return TENANT_USER_ROLE_OPTIONS;
+
+    const current = (tm.editUserForm.role || "").trim().toUpperCase();
+    if (
+      current &&
+      !DEFAULT_ORG_USER_FORM_ROLE_OPTIONS.some((o) => o.value === current)
+    ) {
+      // Preserve non-assignable current roles (e.g. Admin) so profile-only edits
+      // do not force a demotion.
+      return [
+        {
+          value: current,
+          label: current === "ADMIN" ? "Admin" : current,
+        },
+        ...DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
+      ];
+    }
+    return DEFAULT_ORG_USER_FORM_ROLE_OPTIONS;
+  }, [
+    tm.tenants,
+    tm.editUserForm.tenant_id,
+    tm.editUserForm.role,
+    tm.tenantDetailView,
+    tm.isDefaultTenantUsersView,
+  ]);
 
   const handleCloseManagePlan = () => {
     if (isSavingPlan) return;
@@ -572,9 +624,21 @@ export default function TenantManagementTab({
               hasArrow
               openDelay={300}
             >
-              <Text fontWeight="medium" fontSize="sm" isTruncated maxW="340px">
-                {t.organisation}
-              </Text>
+              <HStack spacing={2} minW={0} maxW="340px">
+                <Text fontWeight="medium" fontSize="sm" isTruncated>
+                  {t.organisation}
+                </Text>
+                {isDefaultTenant(t) && (
+                  <Badge
+                    colorScheme="purple"
+                    fontSize="0.65rem"
+                    flexShrink={0}
+                    textTransform="none"
+                  >
+                    Default
+                  </Badge>
+                )}
+              </HStack>
             </Tooltip>
           </HStack>
         ),
@@ -860,6 +924,15 @@ export default function TenantManagementTab({
                   {t.organisation}
                 </Heading>
               </Tooltip>
+              {isDefaultTenant(t) && (
+                <Badge
+                  colorScheme="purple"
+                  flexShrink={0}
+                  textTransform="none"
+                >
+                  Default
+                </Badge>
+              )}
               <Badge
                 colorScheme={getTenantStatusColorScheme(t.status)}
                 flexShrink={0}
@@ -1060,10 +1133,11 @@ export default function TenantManagementTab({
 
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
+    const isProtectedDefaultOrg = isDefaultTenant(t);
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
-        return [
+        const pendingItems: RowActionMenuItem[] = [
           {
             key: "resend-verification",
             label: "Resend verification email",
@@ -1073,7 +1147,9 @@ export default function TenantManagementTab({
             icon: <FiMail size={16} />,
             isDisabled: tm.resendVerificationTenantId === t.tenant_id,
           },
-          {
+        ];
+        if (!isProtectedDefaultOrg) {
+          pendingItems.push({
             key: "deactivate",
             label: "Deactivate",
             onSelect: () =>
@@ -1081,11 +1157,13 @@ export default function TenantManagementTab({
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
-          },
-        ];
+          });
+        }
+        return pendingItems;
       }
 
       if (isTenantStatus(t.status, TENANT.STATUS.ACTIVE)) {
+        if (isProtectedDefaultOrg) return [];
         return [
           {
             key: "suspend",
@@ -1109,7 +1187,7 @@ export default function TenantManagementTab({
       }
 
       if (isTenantStatus(t.status, TENANT.STATUS.SUSPENDED)) {
-        return [
+        const suspendedItems: RowActionMenuItem[] = [
           {
             key: "activate",
             label: "Activate",
@@ -1118,7 +1196,9 @@ export default function TenantManagementTab({
             hoverBg: "green.50",
             icon: <FiPower size={16} />,
           },
-          {
+        ];
+        if (!isProtectedDefaultOrg) {
+          suspendedItems.push({
             key: "deactivate",
             label: "Deactivate",
             onSelect: () =>
@@ -1126,8 +1206,9 @@ export default function TenantManagementTab({
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
-          },
-        ];
+          });
+        }
+        return suspendedItems;
       }
 
       // DEACTIVATED — previous behavior (Activate) unless this tenant was
@@ -1689,7 +1770,7 @@ export default function TenantManagementTab({
                     })
                   }
                 >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {userFormRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -1795,6 +1876,7 @@ export default function TenantManagementTab({
                 <FormLabel>Role</FormLabel>
                 <Select
                   value={tm.editUserForm.role}
+                  isDisabled={!tm.editUserRolesLoaded}
                   onChange={(e) =>
                     tm.setEditUserForm({
                       ...tm.editUserForm,
@@ -1802,12 +1884,17 @@ export default function TenantManagementTab({
                     })
                   }
                 >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {editUserRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
                   ))}
                 </Select>
+                {!tm.editUserRolesLoaded && (
+                  <FormHelperText>
+                    Roles could not be loaded; role changes are disabled.
+                  </FormHelperText>
+                )}
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editUserFormErrors.phone_number)}
@@ -2041,36 +2128,22 @@ export default function TenantManagementTab({
                 <FormLabel fontWeight="semibold" fontSize="sm">
                   Tier
                 </FormLabel>
-                <Select
+                <TierSelect
                   value={assignTierId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setAssignTierId(nextId);
-                    if (
-                      nextId &&
-                      serviceMappingsReady &&
-                      !tierIdsWithServices.has(String(nextId))
-                    ) {
-                      setAssignTierError(TIER_NO_SERVICES_MSG);
-                    } else {
-                      setAssignTierError(null);
-                    }
-                  }}
-                  placeholder="Select a tier"
-                  size="sm"
-                  isDisabled={isAssigning}
-                >
-                  {tierOptions.map((t) => {
-                    const hasServices = tierIdsWithServices.has(String(t.id));
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {serviceMappingsReady && !hasServices
-                          ? `${t.name} (no services mapped)`
-                          : t.name}
-                      </option>
+                  onChange={(id) => {
+                    setAssignTierId(id);
+                    setAssignTierError(
+                      serviceMappingsReady && !tierIdsWithServices.has(id)
+                        ? TIER_NO_SERVICES_MSG
+                        : null,
                     );
-                  })}
-                </Select>
+                  }}
+                  tierOptions={tierOptions}
+                  serviceMappingsReady={serviceMappingsReady}
+                  tierIdsWithServices={tierIdsWithServices}
+                  isDisabled={isAssigning}
+                  isInvalid={selectedTierHasNoServices}
+                />
               </FormControl>
 
               <FormControl isRequired isInvalid={isBudgetInvalid}>
@@ -2200,24 +2273,16 @@ export default function TenantManagementTab({
                     </HStack>
                   ) : (
                     <HStack align="flex-start">
-                      <Select
-                        flex={1}
+                      <TierSelect
                         value={manageTierId}
-                        onChange={(e) => setManageTierId(e.target.value)}
-                      >
-                        {tierOptions.map((tier) => {
-                          const hasServices = tierIdsWithServices.has(
-                            String(tier.id),
-                          );
-                          return (
-                            <option key={tier.id} value={tier.id}>
-                              {serviceMappingsReady && !hasServices
-                                ? `${tier.name} (no services mapped)`
-                                : tier.name}
-                            </option>
-                          );
-                        })}
-                      </Select>
+                        onChange={setManageTierId}
+                        tierOptions={tierOptions}
+                        serviceMappingsReady={serviceMappingsReady}
+                        tierIdsWithServices={tierIdsWithServices}
+                        fallbackName={selectedTierName || manageTierId}
+                        isInvalid={manageTierHasNoServices}
+                        flex={1}
+                      />
 
                       <Button
                         size="sm"
