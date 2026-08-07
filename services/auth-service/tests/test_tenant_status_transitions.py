@@ -373,6 +373,27 @@ class TestUpdateTenantDefaultOrgRenameGuard:
 
         svc._tenants.update.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_allows_edit_form_echoing_unchanged_organisation(self) -> None:
+        """The Edit Tenant form always resubmits ``organisation`` — a profile
+        edit that leaves the name unchanged (even in different casing) must
+        not be mistaken for a rename."""
+        svc = _tenant_service_with_mocks()
+        svc.enforce_scope = AsyncMock()
+        tenant = _default_tenant()
+        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc._tenants.get_by_organisation = AsyncMock(return_value=None)
+        svc._tenants.commit = AsyncMock()
+        svc._tenants.refresh = AsyncMock()
+        body = TenantUpdate(
+            organisation=tenant.organisation.lower(),  # same name, different case
+            phone_number="+15550001111",
+        )
+
+        await svc.update_tenant(_admin_user(), 1, body)
+
+        svc._tenants.update.assert_awaited_once()
+
 
 def _tenant_service_for_user_ops() -> TenantService:
     svc = _tenant_service_with_mocks()

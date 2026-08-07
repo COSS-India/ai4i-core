@@ -695,9 +695,12 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         data = self._prepare_tenant_update_payload(body)
-        if "organisation" in data:
+        if "organisation" in data and data["organisation"].strip().casefold() != tenant.organisation.strip().casefold():
             # The Default Organisation guards (status, TENANT ADMIN) key off
             # this name — renaming it would silently disable all of them.
+            # Compare against the stored value (not just presence) so the
+            # Edit Tenant form, which always echoes organisation back, can
+            # still save unrelated field changes.
             assert_default_tenant_not_targeted(
                 tenant,
                 message="The Default Organisation cannot be renamed.",
