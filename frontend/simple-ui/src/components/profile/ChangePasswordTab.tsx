@@ -146,7 +146,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
     }
 
     try {
-      const res = await changePassword({
+      await changePassword({
         current_password: currentPassword,
         new_password: newPassword,
         confirm_password: confirmPassword,
@@ -154,7 +154,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
       resetForm();
       showToast({
         type: "success",
-        message: res?.message || "Your password has been changed successfully.",
+        message: "Your password has been changed successfully.",
       });
     } catch (err: unknown) {
       const message =
