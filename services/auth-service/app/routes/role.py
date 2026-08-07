@@ -15,8 +15,10 @@ from app.dependencies.services import get_role_service
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.models.role_name import RoleName
 from app.models.user import User
+from app.repositories.tenant_repository import TenantRepository
 from app.schemas.role import GuestServicesAssignRequest, RoleAssignRequest, RoleResponse
 from app.services.role_service import RoleService
+from app.services.tenant_lifecycle import assert_tenant_admin_assignable
 
 router = APIRouter(prefix="/auth/roles", tags=["Roles"])
 
@@ -39,9 +41,11 @@ async def assign_role(
     svc: RoleService = Depends(get_role_service),
     db: AsyncSession = Depends(get_db),
 ):
-    await enforce_target_user_same_tenant(
+    target = await enforce_target_user_same_tenant(
         request, _admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
     )
+    if body.role_name == RoleName.TENANT_ADMIN:
+        await assert_tenant_admin_assignable(TenantRepository(db), target.tenant_id)
     await svc.assign_role(body.user_id, body.role_name)
     return success_response(data={"message": f"Role '{body.role_name.value}' assigned to user {body.user_id}."})
 

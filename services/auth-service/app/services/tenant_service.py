@@ -55,7 +55,9 @@ from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
+    assert_default_tenant_not_targeted,
     assert_valid_tenant_status_transition,
+    is_default_tenant,
     sync_tenant_users_for_status,
 )
 from app.services.email_helpers import (
@@ -758,6 +760,11 @@ class TenantService:
                 },
             )
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
+        if body.status != TenantStatus.ACTIVE and is_default_tenant(tenant):
+            raise ValidationError(
+                message="The Default Organisation cannot be suspended or deactivated.",
+                code="DEFAULT_ORG_PROTECTED",
+            )
         assert_valid_tenant_status_transition(tenant.status, body.status)
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
@@ -836,6 +843,8 @@ class TenantService:
         # between the ACTIVE check and user insert in the same request.
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
         self._assert_tenant_active_for_user_creation(tenant)
+        if body.role == TenantUserRole.TENANT_ADMIN:
+            assert_default_tenant_not_targeted(tenant)
         email = body.email.lower().strip()
         username = await allocate_unique_username(
             self._users.list_usernames_in_collision_family,
@@ -861,13 +870,15 @@ class TenantService:
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
-        await self._load_tenant_or_404(tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         # Drop masked email/phone a client echoed back unchanged (responses are
         # masked); scoped to PII keys so other ``*``-bearing fields survive.
         payload = drop_masked_pii(payload)
         role_update = payload.pop("role", None)
+        if role_update == TenantUserRole.TENANT_ADMIN.value:
+            assert_default_tenant_not_targeted(tenant)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
         if role_update is not None:
