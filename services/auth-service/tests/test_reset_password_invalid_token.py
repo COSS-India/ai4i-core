@@ -29,6 +29,7 @@ def _make_auth_service() -> AuthService:
         verification_repo=MagicMock(),
         tenant_repo=MagicMock(),
         email_client=MagicMock(),
+        cache_service=AsyncMock(),
     )
 
 

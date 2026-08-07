@@ -13,6 +13,8 @@ import redis.asyncio as aioredis
 from redis.exceptions import ResponseError
 from ai4i_core.bootstrap.cache import CacheService as _BaseCacheService
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Redis key pattern: auth:apikey:{api_key}
@@ -72,7 +74,14 @@ class CacheService(_BaseCacheService):
         TTL matches the access-token lifetime — once it elapses, any token
         issued before the logout has expired on its own anyway.
         """
-        await self._redis.setex(f"{REDIS_LOGOUT_PREFIX}{user_id}", ttl_seconds, str(time.time()))
+        await self._redis.setex(f"{REDIS_LOGOUT_PREFIX}{user_id}", ttl_seconds, str(int(time.time())))
+
+    async def revoke_all_sessions(self, user_id: str) -> None:
+        """Reject any access token already issued for user_id, using the
+        access-token lifetime as TTL (see set_logout_timestamp)."""
+        await self.set_logout_timestamp(
+            user_id, ttl_seconds=settings.access_token_expire_minutes * 60
+        )
 
     async def get_logout_timestamp(self, user_id: str) -> Optional[float]:
         """Return the unix timestamp of the user's last logout, or None if none/expired."""

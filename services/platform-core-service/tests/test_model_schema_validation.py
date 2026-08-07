@@ -163,3 +163,31 @@ def test_patch_is_multilingual_only():
     )
     assert payload.isMultilingual is True
     assert payload.adapterConfig is None
+
+
+# ── StrictBool rejects strings for boolean fields ─────────────────────────────
+
+
+@pytest.mark.parametrize("field", ["isLangDetectionEnabled", "isMultilingual", "isSyncApi"])
+def test_create_boolean_field_rejects_string(field):
+    with pytest.raises(ValidationError, match=field):
+        ModelCreateRequest(**_base_payload(**{field: "true"}))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("isLangDetectionEnabled", True),
+    ("isLangDetectionEnabled", False),
+    ("isMultilingual", True),
+    ("isMultilingual", False),
+    ("isSyncApi", True),
+    ("isSyncApi", False),
+])
+def test_create_boolean_field_accepts_bool(field, value):
+    req = ModelCreateRequest(**_base_payload(**{field: value}))
+    assert getattr(req, field) is value
+
+
+@pytest.mark.parametrize("field", ["isLangDetectionEnabled", "isMultilingual", "isSyncApi"])
+def test_patch_boolean_field_rejects_string(field):
+    with pytest.raises(ValidationError, match=field):
+        ModelUpdateRequest(modelId="abc123", version="1.0", **{field: "false"})

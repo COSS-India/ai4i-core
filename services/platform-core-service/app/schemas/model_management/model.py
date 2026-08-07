@@ -8,7 +8,7 @@ during migration.
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import (
@@ -181,11 +181,11 @@ class ModelCreateRequest(BaseSchema):
             "English language list."
         ),
     )
-    isLangDetectionEnabled: bool = Field(
+    isLangDetectionEnabled: StrictBool = Field(
         default=False,
         description="Optional, default: false. True if this model can auto-detect the input language on its own.",
     )
-    isMultilingual: bool = Field(
+    isMultilingual: StrictBool = Field(
         default=False,
         description="Optional, default: false. True if this single model handles multiple languages itself.",
     )
@@ -226,7 +226,7 @@ class ModelCreateRequest(BaseSchema):
         None,
         description="Optional. Auth header expected by callbackUrl.",
     )
-    isSyncApi: Optional[bool] = Field(
+    isSyncApi: Optional[StrictBool] = Field(
         None,
         description="Optional. True if inference is synchronous; False means async — asyncApiDetails should also be provided.",
     )
@@ -371,8 +371,8 @@ class ModelUpdateRequest(BaseSchema):
     )
     task: Optional[TaskSpec] = Field(None, description="Optional — omit to leave unchanged.")
     languages: Optional[List[LanguagePair]] = Field(None, description="Optional — omit to leave unchanged.")
-    isLangDetectionEnabled: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
-    isMultilingual: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
+    isLangDetectionEnabled: Optional[StrictBool] = Field(None, description="Optional — omit to leave unchanged.")
+    isMultilingual: Optional[StrictBool] = Field(None, description="Optional — omit to leave unchanged.")
     license: Optional[str] = Field(
         None, description="Optional — omit to leave unchanged. Must be a valid ULCA License value if provided."
     )
@@ -391,7 +391,7 @@ class ModelUpdateRequest(BaseSchema):
     )
     callbackUrl: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
     inferenceApiKey: Optional[InferenceApiKey] = Field(None, description="Optional — omit to leave unchanged.")
-    isSyncApi: Optional[bool] = Field(None, description="Optional — omit to leave unchanged.")
+    isSyncApi: Optional[StrictBool] = Field(None, description="Optional — omit to leave unchanged.")
     asyncApiDetails: Optional[AsyncApiDetails] = Field(None, description="Optional — omit to leave unchanged.")
     benchmarks: Optional[List[Benchmark]] = Field(None, description="Optional — omit to leave unchanged.")
     submitter: Optional[Submitter] = Field(None, description="Optional — omit to leave unchanged.")

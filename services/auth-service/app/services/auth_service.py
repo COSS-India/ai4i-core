@@ -39,7 +39,7 @@ from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
-from app.schemas.auth import LoginResponse, TokenRefreshResponse
+from app.schemas.auth import ChangePasswordResponse, LoginResponse, TokenRefreshResponse
 from app.services.auth_email_templates import (
     render_password_changed,
     render_password_reset,
@@ -57,6 +57,7 @@ from app.services.email_helpers import (
     setup_token_expires_at,
 )
 from app.services.api_key_service import APIKeyService
+from app.services.cache_service import CacheService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 from app.utils.masking import looks_masked, mask_email
@@ -121,6 +122,7 @@ class AuthService:
         verification_repo: VerificationRepository,
         tenant_repo: TenantRepository,
         email_client: EmailClient,
+        cache_service: CacheService,
         api_key_service: Optional[APIKeyService] = None,
     ) -> None:
         self._users = user_repo
@@ -131,6 +133,7 @@ class AuthService:
         self._verifications = verification_repo
         self._tenants = tenant_repo
         self._email = email_client
+        self._cache = cache_service
         self._api_keys = api_key_service
 
     def _validate_token_of_type(self, token: str, expected_type: str):
@@ -368,10 +371,15 @@ class AuthService:
         hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._verifications.deactivate(token_obj)
-        # Sign out all other sessions per security spec.
+        # Sign out all other sessions per security spec: revoke refresh tokens
+        # and reject any already-issued access token via the global logout gate.
         await self._refresh_tokens.delete_by_user_id(user.id)
         await self._credentials.commit()
-        logger.info("Password reset for user id=%s; refresh tokens revoked", user.id)
+        try:
+            await self._cache.revoke_all_sessions(str(user.id))
+        except Exception:
+            logger.error("Failed to set logout timestamp for user id=%s; live access tokens not revoked", user.id)
+        logger.info("Password reset for user id=%s; all sessions revoked", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
     # ── Login ──
@@ -513,9 +521,8 @@ class AuthService:
         current_password: str,
         new_password: str,
         confirm_password: str,
-        current_refresh_token: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> None:
+    ) -> ChangePasswordResponse:
         password_manager.validate_and_confirm(new_password, confirm_password)
 
         creds = await self._credentials.get_by_user_id(user.id)
@@ -531,21 +538,29 @@ class AuthService:
                 code="SAME_PASSWORD",
             )
 
-        # Preserve current session's refresh token (client-provided or fetch from DB)
-        token_to_preserve = current_refresh_token
-        if not token_to_preserve:
-            existing = await self._refresh_tokens.get_by_user_id(user.id)
-            token_to_preserve = existing.refresh_token if existing else None
-
         hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
-        await self._refresh_tokens.delete_by_user_id(user.id)
-        if token_to_preserve:
-            await self._refresh_tokens.upsert(user.id, token_to_preserve)
         await self._credentials.commit()
-        await self._refresh_tokens.commit()
-        logger.info("Password changed for user id=%s; refresh tokens revoked except current session", user.id)
+
+        # Reject any access token issued before now first, so every currently
+        # live session (including the one the caller just used to authenticate
+        # this request) is signed out. Must happen BEFORE minting the caller's
+        # replacement pair below — otherwise a fresh token could land in the
+        # same second as this write and get rejected by its own revocation gate.
+        try:
+            await self._cache.revoke_all_sessions(str(user.id))
+        except Exception:
+            logger.error("Failed to set logout timestamp for user id=%s; live access tokens not revoked", user.id)
+
+        # Issue a fresh token pair for the caller instead of trying to guess
+        # which DB-stored refresh token belongs to them — the refresh table
+        # holds only one row per user, so "preserving" one is unreliable.
+        login_response = await issue_session(
+            user, self._roles, self._tokens, self._refresh_tokens, self._users,
+        )
+        logger.info("Password changed for user id=%s; all other sessions revoked, fresh token pair issued", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
+        return ChangePasswordResponse(**login_response.model_dump())
 
     # ── Email Activation: Set Password ──
 
