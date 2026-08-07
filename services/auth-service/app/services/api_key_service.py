@@ -730,7 +730,6 @@ class APIKeyService:
 
         await self._repo.update(db_key, data)
         await self._repo.commit()
-        await self._repo.refresh(db_key)
 
         tenant_id_str: Optional[str] = None
         if self._users is not None:
