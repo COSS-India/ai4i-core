@@ -19,21 +19,20 @@ async def enforce_target_user_same_tenant(
     db: AsyncSession,
     *,
     bypass_roles: tuple[RoleName | str, ...],
-) -> User:
+) -> None:
     """Load target user and ensure tenant admin may only act on users in their tenant.
 
-    Callers with any role in ``bypass_roles`` skip the tenant check but the
-    target user is still loaded and returned.
+    Callers with any role in ``bypass_roles`` skip the check.
     """
+    role_repo = RoleRepository(db)
+    user_roles = await role_repo.get_user_roles(current_user.id)
+    if PermissionChecker.has_any_role([role_name_to_str(r) for r in bypass_roles], user_roles):
+        return
+
     user_repo = UserRepository(db)
     target = await user_repo.get_by_id(target_user_id)
     if not target:
         raise EntityNotFoundError(f"User {target_user_id}")
-
-    role_repo = RoleRepository(db)
-    user_roles = await role_repo.get_user_roles(current_user.id)
-    if PermissionChecker.has_any_role([role_name_to_str(r) for r in bypass_roles], user_roles):
-        return target
 
     jwt_tid = getattr(request.state, "tenant_id", None)
     try:
@@ -52,4 +51,3 @@ async def enforce_target_user_same_tenant(
                 "message": "Cannot access user outside your tenant.",
             },
         )
-    return target

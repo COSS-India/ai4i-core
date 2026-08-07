@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.exceptions import EntityNotFoundError
 from app.core.responses import success_response, to_response
 from app.dependencies.auth import get_current_user
 from app.dependencies.permissions import require_any_role
@@ -16,6 +17,7 @@ from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.tenant_repository import TenantRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.role import GuestServicesAssignRequest, RoleAssignRequest, RoleResponse
 from app.services.role_service import RoleService
 from app.services.tenant_lifecycle import assert_tenant_admin_assignable
@@ -41,10 +43,13 @@ async def assign_role(
     svc: RoleService = Depends(get_role_service),
     db: AsyncSession = Depends(get_db),
 ):
-    target = await enforce_target_user_same_tenant(
+    await enforce_target_user_same_tenant(
         request, _admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
     )
     if body.role_name == RoleName.TENANT_ADMIN:
+        target = await UserRepository(db).get_by_id(body.user_id)
+        if not target:
+            raise EntityNotFoundError(f"User {body.user_id}")
         await assert_tenant_admin_assignable(TenantRepository(db), target.tenant_id)
     await svc.assign_role(body.user_id, body.role_name)
     return success_response(data={"message": f"Role '{body.role_name.value}' assigned to user {body.user_id}."})

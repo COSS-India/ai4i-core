@@ -57,7 +57,6 @@ from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
     assert_valid_tenant_status_transition,
-    is_default_tenant,
     sync_tenant_users_for_status,
 )
 from app.services.email_helpers import (
@@ -696,6 +695,13 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
         data = self._prepare_tenant_update_payload(body)
+        if "organisation" in data:
+            # The Default Organisation guards (status, TENANT ADMIN) key off
+            # this name — renaming it would silently disable all of them.
+            assert_default_tenant_not_targeted(
+                tenant,
+                message="The Default Organisation cannot be renamed.",
+            )
 
         # ── Pre-validation. Every failure-prone check runs BEFORE any write,
         # so the tenant.email change is never committed without the matching
@@ -760,10 +766,10 @@ class TenantService:
                 },
             )
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
-        if body.status != TenantStatus.ACTIVE and is_default_tenant(tenant):
-            raise ValidationError(
+        if body.status != TenantStatus.ACTIVE:
+            assert_default_tenant_not_targeted(
+                tenant,
                 message="The Default Organisation cannot be suspended or deactivated.",
-                code="DEFAULT_ORG_PROTECTED",
             )
         assert_valid_tenant_status_transition(tenant.status, body.status)
         await sync_tenant_users_for_status(
