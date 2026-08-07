@@ -181,3 +181,48 @@ class TestRemoveCachedDataFieldsGloballyBatching:
         repo = APIKeyRepository(db)
         assert await repo.remove_cached_data_fields_globally(["quota-nmt"]) == 0
         db.commit.assert_not_awaited()
+
+
+class TestRevokeWhileExhausted:
+    """revoke_by_obj never touches cached_data, so a stale budget-exhausted/quota-*
+    flag can persist there after revocation. That's harmless: get_by_api_key_if_valid
+    hard-filters is_active.is_(True) in SQL, so once is_active flips to False this row
+    can never be returned by the DB-fallback lookup again, making cached_data's
+    content permanently inert regardless of what it holds. That reasoning had no test
+    until now. Proves the two things revoke_by_obj is actually responsible for —
+    Redis fully cleared, is_active flipped False — and confirms cached_data is left
+    untouched (the intended behavior, relying on the SQL filter above rather than an
+    explicit clear), not silently scrubbed by accident.
+    """
+
+    @staticmethod
+    def _service_with_revoke_side_effect():
+        repo = AsyncMock()
+
+        async def _revoke(key: APIKey) -> None:
+            key.is_active = False
+
+        repo.revoke = AsyncMock(side_effect=_revoke)
+        cache = AsyncMock()
+        return APIKeyService(repo, cache), repo, cache
+
+    @pytest.mark.asyncio
+    async def test_revoking_an_exhausted_key_clears_redis_and_deactivates_it(self) -> None:
+        svc, repo, cache = self._service_with_revoke_side_effect()
+        key = _api_key(is_active=True)
+        key.cached_data = {"api_key": key.api_key, "budget-exhausted": "1", "quota-nmt": "1"}
+
+        await svc.revoke_by_obj(key)
+
+        assert key.is_active is False
+        cache.delete_api_key_cache.assert_awaited_once_with(key.api_key)
+        cache.set_api_key_cache.assert_not_awaited()
+        repo.commit.assert_awaited_once()
+        # cached_data is never touched by revoke_by_obj — the stale flags survive in
+        # the DB, which is fine precisely because is_active=False makes this row
+        # unreachable via get_by_api_key_if_valid from now on (that SQL filter itself
+        # isn't re-verified by this test — it's a separate, already-reviewed query).
+        repo.update.assert_not_awaited()
+        assert key.cached_data == {
+            "api_key": key.api_key, "budget-exhausted": "1", "quota-nmt": "1"
+        }

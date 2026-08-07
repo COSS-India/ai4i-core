@@ -165,15 +165,27 @@ class APIKeyService:
             **(extra_fields or {}),
         }
 
-    async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
-        """Mirror ``payload`` (minus transient billing flags) onto
-        ``api_key.cached_data`` so a future Redis miss can repopulate the
-        cache without rejoining users/tenants."""
-        snapshot = {
+    @staticmethod
+    def _preserved_billing_fields(db_key: APIKey) -> dict:
+        """budget-exhausted/quota-* already in cached_data, carried forward so a
+        refresh never erases billing state the PPU write-through path
+        (patch_cached_data_field_for_tenant et al.) wrote directly into
+        cached_data — mirrors how _refresh_redis_cache's own ``preserved``
+        carries the same fields forward from the live Redis hash."""
+        return {
             k: v
-            for k, v in payload.items()
-            if k != "budget-exhausted" and not k.startswith("quota-")
+            for k, v in (db_key.cached_data or {}).items()
+            if k == "budget-exhausted" or k.startswith("quota-")
         }
+
+    async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
+        """Mirror ``payload`` onto ``api_key.cached_data`` so a future Redis
+        miss can repopulate the cache without rejoining users/tenants.
+        Merges forward any billing flags already in cached_data that
+        ``payload`` doesn't itself carry — payload's own values (e.g.
+        preserved from a live Redis hash) still win when present, since
+        they're fresher."""
+        snapshot = {**self._preserved_billing_fields(db_key), **payload}
         await self._repo.update(db_key, {"cached_data": snapshot})
         await self._repo.commit()
 
@@ -193,11 +205,18 @@ class APIKeyService:
         if ttl <= 0:
             return
         existing = await self._cache.get_api_key_cache(db_key.api_key)
-        preserved = {
+        # No value filter: a live "0" is evidence too — filtering to v == "1"
+        # would let a stale "1" in cached_data win the merge below and
+        # resurrect a cleared budget-exhausted flag into both stores.
+        preserved_from_redis = {
             k: v
             for k, v in (existing or {}).items()
-            if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
+            if k == "budget-exhausted" or k.startswith("quota-")
         }
+        # cached_data's own billing state is the base (covers a cold/evicted Redis
+        # hash with nothing to preserve); Redis's live state, if any, overrides it —
+        # keeps both stores converging on the same values instead of just one.
+        preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
         payload = self._build_cache_payload(
             db_key, tenant_id, {**self._preserved_tier_id(db_key), **preserved}
         )
