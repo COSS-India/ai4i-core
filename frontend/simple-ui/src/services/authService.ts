@@ -2,6 +2,7 @@
  * Authentication service
  */
 import {
+  ChangePasswordResponse,
   LoginRequest,
   LoginResponse,
   RegisterRequest,
@@ -35,6 +36,7 @@ import {
   apiKeyListResponseSchema,
   apiKeyListUnionSchema,
   apiKeyResponseSchema,
+  changePasswordResponseSchema,
   checkEmailExistsResponseSchema,
   createApiKeyResponseSchema,
   guestServicesListSchema,
@@ -384,10 +386,10 @@ class AuthService {
     });
   }
 
-  async changePassword(data: PasswordChangeRequest): Promise<LoginResponse> {
+  async changePassword(data: PasswordChangeRequest): Promise<ChangePasswordResponse> {
     const response = await this.validatedRequest(
       authPath.changePassword,
-      authUnwrappedSchema(loginResponseSchema),
+      authUnwrappedSchema(changePasswordResponseSchema),
       {
         method: 'POST',
         body: JSON.stringify(data),
