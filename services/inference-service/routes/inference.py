@@ -24,14 +24,10 @@ from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
+from swagger_docs import _CHAT_OPENAPI_RESPONSES, _CHAT_EXAMPLE
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
-
-_CHAT_EXAMPLE = {
-    "model": "llm-service-1",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": False,
-}
 
 # Module-level singleton: a fresh Orchestrator per request would rebuild the
 # InferenceServerResolver each time, so its in-memory service cache never got
@@ -229,24 +225,31 @@ async def run_nmt_try_it(
 
 @router.post(
     "/llm/try-it",
-    response_model=GenericInferenceResponse,
-    response_model_exclude={"config"},
     summary="LLM Try-It Endpoint (anonymous)",
-    description="Anonymous try-it endpoint. Accepts either a TryItRequest envelope "
-                "({ service_name, serviceId?, payload: LLMPayload }) or a plain LLM "
-                "payload directly (for when APISIX has already unwrapped the envelope).",
+    description=(
+        "Anonymous try-it endpoint. Accepts an OpenAI-compatible chat completions "
+        "payload (same shape as /api/v1/chat). Also accepts a TryItRequest envelope "
+        "({ service_name, serviceId?, payload: ... }) when APISIX forwards the "
+        "wrapped body."
+    ),
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def run_llm_try_it(
     request: Request,
-    body: Dict[str, Any],
-    orchestrator: Orchestrator = Depends(get_orchestrator),
-) -> Dict[str, Any]:
-    inner: Dict[str, Any] = body.get("payload") or body
-    # LLM payloads use "model" as the service identifier (OpenAI-compatible convention)
-    service_id = inner.get("model") or body.get("serviceId")
-    if service_id and not inner.get("serviceId"):
-        inner = {**inner, "serviceId": service_id}
-    return await _run_inference(request, inner, orchestrator, default_task_type="LLM")
+    body: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+) -> Response:
+    # Unwrap TryItRequest envelope if present; otherwise treat body as the
+    # OpenAI-compatible chat payload (what the portal try-it UI sends).
+    inner = body.get("payload")
+    if isinstance(inner, dict) and "service_name" in body:
+        payload = dict(inner)
+    else:
+        payload = body
+    # OpenAIProxyService resolves MMS via `model`; accept top-level serviceId too.
+    service_id = payload.get("model") or body.get("serviceId")
+    if service_id and not payload.get("model"):
+        payload = {**payload, "model": service_id}
+    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
 @router.post(
@@ -580,6 +583,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     "/chat/completions",
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat_completions(
     request: Request,
@@ -592,6 +596,7 @@ async def chat_completions(
     "/chat",
     summary="LLM Chat",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat(
     request: Request,
