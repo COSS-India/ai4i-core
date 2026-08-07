@@ -729,7 +729,6 @@ class APIKeyService:
             data["updated_by"] = str(user_id)
 
         await self._repo.update(db_key, data)
-        await self._repo.refresh(db_key)
         await self._repo.commit()
 
         tenant_id_str: Optional[str] = None
@@ -751,6 +750,7 @@ class APIKeyService:
         elif data.get("is_active") is False:
             await self._cache.delete_api_key_cache(db_key.api_key)
 
+        await self._repo.refresh(db_key)
         logger.info("API key updated: api_key=%s user=%s", db_key.api_key, db_key.user_id)
         return db_key
 

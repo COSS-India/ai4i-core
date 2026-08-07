@@ -3,8 +3,10 @@
 from typing import Optional
 from uuid import UUID
 
-from app.core.exceptions import ValidationError
-from app.models.tenant import TenantStatus
+from app.core.config import settings
+from app.core.exceptions import EntityNotFoundError, ValidationError
+from app.models.tenant import Tenant, TenantStatus
+from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 
 # PATCH /tenants/{id}/status and onboarding (PENDING → ACTIVE on set-password).
@@ -23,6 +25,45 @@ ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] =
 TENANT_ONBOARDING_STATUSES: frozenset[TenantStatus] = frozenset(
     {TenantStatus.PENDING, TenantStatus.ACTIVE}
 )
+
+
+def is_default_tenant(tenant: Tenant) -> bool:
+    """True if ``tenant`` is the seeded Default Organisation (matched by ``organisation``, case-insensitive)."""
+    return tenant.organisation.strip().casefold() == settings.default_tenant_org.strip().casefold()
+
+
+def assert_default_tenant_not_targeted(
+    tenant: Tenant, *, message: Optional[str] = None
+) -> None:
+    """Raise ValidationError (code ``DEFAULT_ORG_PROTECTED``) if ``tenant`` is the Default Organisation.
+
+    The Default Organisation is the fallback tenant for direct portal
+    signups and must always stay ACTIVE, keep its name, and have no TENANT
+    ADMIN — suspending, deactivating, renaming, or handing out TENANT ADMIN
+    there would strand that fallback path.
+    """
+    if is_default_tenant(tenant):
+        raise ValidationError(
+            message=message or "This action is not allowed for the Default Organisation.",
+            code="DEFAULT_ORG_PROTECTED",
+        )
+
+
+async def assert_tenant_admin_assignable(
+    tenant_repo: TenantRepository, tenant_id: Optional[int]
+) -> None:
+    """Raise if ``tenant_id`` belongs to the Default Organisation, or doesn't resolve to a tenant at all.
+
+    Fails closed: a ``tenant_id`` that no longer resolves to a row is an
+    anomaly this guard cannot vouch for, so it rejects rather than letting
+    the assignment through unchecked.
+    """
+    if tenant_id is None:
+        return
+    tenant = await tenant_repo.get_by_id(tenant_id)
+    if tenant is None:
+        raise EntityNotFoundError(f"Tenant {tenant_id}")
+    assert_default_tenant_not_targeted(tenant)
 
 
 def assert_valid_tenant_status_transition(

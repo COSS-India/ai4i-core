@@ -27,6 +27,7 @@ import ChangePasswordTab from "../components/profile/ChangePasswordTab";
 import RolesTab from "../components/profile/RolesTab";
 import { listTenants, listUsers } from "../services/tenantService";
 import { resolveDefaultTenantId, tenantUsersToAuthUsers } from "../utils/defaultTenant";
+import { canChangeOwnPassword } from "../utils/rbac";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -80,14 +81,15 @@ const ProfilePage: React.FC = () => {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const showChangePassword = canChangeOwnPassword(user?.roles);
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
       { id: "user-details", label: "User Details", show: true },
-      { id: "change-password", label: "Change Password", show: true },
+      { id: "change-password", label: "Change Password", show: showChangePassword },
       { id: "roles", label: "Roles", show: isAdmin },
     ];
     return tabs.filter((t) => t.show);
-  }, [isAdmin]);
+  }, [isAdmin, showChangePassword]);
 
   if (authLoading) {
     return (
