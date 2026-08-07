@@ -583,6 +583,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     "/chat/completions",
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat_completions(
     request: Request,
@@ -595,6 +596,7 @@ async def chat_completions(
     "/chat",
     summary="LLM Chat",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat(
     request: Request,
