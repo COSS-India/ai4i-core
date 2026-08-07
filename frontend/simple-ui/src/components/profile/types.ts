@@ -37,6 +37,13 @@ export type {
 } from "../../types/tenant";
 
 import type { TenantAssignableRole } from "../../types/tenant";
+import type { DefaultOrgUserRole } from "../../utils/defaultTenant";
+
+/** Role value in tenant-user create/edit forms (regular or default-org). */
+export type TenantUserFormRole =
+  | TenantAssignableRole
+  | DefaultOrgUserRole
+  | "ADMIN";
 
 export interface TenantFormState {
   organisation: string;
@@ -50,10 +57,10 @@ export interface TenantUserFormState {
   email: string;
   full_name: string;
   phone_number: string;
-  role: TenantAssignableRole;
+  role: TenantUserFormRole;
 }
 
-/** Assignable tenant-user roles (create/edit forms). */
+/** Assignable tenant-user roles (create/edit forms for regular tenants). */
 export const TENANT_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "TENANT ADMIN", label: "Tenant Admin" },
@@ -74,7 +81,7 @@ export interface EditUserFormState {
   email?: string;
   full_name?: string;
   phone_number?: string;
-  role: TenantAssignableRole;
+  role: TenantUserFormRole;
 }
 
 export interface StatusUpdateTarget {

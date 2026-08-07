@@ -18,6 +18,7 @@ import {
 import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
+import { canEditOwnProfile } from "../../utils/rbac";
 import { useUserDetails } from "./hooks/useUserDetails";
 import { TIMEZONES } from "./types";
 import DeleteAccountSection from "./DeleteAccountSection";
@@ -39,6 +40,8 @@ export default function UserDetailsTab() {
 
   if (!user) return null;
 
+  const canEdit = canEditOwnProfile(user.roles);
+
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
       <CardHeader pb={3}>
@@ -48,42 +51,45 @@ export default function UserDetailsTab() {
               User Details
             </Heading>
             <Text fontSize="sm" color="gray.500" mt={1}>
-              Manage your profile information and preferences.
+              {canEdit
+                ? "Manage your profile information and preferences."
+                : "View your profile information."}
             </Text>
           </Box>
-          {!ud.isEditingUser ? (
-            <Button
-              leftIcon={<FiEdit2 />}
-              size="sm"
-              colorScheme="blue"
-              variant="outline"
-              onClick={ud.handleEditUser}
-            >
-              Edit
-            </Button>
-          ) : (
-            <HStack>
+          {canEdit &&
+            (!ud.isEditingUser ? (
               <Button
-                leftIcon={<FiCheck />}
+                leftIcon={<FiEdit2 />}
                 size="sm"
-                colorScheme="green"
-                onClick={ud.handleSaveUser}
-                isLoading={ud.isSaving}
-                loadingText="Saving..."
-              >
-                Save
-              </Button>
-              <Button
-                leftIcon={<FiX />}
-                size="sm"
+                colorScheme="blue"
                 variant="outline"
-                onClick={ud.handleCancelEdit}
-                isDisabled={ud.isSaving}
+                onClick={ud.handleEditUser}
               >
-                Cancel
+                Edit
               </Button>
-            </HStack>
-          )}
+            ) : (
+              <HStack>
+                <Button
+                  leftIcon={<FiCheck />}
+                  size="sm"
+                  colorScheme="green"
+                  onClick={ud.handleSaveUser}
+                  isLoading={ud.isSaving}
+                  loadingText="Saving..."
+                >
+                  Save
+                </Button>
+                <Button
+                  leftIcon={<FiX />}
+                  size="sm"
+                  variant="outline"
+                  onClick={ud.handleCancelEdit}
+                  isDisabled={ud.isSaving}
+                >
+                  Cancel
+                </Button>
+              </HStack>
+            ))}
         </HStack>
       </CardHeader>
       <CardBody pt={2}>

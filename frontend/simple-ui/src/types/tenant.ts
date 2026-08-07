@@ -59,7 +59,7 @@ export interface TenantRegisterRequest {
 export type TenantRegisterResponse = TenantView;
 
 /** Roles assignable to tenant-scoped users (auth-service TenantUserRole). */
-export type TenantAssignableRole = 'USER' | 'TENANT ADMIN';
+export type TenantAssignableRole = "USER" | "TENANT ADMIN";
 
 // POST /api/v1/auth/tenants/{tenant_id}/users
 export interface UserRegisterRequest {

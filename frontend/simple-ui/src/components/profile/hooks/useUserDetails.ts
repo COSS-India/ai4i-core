@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { showToast } from "../../../utils/toast";
+import { canEditOwnProfile } from "../../../utils/rbac";
 import type { User, UserUpdateRequest } from "../../../types/auth";
 
 const INDIAN_MOBILE_RE = /^[6-9]\d{9}$/;
@@ -79,6 +80,7 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
   };
 
   const handleEditUser = () => {
+    if (!canEditOwnProfile(user?.roles)) return;
     if (!checkSessionExpiry()) return;
     setIsEditingUser(true);
     setErrors({});
@@ -98,6 +100,7 @@ export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUser
   };
 
   const handleSaveUser = async () => {
+    if (!canEditOwnProfile(user?.roles)) return;
     if (!checkSessionExpiry()) return;
     if (!validateForm()) return;
     setIsSaving(true);
