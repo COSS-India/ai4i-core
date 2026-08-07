@@ -474,6 +474,12 @@ export default function TenantManagementTab({
       return;
     }
 
+    if (assignEffectiveFrom === assignEffectiveTo) {
+      setAssignTierError(
+        "Effective From and Effective To cannot be the same date.",
+      );
+      return;
+    }
     const effectiveFromIso = dateInputToStartOfDayIso(assignEffectiveFrom);
     const effectiveToIso = dateInputToEndOfDayIso(assignEffectiveTo);
     if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
