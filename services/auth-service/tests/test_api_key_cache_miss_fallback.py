@@ -267,10 +267,11 @@ class TestValidateAPIKeyCacheMissDBFallback:
 class TestRefreshAndCreatePersistCachedData:
     @pytest.mark.asyncio
     async def test_refresh_redis_cache_persists_billing_flags_preserved_from_redis(self) -> None:
-        """Fix for cached_data_billing_flag_analysis.md, Q1: billing flags preserved
-        from the live Redis hash must also land in cached_data, not just Redis — a
-        prior version of this method stripped them here unconditionally, which this
-        test used to lock in (see git history) before the fix."""
+        """Billing flags preserved from the live Redis hash must also land in
+        cached_data, not just Redis — a prior version of _persist_cache_snapshot
+        stripped them unconditionally, so any refresh silently erased billing state
+        from the DB mirror. This test used to lock in that strip behavior (see git
+        history) before the fix."""
         svc, repo, cache = _service()
         cache.get_api_key_cache = AsyncMock(
             return_value={"budget-exhausted": "1", "quota-nmt": "1", "tier_id": "old"}
@@ -288,10 +289,9 @@ class TestRefreshAndCreatePersistCachedData:
 
     @pytest.mark.asyncio
     async def test_refresh_redis_cache_no_longer_diverges_from_redis_for_an_exhausted_key(self) -> None:
-        """Fix for cached_data_billing_flag_analysis.md, Q1. Redis has quota-nmt=1
-        (preserved from the live hash); cached_data already had it too from an
-        earlier billing patch. Both must end up agreeing after the refresh — no more
-        silent divergence between the two stores."""
+        """Redis has quota-nmt=1 (preserved from the live hash); cached_data already
+        had it too from an earlier billing patch. Both must end up agreeing after the
+        refresh — no more silent divergence between the two stores."""
         svc, repo, cache = _service()
         cache.get_api_key_cache = AsyncMock(return_value={"quota-nmt": "1", "tier_id": "old"})
         key = _api_key(
