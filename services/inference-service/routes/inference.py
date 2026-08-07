@@ -24,43 +24,10 @@ from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
+from swagger_docs import _CHAT_OPENAPI_RESPONSES, _CHAT_EXAMPLE
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
-
-_CHAT_EXAMPLE = {
-    "model": "llm-service-1",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": False,
-}
-
-# OpenAPI response example for chat / try-it (runtime body is upstream-passthrough).
-_CHAT_RESPONSE_EXAMPLE = {
-    "id": "chatcmpl-123",
-    "object": "chat.completion",
-    "created": 1677652288,
-    "model": "llm-service-1",
-    "choices": [
-        {
-            "index": 0,
-            "message": {"role": "assistant", "content": "Hello! How can I help you?"},
-            "finish_reason": "stop",
-        }
-    ],
-    "usage": {
-        "prompt_tokens": 9,
-        "completion_tokens": 12,
-        "total_tokens": 21,
-    },
-}
-
-_CHAT_OPENAPI_RESPONSES: Dict[int | str, Dict[str, Any]] = {
-    200: {
-        "description": "Successful Response",
-        "content": {
-            "application/json": {"example": _CHAT_RESPONSE_EXAMPLE},
-        },
-    },
-}
 
 # Module-level singleton: a fresh Orchestrator per request would rebuild the
 # InferenceServerResolver each time, so its in-memory service cache never got
