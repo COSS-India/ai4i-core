@@ -240,15 +240,15 @@ async def assign_tier(
     # 2. Validate the tier_id and confirm it exists and is active in platform-core DB.
     tier = await _resolve_active_tier(db, body.tier_id)
 
-    if body.effective_to - body.effective_from < timedelta(days=1):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Effective From and Effective To cannot be the same date.",
-        )
     if body.effective_to <= body.effective_from:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="effective_to must be after effective_from",
+        )
+    if body.effective_to - body.effective_from < timedelta(days=1):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Effective From and Effective To cannot be the same date.",
         )
 
     now = datetime.now(timezone.utc)
