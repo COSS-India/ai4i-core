@@ -16,18 +16,21 @@ const norm = (r: string) => r.trim().toUpperCase();
 /** Lazy single-user enrich — do not call for full tenant lists. */
 export async function enrichDefaultOrgTenantUser(
   user: TenantUserView,
-): Promise<TenantUserView> {
+): Promise<{ user: TenantUserView; rolesLoaded: boolean }> {
   try {
     const cleaned = (await roleService.getUserRoles(user.user_id)).roles
       .map(norm)
       .filter(Boolean);
     return {
-      ...user,
-      roles: cleaned,
-      role: resolveDefaultOrgFormRole(cleaned, user.role),
+      user: {
+        ...user,
+        roles: cleaned,
+        role: resolveDefaultOrgFormRole(cleaned, user.role),
+      },
+      rolesLoaded: true,
     };
   } catch {
-    return user;
+    return { user, rolesLoaded: false };
   }
 }
 

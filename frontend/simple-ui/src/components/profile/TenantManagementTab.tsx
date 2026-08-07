@@ -1876,6 +1876,7 @@ export default function TenantManagementTab({
                 <FormLabel>Role</FormLabel>
                 <Select
                   value={tm.editUserForm.role}
+                  isDisabled={!tm.editUserRolesLoaded}
                   onChange={(e) =>
                     tm.setEditUserForm({
                       ...tm.editUserForm,
@@ -1889,6 +1890,11 @@ export default function TenantManagementTab({
                     </option>
                   ))}
                 </Select>
+                {!tm.editUserRolesLoaded && (
+                  <FormHelperText>
+                    Roles could not be loaded; role changes are disabled.
+                  </FormHelperText>
+                )}
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editUserFormErrors.phone_number)}

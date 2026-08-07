@@ -208,6 +208,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     Record<string, string>
   >({});
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
+  /** False when GET /roles/user failed — role field must not drive sync. */
+  const [editUserRolesLoaded, setEditUserRolesLoaded] = useState(true);
 
   // Delete user confirmation
   const [deleteUserTarget, setDeleteUserTarget] =
@@ -1019,7 +1021,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleViewUser = async (u: TenantUserView) => {
     let row = normalizeTenantUserRow(u);
-    if (isDefaultTenantUsersView) row = await enrichDefaultOrgTenantUser(row);
+    if (isDefaultTenantUsersView) {
+      row = (await enrichDefaultOrgTenantUser(row)).user;
+    }
     setViewUserDetail(row);
     setIsViewUserModalOpen(true);
   };
@@ -1353,14 +1357,24 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
       let role: TenantUserFormRole = DEFAULT_TENANT_USER_ROLE;
       let editRow: TenantUserView = unmasked;
+      let rolesLoaded = true;
       if (editingDefaultOrg) {
-        editRow = await enrichDefaultOrgTenantUser(unmasked);
+        const enriched = await enrichDefaultOrgTenantUser(unmasked);
+        editRow = enriched.user;
+        rolesLoaded = enriched.rolesLoaded;
         const resolved = resolveDefaultOrgFormRole(editRow.roles, editRow.role);
         role =
           isDefaultOrgUserRole(resolved) || resolved === "ADMIN"
             ? (resolved as TenantUserFormRole)
             : DEFAULT_TENANT_USER_ROLE;
         editRow = { ...editRow, role };
+        if (!rolesLoaded) {
+          showToast({
+            type: "warning",
+            message:
+              "Could not load roles for this user. Role changes are disabled until reload.",
+          });
+        }
       } else {
         const normalizedRole = (
           unmasked.role ??
@@ -1375,6 +1389,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
             : DEFAULT_TENANT_USER_ROLE;
       }
       setEditUserRow(editRow);
+      setEditUserRolesLoaded(rolesLoaded);
       setEditUserForm({
         tenant_id: tenantId,
         user_id: unmasked.user_id,
@@ -1432,14 +1447,24 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           full_name: editUserForm.full_name?.trim(),
           phone_number: editUserForm.phone_number?.trim(),
         });
-        // Only sync when choosing an assignable default-org role. Leaving Admin
-        // unchanged skips role API calls so profile-only edits are safe.
-        if (isDefaultOrgUserRole(editUserForm.role)) {
-          await syncDefaultOrgUserRole(
-            editUserForm.user_id,
-            editUserForm.role,
-            editUserRow?.roles,
-          );
+        // Sync only when the operator changed the role and we trust the loaded roles.
+        // Avoids silent demotion on profile-only edits after a failed roles fetch.
+        const initialRole = (editUserRow?.role ?? "").trim().toUpperCase();
+        const nextRole = editUserForm.role.trim().toUpperCase();
+        if (isDefaultOrgUserRole(nextRole) && nextRole !== initialRole) {
+          if (!editUserRolesLoaded) {
+            showToast({
+              type: "warning",
+              message:
+                "Role was not updated because current roles could not be loaded. Other changes were saved.",
+            });
+          } else {
+            await syncDefaultOrgUserRole(
+              editUserForm.user_id,
+              nextRole,
+              editUserRow?.roles,
+            );
+          }
         }
       } else {
         await tenantService.updateUser({
@@ -1457,6 +1482,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({ type: "success", message: "User updated" });
       setIsEditUserModalOpen(false);
       setEditUserRow(null);
+      setEditUserRolesLoaded(true);
       await refreshTenantAndUserLists(editUserForm.tenant_id);
     } catch (err) {
       console.error("Failed to update user:", err);
@@ -1470,6 +1496,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsEditUserModalOpen(false);
     setEditUserRow(null);
     setEditUserFormErrors({});
+    setEditUserRolesLoaded(true);
   };
 
   // ----- Delete tenant user -----
@@ -1630,6 +1657,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setEditUserForm,
     editUserFormErrors,
     setEditUserFormErrors,
+    editUserRolesLoaded,
     isSubmittingEditUser,
     handleOpenEditUser,
     handleSaveEditUser,
