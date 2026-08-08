@@ -538,6 +538,17 @@ async def test_inference_async(
         ) + (payload_kind,)
 
 
+def _log_if_passed(detail: ValidationDetail, message: str, *args: Any) -> None:
+    """Log *message* only when *detail* passed.
+
+    Failures are reported once, by the caller, as a single WARNING carrying
+    every reason. Logging them here as well produced two lines per failure
+    and made the pod logs harder to read, not easier.
+    """
+    if detail.status == ValidationStatus.PASSED:
+        logger.info(message, *args)
+
+
 # ── Orchestrator ──
 
 
@@ -653,7 +664,8 @@ async def validate_endpoint(
                 model_name=model_name,
             )
         details.append(inference_result)
-        logger.info(
+        _log_if_passed(
+            inference_result,
             "Endpoint validation [%s] for %s (task=%s, async=%s, payload=%s): %s",
             inference_result.status.value,
             probe_endpoint,
@@ -668,7 +680,8 @@ async def validate_endpoint(
         if inference_result.status == ValidationStatus.PASSED and effective_expected_schema:
             shape_result = validate_response_shape(response_body, effective_expected_schema)
             details.append(shape_result)
-            logger.info(
+            _log_if_passed(
+                shape_result,
                 "Response-shape validation [%s] for %s: %s",
                 shape_result.status.value,
                 probe_endpoint,
