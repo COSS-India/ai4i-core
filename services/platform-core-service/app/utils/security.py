@@ -12,14 +12,25 @@ Behavior:
   `*.cluster.local`, `localhost`, etc.).
 - Sanitize URLs for logging (strip user:pass) and redact sensitive keys
   in request/response bodies.
+
+ENDPOINT_VALIDATION_ALLOW_PRIVATE_HOSTS=true relaxes only the private/
+reserved rule, for deployments whose model fleet lives entirely on private
+infrastructure. The hard blocks below (cloud metadata, loopback,
+link-local, unspecified, multicast, cluster-internal hostnames) are not
+configurable and hold either way.
 """
 
 import asyncio
 import ipaddress
 import json
+import logging
 import socket
 from typing import Any, Dict
 from urllib.parse import urlparse, urlunparse
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 _REDACT_KEYS = frozenset(
@@ -61,10 +72,53 @@ def is_disallowed_ip(ip: ipaddress._BaseAddress) -> bool:
     )
 
 
+# Never probeable, whatever ENDPOINT_VALIDATION_ALLOW_PRIVATE_HOSTS says.
+# `is_link_local` already covers IPv4 169.254.0.0/16, and with it the cloud
+# metadata service at 169.254.169.254. The IPv6 metadata address is a
+# unique-local address, so it reads as merely "private" and would be let
+# through by the setting: it is listed explicitly instead.
+_ALWAYS_BLOCKED_NETWORKS = (
+    ipaddress.ip_network("fd00:ec2::254/128"),
+)
+
+
+def is_always_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
+    """Addresses that must never be probed, regardless of configuration.
+
+    Cloud metadata hands out credentials to anything that asks, and loopback
+    reaches this service's own pod and any sidecar admin ports. Neither is a
+    legitimate model endpoint on any deployment, so neither is negotiable.
+    """
+    if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_link_local:
+        return True
+    # A version mismatch makes `in` return False rather than raise, so a v4
+    # address tested against a v6 network is simply not a match.
+    return any(ip in network for network in _ALWAYS_BLOCKED_NETWORKS)
+
+
+def _is_ip_allowed(ip: ipaddress._BaseAddress, hostname: str) -> bool:
+    """Apply the endpoint-host policy to a single resolved address."""
+    if is_always_blocked_ip(ip):
+        return False
+    if not is_disallowed_ip(ip):
+        return True
+    if settings.endpoint_validation_allow_private_hosts:
+        # Audit trail: every host that only got through because the trusted-
+        # network setting is on is recorded, with what it resolved to.
+        logger.info(
+            "Endpoint host '%s' (%s) allowed by "
+            "ENDPOINT_VALIDATION_ALLOW_PRIVATE_HOSTS.",
+            hostname,
+            ip,
+        )
+        return True
+    return False
+
+
 async def is_safe_host(hostname: str, *, resolve_timeout_s: float = 2.0) -> bool:
     """
-    Resolve *hostname* and ensure all resulting IPs are public/routable.
-    Returns False (fail-closed) on resolution failure or unsafe IP.
+    Resolve *hostname* and ensure all resulting IPs are allowed as endpoint
+    hosts. Returns False (fail-closed) on resolution failure or unsafe IP.
     """
     if not hostname:
         return False
@@ -74,7 +128,7 @@ async def is_safe_host(hostname: str, *, resolve_timeout_s: float = 2.0) -> bool
     # Direct IP literal? Validate without DNS.
     try:
         ip = ipaddress.ip_address(hostname)
-        return not is_disallowed_ip(ip)
+        return _is_ip_allowed(ip, hostname)
     except ValueError:
         pass
 
@@ -92,7 +146,7 @@ async def is_safe_host(hostname: str, *, resolve_timeout_s: float = 2.0) -> bool
             ip = ipaddress.ip_address(info[4][0])
         except Exception:
             return False
-        if is_disallowed_ip(ip):
+        if not _is_ip_allowed(ip, hostname):
             return False
     return True
 

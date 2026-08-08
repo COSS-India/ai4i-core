@@ -132,6 +132,17 @@ class CoreSettings(BaseSettings):
     # identically. See endpoint_validator._VALIDATION_MODE_THRESHOLDS.
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
+    # Trusted-network escape hatch. Deployments whose model fleet lives entirely
+    # on private infrastructure cannot register any endpoint, because the SSRF
+    # guard rejects private addresses by class before it ever attempts a
+    # connection.
+    # When true, private/reserved addresses are accepted as endpoint hosts.
+    # Cloud metadata, loopback, link-local, unspecified, multicast and
+    # cluster-internal hostnames stay blocked either way (see
+    # security.is_always_blocked_ip). Leave this false on any deployment where
+    # service creation is not restricted to trusted admins: enabling it lets
+    # anyone who can reach the create-service form probe internal hosts.
+    endpoint_validation_allow_private_hosts: bool = False
     # Cap on PATCH /services bulk endpoint-update array size. Each item runs
     # a live probe with endpoint_validation_timeout_seconds, so an unbounded
     # array can outlast a proxy timeout even with concurrent probing.
