@@ -24,9 +24,10 @@ Owns the rules:
 """
 
 import asyncio
+import functools
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
@@ -52,6 +53,7 @@ from .serializers import (
     service_to_dict,
 )
 from app.utils.endpoint_validator import ValidationStatus, validate_endpoint
+from app.utils.security import sanitize_url_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,37 @@ class EndpointValidationFailedError(AppError):
         super().__init__(
             message=message, code="ENDPOINT_VALIDATION_ERROR", status_code=400
         )
+
+
+def _log_rejections(
+    func: Callable[..., Awaitable[Any]]
+) -> Callable[..., Awaitable[Any]]:
+    """Log any client-facing rejection raised inside *func* before it
+    propagates.
+
+    Nothing else records these. The shared handlers in ai4i_core log only
+    unhandled exceptions, and RequestMiddleware skips 4xx to avoid
+    duplicating the gateway's access log. Without this a rejected create,
+    update or delete leaves no trace in the pod at all, and the caller's
+    error toast is the only evidence it happened.
+
+    Applied at the method boundary rather than at each raise site so a
+    rejection added later is covered without anyone remembering to log it.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await func(*args, **kwargs)
+        except EndpointValidationFailedError:
+            # Already logged by _validate_endpoint_for_model, with the
+            # endpoint and task type this layer cannot see.
+            raise
+        except AppError as exc:
+            logger.warning("Rejected %s: %s", exc.code, exc.message)
+            raise
+
+    return wrapper
 
 
 def _extract_validation_params(model_inference_endpoint: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,6 +236,7 @@ class ServiceService:
 
     # ── Writes ──
 
+    @_log_rejections
     async def create_service(
         self, payload: ServiceCreateRequest, *, created_by: Optional[str]
     ) -> str:
@@ -302,6 +336,7 @@ class ServiceService:
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
         return service_id
 
+    @_log_rejections
     async def update_service(
         self, payload: ServiceUpdateRequest, *, updated_by: Optional[str]
     ) -> None:
@@ -540,6 +575,7 @@ class ServiceService:
             instance.service_id, service_detail_dict(instance, model, tier_names=tier_names)
         )
 
+    @_log_rejections
     async def update_service_endpoints(
         self, items: List[ServiceEndpointUpdateItem], *, updated_by: Optional[str]
     ) -> List[str]:
@@ -567,6 +603,7 @@ class ServiceService:
             await self._refresh_endpoint_cache(instance, model)
         return [instance.service_id for instance in instances]
 
+    @_log_rejections
     async def delete_service(self, id_str: str) -> None:
         instance = await self._services.get_by_service_id(id_str)
         if instance is None:
@@ -611,6 +648,7 @@ class ServiceService:
         expected_response_schema: Optional[Dict[str, Any]],
     ) -> None:
         params = _extract_validation_params(model_inference_endpoint)
+        safe_endpoint = sanitize_url_for_log(endpoint)
         result = await validate_endpoint(
             endpoint=endpoint,
             task_type=task_type,
@@ -633,6 +671,16 @@ class ServiceService:
             failed_messages = [
                 d.message for d in result.details if d.status == ValidationStatus.FAILED
             ]
+            # The single line for a failed validation. Every failure surfaces
+            # here and nowhere else, and this layer is the only one that has
+            # the endpoint and task type together, so validate_endpoint stays
+            # quiet on failure and reports only what passed.
+            logger.warning(
+                "Endpoint validation failed for %s (task=%s): %s",
+                safe_endpoint,
+                task_type,
+                "; ".join(failed_messages),
+            )
             raise EndpointValidationFailedError(
                 message="Service endpoint validation failed.",
                 errors=failed_messages,
