@@ -50,6 +50,7 @@ import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
+import { generateUUID } from "../../utils/uuid";
 
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
@@ -283,7 +284,7 @@ function QuotaEditor({
     onChange([
       ...quotas,
       {
-        _key: crypto.randomUUID(),
+        _key: generateUUID(),
         modelTaskType: "",
         unit: "",
         limit: "",
