@@ -15,13 +15,14 @@ import {
 import { listTenants } from "../services/tenantService";
 import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
+import { generateUUID } from "../utils/uuid";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 
 const TIER_QUERY_KEY = "tiers";
 
 function newQuota(): TierFormQuota {
   return {
-    _key: crypto.randomUUID(),
+    _key: generateUUID(),
     modelTaskType: "",
     unit: "",
     limit: "",
@@ -360,7 +361,7 @@ export function useTierManagement() {
         description: tier.description ?? "",
         quotas: tier.quotas?.length
           ? tier.quotas.map((q) => ({
-              _key: crypto.randomUUID(),
+              _key: generateUUID(),
               modelTaskType: q.modelTaskType,
               unit: q.unit || unitByTaskType[q.modelTaskType] || "",
               limit: String(q.limit),

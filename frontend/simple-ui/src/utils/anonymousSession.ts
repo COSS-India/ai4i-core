@@ -2,25 +2,7 @@
 // Generates and stores a unique session ID for anonymous users
 // Used by the backend to track rate limits for try-it feature
 import { getStoredAccessToken } from './tokenStorage';
-
-/**
- * Generate a random UUID v4
- */
-function generateUUID(): string {
-  // Use crypto.randomUUID if available (modern browsers)
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
-    return window.crypto.randomUUID();
-  }
-
-  // Fallback to manual UUID generation using crypto.getRandomValues()
-  const bytes = new Uint8Array(16);
-  window.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant bits
-  return Array.from(bytes).map((b, i) =>
-    [4, 6, 8, 10].includes(i) ? `-${b.toString(16).padStart(2, '0')}` : b.toString(16).padStart(2, '0')
-  ).join('');
-}
+import { generateUUID } from './uuid';
 
 /**
  * Get or create anonymous session ID
