@@ -907,6 +907,16 @@ class TenantService:
         await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
+        if body.is_active is False and target.id == current_user.id:
+            caller_roles = await self._roles.get_user_roles(current_user.id)
+            if RoleName.TENANT_ADMIN.value in caller_roles:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "SELF_DEACTIVATION_FORBIDDEN",
+                        "message": "Tenant admins cannot deactivate their own account.",
+                    },
+                )
         payload = {"is_active": body.is_active, "updated_by": current_user.id}
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
