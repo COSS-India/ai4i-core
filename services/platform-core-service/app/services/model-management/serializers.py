@@ -65,6 +65,37 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
     }
 
 
+def _service_inference_api_key(service: Service) -> Optional[Dict[str, Any]]:
+    """Resolve the {name, value} auth-header object for a service's
+    response, masked — preferring the new structured `inference_api_key`
+    column and falling back to synthesizing one from the deprecated flat
+    `api_key` string so old rows still return a shape-correct object."""
+    if service.inference_api_key:
+        return _mask_api_key(service.inference_api_key)
+    if service.api_key:
+        return _mask_api_key({"name": "Authorization", "value": service.api_key})
+    return None
+
+
+def _service_inference_endpoint(service: Service) -> Dict[str, Any]:
+    """Assemble ULCA's `inferenceEndPoint` (InferenceAPIEndPoint) object
+    for a Service response (AI4IDS-2710) from the individual mm_services
+    columns it's stored across."""
+    return {
+        "callbackUrl": service.endpoint,
+        "inferenceApiKey": _service_inference_api_key(service),
+        "isMultilingualEnabled": bool(service.is_multilingual_enabled),
+        "supportedInputFormats": service.supported_input_formats,
+        "supportedOutputFormats": service.supported_output_formats,
+        "schema": service.inference_schema,
+        "isSyncApi": service.is_sync_api,
+        "asyncApiDetails": service.async_api_details,
+        "providerName": service.provider_name,
+        "infraDescription": service.hardware_description,
+        "inferenceModelId": service.inference_model_id,
+    }
+
+
 def service_to_dict(
     service: Service,
     *,
@@ -72,18 +103,35 @@ def service_to_dict(
     include_task_languages: bool = False,
     tier_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Serialize a Service ORM row. Optionally enrich with task & languages
-    from the joined Model (used by list endpoints)."""
+    """Serialize a Service ORM row. Optionally enrich with languages &
+    versionStatus from the joined Model (used by list endpoints)."""
     out: Dict[str, Any] = {
         "serviceId": service.service_id,
         "name": service.name,
+        "description": service.service_description,
         "serviceDescription": service.service_description,
         "hardwareDescription": service.hardware_description,
         "modelId": service.model_id,
         "modelVersion": service.model_version,
+        # task_type is denormalized onto Service for billing/filtering, but
+        # the ULCA-shaped `task` object is sourced from the joined Model
+        # when available (task type is conceptually a model-card fact) and
+        # falls back to the denormalized column otherwise.
+        "task": (model.task if model and model.task else {"type": service.task_type})
+                if service.task_type or (model and model.task) else None,
+        "taskType": service.task_type,
+        "inferenceEndPoint": _service_inference_endpoint(service),
         "endpoint": service.endpoint,
         "inferenceServerType": service.inference_server_type or "triton",
         "sslVerify": bool(service.ssl_verify),
+        # Deprecated (AI4IDS-2710) — use `inferenceEndPoint.inferenceApiKey`
+        # (masked, see _service_inference_api_key). This flat field is
+        # deliberately left UNMASKED, unlike Model's equivalent field:
+        # inference-service reads this exact key off this exact response
+        # (services/inference-service/services/base/task_service.py) to
+        # build the outbound `Authorization: Bearer` header for the real
+        # Triton call — masking it here breaks every auth-protected Triton
+        # backend platform-wide. See AI4IDS-1871's test_triton_url_redaction.py.
         "api_key": service.api_key,
         "healthStatus": service.health_status,
         "benchmarks": service.benchmarks,
@@ -93,7 +141,6 @@ def service_to_dict(
         "isTryItDefault": bool(service.is_try_it_default),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
-        "taskType": service.task_type,
         "costPerUnit": float(service.cost_per_unit) if service.cost_per_unit is not None else None,
         "unitSize": service.unit_size,
         "unitRate": float(service.unit_rate) if service.unit_rate is not None else None,
@@ -105,7 +152,6 @@ def service_to_dict(
         "updatedBy": service.updated_by,
     }
     if include_task_languages and model is not None:
-        out["task"] = model.task or {"type": "unknown"}
         out["languages"] = _normalize_languages(model.languages or [])
         out["versionStatus"] = (
             model.version_status.value if model.version_status else None
@@ -130,6 +176,6 @@ def service_detail_dict(
     tier_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Full service-detail response, embedding the model card."""
-    out = service_to_dict(service, tier_names=tier_names)
+    out = service_to_dict(service, model=model, tier_names=tier_names)
     out["model"] = model_to_dict(model) if model else None
     return out

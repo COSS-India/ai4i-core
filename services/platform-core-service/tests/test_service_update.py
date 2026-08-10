@@ -140,7 +140,9 @@ class TestUpdateServicePolicy:
         svc = _make_svc()
         payload = ServiceUpdateRequest(
             serviceId="svc-abc",
-            serviceDescription="Updated description",
+            # AI4IDS-2710: description (or its deprecated serviceDescription
+            # alias) must be 25-1000 chars when supplied.
+            serviceDescription="Updated description for this test service.",
             taskType="asr",
             costPerUnit=1.0,
             unitSize=1,
@@ -315,7 +317,9 @@ class TestUpdateServiceEndpointRevalidation:
 
         payload = ServiceUpdateRequest(
             serviceId="svc-abc",
-            serviceDescription="new description",
+            # AI4IDS-2710: description (or its deprecated serviceDescription
+            # alias) must be 25-1000 chars when supplied.
+            serviceDescription="A new, longer description for this test service.",
             taskType="asr",
             costPerUnit=1.0,
             unitSize=1,

@@ -282,10 +282,17 @@ class ServiceService:
             if payload.costPerUnit is not None and payload.unitSize is not None
             else None
         )
+        # AI4IDS-2710: `_reconcile_ulca_fields` on ServiceCreateRequest has
+        # already merged the deprecated flat aliases and the new nested
+        # `inferenceEndPoint`/`task` fields into one another, and guarantees
+        # `inferenceEndPoint` is populated here — so the net-new ULCA fields
+        # below always have a home to read from regardless of which input
+        # shape the caller actually used.
+        ep = payload.inferenceEndPoint
         instance = Service(
             service_id=service_id,
             name=payload.name,
-            service_description=payload.serviceDescription,
+            service_description=payload.description,
             hardware_description=payload.hardwareDescription,
             model_id=payload.modelId,
             model_version=payload.modelVersion,
@@ -297,6 +304,15 @@ class ServiceService:
             ),
             ssl_verify=payload.sslVerify,
             api_key=payload.api_key,
+            inference_api_key=jsonable_encoder(ep.inferenceApiKey) if ep.inferenceApiKey else None,
+            inference_schema=jsonable_encoder(ep.endpoint_schema),
+            is_sync_api=ep.isSyncApi,
+            async_api_details=jsonable_encoder(ep.asyncApiDetails) if ep.asyncApiDetails else None,
+            is_multilingual_enabled=bool(ep.isMultilingualEnabled),
+            supported_input_formats=jsonable_encoder(ep.supportedInputFormats) if ep.supportedInputFormats else None,
+            supported_output_formats=jsonable_encoder(ep.supportedOutputFormats) if ep.supportedOutputFormats else None,
+            provider_name=ep.providerName,
+            inference_model_id=ep.inferenceModelId,
             health_status=jsonable_encoder(payload.healthStatus) if payload.healthStatus else {},
             benchmarks=jsonable_encoder(payload.benchmarks) if payload.benchmarks else None,
             expected_response_schema=jsonable_encoder(payload.expectedResponseSchema),
@@ -383,8 +399,14 @@ class ServiceService:
         request_dict = payload.model_dump(exclude_unset=True)
         update_data: Dict[str, Any] = {}
 
-        if "serviceDescription" in request_dict:
-            update_data["service_description"] = request_dict["serviceDescription"]
+        # AI4IDS-2710: `_reconcile_ulca_fields` on ServiceUpdateRequest has
+        # already backfilled `description`/`endpoint`/`hardwareDescription`/
+        # `api_key`/`taskType` from the new `task`/`inferenceEndPoint`
+        # fields (and vice versa) whenever either channel was touched, so
+        # these checks cover both the deprecated flat input and the new
+        # ULCA-shaped input without extra branching.
+        if "description" in request_dict:
+            update_data["service_description"] = request_dict["description"]
         if "hardwareDescription" in request_dict:
             update_data["hardware_description"] = request_dict["hardwareDescription"]
         if "endpoint" in request_dict:
@@ -398,6 +420,29 @@ class ServiceService:
             update_data["ssl_verify"] = bool(request_dict["sslVerify"])
         if "api_key" in request_dict:
             update_data["api_key"] = request_dict["api_key"]
+        if payload.inferenceEndPoint is not None:
+            # Read straight off the validated object rather than
+            # request_dict, so the `schema`-aliased field (attribute name
+            # `endpoint_schema`) doesn't need special-casing here.
+            ep = payload.inferenceEndPoint
+            if ep.inferenceApiKey is not None:
+                update_data["inference_api_key"] = jsonable_encoder(ep.inferenceApiKey)
+            if ep.isMultilingualEnabled is not None:
+                update_data["is_multilingual_enabled"] = ep.isMultilingualEnabled
+            if ep.supportedInputFormats is not None:
+                update_data["supported_input_formats"] = jsonable_encoder(ep.supportedInputFormats)
+            if ep.supportedOutputFormats is not None:
+                update_data["supported_output_formats"] = jsonable_encoder(ep.supportedOutputFormats)
+            if ep.endpoint_schema is not None:
+                update_data["inference_schema"] = jsonable_encoder(ep.endpoint_schema)
+            if ep.isSyncApi is not None:
+                update_data["is_sync_api"] = ep.isSyncApi
+            if ep.asyncApiDetails is not None:
+                update_data["async_api_details"] = jsonable_encoder(ep.asyncApiDetails)
+            if ep.providerName is not None:
+                update_data["provider_name"] = ep.providerName
+            if ep.inferenceModelId is not None:
+                update_data["inference_model_id"] = ep.inferenceModelId
         if "healthStatus" in request_dict:
             update_data["health_status"] = request_dict["healthStatus"]
         if "benchmarks" in request_dict:
@@ -475,10 +520,12 @@ class ServiceService:
             raise ValidationError(
                 message=(
                     "No valid update fields provided. Updatable fields: "
-                    "serviceDescription, hardwareDescription, endpoint, "
-                    "inferenceServerType, sslVerify, api_key, healthStatus, "
+                    "description (or deprecated serviceDescription), "
+                    "task/inferenceEndPoint (or deprecated taskType/"
+                    "endpoint/hardwareDescription/api_key), "
+                    "inferenceServerType, sslVerify, healthStatus, "
                     "benchmarks, expectedResponseSchema, isPublished, "
-                    "isTryItDefault, policy, taskType, costPerUnit, unitSize, "
+                    "isTryItDefault, policy, costPerUnit, unitSize, "
                     "tierIds. Note: name, modelId, modelVersion are not "
                     "updatable."
                 ),

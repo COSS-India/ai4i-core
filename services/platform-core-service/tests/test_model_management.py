@@ -513,12 +513,15 @@ class TestServiceServiceCreate:
         payload = ServiceCreateRequest(
             serviceId="svc-1",
             name="my-service",
-            serviceDescription="desc",
-            hardwareDescription="hw",
+            # AI4IDS-2710: description/infraDescription now enforce ULCA's
+            # minimum lengths, and `inferenceEndPoint.schema` is required.
+            serviceDescription="A test service used for automated unit tests.",
+            hardwareDescription="test-hw-cluster",
             modelId="no-model",
             modelVersion="1.0",
             endpoint="http://localhost:8000",
             taskType="asr",
+            inferenceEndPoint={"schema": [{"taskType": "asr", "request": {}, "response": {}}]},
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
@@ -542,12 +545,13 @@ class TestServiceServiceCreate:
         payload = ServiceCreateRequest(
             serviceId="svc-1",
             name="dup-service",
-            serviceDescription="desc",
-            hardwareDescription="hw",
+            serviceDescription="A test service used for automated unit tests.",
+            hardwareDescription="test-hw-cluster",
             modelId="abc123",
             modelVersion="1.0",
             endpoint="http://localhost:8000",
             taskType="asr",
+            inferenceEndPoint={"schema": [{"taskType": "asr", "request": {}, "response": {}}]},
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
