@@ -206,29 +206,35 @@ class TestGetUserRolesAccess:
 
     @pytest.mark.asyncio
     async def test_moderator_gets_403(self):
+        import inspect
         from unittest.mock import AsyncMock, MagicMock, patch
         from app.core.exceptions import InsufficientPermissionsError
-        from app.dependencies.permissions import require_any_role
         from app.models.role_name import RoleName
+        from app.routes.role import get_user_roles
 
         moderator = self._make_user(tenant_id=1)
 
-        check = require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)
+        # Read the dependency the route actually declares so re-adding MODERATOR
+        # to require_any_role in the route would make this test pass correctly.
+        dep = inspect.signature(get_user_roles).parameters["_admin"].default.dependency
 
         with patch("app.dependencies.permissions.RoleRepository") as MockRoleRepo:
             MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
 
             with pytest.raises(InsufficientPermissionsError):
-                await check(request=self._mock_request(), current_user=moderator, db=MagicMock())
+                await dep(request=self._mock_request(), current_user=moderator, db=MagicMock())
 
     @pytest.mark.asyncio
     async def test_admin_bypasses_cross_tenant_check(self):
         from unittest.mock import AsyncMock, MagicMock, patch
-        from app.dependencies.tenant_scope import enforce_target_user_same_tenant
         from app.models.role_name import RoleName
+        from app.routes.role import get_user_roles
 
         caller = self._make_user(tenant_id=1)
         target = self._make_user(tenant_id=2)
+
+        mock_svc = MagicMock()
+        mock_svc.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
 
         with patch("app.dependencies.tenant_scope.RoleRepository") as MockRoleRepo, \
              patch("app.dependencies.tenant_scope.UserRepository") as MockUserRepo:
@@ -236,9 +242,9 @@ class TestGetUserRolesAccess:
             MockUserRepo.return_value.get_by_id = AsyncMock(return_value=target)
 
             # Must not raise — ADMIN bypasses tenant scope for cross-tenant target.
-            # bypass_roles=(RoleName.ADMIN) without the trailing comma is not a tuple
-            # and would raise TypeError here, catching the missing-comma bug.
-            await enforce_target_user_same_tenant(
-                self._mock_request(), caller, target.id, MagicMock(),
-                bypass_roles=(RoleName.ADMIN,),
+            # Calls the route function directly so the real bypass_roles literal on
+            # line 82 runs. Without the trailing comma, RoleName.ADMIN iterates as
+            # individual characters so the bypass fails and ADMIN gets 403 TENANT_FORBIDDEN.
+            await get_user_roles(
+                self._mock_request(), target.id, _admin=caller, svc=mock_svc, db=MagicMock()
             )
