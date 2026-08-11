@@ -79,7 +79,7 @@ async def get_user_roles(
     db: AsyncSession = Depends(get_db),
 ):
     await enforce_target_user_same_tenant(
-        request, _admin, user_id, db, bypass_roles=(RoleName.ADMIN)
+        request, _admin, user_id, db, bypass_roles=(RoleName.ADMIN,)
     )
     roles = await svc.get_user_roles(user_id)
     return success_response(data={"user_id": str(user_id), "roles": roles})

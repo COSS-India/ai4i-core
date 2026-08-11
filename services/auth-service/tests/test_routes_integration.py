@@ -188,3 +188,57 @@ class TestTenantAdminRoleRemoval:
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["code"] == "TENANT_FORBIDDEN"
+
+
+class TestGetUserRolesAccess:
+    """GET /auth/roles/user/{user_id}: MODERATOR blocked; ADMIN bypasses tenant scope."""
+
+    def _make_user(self, tenant_id: int):
+        from uuid import uuid4
+        from app.models.user import User
+        return User(id=uuid4(), email="u@example.com", username="u", tenant_id=tenant_id)
+
+    def _mock_request(self):
+        from unittest.mock import MagicMock
+        req = MagicMock()
+        req.state.tenant_id = None
+        return req
+
+    @pytest.mark.asyncio
+    async def test_moderator_gets_403(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.core.exceptions import InsufficientPermissionsError
+        from app.dependencies.permissions import require_any_role
+        from app.models.role_name import RoleName
+
+        moderator = self._make_user(tenant_id=1)
+
+        check = require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)
+
+        with patch("app.dependencies.permissions.RoleRepository") as MockRoleRepo:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
+
+            with pytest.raises(InsufficientPermissionsError):
+                await check(request=self._mock_request(), current_user=moderator, db=MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_admin_bypasses_cross_tenant_check(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.dependencies.tenant_scope import enforce_target_user_same_tenant
+        from app.models.role_name import RoleName
+
+        caller = self._make_user(tenant_id=1)
+        target = self._make_user(tenant_id=2)
+
+        with patch("app.dependencies.tenant_scope.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.tenant_scope.UserRepository") as MockUserRepo:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=target)
+
+            # Must not raise — ADMIN bypasses tenant scope for cross-tenant target.
+            # bypass_roles=(RoleName.ADMIN) without the trailing comma is not a tuple
+            # and would raise TypeError here, catching the missing-comma bug.
+            await enforce_target_user_same_tenant(
+                self._mock_request(), caller, target.id, MagicMock(),
+                bypass_roles=(RoleName.ADMIN,),
+            )
