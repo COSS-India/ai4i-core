@@ -287,26 +287,30 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   }, [activeUserListTenant?.tenant_id]);
 
   // ----- Fetchers -----
+  /** Read tenants without committing React state (for refreshUntil polls). */
+  const loadTenants = async (): Promise<TenantView[]> => {
+    if (isTenantScopedUser) {
+      const tenantId = user?.tenant_id?.trim();
+      if (!tenantId) return [];
+      const tenant = await tenantService.getViewTenant(tenantId);
+      return tenant ? applyTenantPendingSoftDeleteFlags([tenant]) : [];
+    }
+    const res = await tenantService.listTenants();
+    return applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
+  };
+
+  const commitTenants = (rows: TenantView[]) => {
+    setTenants(rows);
+    if (!isTenantScopedUser) {
+      setKnownTenantEmails(collectTenantContactEmails(rows));
+    }
+  };
+
   const handleFetchTenants = async (): Promise<TenantView[]> => {
     setIsLoadingTenants(true);
     try {
-      if (isTenantScopedUser) {
-        const tenantId = user?.tenant_id?.trim();
-        if (!tenantId) {
-          setTenants([]);
-          return [];
-        }
-        const tenant = await tenantService.getViewTenant(tenantId);
-        const rows = tenant
-          ? applyTenantPendingSoftDeleteFlags([tenant])
-          : [];
-        setTenants(rows);
-        return rows;
-      }
-      const res = await tenantService.listTenants();
-      const rows = applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
-      setTenants(rows);
-      setKnownTenantEmails(collectTenantContactEmails(rows));
+      const rows = await loadTenants();
+      commitTenants(rows);
       return rows;
     } catch (err) {
       console.error("Failed to fetch tenants:", err);
@@ -371,14 +375,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const refreshTenantAndUserLists = async (
     tenantIdOverride?: string,
-    expectTenantId?: string,
+    expectReady?: (rows: TenantView[]) => boolean,
   ) => {
     if (isAdmin) {
-      if (expectTenantId) {
-        await refreshUntil(
-          handleFetchTenants,
-          (rows) => rows.some((t) => t.tenant_id === expectTenantId),
-        );
+      if (expectReady) {
+        const rows = await refreshUntil(loadTenants, expectReady);
+        commitTenants(rows);
       } else {
         await handleFetchTenants();
       }
@@ -818,7 +820,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         message: `${created.organisation} is pending activation. The contact will receive a setup link by email.`,
       });
       closeTenantModal();
-      await refreshTenantAndUserLists(created.tenant_id, created.tenant_id);
+      await refreshTenantAndUserLists(
+        created.tenant_id,
+        (rows) => rows.some((t) => t.tenant_id === created.tenant_id),
+      );
     } catch (err) {
       console.error("Failed to register tenant:", err);
       showError(err);
@@ -1129,7 +1134,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
-      await refreshTenantAndUserLists(editTenantForm.tenant_id, editTenantForm.tenant_id);
+      const expectedOrg = patch.organisation;
+      const expectedContact = patch.contact_name;
+      await refreshTenantAndUserLists(editTenantForm.tenant_id, (rows) =>
+        rows.some(
+          (t) =>
+            t.tenant_id === editTenantForm.tenant_id &&
+            t.organisation === expectedOrg &&
+            t.contact_name === expectedContact,
+        ),
+      );
     } catch (err) {
       console.error("Failed to update tenant:", err);
       showError(err);
@@ -1320,9 +1334,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           status: statusUpdateNewStatus as TenantStatus,
         });
         showToast({ type: "success", message: "Tenant status updated" });
-        await refreshTenantAndUserLists(
-          statusUpdateTarget.tenant_id,
-          statusUpdateTarget.tenant_id,
+        const expectedStatus = statusUpdateNewStatus as TenantStatus;
+        const targetTenantId = statusUpdateTarget.tenant_id;
+        await refreshTenantAndUserLists(targetTenantId, (rows) =>
+          rows.some(
+            (t) =>
+              t.tenant_id === targetTenantId &&
+              normalizeTenantStatus(t.status) ===
+                normalizeTenantStatus(expectedStatus),
+          ),
         );
       } else {
         const isActive = statusUpdateNewStatus === TENANT.USER_STATUS.ACTIVE;
@@ -1481,6 +1501,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     setIsSubmittingEditUser(true);
     try {
+      let didSyncDefaultOrgRole = false;
+      let syncedDefaultOrgRole: string | null = null;
       if (isDefaultOrg) {
         await tenantService.updateUser({
           tenant_id: editUserForm.tenant_id,
@@ -1506,6 +1528,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
               nextRole,
               editUserRow?.roles,
             );
+            didSyncDefaultOrgRole = true;
+            syncedDefaultOrgRole = nextRole;
           }
         }
       } else {
@@ -1525,7 +1549,30 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setIsEditUserModalOpen(false);
       setEditUserRow(null);
       setEditUserRolesLoaded(true);
-      await refreshTenantAndUserLists(editUserForm.tenant_id);
+      // Default org role updates may be eventually consistent across endpoints.
+      // Ensure the users list role column is updated to avoid stale UI state.
+      if (didSyncDefaultOrgRole && syncedDefaultOrgRole) {
+        const tenantId = editUserForm.tenant_id;
+        const targetRole = syncedDefaultOrgRole;
+        const finalUsers = await refreshUntil(
+          () => loadTenantUsersForTenant(tenantId),
+          (rows) =>
+            rows.some(
+              (row) =>
+                row.user_id === editUserForm.user_id &&
+                tenantUserHasRole(row, targetRole),
+            ),
+          6,
+          500,
+        );
+        setTenantUsers(finalUsers);
+        setKnownUserEmails(collectUserEmails(finalUsers));
+        if (isAdmin) {
+          await handleFetchTenants();
+        }
+      } else {
+        await refreshTenantAndUserLists(editUserForm.tenant_id);
+      }
     } catch (err) {
       console.error("Failed to update user:", err);
       showError(err);

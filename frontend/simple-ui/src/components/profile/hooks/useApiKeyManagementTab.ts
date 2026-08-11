@@ -314,14 +314,22 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
   };
 
+  /** Keys with at least one enabled-task permission (or no permissions). */
+  const visibleApiKeys = useMemo(
+    () =>
+      allApiKeys.filter((key) => {
+        const perms = key.permissions ?? [];
+        if (perms.length === 0) return true;
+        return perms.some((name) =>
+          isPermissionEnabledForTaskTypes(name, taskTypeNames, inferenceTypes),
+        );
+      }),
+    [allApiKeys, taskTypeNames, inferenceTypes],
+  );
+
   const filteredApiKeys = useMemo(
     () =>
-      [...allApiKeys]
-        .filter((key) =>
-          (key.permissions ?? []).every((name) =>
-            isPermissionEnabledForTaskTypes(name, taskTypeNames, inferenceTypes),
-          ),
-        )
+      [...visibleApiKeys]
         .filter((key) => {
           const search = keyNameSearch.trim().toLowerCase();
           if (search && !(key.key_name ?? "").toLowerCase().includes(search)) {
@@ -338,26 +346,35 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         })
         .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
     [
-      allApiKeys,
+      visibleApiKeys,
       apiKeyAccessContext,
       filterPermission,
       filterActive,
       keyNameSearch,
-      taskTypeNames,
-      inferenceTypes,
     ],
   );
 
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
 
+  /** Hide badges for permissions outside the enabled task-type set. */
+  const visiblePermissionsForKey = useCallback(
+    (key: { permissions?: string[] | null }) =>
+      (key.permissions ?? []).filter((name) =>
+        isPermissionEnabledForTaskTypes(name, taskTypeNames, inferenceTypes),
+      ),
+    [taskTypeNames, inferenceTypes],
+  );
+
   const formatKeyId = (key: AdminAPIKeyWithUserResponse) => key.api_key ?? "—";
 
   return {
     allApiKeys,
+    visibleApiKeysCount: visibleApiKeys.length,
     isLoadingAllApiKeys,
     permissions,
     formatPermission,
+    visiblePermissionsForKey,
     formatKeyId,
     filterPermission,
     setFilterPermission,

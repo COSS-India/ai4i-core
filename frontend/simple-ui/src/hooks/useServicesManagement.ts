@@ -196,32 +196,42 @@ export function useServicesManagement() {
   // re-create fetchServices every render and re-fire the fetch effect below.
   const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
-  const fetchServices = useCallback(async (options?: { silent?: boolean }): Promise<Service[]> => {
-    if (!options?.silent) setIsLoading(true);
+  const fetchServices = useCallback(async (options?: {
+    silent?: boolean;
+    /** When false, return items without writing React state (for refreshUntil polls). */
+    commit?: boolean;
+    taskType?: string;
+    status?: string;
+  }): Promise<Service[]> => {
+    const commit = options?.commit !== false;
+    if (!options?.silent && commit) setIsLoading(true);
     try {
+      const statusFilter = options?.status !== undefined ? options.status : filterStatus;
+      const taskTypeFilter =
+        options?.taskType !== undefined ? options.taskType : filterTaskType;
       const isPublishedFilter =
-        filterStatus === "published"
+        statusFilter === "published"
           ? true
-          : filterStatus === "unpublished"
+          : statusFilter === "unpublished"
             ? false
             : undefined;
 
       // Backend query-filters by the frontend-enabled task types (task_types=),
       // so the list comes back already scoped — no client-side filter here.
       const result = await fetchAllServicesMatchingFilters({
-        taskType: filterTaskType || undefined,
+        taskType: taskTypeFilter || undefined,
         taskTypes: enabledTaskTypesParam,
         isPublished: isPublishedFilter,
       });
-      setServices(result.items);
+      if (commit) setServices(result.items);
       return result.items;
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
       showError(error);
-      setServices([]);
+      if (commit) setServices([]);
       return [];
     } finally {
-      if (!options?.silent) setIsLoading(false);
+      if (!options?.silent && commit) setIsLoading(false);
     }
   }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
 
@@ -503,14 +513,20 @@ export function useServicesManagement() {
           modelDetails?.model_id ||
           "";
 
-        const modelTaskType =
+        const rawModelTaskType =
           modelDetails?.task?.type ||
           modelDetails?.task_type ||
           modelDetails?.taskType ||
           "";
+        // Select options use catalog `taskTypeNames` exactly — resolve
+        // case-insensitively and ignore values outside the enabled set.
+        const resolvedModelTaskType =
+          taskTypeNames.find(
+            (t) => t.trim().toLowerCase() === String(rawModelTaskType).trim().toLowerCase(),
+          ) ?? "";
 
         setFormData((prev) => {
-          const task_type = modelTaskType || prev.task_type || "";
+          const task_type = resolvedModelTaskType || prev.task_type || "";
           const taskIsLlm = task_type.trim().toLowerCase() === "llm";
           // Sanitize to BE service-name charset (no underscore) since name=serviceId.
           const sanitizeLlmId = (s: string) =>
@@ -599,6 +615,9 @@ export function useServicesManagement() {
 
     try {
       let mutatedServiceId = "";
+      let apiReturnedServiceId = "";
+      const submittedTaskType = (formData.task_type || "").trim();
+      const wasCreate = !editingService;
 
       if (editingService) {
         // Edit mode: PATCH only the fields the edit form allows changing
@@ -620,6 +639,7 @@ export function useServicesManagement() {
         // PATCH returns only `{ serviceId }` — do not treat it as a full Service
         await updateService(updateData);
         mutatedServiceId = serviceId;
+        apiReturnedServiceId = serviceId;
         upsertLocalService({
           ...editingService,
           ...updateData,
@@ -661,8 +681,9 @@ export function useServicesManagement() {
         };
 
         const created = await createService(serviceData);
-        mutatedServiceId =
-          created.serviceId || created.service_id || serviceId;
+        apiReturnedServiceId =
+          created.serviceId || created.service_id || "";
+        mutatedServiceId = apiReturnedServiceId || serviceId;
         upsertLocalService({
           ...serviceData,
           serviceId: mutatedServiceId,
@@ -689,15 +710,44 @@ export function useServicesManagement() {
 
       const targetId = mutatedServiceId;
       if (targetId) {
-        try {
-          upsertLocalService(await getServiceById(targetId));
-        } catch (e) {
-          console.warn("Failed to refresh service after create/update:", e);
+        // Only GET by id when the API returned a registry key — typed form
+        // fallbacks can 404 and never satisfy refreshUntil.
+        if (apiReturnedServiceId) {
+          try {
+            upsertLocalService(await getServiceById(apiReturnedServiceId));
+          } catch (e) {
+            console.warn("Failed to refresh service after create/update:", e);
+          }
         }
-        await refreshUntil(
-          () => fetchServices({ silent: true }),
-          (items) => items.some((s) => serviceKey(s) === targetId),
+
+        // Align list filters with the mutated row so refreshUntil can succeed
+        // (creates are unpublished; task type may differ from the active filter).
+        let listTaskType = filterTaskType;
+        let listStatus = filterStatus;
+        if (
+          submittedTaskType &&
+          filterTaskType &&
+          submittedTaskType.toLowerCase() !== filterTaskType.toLowerCase()
+        ) {
+          listTaskType = submittedTaskType;
+          setFilterTaskType(submittedTaskType);
+        }
+        if (wasCreate && filterStatus === "published") {
+          listStatus = "";
+          setFilterStatus("");
+        }
+
+        const items = await refreshUntil(
+          () =>
+            fetchServices({
+              silent: true,
+              commit: false,
+              taskType: listTaskType,
+              status: listStatus,
+            }),
+          (rows) => rows.some((s) => serviceKey(s) === targetId),
         );
+        setServices(items);
       } else {
         await fetchServices({ silent: true });
       }
@@ -1082,9 +1132,9 @@ export function useServicesManagement() {
         setActiveTab(0);
       }
       await refreshUntil(
-        () => fetchServices({ silent: true }),
+        () => fetchServices({ silent: true, commit: false }),
         (items) => !items.some((s) => serviceKey(s) === deletedId),
-      );
+      ).then(setServices);
     } catch (error: any) {
       showError(error);
     } finally {
