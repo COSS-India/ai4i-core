@@ -125,14 +125,15 @@ export default function ApiKeyManagementTab({
         header: "Status",
         cell: (key) => {
           const displayStatus = mgmt.resolveKeyDisplayStatus(key);
-          const inactiveReason = mgmt.getKeyInactiveReason(key);
+          const badgeTooltip =
+            mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key);
           const badge = (
             <Badge colorScheme={getApiKeyDisplayStatusColorScheme(displayStatus)}>
               {formatApiKeyDisplayStatusLabel(displayStatus)}
             </Badge>
           );
-          return inactiveReason ? (
-            <Tooltip label={inactiveReason} placement="top" hasArrow openDelay={300}>
+          return badgeTooltip ? (
+            <Tooltip label={badgeTooltip} placement="top" hasArrow openDelay={300}>
               {badge}
             </Tooltip>
           ) : (
@@ -376,9 +377,11 @@ export default function ApiKeyManagementTab({
                       mgmt.resolveKeyDisplayStatus(mgmt.selectedKeyForView)
                     )}
                   </Badge>
-                  {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) && (
+                  {(mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) ??
+                    mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)) && (
                     <Text fontSize="xs" color="gray.500" mt={2}>
-                      {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView)}
+                      {mgmt.getKeyInactiveReason(mgmt.selectedKeyForView) ??
+                        mgmt.getKeyRevokedReason(mgmt.selectedKeyForView)}
                     </Text>
                   )}
                 </Box>
@@ -464,7 +467,7 @@ export default function ApiKeyManagementTab({
                 <Text fontSize="sm" color="gray.600" mb={3}>
                   Select permissions for this API key
                 </Text>
-                {mgmt.permissions.length > 0 ? (
+                {mgmt.permissionFilterOptions.length > 0 ? (
                   <Box
                     borderWidth="1px"
                     borderRadius="md"
@@ -483,7 +486,7 @@ export default function ApiKeyManagementTab({
                       }
                     >
                       <SimpleGrid columns={2} spacing={3}>
-                        {mgmt.permissions.map((perm) => (
+                        {mgmt.permissionFilterOptions.map((perm) => (
                           <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
                             <Text fontSize="sm">{perm.label}</Text>
                           </Checkbox>

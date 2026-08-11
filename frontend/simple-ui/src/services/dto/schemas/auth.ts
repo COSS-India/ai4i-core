@@ -59,6 +59,16 @@ export const loginResponseSchema = z
   })
   .passthrough();
 
+export const changePasswordResponseSchema = z
+  .object({
+    message: z.string(),
+    access_token: z.string(),
+    refresh_token: z.string(),
+    token_type: z.string(),
+    expires_in: z.number(),
+  })
+  .passthrough();
+
 export const tokenRefreshResponseSchema = z.object({
   access_token: z.string(),
   token_type: z.string(),

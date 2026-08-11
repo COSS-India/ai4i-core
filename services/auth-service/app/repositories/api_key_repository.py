@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import cast, func, or_, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.models.api_key import APIKey
 from app.models.role import Permission
@@ -40,6 +42,32 @@ class APIKeyRepository(BaseRepository):
             select(APIKey).where(APIKey.api_key == api_key_value)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    def _active_key_conditions(*, require_cached_data: bool = False) -> list:
+        """Shared is_active/expiry predicate for every 'still-usable key'
+        query, optionally requiring a cached_data snapshot to be present
+        (the tenant/global cached_data patch-and-remove writers only touch
+        already-backfilled rows)."""
+        conditions = [
+            APIKey.is_active.is_(True),
+            or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
+        ]
+        if require_cached_data:
+            conditions.append(APIKey.cached_data.isnot(None))
+        return conditions
+
+    async def get_by_api_key_if_valid(self, api_key_value: str) -> Optional[APIKey]:
+        """Validation-hot-path lookup: eager-loads user and user.tenant in one
+        query so the caller can check owner/tenant eligibility with zero
+        further queries. Filters is_active/expiry here; owner/tenant
+        eligibility itself stays a service-layer concern."""
+        result = await self._db.execute(
+            select(APIKey)
+            .options(joinedload(APIKey.user).joinedload(User.tenant))
+            .where(APIKey.api_key == api_key_value, *self._active_key_conditions())
+        )
+        return result.unique().scalar_one_or_none()
 
     async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
         if not permission_ids:
@@ -72,15 +100,107 @@ class APIKeyRepository(BaseRepository):
         to issue one query per user to reach the same keys."""
         result = await self._db.execute(
             select(APIKey)
-            .where(
-                APIKey.is_active.is_(True),
-                or_(APIKey.expires_at.is_(None), APIKey.expires_at > datetime.now(timezone.utc)),
-            )
+            .where(*self._active_key_conditions())
             .order_by(APIKey.id)
             .offset(offset)
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def patch_cached_data_field_for_tenant(
+        self, tenant_id: int, field: str, value: str
+    ) -> int:
+        """Set one top-level field inside cached_data for every active,
+        non-expired, already-backfilled key belonging to tenant_id's users —
+        a single UPDATE ... FROM, not a per-key round trip. Keys with no
+        cached_data snapshot yet are skipped (nothing to patch until the
+        backfill/an update populates one). Returns rows touched.
+
+        Mirrors the same field this call's Redis counterpart
+        (CacheService.patch_api_key_cache_field) writes, so budget/quota
+        flags survive a cache eviction instead of resetting on rehydrate.
+        """
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.user_id == User.id,
+                User.tenant_id == tenant_id,
+                *self._active_key_conditions(require_cached_data=True),
+            )
+            .values(
+                cached_data=func.jsonb_set(
+                    APIKey.cached_data, cast([field], ARRAY(TEXT)), func.to_jsonb(value)
+                )
+            )
+        )
+        return result.rowcount
+
+    async def remove_cached_data_fields_for_tenant(
+        self, tenant_id: int, fields: list[str]
+    ) -> int:
+        """Remove multiple top-level fields from cached_data for every active,
+        non-expired, already-backfilled key belonging to tenant_id's users —
+        one UPDATE ... FROM. Mirrors CacheService.delete_api_key_cache_fields."""
+        if not fields:
+            return 0
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.user_id == User.id,
+                User.tenant_id == tenant_id,
+                *self._active_key_conditions(require_cached_data=True),
+            )
+            .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
+        )
+        return result.rowcount
+
+    async def remove_cached_data_fields_globally(
+        self, fields: list[str], *, batch_size: int = 1000
+    ) -> int:
+        """Remove multiple top-level fields from cached_data across every
+        active, non-expired, already-backfilled key in every tenant. Used by
+        the monthly quota-reset cron. Commits per batch and returns the total
+        rows touched.
+
+        Keyset-paginated (id > last_id) rather than a single table-wide UPDATE:
+        at lakhs-of-keys scale one statement would hold row locks on every
+        matching row for its whole duration — blocking concurrent
+        billing/create writes to cached_data — build one oversized
+        transaction (WAL bloat, vacuum stall, replica lag), and risk a
+        statement_timeout rolling back the entire reset. Each batch locks only
+        ~batch_size rows briefly then commits; the ``-`` operator is
+        idempotent, so a mid-run failure resumes cleanly on the next run. This
+        is the one repository method that commits on its own — batching is
+        meaningless otherwise. Mirrors CacheService.delete_api_key_cache_fields_bulk."""
+        if not fields:
+            return 0
+        total = 0
+        last_id = 0
+        while True:
+            ids = (
+                await self._db.execute(
+                    select(APIKey.id)
+                    .where(
+                        APIKey.id > last_id,
+                        *self._active_key_conditions(require_cached_data=True),
+                    )
+                    .order_by(APIKey.id)
+                    .limit(batch_size)
+                )
+            ).scalars().all()
+            if not ids:
+                break
+            result = await self._db.execute(
+                update(APIKey)
+                .where(APIKey.id.in_(ids))
+                .values(cached_data=APIKey.cached_data.op("-")(cast(fields, ARRAY(TEXT))))
+            )
+            await self.commit()
+            total += result.rowcount
+            last_id = ids[-1]
+            if len(ids) < batch_size:
+                break
+        return total
 
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(
@@ -95,3 +215,23 @@ class APIKeyRepository(BaseRepository):
     async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()
+
+    async def revoke_active_for_users(self, user_ids: list[UUID]) -> list[str]:
+        """Bulk-revoke active keys for the given users; return raw key values.
+
+        Single ``UPDATE … RETURNING`` per call (no per-key flush). Callers
+        must ``commit()`` before deleting Redis entries so a failed commit
+        cannot leave Redis empty while ``is_active`` remains true.
+        """
+        if not user_ids:
+            return []
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.user_id.in_(user_ids),
+                APIKey.is_active.is_(True),
+            )
+            .values(is_active=False)
+            .returning(APIKey.api_key)
+        )
+        return list(result.scalars().all())

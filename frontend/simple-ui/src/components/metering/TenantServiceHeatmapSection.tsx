@@ -1,13 +1,13 @@
 import {
   Box,
-  Button,
-  Checkbox,
+  // Button,
+  // Checkbox,
   Flex,
   HStack,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
+  // Menu,
+  // MenuButton,
+  // MenuItem,
+  // MenuList,
   Progress,
   Tbody,
   Td,
@@ -17,8 +17,13 @@ import {
   Tr,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronDownIcon } from "@chakra-ui/icons";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+// import { ChevronDownIcon } from "@chakra-ui/icons";
+import React, {
+  useMemo,
+  // useEffect,
+  // useRef,
+  // useState,
+} from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
 import { formatTenantLabel } from "../../utils/meteringFormatters";
@@ -37,17 +42,24 @@ import MeteringTableText from "./MeteringTableText";
 interface TenantServiceHeatmapSectionProps {
   rows: TenantServiceRow[];
   topN: MeteringTopN;
-  onServicesFilterChange?: (services: string[] | null) => void;
+  // UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
+  // TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
+  // onServicesFilterChange?: (services: string[] | null) => void;
   windowLabel: string;
   tenantOrganisationById?: Record<string, string>;
 }
+
+/** UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
+ * TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
+ */
+// (Select-services UI kept commented below; columns now follow BE response keys.)
 
 const TenantServiceHeatmapSection: React.FC<
   TenantServiceHeatmapSectionProps
 > = ({
   rows,
   topN,
-  onServicesFilterChange,
+  // onServicesFilterChange,
   windowLabel,
   tenantOrganisationById = {},
 }) => {
@@ -55,31 +67,86 @@ const TenantServiceHeatmapSection: React.FC<
   const catalogServices = heatmap.SERVICES;
   const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
 
-  const [selectedServices, setSelectedServices] = useState<Set<string>>(
-    () => new Set(catalogServices.map((s) => s.key)),
-  );
+  /*
+   * UNDO — multi-service "Select services" dropdown:
+   *
+   * const [selectedServices, setSelectedServices] = useState<Set<string>>(
+   *   () => new Set(catalogServices.map((s) => s.key)),
+   * );
+   *
+   * const didMountRef = useRef(false);
+   * useEffect(() => {
+   *   if (!didMountRef.current) {
+   *     didMountRef.current = true;
+   *     return;
+   *   }
+   *   if (!onServicesFilterChange) return;
+   *   const allKeys = catalogServices.map((s) => s.key);
+   *   const isAllSelected =
+   *     allKeys.length > 0 && allKeys.every((key) => selectedServices.has(key));
+   *   onServicesFilterChange(
+   *     isAllSelected
+   *       ? null
+   *       : Array.from(selectedServices).sort((a, b) => a.localeCompare(b)),
+   *   );
+   * }, [selectedServices, onServicesFilterChange, catalogServices]);
+   *
+   * const visibleServices = useMemo(
+   *   () => catalogServices.filter((s) => selectedServices.has(s.key)),
+   *   [catalogServices, selectedServices],
+   * );
+   *
+   * const toggleService = (key: string) => {
+   *   setSelectedServices((prev) => {
+   *     const next = new Set(prev);
+   *     if (next.has(key)) {
+   *       if (next.size > 1) next.delete(key);
+   *     } else {
+   *       next.add(key);
+   *     }
+   *     return next;
+   *   });
+   * };
+   *
+   * const serviceFilter = (
+   *   <Menu closeOnSelect={false}>
+   *     <MenuButton
+   *       as={Button}
+   *       size="sm"
+   *       variant="outline"
+   *       rightIcon={<ChevronDownIcon />}
+   *       bg="white"
+   *       fontWeight="normal"
+   *     >
+   *       Select services ({selectedServices.size})
+   *     </MenuButton>
+   *     <MenuList maxH="320px" overflowY="auto" minW="220px">
+   *       {catalogServices.map((svc) => (
+   *         <MenuItem key={svc.key} onClick={() => toggleService(svc.key)}>
+   *           <Checkbox
+   *             isChecked={selectedServices.has(svc.key)}
+   *             pointerEvents="none"
+   *             mr={2}
+   *             colorScheme="orange"
+   *           />
+   *           {svc.displayName}
+   *         </MenuItem>
+   *       ))}
+   *     </MenuList>
+   *   </Menu>
+   * );
+   */
 
-  const didMountRef = useRef(false);
-  useEffect(() => {
-    if (!didMountRef.current) {
-      didMountRef.current = true;
-      return;
-    }
-    if (!onServicesFilterChange) return;
-    const allKeys = catalogServices.map((s) => s.key);
-    const isAllSelected =
-      allKeys.length > 0 && allKeys.every((key) => selectedServices.has(key));
-    onServicesFilterChange(
-      isAllSelected
-        ? null
-        : Array.from(selectedServices).sort((a, b) => a.localeCompare(b)),
-    );
-  }, [selectedServices, onServicesFilterChange, catalogServices]);
-
-  const visibleServices = useMemo(
-    () => catalogServices.filter((s) => selectedServices.has(s.key)),
-    [catalogServices, selectedServices],
-  );
+  // Columns follow whatever service keys the BE heatmap payload includes
+  // (ENABLED_TASK_TYPES today may be LLM-only; later LLM+others without FE changes).
+  const visibleServices = useMemo(() => {
+    const present = new Set<string>();
+    rows.forEach((row) => {
+      Object.keys(row.services ?? {}).forEach((key) => present.add(key));
+    });
+    if (present.size === 0) return [...catalogServices];
+    return catalogServices.filter((s) => present.has(s.key));
+  }, [rows, catalogServices]);
 
   const maxCellValue = useMemo(() => {
     let max = 0;
@@ -97,57 +164,18 @@ const TenantServiceHeatmapSection: React.FC<
     [rows],
   );
 
-  const toggleService = (key: string) => {
-    setSelectedServices((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        if (next.size > 1) next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  };
-
-  const serviceFilter = (
-    <Menu closeOnSelect={false}>
-      <MenuButton
-        as={Button}
-        size="sm"
-        variant="outline"
-        rightIcon={<ChevronDownIcon />}
-        bg="white"
-        fontWeight="normal"
-      >
-        Select services ({selectedServices.size})
-      </MenuButton>
-      <MenuList maxH="320px" overflowY="auto" minW="220px">
-        {catalogServices.map((svc) => (
-          <MenuItem key={svc.key} onClick={() => toggleService(svc.key)}>
-            <Checkbox
-              isChecked={selectedServices.has(svc.key)}
-              pointerEvents="none"
-              mr={2}
-              colorScheme="orange"
-            />
-            {svc.displayName}
-          </MenuItem>
-        ))}
-      </MenuList>
-    </Menu>
-  );
-
   if (!rows.length) {
     return (
       <MeteringSectionCard
         title={heatmap.TITLE}
         subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
         sectionLabel
-        action={
-          <HStack spacing={3} flexWrap="wrap">
-            {serviceFilter}
-          </HStack>
-        }
+        // UNDO: restore selector action
+        // action={
+        //   <HStack spacing={3} flexWrap="wrap">
+        //     {serviceFilter}
+        //   </HStack>
+        // }
       >
         <MeteringEmptyState height={200} message={heatmap.EMPTY} />
       </MeteringSectionCard>
@@ -159,13 +187,14 @@ const TenantServiceHeatmapSection: React.FC<
       title={heatmap.TITLE}
       subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
       sectionLabel
-      action={
-        <HStack spacing={3} flexWrap="wrap" justify="flex-end">
-          {serviceFilter}
-        </HStack>
-      }
+      // UNDO: restore selector action
+      // action={
+      //   <HStack spacing={3} flexWrap="wrap" justify="flex-end">
+      //     {serviceFilter}
+      //   </HStack>
+      // }
     >
-      <MeteringDataTable>
+      <MeteringDataTable w="auto" minW="100%">
         <Thead>
           <Tr>
             <Th
@@ -174,6 +203,7 @@ const TenantServiceHeatmapSection: React.FC<
               color="gray.500"
               bg="gray.50"
               minW="220px"
+              w="50%"
               position="sticky"
               left={0}
               zIndex={1}
@@ -188,8 +218,9 @@ const TenantServiceHeatmapSection: React.FC<
                 color="gray.500"
                 bg="gray.50"
                 isNumeric
-                px={2}
-                minW="72px"
+                px={3}
+                minW="120px"
+                w="25%"
               >
                 <VStack spacing={1} align="center">
                   <Box
@@ -208,7 +239,8 @@ const TenantServiceHeatmapSection: React.FC<
               color="gray.500"
               bg="gray.50"
               isNumeric
-              minW="100px"
+              minW="120px"
+              w="25%"
             >
               <VStack spacing={0} align="flex-end">
                 <Text>{heatmap.TABLE_TOTAL}</Text>
@@ -263,7 +295,7 @@ const TenantServiceHeatmapSection: React.FC<
                     isNumeric
                     fontSize="sm"
                     fontWeight="medium"
-                    px={2}
+                    px={3}
                     bg={heatmapIntensityColor(intensity)}
                     color={heatmapTextColor(intensity)}
                   >

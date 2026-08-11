@@ -83,15 +83,15 @@ class ModelRepository:
     async def count_models(
         self,
         *,
-        task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         version_status: Optional[str] = None,
         model_name: Optional[str] = None,
         created_by: Optional[str] = None,
     ) -> int:
         """Return the total number of models matching the given filters (no pagination)."""
         stmt = select(func.count(Model.id))
-        if task_type:
-            stmt = stmt.where(Model.task["type"].astext == task_type)
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
         if version_status == "active":
@@ -106,7 +106,7 @@ class ModelRepository:
     async def list_models(
         self,
         *,
-        task_type: Optional[str] = None,
+        task_types: Optional[List[str]] = None,
         include_deprecated: bool = True,
         version_status: Optional[str] = None,
         model_name: Optional[str] = None,
@@ -119,8 +119,8 @@ class ModelRepository:
             else_=1,
         )
         stmt = select(Model)
-        if task_type:
-            stmt = stmt.where(Model.task["type"].astext == task_type)
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
         # version_status takes precedence over include_deprecated

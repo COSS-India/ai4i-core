@@ -113,7 +113,7 @@ class InferenceServerResolver:
         Normalize MMS response to internal service info format.
 
         Real MMS returns {"success": true, "data": {...camelCase...}} with base endpoint
-        and inference path split across data.endpoint and data.model.inferenceEndPoint.schema.endpoint.
+        and inference path split across data.endpoint and data.model.schema.model_name.
         Flat shape (no envelope) is passed through as-is for legacy/fallback.
 
         Returns:
@@ -123,18 +123,31 @@ class InferenceServerResolver:
         if "success" in raw and "data" in raw:
             data = raw["data"]
             model_block = data.get("model") or {}
-            inference_endpoint = model_block.get("inferenceEndPoint", {})
-            schema = inference_endpoint.get("schema", {})
+            schema = model_block.get("schema") or {}
 
             base_endpoint = data.get("endpoint", "").rstrip("/")
-            model_name = schema.get("model_name", "")
-            endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
 
-            # adapter_config can be at data level or nested under inferenceEndPoint
+            model_name = schema.get("model_name", "")
+            # data.taskType is unset on some legacy service records; fall back
+            # to the nested model.task.type, which is always populated.
+            task_type = (
+                data.get("taskType")
+                or (model_block.get("task") or {}).get("type")
+                or ""
+            ).strip().lower()
+            # LLM services are OpenAI-compatible — the caller appends a path
+            # like /v1/chat/completions, so the base must stay bare here.
+            # Only Triton-native task types get the /v2/models/.../infer template.
+            if model_name and task_type != "llm":
+                endpoint = f"{base_endpoint}/v2/models/{model_name}/infer"
+            else:
+                endpoint = base_endpoint
+
+            # adapter_config can be at data level or at model top-level
             adapter_config = (
                 data.get("adapter_config")
-                or inference_endpoint.get("adapter_config")
-                or inference_endpoint.get("adapterConfig")
+                or model_block.get("adapterConfig")
+                or model_block.get("adapter_config")
             )
             if not adapter_config:
                 logger.warning(

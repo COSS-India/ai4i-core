@@ -1,7 +1,7 @@
 """Tenant tier assignment service."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -244,6 +244,11 @@ async def assign_tier(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="effective_to must be after effective_from",
+        )
+    if body.effective_to - body.effective_from < timedelta(days=1):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Effective From and Effective To cannot be the same date.",
         )
 
     now = datetime.now(timezone.utc)

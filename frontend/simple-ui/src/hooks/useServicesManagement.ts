@@ -84,6 +84,7 @@ export function useServicesManagement() {
   const [existingServiceIds, setExistingServiceIds] = useState<string[]>([]);
   const [pricePerUnit, setPricePerUnit] = useState<string>("");
   const [unitSize, setUnitSize] = useState<string>("");
+  const [currency, setCurrency] = useState<string>("INR");
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,7 +102,19 @@ export function useServicesManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
-  const { taskTypeNames, unitByTaskType } = useInferenceTypes();
+  const {
+    taskTypeNames,
+    unitByTaskType,
+    isLoading: isLoadingTaskTypes,
+  } = useInferenceTypes();
+  const didInitTaskTypeFilter = useRef(false);
+  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
+  useEffect(() => {
+    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
+    didInitTaskTypeFilter.current = true;
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setTaskTypeFilterReady(true);
+  }, [isLoadingTaskTypes, taskTypeNames]);
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">(
     "asc",
@@ -147,11 +160,11 @@ export function useServicesManagement() {
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
   const hasActiveFilters =
-    filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+    filterStatus !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
-    setFilterTaskType("");
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
   };
 
   const router = useRouter();
@@ -178,6 +191,10 @@ export function useServicesManagement() {
     useState<ModelDetails | null>(null);
 
   // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
+  // Primitive dep (joined string), not the array — an unstable array ref would
+  // re-create fetchServices every render and re-fire the fetch effect below.
+  const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
+
   const fetchServices = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setIsLoading(true);
     try {
@@ -188,8 +205,11 @@ export function useServicesManagement() {
             ? false
             : undefined;
 
+      // Backend query-filters by the frontend-enabled task types (task_types=),
+      // so the list comes back already scoped — no client-side filter here.
       const result = await fetchAllServicesMatchingFilters({
         taskType: filterTaskType || undefined,
+        taskTypes: enabledTaskTypesParam,
         isPublished: isPublishedFilter,
       });
       setServices(result.items);
@@ -200,7 +220,7 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus]);
+  }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
 
   /**
    * Keep registry + detail UI in sync after publish/unpublish.
@@ -241,8 +261,9 @@ export function useServicesManagement() {
   );
 
   useEffect(() => {
+    if (!taskTypeFilterReady) return;
     fetchServices();
-  }, [fetchServices]);
+  }, [fetchServices, taskTypeFilterReady]);
 
   // Fetch all existing serviceIds (unfiltered) for duplicate detection in the create form
   const loadExistingServiceIds = useCallback(async () => {
@@ -416,6 +437,8 @@ export function useServicesManagement() {
     }));
   };
 
+  const isLlmTaskType = (formData.task_type || "").trim().toLowerCase() === "llm";
+
   const handleTaskTypeChange = (taskType: string) => {
     setFormData((prev) => ({
       ...prev,
@@ -424,6 +447,9 @@ export function useServicesManagement() {
       modelName: "",
       modelSubmissionDate: "",
       modelVersion: "",
+      // LLM: Service Name is derived from Service ID — clear free-text name
+      name: taskType.trim().toLowerCase() === "llm" ? "" : prev.name,
+      serviceId: "",
     }));
   };
 
@@ -458,13 +484,46 @@ export function useServicesManagement() {
           modelDetails?.model_id ||
           "";
 
-        setFormData((prev) => ({
-          ...prev,
-          modelId: modelId,
-          modelName: modelName,
-          modelSubmissionDate: modelSubmissionDate,
-          modelVersion: modelVersion,
-        }));
+        setFormData((prev) => {
+          const taskIsLlm =
+            (prev.task_type || "").trim().toLowerCase() === "llm";
+          // AI4IDS-2692: LLM Service ID pre-filled with "{modelName}/"
+          // Sanitize to BE service-name charset (no underscore) since name=serviceId.
+          const sanitizeLlmId = (s: string) =>
+            s.replaceAll(/[^a-zA-Z0-9/-]/g, "");
+          const llmPrefix = modelName
+            ? `${sanitizeLlmId(modelName)}/`
+            : "";
+          let nextServiceId = prev.serviceId || "";
+          if (taskIsLlm && !editingService) {
+            const prevPrefix = prev.modelName
+              ? `${sanitizeLlmId(prev.modelName)}/`
+              : "";
+            if (
+              !nextServiceId ||
+              nextServiceId === prevPrefix ||
+              (prevPrefix && nextServiceId.startsWith(prevPrefix))
+            ) {
+              // Still on the auto-generated prefix pattern — swap prefix, keep suffix
+              const suffix =
+                prevPrefix && nextServiceId.startsWith(prevPrefix)
+                  ? nextServiceId.slice(prevPrefix.length)
+                  : "";
+              nextServiceId = `${llmPrefix}${sanitizeLlmId(suffix)}`;
+            }
+            // else: user hand-edited away from the previous model prefix — preserve
+          }
+          return {
+            ...prev,
+            modelId: modelId,
+            modelName: modelName,
+            modelSubmissionDate: modelSubmissionDate,
+            modelVersion: modelVersion,
+            ...(taskIsLlm && !editingService
+              ? { serviceId: nextServiceId }
+              : {}),
+          };
+        });
       } catch (error: any) {
         console.error("Failed to fetch model details:", error);
         showToast({
@@ -500,6 +559,7 @@ export function useServicesManagement() {
     setFormData(emptyServiceForm());
     setPricePerUnit("");
     setUnitSize("");
+    setCurrency("INR");
     setSelectedTiers([]);
     setPreselectedModelFromQuery(null);
   };
@@ -515,15 +575,20 @@ export function useServicesManagement() {
     try {
       if (editingService) {
         // Edit mode: PATCH only the fields the edit form allows changing
-        await updateService({
+        const updateData: Partial<Service> = {
           serviceId: editingService.serviceId || editingService.service_id,
           serviceDescription: formData.serviceDescription,
-          endpoint: formData.endpoint,
           task_type: formData.task_type,
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds: selectedTiers,
-        });
+        };
+        const storedEndpoint =
+          editingService.endpoint || editingService.endpoint_url || "";
+        if (formData.endpoint !== storedEndpoint) {
+          updateData.endpoint = formData.endpoint;
+        }
+        await updateService(updateData);
 
         showToast({
           type: "success",
@@ -532,6 +597,12 @@ export function useServicesManagement() {
       } else {
         // Use the user-provided serviceId.
         const serviceId = formData.serviceId?.trim() || "";
+        const taskIsLlm =
+          (formData.task_type || "").trim().toLowerCase() === "llm";
+        // AI4IDS-2692: for LLM, Service ID is copied to Service Name
+        const serviceName = taskIsLlm
+          ? serviceId
+          : formData.name?.trim() || "";
 
         // Prepare service data with the user-provided serviceId.
         // Do not send modelSubmissionDate because backend owns this field.
@@ -541,6 +612,7 @@ export function useServicesManagement() {
 
         const serviceData: Partial<Service> = {
           ...serviceFormData,
+          name: serviceName,
           serviceId: serviceId,
           publishedOn: Math.floor(Date.now() / 1000),
           hardwareDescription: "Default hardware",
@@ -583,6 +655,7 @@ export function useServicesManagement() {
     }
   };
 
+  // Unit type is derived from task type (billing is server-driven via inference_types).
   const unitType = unitByTaskType[formData.task_type || ""] || "";
 
   const viewServiceTaskType =
@@ -617,15 +690,19 @@ export function useServicesManagement() {
     existingServiceIds.includes(formData.serviceId.trim());
   const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
 
+  // LLM: Service Name is derived from Service ID (not shown). Non-LLM: both required.
+  const hasRequiredServiceIdentity = isLlmTaskType
+    ? !!formData.serviceId?.trim()
+    : !!formData.name?.trim() && !!formData.serviceId?.trim();
+
   const canCreateService =
-    !!formData.name?.trim() &&
-    !!formData.serviceId?.trim() &&
+    hasRequiredServiceIdentity &&
     !serviceIdExists &&
-    !!formData.serviceDescription?.trim() &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
     !!pricePerUnit.trim() &&
+    !!currency.trim() &&
     isUnitSizeValid &&
     selectedTiers.length > 0;
 
@@ -1008,11 +1085,14 @@ export function useServicesManagement() {
     setPricePerUnit,
     unitSize,
     setUnitSize,
+    currency,
+    setCurrency,
     selectedTiers,
     toggleTier,
     availableTiers,
     isCreateFormModelSelected,
     canCreateService,
+    isLlmTaskType,
     serviceIdError,
     isSubmitting,
     handleSubmit,

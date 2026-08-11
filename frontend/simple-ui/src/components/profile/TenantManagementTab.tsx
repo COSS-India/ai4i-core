@@ -62,6 +62,7 @@ import {
   type TenantTierAssignment,
   adjustTenantBudget,
 } from "../../services/tierManagementService";
+import { fetchAllServicesMatchingFilters } from "../../services/servicesManagementService";
 import {
   FiArrowLeft,
   FiCheckCircle,
@@ -82,12 +83,16 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
+import ConsentCheckbox, {
+  getConsentValidationError,
+} from "../common/ConsentCheckbox";
 import AdminDataTable, {
   TableSearchField,
   TableSelectField,
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
+import TierSelect from "./TierSelect";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import {
   TENANT,
@@ -100,9 +105,32 @@ import {
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
+import {
+  DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
+  isDefaultTenant,
+} from "../../utils/defaultTenant";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
+
+/** Shown when assigning/reassigning a tier that has no mapped services. */
+const TIER_NO_SERVICES_MSG =
+  "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
+
+/**
+ * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
+ * Uses local calendar day bounds so "Effective To = today" stays active
+ * through the end of that day (not midnight UTC, which expires immediately).
+ */
+function dateInputToStartOfDayIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+}
+
+function dateInputToEndOfDayIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+}
 
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
@@ -167,6 +195,26 @@ export default function TenantManagementTab({
   const toast = useToast();
   const queryClient = useQueryClient();
 
+  // Create Tenant modal — consent checkbox state
+  const [tenantConsentAccepted, setTenantConsentAccepted] = useState(false);
+  const [tenantConsentError, setTenantConsentError] = useState("");
+
+  // Reset consent whenever the Create Tenant modal opens or closes.
+  useEffect(() => {
+    setTenantConsentAccepted(false);
+    setTenantConsentError("");
+  }, [tm.isTenantModalOpen]);
+
+  // Add Tenant User modal — consent checkbox state
+  const [userConsentAccepted, setUserConsentAccepted] = useState(false);
+  const [userConsentError, setUserConsentError] = useState("");
+
+  // Reset consent whenever the Add Tenant User modal opens or closes.
+  useEffect(() => {
+    setUserConsentAccepted(false);
+    setUserConsentError("");
+  }, [tm.isUserModalOpen]);
+
   // Assign Tier modal state
   const [assignTierTenant, setAssignTierTenant] = useState<TenantView | null>(
     null,
@@ -182,6 +230,11 @@ export default function TenantManagementTab({
     onOpen: onAssignTierOpen,
     onClose: onAssignTierClose,
   } = useDisclosure();
+  const {
+    isOpen: isViewTierOpen,
+    onOpen: onViewTierOpen,
+    onClose: onViewTierClose,
+  } = useDisclosure();
 
   const tiersQuery = useQuery({
     queryKey: ["tiers"],
@@ -189,6 +242,25 @@ export default function TenantManagementTab({
     staleTime: 5 * 60_000,
   });
   const tierOptions = tiersQuery.data?.data ?? [];
+
+  // Shared with Tier Management so service↔tier mappings stay consistent.
+  // Used to block assigning a tier that has no services mapped.
+  const servicesForTiersQuery = useQuery({
+    queryKey: ["services-for-tiers"],
+    queryFn: () => fetchAllServicesMatchingFilters({}),
+    staleTime: 60_000,
+    enabled: isAdmin && (isAssignTierOpen || isViewTierOpen),
+  });
+  const tierIdsWithServices = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of servicesForTiersQuery.data?.items ?? []) {
+      for (const tierId of s.tierIds ?? []) {
+        if (tierId) ids.add(String(tierId));
+      }
+    }
+    return ids;
+  }, [servicesForTiersQuery.data]);
+  const serviceMappingsReady = servicesForTiersQuery.isSuccess;
 
   const tenantTiersQuery = useQuery({
     queryKey: ["tenant-tiers"],
@@ -214,11 +286,53 @@ export default function TenantManagementTab({
   );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
-  const {
-    isOpen: isViewTierOpen,
-    onOpen: onViewTierOpen,
-    onClose: onViewTierClose,
-  } = useDisclosure();
+
+  const userFormRoleOptions = useMemo(() => {
+    const tenantId =
+      tm.lockedUserFormTenantId ?? tm.userForm.tenant_id?.trim() ?? "";
+    const selected = tm.tenants.find((t) => t.tenant_id === tenantId);
+    if (selected && isDefaultTenant(selected)) {
+      return DEFAULT_ORG_USER_FORM_ROLE_OPTIONS;
+    }
+    return TENANT_USER_ROLE_OPTIONS;
+  }, [tm.lockedUserFormTenantId, tm.userForm.tenant_id, tm.tenants]);
+
+  const editUserRoleOptions = useMemo((): ReadonlyArray<{
+    value: string;
+    label: string;
+  }> => {
+    const tenant = tm.tenants.find(
+      (t) => t.tenant_id === tm.editUserForm.tenant_id,
+    );
+    const isDefaultOrg =
+      (tenant && isDefaultTenant(tenant)) ||
+      (tm.tenantDetailView && isDefaultTenant(tm.tenantDetailView)) ||
+      tm.isDefaultTenantUsersView;
+    if (!isDefaultOrg) return TENANT_USER_ROLE_OPTIONS;
+
+    const current = (tm.editUserForm.role || "").trim().toUpperCase();
+    if (
+      current &&
+      !DEFAULT_ORG_USER_FORM_ROLE_OPTIONS.some((o) => o.value === current)
+    ) {
+      // Preserve non-assignable current roles (e.g. Admin) so profile-only edits
+      // do not force a demotion.
+      return [
+        {
+          value: current,
+          label: current === "ADMIN" ? "Admin" : current,
+        },
+        ...DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
+      ];
+    }
+    return DEFAULT_ORG_USER_FORM_ROLE_OPTIONS;
+  }, [
+    tm.tenants,
+    tm.editUserForm.tenant_id,
+    tm.editUserForm.role,
+    tm.tenantDetailView,
+    tm.isDefaultTenantUsersView,
+  ]);
 
   const handleCloseManagePlan = () => {
     if (isSavingPlan) return;
@@ -236,6 +350,41 @@ export default function TenantManagementTab({
 
   const handleSaveManagePlan = async () => {
     if (!viewTierTenant || !manageTierId) return;
+
+    // Wait for service mapping data before allowing reassignment to a
+    // potentially service-less tier (avoids ghost / contradictory state).
+    if (servicesForTiersQuery.isLoading || servicesForTiersQuery.isFetching) {
+      toast({
+        title: "Loading services",
+        description: "Please wait while service mappings are loaded.",
+        status: "info",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (servicesForTiersQuery.isError) {
+      toast({
+        title: "Cannot update plan",
+        description:
+          "Unable to verify service mappings for this Tier. Please refresh and try again.",
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!tierIdsWithServices.has(String(manageTierId))) {
+      toast({
+        title: "Cannot update plan",
+        description: TIER_NO_SERVICES_MSG,
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+      return;
+    }
+
     setIsSavingPlan(true);
     try {
       await reassignTenantTier({
@@ -306,6 +455,38 @@ export default function TenantManagementTab({
       return;
     }
 
+    // Block assignment of tiers with no mapped services before calling the API,
+    // so we never create a partial/ghost assignment or show misleading feedback.
+    if (servicesForTiersQuery.isLoading || servicesForTiersQuery.isFetching) {
+      setAssignTierError(
+        "Loading service mappings… please try again in a moment.",
+      );
+      return;
+    }
+    if (servicesForTiersQuery.isError) {
+      setAssignTierError(
+        "Unable to verify service mappings for this Tier. Please refresh and try again.",
+      );
+      return;
+    }
+    if (!tierIdsWithServices.has(String(assignTierId))) {
+      setAssignTierError(TIER_NO_SERVICES_MSG);
+      return;
+    }
+
+    if (assignEffectiveFrom === assignEffectiveTo) {
+      setAssignTierError(
+        "Effective From and Effective To cannot be the same date.",
+      );
+      return;
+    }
+    const effectiveFromIso = dateInputToStartOfDayIso(assignEffectiveFrom);
+    const effectiveToIso = dateInputToEndOfDayIso(assignEffectiveTo);
+    if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
+      setAssignTierError("Effective To must be after Effective From.");
+      return;
+    }
+
     setIsAssigning(true);
     setAssignTierError(null);
     try {
@@ -313,8 +494,8 @@ export default function TenantManagementTab({
         tenant_id: String(assignTierTenant.tenant_id),
         tier_id: assignTierId,
         budget: budgetValue,
-        effective_from: new Date(assignEffectiveFrom).toISOString(),
-        effective_to: new Date(assignEffectiveTo).toISOString(),
+        effective_from: effectiveFromIso,
+        effective_to: effectiveToIso,
       });
       queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
       toast({
@@ -342,7 +523,15 @@ export default function TenantManagementTab({
         message = detail;
       }
       message = message ?? err?.message ?? "An error occurred.";
-      setAssignTierError(String(message));
+      const messageStr = String(message);
+      // Map overlapping-period 409 into a clearer failure (not a success-sounding state).
+      if (/already has a tier assignment overlapping/i.test(messageStr)) {
+        setAssignTierError(
+          "This tenant already has a tier assignment for the selected date range. Choose different dates or manage the existing assignment.",
+        );
+      } else {
+        setAssignTierError(messageStr);
+      }
     } finally {
       setIsAssigning(false);
     }
@@ -441,9 +630,21 @@ export default function TenantManagementTab({
               hasArrow
               openDelay={300}
             >
-              <Text fontWeight="medium" fontSize="sm" isTruncated maxW="340px">
-                {t.organisation}
-              </Text>
+              <HStack spacing={2} minW={0} maxW="340px">
+                <Text fontWeight="medium" fontSize="sm" isTruncated>
+                  {t.organisation}
+                </Text>
+                {isDefaultTenant(t) && (
+                  <Badge
+                    colorScheme="purple"
+                    fontSize="0.65rem"
+                    flexShrink={0}
+                    textTransform="none"
+                  >
+                    Default
+                  </Badge>
+                )}
+              </HStack>
             </Tooltip>
           </HStack>
         ),
@@ -729,6 +930,15 @@ export default function TenantManagementTab({
                   {t.organisation}
                 </Heading>
               </Tooltip>
+              {isDefaultTenant(t) && (
+                <Badge
+                  colorScheme="purple"
+                  flexShrink={0}
+                  textTransform="none"
+                >
+                  Default
+                </Badge>
+              )}
               <Badge
                 colorScheme={getTenantStatusColorScheme(t.status)}
                 flexShrink={0}
@@ -929,10 +1139,11 @@ export default function TenantManagementTab({
 
   function renderTenantRowActions(t: TenantView) {
     const stopRowClick = (e: React.MouseEvent) => e.stopPropagation();
+    const isProtectedDefaultOrg = isDefaultTenant(t);
 
     const items: RowActionMenuItem[] = (() => {
       if (isTenantStatus(t.status, TENANT.STATUS.PENDING)) {
-        return [
+        const pendingItems: RowActionMenuItem[] = [
           {
             key: "resend-verification",
             label: "Resend verification email",
@@ -942,7 +1153,9 @@ export default function TenantManagementTab({
             icon: <FiMail size={16} />,
             isDisabled: tm.resendVerificationTenantId === t.tenant_id,
           },
-          {
+        ];
+        if (!isProtectedDefaultOrg) {
+          pendingItems.push({
             key: "deactivate",
             label: "Deactivate",
             onSelect: () =>
@@ -950,11 +1163,13 @@ export default function TenantManagementTab({
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
-          },
-        ];
+          });
+        }
+        return pendingItems;
       }
 
       if (isTenantStatus(t.status, TENANT.STATUS.ACTIVE)) {
+        if (isProtectedDefaultOrg) return [];
         return [
           {
             key: "suspend",
@@ -978,7 +1193,7 @@ export default function TenantManagementTab({
       }
 
       if (isTenantStatus(t.status, TENANT.STATUS.SUSPENDED)) {
-        return [
+        const suspendedItems: RowActionMenuItem[] = [
           {
             key: "activate",
             label: "Activate",
@@ -987,7 +1202,9 @@ export default function TenantManagementTab({
             hoverBg: "green.50",
             icon: <FiPower size={16} />,
           },
-          {
+        ];
+        if (!isProtectedDefaultOrg) {
+          suspendedItems.push({
             key: "deactivate",
             label: "Deactivate",
             onSelect: () =>
@@ -995,8 +1212,9 @@ export default function TenantManagementTab({
             color: "red.600",
             hoverBg: "red.50",
             icon: <DeleteIcon boxSize={4} />,
-          },
-        ];
+          });
+        }
+        return suspendedItems;
       }
 
       // DEACTIVATED — previous behavior (Activate) unless this tenant was
@@ -1296,6 +1514,14 @@ export default function TenantManagementTab({
                   {tm.tenantFormErrors.phone_number}
                 </FormErrorMessage>
               </FormControl>
+              <ConsentCheckbox
+                isChecked={tenantConsentAccepted}
+                onChange={(checked) => {
+                  setTenantConsentAccepted(checked);
+                  if (checked) setTenantConsentError("");
+                }}
+                error={tenantConsentError}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -1304,9 +1530,16 @@ export default function TenantManagementTab({
             </Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleRegisterTenant}
+              onClick={() => {
+                const consentError = getConsentValidationError(tenantConsentAccepted);
+                if (consentError) {
+                  setTenantConsentError(consentError);
+                  return;
+                }
+                tm.handleRegisterTenant();
+              }}
               isLoading={tm.isSubmittingTenant}
-              isDisabled={!tm.canSubmitTenantForm}
+              isDisabled={!tm.canSubmitTenantForm || !tenantConsentAccepted}
             >
               Create
             </Button>
@@ -1543,7 +1776,7 @@ export default function TenantManagementTab({
                     })
                   }
                 >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {userFormRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -1560,6 +1793,14 @@ export default function TenantManagementTab({
                   {tm.userFormErrors.phone_number}
                 </FormErrorMessage>
               </FormControl>
+              <ConsentCheckbox
+                isChecked={userConsentAccepted}
+                onChange={(checked) => {
+                  setUserConsentAccepted(checked);
+                  if (checked) setUserConsentError("");
+                }}
+                error={userConsentError}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -1568,9 +1809,16 @@ export default function TenantManagementTab({
             </Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleRegisterUser}
+              onClick={() => {
+                const consentError = getConsentValidationError(userConsentAccepted);
+                if (consentError) {
+                  setUserConsentError(consentError);
+                  return;
+                }
+                tm.handleRegisterUser();
+              }}
               isLoading={tm.isSubmittingUser}
-              isDisabled={!tm.canSubmitUserForm}
+              isDisabled={!tm.canSubmitUserForm || !userConsentAccepted}
             >
               Add
             </Button>
@@ -1634,6 +1882,7 @@ export default function TenantManagementTab({
                 <FormLabel>Role</FormLabel>
                 <Select
                   value={tm.editUserForm.role}
+                  isDisabled={!tm.editUserRolesLoaded}
                   onChange={(e) =>
                     tm.setEditUserForm({
                       ...tm.editUserForm,
@@ -1641,12 +1890,17 @@ export default function TenantManagementTab({
                     })
                   }
                 >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {editUserRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
                   ))}
                 </Select>
+                {!tm.editUserRolesLoaded && (
+                  <FormHelperText>
+                    Roles could not be loaded; role changes are disabled.
+                  </FormHelperText>
+                )}
               </FormControl>
               <FormControl
                 isInvalid={Boolean(tm.editUserFormErrors.phone_number)}
@@ -1756,6 +2010,31 @@ export default function TenantManagementTab({
     return formatTenantStatusLabel(status);
   }
 
+  function getTenantStatusConfirmBody(
+    currentStatus: string,
+    newStatus: string,
+  ): string | null {
+    if (isTenantStatus(newStatus, TENANT.STATUS.SUSPENDED)) {
+      return "API keys become Inactive. Reactivating the tenant restores the same keys to Active.";
+    }
+    if (isTenantStatus(newStatus, TENANT.STATUS.DEACTIVATED)) {
+      return "API keys are Revoked. After reactivation, an admin must create a new key.";
+    }
+    if (
+      isTenantStatus(newStatus, TENANT.STATUS.ACTIVE) &&
+      isTenantStatus(currentStatus, TENANT.STATUS.SUSPENDED)
+    ) {
+      return "Inactive API keys will automatically resume as Active.";
+    }
+    if (
+      isTenantStatus(newStatus, TENANT.STATUS.ACTIVE) &&
+      isTenantStatus(currentStatus, TENANT.STATUS.DEACTIVATED)
+    ) {
+      return "Previously revoked API keys are not restored. Create a new key if needed.";
+    }
+    return null;
+  }
+
   function renderStatusConfirmDialog() {
     const target = tm.statusUpdateTarget;
     const isOpen = tm.isStatusDialogOpen && Boolean(target);
@@ -1764,13 +2043,28 @@ export default function TenantManagementTab({
       target?.type,
       tm.statusUpdateNewStatus,
     );
+    const apiKeyNote =
+      target?.type === "tenant"
+        ? getTenantStatusConfirmBody(
+            target.currentStatus,
+            tm.statusUpdateNewStatus,
+          )
+        : null;
+    const body = apiKeyNote ? (
+      <VStack align="stretch" spacing={2}>
+        <Text>Set {targetLabel} status to &quot;{statusLabel}&quot;?</Text>
+        <Text>{apiKeyNote}</Text>
+      </VStack>
+    ) : (
+      `Set ${targetLabel} status to "${statusLabel}"?`
+    );
     return (
       <ConfirmDialog
         isOpen={isOpen}
         onClose={tm.closeStatusDialog}
         onConfirm={tm.handleConfirmStatusUpdate}
         title={`Change ${targetLabel} status`}
-        body={`Set ${targetLabel} status to "${statusLabel}"?`}
+        body={body}
         confirmLabel="Update"
         confirmColorScheme="blue"
         isConfirmLoading={tm.isSubmittingStatus}
@@ -1800,12 +2094,19 @@ export default function TenantManagementTab({
     const isBudgetInvalid =
       assignBudget.trim() !== "" &&
       (!Number.isFinite(budgetNum) || budgetNum <= 0);
+    const selectedTierHasNoServices =
+      !!assignTierId &&
+      serviceMappingsReady &&
+      !tierIdsWithServices.has(String(assignTierId));
     const canAssign =
       !!assignTierId &&
       !!assignBudget.trim() &&
       !isBudgetInvalid &&
       !!assignEffectiveFrom &&
-      !!assignEffectiveTo;
+      !!assignEffectiveTo &&
+      !selectedTierHasNoServices &&
+      !servicesForTiersQuery.isLoading &&
+      !servicesForTiersQuery.isError;
     return (
       <Modal
         isOpen={isAssignTierOpen}
@@ -1821,31 +2122,34 @@ export default function TenantManagementTab({
           <ModalCloseButton isDisabled={isAssigning} />
           <ModalBody pb={6}>
             <VStack align="stretch" spacing={5}>
-              {assignTierError && (
+              {(assignTierError || selectedTierHasNoServices) && (
                 <Alert status="error" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription fontSize="sm">
-                    {assignTierError}
+                    {assignTierError ?? TIER_NO_SERVICES_MSG}
                   </AlertDescription>
                 </Alert>
               )}
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={selectedTierHasNoServices}>
                 <FormLabel fontWeight="semibold" fontSize="sm">
                   Tier
                 </FormLabel>
-                <Select
+                <TierSelect
                   value={assignTierId}
-                  onChange={(e) => setAssignTierId(e.target.value)}
-                  placeholder="Select a tier"
-                  size="sm"
+                  onChange={(id) => {
+                    setAssignTierId(id);
+                    setAssignTierError(
+                      serviceMappingsReady && !tierIdsWithServices.has(id)
+                        ? TIER_NO_SERVICES_MSG
+                        : null,
+                    );
+                  }}
+                  tierOptions={tierOptions}
+                  serviceMappingsReady={serviceMappingsReady}
+                  tierIdsWithServices={tierIdsWithServices}
                   isDisabled={isAssigning}
-                >
-                  {tierOptions.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </Select>
+                  isInvalid={selectedTierHasNoServices}
+                />
               </FormControl>
 
               <FormControl isRequired isInvalid={isBudgetInvalid}>
@@ -1927,6 +2231,10 @@ export default function TenantManagementTab({
   function renderViewTierModal() {
     const a = viewTierTenant;
     const hasTierChanged = manageTierId !== originalTierId;
+    const manageTierHasNoServices =
+      !!manageTierId &&
+      serviceMappingsReady &&
+      !tierIdsWithServices.has(String(manageTierId));
 
     const showSaveButton = isEditingTier && hasTierChanged;
 
@@ -1971,17 +2279,16 @@ export default function TenantManagementTab({
                     </HStack>
                   ) : (
                     <HStack align="flex-start">
-                      <Select
-                        flex={1}
+                      <TierSelect
                         value={manageTierId}
-                        onChange={(e) => setManageTierId(e.target.value)}
-                      >
-                        {tierOptions.map((tier) => (
-                          <option key={tier.id} value={tier.id}>
-                            {tier.name}
-                          </option>
-                        ))}
-                      </Select>
+                        onChange={setManageTierId}
+                        tierOptions={tierOptions}
+                        serviceMappingsReady={serviceMappingsReady}
+                        tierIdsWithServices={tierIdsWithServices}
+                        fallbackName={selectedTierName || manageTierId}
+                        isInvalid={manageTierHasNoServices}
+                        flex={1}
+                      />
 
                       <Button
                         size="sm"
@@ -1992,6 +2299,11 @@ export default function TenantManagementTab({
                       </Button>
                     </HStack>
                   )}
+                  {isEditingTier && manageTierHasNoServices && (
+                      <FormHelperText color="red.500">
+                        {TIER_NO_SERVICES_MSG}
+                      </FormHelperText>
+                    )}
                 </FormControl>
 
                 <FormControl>
@@ -2084,7 +2396,12 @@ export default function TenantManagementTab({
                 onClick={handleSaveManagePlan}
                 isLoading={isSavingPlan}
                 loadingText="Saving..."
-                isDisabled={!manageTierId}
+                isDisabled={
+                  !manageTierId ||
+                  manageTierHasNoServices ||
+                  servicesForTiersQuery.isLoading ||
+                  servicesForTiersQuery.isError
+                }
               >
                 Save Changes
               </Button>

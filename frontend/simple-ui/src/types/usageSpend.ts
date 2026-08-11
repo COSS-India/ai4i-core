@@ -78,6 +78,8 @@ export interface TenantUsageParams {
   billingPeriod?: string;
   tierId?: string;
   modelTaskType?: string;
+  /** Comma-separated task types to include (frontend allowlist). */
+  taskTypes?: string;
   sortOrder?: "asc" | "desc";
   limit?: number;
   offset?: number;
@@ -86,6 +88,8 @@ export interface TenantUsageParams {
 export interface UsageSummaryParams {
   /** Billing month in YYYY-MM format. Defaults to current month server-side. */
   billingPeriod?: string;
+  /** Comma-separated task types to include (frontend allowlist). */
+  taskTypes?: string;
 }
 
 /** Single-tenant detail shares the same shape as a list item. */

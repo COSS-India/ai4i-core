@@ -1,6 +1,6 @@
-// Try-It service for anonymous access to NMT
-// Allows users to try NMT service without authentication
-// Rate limited to 5 requests per hour per user/IP
+// Try-It service for anonymous access to NMT / LLM
+// Allows users to try services without authentication.
+// Client-side rate limit is advisory only; gateway must enforce in prod.
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
@@ -10,6 +10,9 @@ import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import type { Service } from '../types/platform';
 import { UI_ERROR_MESSAGES } from '../config/constants';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
+
+/** Single source for anonymous try-it hourly limit (banner + tracker). */
+export const ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR = 5;
 
 const getTryItHeaders = () => ({
   'X-Anonymous-Session-Id': getAnonymousSessionId(),
@@ -22,18 +25,65 @@ export interface TryItRequest {
   payload: NMTInferenceRequest;
 }
 
+type TryItSelectable = {
+  isTryItDefault?: boolean;
+  serviceId?: string;
+  service_id?: string;
+  name?: string;
+};
+
+const serviceIdOf = (service: TryItSelectable): string =>
+  service.serviceId || service.service_id || '';
+
 /**
- * Fetch NMT services for try-it (anonymous) users.
- * Uses the centralized try-it service-list endpoint with no auth.
- * @returns Promise with raw list of services from the API
+ * AI4IDS-2704: Prefer the service flagged `isTryItDefault`; otherwise use
+ * `fallbackPick` (today's deterministic pick) so Try-It never goes blank.
+ * If multiple services are flagged, tie-break with lowest service id so the
+ * pick does not depend on API response order. Returns at most one service.
  */
-export const listTryItNMTServices = async (): Promise<Service[]> => {
+export function selectTryItDefaultService<T extends TryItSelectable>(
+  services: T[],
+  fallbackPick: (services: T[]) => T | undefined,
+): T[] {
+  if (services.length === 0) return [];
+  const flagged = services.filter((s) => s.isTryItDefault === true);
+  if (flagged.length > 0) {
+    const picked = pickLowestServiceId(flagged);
+    return picked ? [picked] : [];
+  }
+  const fallback = fallbackPick(services);
+  return fallback ? [fallback] : [];
+}
+
+/** Stable fallback when no `isTryItDefault` is set: lowest service id. */
+export function pickLowestServiceId<T extends TryItSelectable>(
+  services: T[],
+): T | undefined {
+  if (services.length === 0) return undefined;
+  return [...services].sort((a, b) =>
+    serviceIdOf(a).localeCompare(serviceIdOf(b)),
+  )[0];
+}
+
+/**
+ * Fetch services for try-it (anonymous) users by task type(s).
+ * Uses GET /services/try-it-service-list?task_types=...
+ */
+export const listTryItServices = async (taskType: string): Promise<Service[]> => {
   const response = await apiService.get(apiEndpoints.platform.services.tryItList, {
-    params: { task_type: 'nmt' },
+    params: { task_types: taskType },
     headers: getTryItHeaders(),
     responseSchema: tryItServiceListSchema,
   });
   return response.data;
+};
+
+/**
+ * Fetch NMT services for try-it (anonymous) users.
+ * @returns Promise with raw list of services from the API
+ */
+export const listTryItNMTServices = async (): Promise<Service[]> => {
+  return listTryItServices('nmt');
 };
 
 /**
@@ -142,8 +192,8 @@ export const shouldWarnAboutRateLimit = (): boolean => {
       return false;
     }
 
-    // Warn if approaching limit (4 or more requests)
-    return count >= 4;
+    // Warn if approaching limit (one request left before hit)
+    return count >= ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR - 1;
   } catch (e) {
     return false;
   }
@@ -183,7 +233,7 @@ export const trackTryItRequest = (): void => {
 export const getRemainingTryItRequests = (): number => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
-  const limit = 5;
+  const limit = ANONYMOUS_TRY_IT_REQUESTS_PER_HOUR;
 
   if (typeof window === 'undefined') return limit;
 

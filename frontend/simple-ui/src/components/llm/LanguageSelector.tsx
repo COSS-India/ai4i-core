@@ -1,6 +1,6 @@
 // Language selector component for LLM
 
-import React, { useMemo } from 'react';
+import React, { useMemo } from "react";
 import {
   Stack,
   FormControl,
@@ -9,10 +9,10 @@ import {
   IconButton,
   HStack,
   Text,
-} from '@chakra-ui/react';
-import { FaExchangeAlt } from 'react-icons/fa';
-import { LanguageSelectorProps } from '../../types/llm';
-import { LANG_CODE_TO_LABEL } from '../../config/constants';
+} from "@chakra-ui/react";
+import { FaExchangeAlt } from "react-icons/fa";
+import { LanguageSelectorProps } from "../../types/llm";
+import { LANG_CODE_TO_LABEL } from "../../config/constants";
 
 const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   inputLanguage,
@@ -35,17 +35,25 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   });
   const targetLanguageOptions = useMemo(
     () => sortedLanguages.filter((lang) => lang !== inputLanguage),
-    [sortedLanguages, inputLanguage]
+    [sortedLanguages, inputLanguage],
   );
-  const safeOutputLanguage = targetLanguageOptions.includes(outputLanguage) ? outputLanguage : '';
+  const safeOutputLanguage = targetLanguageOptions.includes(outputLanguage)
+    ? outputLanguage
+    : "";
 
   return (
     <Stack spacing={4}>
       <HStack spacing={4} align="end">
         <FormControl flex={1}>
-          <FormLabel fontSize="sm" color="gray.600" className="dview-service-try-option-title">
+          <FormLabel
+            fontSize="sm"
+            color="gray.600"
+            className="dview-service-try-option-title"
+          >
             Source Language{" "}
-            <Text as="span" color="red.500">*</Text>
+            <Text as="span" color="red.500">
+              *
+            </Text>
           </FormLabel>
           <Select
             value={inputLanguage}
@@ -72,9 +80,15 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
         />
 
         <FormControl flex={1}>
-          <FormLabel fontSize="sm" color="gray.600" className="dview-service-try-option-title">
+          <FormLabel
+            fontSize="sm"
+            color="gray.600"
+            className="dview-service-try-option-title"
+          >
             Target Language{" "}
-            <Text as="span" color="red.500">*</Text>
+            <Text as="span" color="red.500">
+              *
+            </Text>
           </FormLabel>
           <Select
             value={safeOutputLanguage}
@@ -95,4 +109,3 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
 };
 
 export default LanguageSelector;
-

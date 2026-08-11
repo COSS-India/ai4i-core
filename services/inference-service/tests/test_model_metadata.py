@@ -26,10 +26,8 @@ MOCK_MMS_RESPONSE = {
             "classInstance": "TextDefaultModel",
             "submitter": {"name": "IndicTrans"},
             "languages": [{"sourceLanguage": "en", "targetLanguage": "hi"}],
-            "inferenceEndPoint": {
-                "schema": {"model_name": "agrinet-model"},
-                "adapter_config": {"outputs": []},
-            },
+            "schema": {"model_name": "agrinet-model"},
+            "adapterConfig": {"outputs": []},
         },
     },
 }
@@ -44,6 +42,8 @@ async def test_normalize_mms_response_extracts_model_metadata():
     assert normalized["model_version"] == "1.0"
     assert normalized["model_provider"] == "IndicTrans"
     assert normalized["language"] == [{"sourceLanguage": "en", "targetLanguage": "hi"}]
+    # model.schema.model_name drives the Triton URL path
+    assert normalized["endpoint"] == "http://3.109.103.63:8080/v2/models/agrinet-model/infer"
 
 
 async def test_normalize_mms_response_defaults_when_submitter_missing():
@@ -63,7 +63,7 @@ async def test_normalize_mms_response_defaults_when_submitter_missing():
 
 
 async def test_process_attaches_model_metadata_block():
-    """process() must attach modelProvider/modelVersion/modelId/language,
+    """process() must attach modelProvider/modelVersion/language,
     resolved from service_info, onto whatever postprocess_output returns."""
     service_info = {
         "name": "agrinet-model",
@@ -94,7 +94,6 @@ async def test_process_attaches_model_metadata_block():
     assert response["model"] == {
         "modelProvider": "IndicTrans",
         "modelVersion": "1.0",
-        "modelId": "ade00312aa6b12da51485a25bdf383b6",
         "language": [{"sourceLanguage": "en", "targetLanguage": "hi"}],
     }
 
@@ -125,6 +124,5 @@ async def test_process_model_metadata_defaults_when_service_info_lacks_fields():
     assert response["model"] == {
         "modelProvider": None,
         "modelVersion": None,
-        "modelId": None,
         "language": [],
     }

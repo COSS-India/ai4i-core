@@ -1,8 +1,13 @@
-import { Box, HStack, Select, Text, VStack } from "@chakra-ui/react";
+import { Box, Flex, HStack, Select, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import { formatModelTaskTypeLabel } from "../../config/constants";
-import { filterTierBreakdown, formatSpendMoney } from "../../utils/usageSpendHelpers";
+import {
+  filterTierBreakdown,
+  formatSpendMoney,
+  USAGE_SPEND_ACCENT,
+  USAGE_SPEND_DANGER,
+} from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
 
@@ -15,6 +20,8 @@ interface TenantSpendPanelProps {
   onFilterTaskTypeChange: (taskType: string) => void;
 }
 
+const SPEND_CARD_BG = "#eef3fb";
+
 function TotalSpendBanner({
   detail,
   currency,
@@ -26,20 +33,60 @@ function TotalSpendBanner({
   const fillPct = Math.min(Math.max(pct, 0), 100);
 
   return (
-    <Box bgGradient="linear(135deg, #12224f, #2a67d6)" borderRadius="12px" p="24px 28px" color="white">
-      <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" opacity={0.85} mb={2}>
+    <Box
+      bg={SPEND_CARD_BG}
+      borderRadius="12px"
+      borderWidth="1px"
+      borderColor="gray.200"
+      p="22px 24px"
+      w="full"
+    >
+      <Text
+        fontSize="11px"
+        fontWeight="semibold"
+        letterSpacing="0.04em"
+        color={USAGE_SPEND_ACCENT}
+        mb={2}
+      >
         TOTAL SPEND
       </Text>
-      <Text fontSize="32px" fontWeight="bold" lineHeight="1" mb={4}>
+      <Text fontSize="28px" fontWeight="bold" lineHeight="1" color="gray.800">
         {formatSpendMoney(spent, cur)}
       </Text>
-      <Box h="8px" borderRadius="4px" bg="whiteAlpha.300" overflow="hidden">
-        <Box h="100%" w={`${fillPct}%`} bg={over > 0 ? "#ffd7a8" : "white"} borderRadius="4px" />
+      <Box mt={4} h="8px" borderRadius="4px" bg="blackAlpha.100" overflow="hidden">
+        <Box
+          h="100%"
+          w={`${fillPct}%`}
+          bg={over > 0 ? USAGE_SPEND_DANGER : USAGE_SPEND_ACCENT}
+          borderRadius="4px"
+        />
       </Box>
-      <Text fontSize="12.5px" mt="10px" opacity={0.9}>
-        {pct.toFixed(0)}% of {formatSpendMoney(limit, cur)} budget ·{" "}
-        {over > 0 ? `${formatSpendMoney(over, cur)} over` : `${formatSpendMoney(remaining, cur)} left`}
-      </Text>
+      <Flex
+        mt="14px"
+        pt="14px"
+        borderTopWidth="1px"
+        borderColor="gray.200"
+        direction={{ base: "column", sm: "row" }}
+        gap={{ base: "9px", sm: 6 }}
+        justify="space-between"
+        fontSize="12.5px"
+        flexWrap="wrap"
+      >
+        <HStack spacing={1.5}>
+          <Text color="gray.500">Budget used:</Text>
+          <Text fontWeight="semibold" color="gray.800">{pct.toFixed(0)}%</Text>
+        </HStack>
+        <HStack spacing={1.5}>
+          <Text color="gray.500">Limit:</Text>
+          <Text fontWeight="semibold" color="gray.800">{formatSpendMoney(limit, cur)}</Text>
+        </HStack>
+        <HStack spacing={1.5}>
+          <Text color="gray.500">{over > 0 ? "Over budget:" : "Remaining:"}</Text>
+          <Text fontWeight="semibold" color={over > 0 ? USAGE_SPEND_DANGER : "gray.800"}>
+            {over > 0 ? formatSpendMoney(over, cur) : formatSpendMoney(remaining, cur)}
+          </Text>
+        </HStack>
+      </Flex>
     </Box>
   );
 }

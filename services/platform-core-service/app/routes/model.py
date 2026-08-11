@@ -25,21 +25,6 @@ router = APIRouter(
 )
 
 
-def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
-    """Translate the raw query-string into a normalized task-type value.
-
-    `None` and the literal string `"none"` (case-insensitive) both mean
-    "no filter".
-    """
-    if not task_type or task_type.lower() == "none":
-        return None
-    try:
-        return TaskTypeEnum(task_type).value
-    except ValueError:
-        valid = [e.value for e in TaskTypeEnum]
-        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
-
-
 _MODEL_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
 _MODEL_ID_MAX_LEN = 255
 
@@ -65,9 +50,9 @@ def _validate_model_id(model_id: str) -> str:
 @router.get("")
 async def list_models(
     response: Response,
-    task_type: Optional[str] = Query(
+    task_types: Optional[str] = Query(
         None,
-        description="Filter by task type (asr, nmt, tts, etc.).",
+        description="Comma-separated task types to include. A single value is a one-element list.",
     ),
     include_deprecated: bool = Query(
         True,
@@ -102,8 +87,17 @@ async def list_models(
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
     if version_status is not None and version_status not in valid_version_statuses:
         raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
+    # ONE task-type filter param: a drill-down is just a one-element list, so a
+    # separate single param would only recreate union/precedence ambiguity.
+    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # registered models) are skipped rather than failing the whole request —
+    # they can't match any row anyway.
+    _task_types = []
+    if task_types:
+        valid = {m.value for m in TaskTypeEnum}
+        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
     items, total = await svc.list_models(
-        task_type=_resolve_task_type(task_type),
+        task_types=_task_types or None,
         include_deprecated=include_deprecated,
         version_status=version_status,
         model_name=model_name,
@@ -138,9 +132,10 @@ async def get_model_by_id(
         "Registers a new model version in the registry. The request body "
         "follows ULCA's `model-schema.yml` Model object: `name`, `version`, "
         "`description`, `task`, `license`, `domain`, `submitter`, "
-        "`inferenceEndPoint`, and `trainingDataset` are required; "
+        "and `trainingDataset` are required; "
         "`refUrl`, `languages`, `isLangDetectionEnabled`, `isMultilingual`, "
-        "`licenseUrl`, `benchmarks`, and `classInstance` are optional (see "
+        "`licenseUrl`, `adapterConfig`, `schema`, `benchmarks`, "
+        "and `classInstance` are optional (see "
         "each field's description in the schema below for its default, if "
         "any). Use the 'Example Value' tab for a full worked payload."
     ),
@@ -168,18 +163,14 @@ async def create_model(
     summary="Partially update a model version (ULCA model-schema conformant)",
     description=(
         "Applies a partial update to an existing (modelId, version). Only "
-        "`modelId` and `version` are required — every other ULCA Model "
-        "field (`description`, `task`, `languages`, `license`, `domain`, "
-        "`submitter`, `inferenceEndPoint`, `trainingDataset`, etc.) is "
-        "optional; omit a field to leave it unchanged. `name` cannot be "
-        "changed (modelId is derived from name+version — create a new "
-        "version instead). `inferenceEndPoint` merges: send only the keys "
-        "you want changed (e.g. just `adapterConfig`), no need to resend "
-        "`callbackUrl`/`schema`. Never resend a GET response's "
-        "`inferenceApiKey.value` verbatim — it comes back as '[REDACTED]' "
-        "and that sentinel is stripped before merge, so it won't corrupt "
-        "the stored secret, but it also won't update it. Use the 'Example "
-        "Value' tab for a realistic partial-update payload."
+        "`modelId` and `version` are required — every other field "
+        "(`description`, `task`, `languages`, `license`, `domain`, "
+        "`submitter`, `trainingDataset`, `adapterConfig`, "
+        "`schema`, etc.) is optional; omit a field to leave it unchanged. "
+        "`name` cannot be changed (modelId is derived from name+version — "
+        "create a new version instead). `adapterConfig` is deep-merged with "
+        "the stored value; `schema` replaces the stored value entirely. "
+        "Use the 'Example Value' tab for a realistic partial-update payload."
     ),
 )
 async def update_model(

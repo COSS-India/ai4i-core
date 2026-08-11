@@ -71,7 +71,6 @@ ServiceService = _svc_svc_mod.ServiceService
 
 ImmutableModelVersionError = _model_svc_mod.ImmutableModelVersionError
 DuplicateModelVersionError = _model_svc_mod.DuplicateModelVersionError
-REDACTED_VALUE = _model_svc_mod.REDACTED_VALUE
 
 from app.core.exceptions import EntityNotFoundError, ValidationError  # noqa: E402
 from app.schemas.enums.model_management import VersionStatusEnum  # noqa: E402
@@ -179,7 +178,6 @@ def _make_create_payload(**overrides) -> ModelCreateRequest:
         languages=[{"sourceLanguage": "en"}],
         license="mit",
         domain=["general"],
-        inferenceEndPoint={"callbackUrl": "http://localhost:8000/infer", "schema": {}},
         submitter={"name": "Test User"},
         trainingDataset={"description": "test training dataset"},
     )
@@ -239,6 +237,21 @@ class TestModelServiceCreate:
         with pytest.raises(RuntimeError):
             await svc.create_model(payload, created_by="user-1")
         svc._models.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_model_adapter_config_stored_in_inference_endpoint(self):
+        """adapterConfig from the create request is written into inference_endpoint['adapterConfig']."""
+        from unittest.mock import patch as _patch
+        svc = _make_model_svc()
+        payload = _make_create_payload(adapterConfig={"version": "1", "inputs": []})
+
+        model_ctor = MagicMock(return_value=_make_model_orm())
+        with _patch.object(_model_svc_mod, "Model", model_ctor):
+            await svc.create_model(payload, created_by="user-1")
+
+        assert model_ctor.call_args.kwargs["inference_endpoint"] == {
+            "adapterConfig": {"version": "1", "inputs": []},
+        }
 
 
 # ===========================================================================
@@ -319,59 +332,45 @@ class TestModelServiceUpdate:
         svc._models.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_update_model_echoed_redacted_api_key_does_not_overwrite_real_secret(self):
-        """A client that GETs a model (inferenceApiKey.value comes back as
-        REDACTED_VALUE) and PATCHes the endpoint object straight back must
-        not have the sentinel clobber the real stored secret."""
+    async def test_update_model_adapter_config_deep_merges_existing(self):
+        """PATCH with adapterConfig deep-merges sent keys into the stored adapterConfig,
+        leaving unmentioned keys (e.g. inputs) intact."""
         svc = _make_model_svc()
         instance = _make_model_orm()
         instance.inference_endpoint = {
-            "callbackUrl": "http://example.com/infer",
-            "inferenceApiKey": {"name": "Authorization", "value": "real-secret-token"},
-            "isMultilingualEnabled": False,
+            "adapterConfig": {"version": "1", "inputs": [{"tensor": "A"}]},
         }
         svc._models.get_by_id_version = AsyncMock(return_value=instance)
         svc._models.refresh = AsyncMock(return_value=instance)
         svc._services.list_published_for_model_version = AsyncMock(return_value=[])
 
-        payload = ModelUpdateRequest(
-            modelId="abc123",
-            version="1.0",
-            inferenceEndPoint={
-                "callbackUrl": "http://example.com/infer",
-                "inferenceApiKey": {"name": "Authorization", "value": REDACTED_VALUE},
-                "isMultilingualEnabled": True,
-            },
-        )
+        payload = ModelUpdateRequest(modelId="abc123", version="1.0", adapterConfig={"version": "2"})
         await svc.update_model(payload, updated_by="user-1")
 
-        update_data = svc._models.apply_updates.call_args.args[1]
-        merged_ep = update_data["inference_endpoint"]
-        assert merged_ep["inferenceApiKey"]["value"] == "real-secret-token"
-        assert merged_ep["isMultilingualEnabled"] is True
+        merged = svc._models.apply_updates.call_args.args[1]["inference_endpoint"]["adapterConfig"]
+        assert merged["version"] == "2"
+        assert merged["inputs"] == [{"tensor": "A"}]
 
     @pytest.mark.asyncio
-    async def test_update_model_real_api_key_value_still_applies(self):
-        """A genuine (non-sentinel) inferenceApiKey.value update must still
-        go through — the guard only strips the exact REDACTED_VALUE sentinel."""
+    async def test_update_model_adapter_config_merges_from_legacy_snake_case_key(self):
+        """For seeded rows with adapter_config (snake_case), PATCH must read that
+        as the merge base and normalise the stored key to adapterConfig."""
         svc = _make_model_svc()
         instance = _make_model_orm()
         instance.inference_endpoint = {
-            "inferenceApiKey": {"name": "Authorization", "value": "old-token"},
+            "adapter_config": {"version": "1", "inputs": [{"tensor": "A"}]},
         }
         svc._models.get_by_id_version = AsyncMock(return_value=instance)
         svc._models.refresh = AsyncMock(return_value=instance)
         svc._services.list_published_for_model_version = AsyncMock(return_value=[])
 
-        payload = ModelUpdateRequest(
-            modelId="abc123",
-            version="1.0",
-            inferenceEndPoint={"inferenceApiKey": {"name": "Authorization", "value": "new-token"}},
-        )
+        payload = ModelUpdateRequest(modelId="abc123", version="1.0", adapterConfig={"version": "2"})
         await svc.update_model(payload, updated_by="user-1")
 
-        update_data = svc._models.apply_updates.call_args.args[1]
-        assert update_data["inference_endpoint"]["inferenceApiKey"]["value"] == "new-token"
+        ep = svc._models.apply_updates.call_args.args[1]["inference_endpoint"]
+        assert "adapter_config" not in ep
+        assert ep["adapterConfig"]["version"] == "2"
+        assert ep["adapterConfig"]["inputs"] == [{"tensor": "A"}]
 
 
 # ===========================================================================
@@ -523,6 +522,7 @@ class TestServiceServiceCreate:
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
+            expectedResponseSchema={"output": [{"source": "test"}]},
         )
         with pytest.raises(VE):
             await svc.create_service(payload, created_by="user-1")
@@ -551,6 +551,7 @@ class TestServiceServiceCreate:
             costPerUnit=0.01,
             unitSize=1,
             tierIds=["tier-1"],
+            expectedResponseSchema={"output": [{"source": "test"}]},
         )
         # Endpoint validation is also triggered; mock it out.
         with pytest.raises(DupErr):

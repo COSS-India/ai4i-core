@@ -764,7 +764,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -796,13 +796,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "ASR Payload Size (Seconds)",
+      "title": "ASR Payload Size (Minutes)",
       "type": "stat"
     },
     {
@@ -1100,72 +1100,6 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Median number of Image Size in KBs processed by the OCR service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 41
-      },
-      "id": 200,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_image_size_kb_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "OCR Payload Size (Image KBs)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
       "description": "Median number of tokens processed by the NER service.",
       "fieldConfig": {
         "defaults": {
@@ -1193,7 +1127,7 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 8,
+        "x": 0,
         "y": 41
       },
       "id": 204,
@@ -1225,6 +1159,72 @@
         }
       ],
       "title": "NER Payload Size (Tokens)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Median number of images processed per request by the OCR service.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 41
+      },
+      "id": 200,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_images_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "legendFormat": "Images Processed (24h)",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "OCR Payload Size (Images)",
       "type": "stat"
     },
     {
@@ -2546,7 +2546,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -2578,13 +2578,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Speaker Diarization Payload Size (Seconds)",
+      "title": "Speaker Diarization Payload Size (Minutes)",
       "type": "stat"
     },
     {
@@ -2612,7 +2612,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -2644,13 +2644,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Language Diarization Payload Size (Seconds)",
+      "title": "Language Diarization Payload Size (Minutes)",
       "type": "stat"
     },
     {
@@ -2678,7 +2678,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -2710,13 +2710,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_minutes_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Audio Language Detection Payload Size (Seconds)",
+      "title": "Audio Language Detection Payload Size (Minutes)",
       "type": "stat"
     },
     {

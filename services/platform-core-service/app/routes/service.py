@@ -13,6 +13,7 @@ from app.core.responses import success_response
 from app.dependencies.services import ServiceService, get_service_service
 from app.schemas.enums.model_management import TaskTypeEnum
 from app.schemas.model_management.service import (
+    ServiceBulkEndpointUpdateRequest,
     ServiceCreateRequest,
     ServiceUpdateRequest,
     validate_service_id,
@@ -24,16 +25,6 @@ router = APIRouter(
     prefix="/services",
     tags=["Service Management"],
 )
-
-
-def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
-    if not task_type or task_type.lower() == "none":
-        return None
-    try:
-        return TaskTypeEnum(task_type).value
-    except ValueError:
-        valid = [e.value for e in TaskTypeEnum]
-        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
 
 
 # ── RBAC-aware response filtering (AI4IDS-1816) ──────────────────────────────
@@ -56,7 +47,7 @@ _ROLE_MODERATOR = 2
 # shared picker component in frontend/simple-ui/src), plus "model" — required
 # by inference-service's own internal GET /services/{id} call (no identity
 # headers, so it always hits this filtered path), which reads
-# model.inferenceEndPoint.adapter_config to build the actual Triton request.
+# model.adapterConfig and model.schema to build the actual Triton request.
 # Dropping "model" here breaks inference for every service (AI4IDS-2562
 # investigation) — the model card is Triton tensor-mapping/schema config, not
 # a secret (no api_key/policy/billing inside it), so it's safe to allow.
@@ -69,6 +60,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "endpoint",
     "taskType",
     "isPublished",
+    "isTryItDefault",
     "task",
     "languages",
     "versionStatus",
@@ -94,25 +86,29 @@ def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in item.items() if k in _NON_ADMIN_SERVICE_FIELDS}
 
 
+_TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
+
+
 @router.get(
     "/try-it-service-list",
     summary="List Try-It Services",
 )
 async def list_try_it_services(
-    task_type: str = Query(
+    task_types: str = Query(
         ...,
-        description="Task type. Currently supports 'nmt'.",
+        description="Comma-separated task types",
     ),
     svc: ServiceService = Depends(get_service_service),
 ):
     """List published services available for public trial."""
-    if not task_type or task_type.lower() != TaskTypeEnum.nmt.value:
+    _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in _TRY_IT_SUPPORTED_TASK_TYPES]
+    if not _task_types:
         raise ValidationError(
             message="Try-it is not available for this task type.",
             code="TRY_IT_UNSUPPORTED",
         )
     items, total = await svc.list_services(
-        task_type=TaskTypeEnum.nmt.value, is_published=True
+        task_types=_task_types, is_published=True
     )
     # This endpoint has no auth at all (see api_permissions.json: try-it is
     # public) — always filtered, never the admin/full view.
@@ -124,8 +120,9 @@ async def list_try_it_services(
 async def list_services(
     request: Request,
     response: Response,
-    task_type: Optional[str] = Query(
-        None, description="Filter by task type."
+    task_types: Optional[str] = Query(
+        None,
+        description="Comma-separated task types to include. A single value is a one-element list.",
     ),
     is_published: Optional[bool] = Query(
         None,
@@ -148,8 +145,17 @@ async def list_services(
     svc: ServiceService = Depends(get_service_service),
 ):
     """List services with optional filters and offset/limit pagination."""
+    # ONE task-type filter param: a drill-down is just a one-element list, so a
+    # separate single param would only recreate union/precedence ambiguity.
+    # Parsed leniently: names outside TaskTypeEnum (e.g. catalog entries with no
+    # registered models) are skipped rather than failing the whole request —
+    # they can't match any row anyway.
+    _task_types = []
+    if task_types:
+        valid = {m.value for m in TaskTypeEnum}
+        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
     items, total = await svc.list_services(
-        task_type=_resolve_task_type(task_type),
+        task_types=_task_types or None,
         is_published=is_published,
         created_by=created_by,
         offset=offset,
@@ -199,11 +205,20 @@ async def create_service(
 @router.patch("")
 async def update_service(
     request: Request,
-    payload: ServiceUpdateRequest,
+    payload: ServiceUpdateRequest | ServiceBulkEndpointUpdateRequest,
     svc: ServiceService = Depends(get_service_service),
 ):
-    """Update an existing service."""
+    """Update an existing service, or update multiple services' endpoints in
+    one call by sending {"services": [{"serviceId", "endpoint"}, ...]}."""
     user_id = request.headers.get("X-User-Id")
+    if isinstance(payload, ServiceBulkEndpointUpdateRequest):
+        updated_ids = await svc.update_service_endpoints(
+            payload.services, updated_by=user_id
+        )
+        return success_response(
+            data={"serviceIds": updated_ids},
+            meta={"message": f"{len(updated_ids)} service endpoint(s) updated successfully."},
+        )
     await svc.update_service(payload, updated_by=user_id)
     return success_response(
         data={"serviceId": payload.serviceId},

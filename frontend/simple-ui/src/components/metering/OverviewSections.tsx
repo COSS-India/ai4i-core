@@ -30,7 +30,7 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({ data }) => (
     {data.kpis.map((kpi) => (
       <KpiCard
         key={kpi.key}
-        label={kpi.label}
+        label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
         value={formatMeteringKpiValue(kpi.key, kpi.value)}
         pctChange={kpi.pct_change}
         valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}

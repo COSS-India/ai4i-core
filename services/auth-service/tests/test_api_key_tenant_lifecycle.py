@@ -1,7 +1,7 @@
-"""API key Redis cache vs tenant/user access — no DB ``is_active`` mirroring on lifecycle."""
+"""API key Redis cache vs tenant/user access — Suspend=Inactive (no DB revoke), Deactivate=Revoke."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -56,6 +56,7 @@ class TestAPIKeyCacheLifecycle:
         key = _api_key(is_active=True)
 
         cache = AsyncMock()
+        cache.get_api_key_cache = AsyncMock(return_value={})
         repo = AsyncMock()
         repo.list_by_user = AsyncMock(return_value=[key])
         users = AsyncMock()
@@ -109,3 +110,104 @@ class TestAPIKeyCacheLifecycle:
         await svc.evict_keys_for_user(keys[0].user_id)
 
         assert cache.delete_api_key_cache.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_revoke_keys_for_tenant_commits_before_redis_delete(self) -> None:
+        user = User(
+            id=uuid4(),
+            email="test-user@example.invalid",
+            username=uuid4().hex[:12],
+            tenant_id=1,
+            is_active=True,
+            is_tenant_active=False,
+        )
+        active_key = _api_key(is_active=True)
+        active_key.user_id = user.id
+
+        cache = AsyncMock()
+        repo = AsyncMock()
+        repo.revoke_active_for_users = AsyncMock(return_value=[active_key.api_key])
+        repo.commit = AsyncMock()
+        users = AsyncMock()
+        users.list_by_tenant = AsyncMock(side_effect=[[user], []])
+
+        call_order: list[str] = []
+
+        async def _commit() -> None:
+            call_order.append("commit")
+
+        async def _delete(_api_key: str) -> None:
+            call_order.append("redis")
+
+        repo.commit = AsyncMock(side_effect=_commit)
+        cache.delete_api_key_cache = AsyncMock(side_effect=_delete)
+
+        svc = APIKeyService(repo, cache, user_repo=users)
+        await svc.revoke_keys_for_tenant(1)
+
+        repo.revoke_active_for_users.assert_awaited_once_with([user.id])
+        repo.commit.assert_awaited_once()
+        cache.delete_api_key_cache.assert_awaited_once_with(active_key.api_key)
+        assert call_order == ["commit", "redis"]
+
+    @pytest.mark.asyncio
+    async def test_revoke_keys_for_tenant_skips_redis_when_commit_fails(self) -> None:
+        user = User(
+            id=uuid4(),
+            email="test-user@example.invalid",
+            username=uuid4().hex[:12],
+            tenant_id=1,
+            is_active=True,
+            is_tenant_active=False,
+        )
+        active_key = _api_key(is_active=True)
+
+        cache = AsyncMock()
+        repo = AsyncMock()
+        repo.revoke_active_for_users = AsyncMock(return_value=[active_key.api_key])
+        repo.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))
+        users = AsyncMock()
+        users.list_by_tenant = AsyncMock(side_effect=[[user], []])
+
+        svc = APIKeyService(repo, cache, user_repo=users)
+        with pytest.raises(RuntimeError, match="db commit failed"):
+            await svc.revoke_keys_for_tenant(1)
+
+        cache.delete_api_key_cache.assert_not_awaited()
+
+    def test_user_may_use_api_keys_false_when_tenant_suspended(self) -> None:
+        user = User(
+            id=uuid4(),
+            email="test-user@example.invalid",
+            username=uuid4().hex[:12],
+            tenant_id=1,
+            is_active=True,
+            is_tenant_active=False,
+        )
+        tenant = Tenant(
+            id=1,
+            name="Acme",
+            organisation="Acme",
+            email="test-contact@example.invalid",
+            status=TenantStatus.SUSPENDED,
+        )
+        assert APIKeyService.user_may_use_api_keys(user, tenant) is False
+
+    def test_effective_is_active_false_when_key_revoked(self) -> None:
+        user = User(
+            id=uuid4(),
+            email="test-user@example.invalid",
+            username=uuid4().hex[:12],
+            tenant_id=1,
+            is_active=True,
+            is_tenant_active=True,
+        )
+        tenant = Tenant(
+            id=1,
+            name="Acme",
+            organisation="Acme",
+            email="test-contact@example.invalid",
+            status=TenantStatus.ACTIVE,
+        )
+        key = _api_key(is_active=False)
+        assert APIKeyService.effective_is_active(key, user, tenant) is False

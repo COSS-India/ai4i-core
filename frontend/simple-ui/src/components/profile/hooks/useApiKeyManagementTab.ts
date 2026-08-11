@@ -14,14 +14,39 @@ import {
   type ApiKeyAccessContext,
   type ApiKeyDisplayStatusValue,
   getApiKeyInactiveReason,
+  getApiKeyRevokedReason,
   isApiKeyEffectivelyActive,
   isApiKeyExpired,
   resolveApiKeyDisplayStatus,
 } from "../../../config/constants";
 import { normalizeApiKeyRecord } from "../../../utils/apiKeyUtils";
+import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
+import type { InferenceTypeItem } from "../../../services/inferenceTypesService";
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
+}
+
+/** Gate permission catalog by ENABLED_TASK_TYPES (same rules as create API key). */
+function filterPermissionsByEnabledTaskTypes(
+  permissions: Permission[],
+  taskTypeNames: string[],
+  inferenceTypes: InferenceTypeItem[],
+): Permission[] {
+  const named = [...permissions].filter((p) => p.name);
+  if (taskTypeNames.length === 0) {
+    return named.sort((a, b) => a.label.localeCompare(b.label));
+  }
+  const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+  const knownTaskTypes = new Set(
+    inferenceTypes.map((t) => t.name.trim().toLowerCase()),
+  );
+  return named
+    .filter((p) => {
+      const prefix = p.name.split(".")[0]?.toLowerCase() ?? "";
+      return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function mapKeysToAdminRows(
@@ -37,6 +62,7 @@ function mapKeysToAdminRows(
 }
 
 export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) {
+  const { taskTypeNames, inferenceTypes } = useInferenceTypes();
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -80,6 +106,15 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
         return "This API key has expired.";
       }
       return getApiKeyInactiveReason(apiKeyAccessContext);
+    },
+    [apiKeyAccessContext, resolveKeyDisplayStatus]
+  );
+
+  const getKeyRevokedReason = useCallback(
+    (key: APIKeyResponse): string | null => {
+      const status = resolveKeyDisplayStatus(key);
+      if (status !== API_KEY.DISPLAY_STATUS.REVOKED) return null;
+      return getApiKeyRevokedReason(apiKeyAccessContext);
     },
     [apiKeyAccessContext, resolveKeyDisplayStatus]
   );
@@ -141,16 +176,39 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   );
 
   const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
-    if (permissions.length === 0) {
-      await loadPermissionsCatalog();
-    }
+    const catalog =
+      permissions.length === 0 ? await loadPermissionsCatalog() : permissions;
+    // Same ENABLED_TASK_TYPES gate as create / filter dropdown — only show
+    // assignable permissions (e.g. llm-only when ENABLED_TASK_TYPES=llm).
+    const allowedNames = new Set(
+      filterPermissionsByEnabledTaskTypes(catalog, taskTypeNames, inferenceTypes).map(
+        (p) => p.name,
+      ),
+    );
+    const existing = key.permissions ?? [];
+    const assignable = existing.filter((name) => allowedNames.has(name));
+    const droppedCount = existing.length - assignable.length;
     setSelectedKeyForUpdate(key);
     setUpdateFormData({
       key_name: key.key_name,
-      permissions: key.permissions ?? [],
+      permissions: assignable,
     });
     setIsUpdateModalOpen(true);
+    if (droppedCount > 0) {
+      showToast({
+        type: "warning",
+        message:
+          droppedCount === 1
+            ? "1 permission no longer available was removed from the selection"
+            : `${droppedCount} permissions no longer available were removed from the selection`,
+      });
+    }
   };
+
+  const permissionFilterOptions = useMemo(
+    () => filterPermissionsByEnabledTaskTypes(permissions, taskTypeNames, inferenceTypes),
+    [permissions, taskTypeNames, inferenceTypes],
+  );
 
   const handleCloseUpdateModal = () => {
     setIsUpdateModalOpen(false);
@@ -164,17 +222,30 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       showToast({ type: "error", message: "Please enter a key name" });
       return;
     }
-    if (!updateFormData.permissions?.length) {
+    const allowedNames = new Set(permissionFilterOptions.map((p) => p.name));
+    const nextPermissions = (updateFormData.permissions ?? []).filter((name) =>
+      allowedNames.has(name),
+    );
+    if (!nextPermissions.length) {
       showToast({ type: "error", message: "Please select at least one permission" });
       return;
     }
+    const originalPermissions = selectedKeyForUpdate.permissions ?? [];
+    const droppedCount = originalPermissions.filter((name) => !allowedNames.has(name)).length;
     setIsUpdating(true);
     try {
       await authService.updateApiKey(selectedKeyForUpdate.id, {
         key_name: updateFormData.key_name?.trim(),
-        permissions: updateFormData.permissions,
+        permissions: nextPermissions,
       });
-      showToast({ type: "success", message: "API key has been updated successfully" });
+      let message = "API key has been updated successfully";
+      if (droppedCount > 0) {
+        message =
+          droppedCount === 1
+            ? "API key updated; 1 permission no longer available was removed"
+            : `API key updated; ${droppedCount} permissions no longer available were removed`;
+      }
+      showToast({ type: "success", message });
       handleCloseUpdateModal();
       await handleFetchAllApiKeys();
     } catch (error) {
@@ -258,15 +329,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [allApiKeys, apiKeyAccessContext, filterPermission, filterActive, keyNameSearch, permissions],
   );
 
-  /** Permission name+label pairs for the filter dropdown (full catalog, not keyed to loaded keys). */
-  const permissionFilterOptions = useMemo(
-    () =>
-      [...permissions]
-        .filter((p) => p.name)
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [permissions],
-  );
-
   const formatPermission = (permissionName: string) =>
     permissions.find((p) => p.name === permissionName)?.label ?? permissionName;
 
@@ -309,6 +371,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     apiKeyAccessContext,
     resolveKeyDisplayStatus,
     getKeyInactiveReason,
+    getKeyRevokedReason,
     isKeyEffectivelyActive: (key: APIKeyResponse) =>
       isApiKeyEffectivelyActive(key, apiKeyAccessContext),
     isKeyRevocable: (key: APIKeyResponse) => key.is_active !== false && key.is_revoked !== true,

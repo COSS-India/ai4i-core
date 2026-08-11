@@ -1,6 +1,9 @@
 inference_types:
   - name: llm
     endpoint_pattern: /api/v1/chat
+    # OpenAI-compatible surface serves the same type on more than one path.
+    endpoint_aliases:
+      - /api/v1/chat/completions
     unit: tokens
     pricing: per_million_tokens
   - name: asr

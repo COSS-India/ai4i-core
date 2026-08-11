@@ -83,6 +83,7 @@ def get_auth_service(
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
+    cache_service: CacheService = Depends(get_cache_service),
     api_key_service: APIKeyService = Depends(get_api_key_service),
 ) -> AuthService:
     return AuthService(
@@ -94,6 +95,7 @@ def get_auth_service(
         verification_repo=VerificationRepository(db),
         tenant_repo=TenantRepository(db),
         email_client=email_client,
+        cache_service=cache_service,
         api_key_service=api_key_service,
     )
 

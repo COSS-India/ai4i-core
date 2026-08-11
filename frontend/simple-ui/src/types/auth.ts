@@ -41,6 +41,17 @@ export interface LoginResponse {
   user?: User; // Optional since API might not include it
 }
 
+/** POST /auth/change-password — keeps `message` for backward compatibility
+ * with any pre-existing consumer of this endpoint, alongside a fresh token
+ * pair for the caller's own session. */
+export interface ChangePasswordResponse {
+  message: string;
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
 export interface RegisterRequest {
   email: string;
   password: string;

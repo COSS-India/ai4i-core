@@ -27,7 +27,7 @@ import {
 } from "@chakra-ui/react";
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
-import { showToast } from "../../utils/toast";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 
 export interface CreateApiKeyTabProps {
   onApiKeyCreated?: () => void;
@@ -38,6 +38,7 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const create = useCreateApiKeyTab({ onApiKeyCreated });
+  const { copy } = useCopyToClipboard();
 
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
@@ -78,11 +79,10 @@ export default function CreateApiKeyTab({ onApiKeyCreated }: CreateApiKeyTabProp
                           icon={<CopyIcon />}
                           size="xs"
                           onClick={() => {
-                            navigator.clipboard.writeText(create.createdApiKeyToken!);
-                            showToast({
-                              type: "success",
-                              message: "API key copied to clipboard",
-                            });
+                            void copy(
+                              create.createdApiKeyToken!,
+                              "API key copied to clipboard",
+                            );
                           }}
                         />
                         <IconButton

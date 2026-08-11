@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { installGlobalErrorHandling } from '../utils/errorHandler';
-import { AppProps } from 'next/app';
+import App, { AppContext, AppProps } from 'next/app';
 import Head from 'next/head';
 import { ChakraProvider } from '@chakra-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -13,12 +13,20 @@ import Layout from '../components/common/Layout';
 import AppErrorBoundary from '../components/common/AppErrorBoundary';
 import { GlobalToastRegistrar } from '../utils/toast';
 import AuthGuard from '../components/auth/AuthGuard';
+import {
+  applyRuntimeConfig,
+  getServerRuntimeConfig,
+  type RuntimeConfig,
+} from '../config/runtimeConfig';
+import { syncApiClientBaseUrl } from '../services/api';
 import '../styles/globals.css';
 import '../styles/metering.css';
 
 if (typeof window !== 'undefined') {
   installGlobalErrorHandling();
 }
+
+type AppOwnProps = { runtimeConfig: RuntimeConfig };
 
 // Define routes that need the full layout
 const layoutRoutes = [
@@ -44,13 +52,30 @@ const layoutRoutes = [
   '/logs',
   '/usage-dashboard',
   '/traces',
-  '/alerts-management',
-  '/pii-management',
+  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // '/alerts-management',
+  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // '/pii-management',
   '/tier-management',
   '/policy-management',
 ];
 
-export default function App({ Component, pageProps }: AppProps) {
+export default function MyApp({
+  Component,
+  pageProps,
+  runtimeConfig,
+}: AppProps & Partial<AppOwnProps>) {
+  // Apply before children render so hooks/services see ConfigMap values.
+  applyRuntimeConfig(
+    runtimeConfig ??
+      (typeof window !== "undefined" ? window.__RUNTIME_CONFIG__ : undefined) ?? {
+        apiUrl: "",
+        telemetryServiceUrl: "",
+        enabledTaskTypes: "",
+      },
+  );
+  syncApiClientBaseUrl();
+
   const router = useRouter();
   const [queryClient] = useState(
     () =>
@@ -94,3 +119,19 @@ export default function App({ Component, pageProps }: AppProps) {
     </ChakraProvider>
   );
 }
+
+MyApp.getInitialProps = async (appContext: AppContext) => {
+  const appProps = await App.getInitialProps(appContext);
+
+  let runtimeConfig: RuntimeConfig;
+  if (typeof window === 'undefined') {
+    runtimeConfig = getServerRuntimeConfig();
+  } else if (window.__RUNTIME_CONFIG__) {
+    runtimeConfig = window.__RUNTIME_CONFIG__;
+  } else {
+    const res = await fetch(`${window.location.origin}/api/config`);
+    runtimeConfig = (await res.json()) as RuntimeConfig;
+  }
+
+  return { ...appProps, runtimeConfig };
+};

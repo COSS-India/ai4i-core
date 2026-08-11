@@ -13,8 +13,9 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
-from app.schemas.pay_per_use.tenant_assignment import TierReassignRequest
+from app.schemas.pay_per_use.tenant_assignment import TierAssignRequest, TierReassignRequest
 from app.services.pay_per_use import tenant_assignment_service as svc
 
 
@@ -211,6 +212,32 @@ class TestReassignTier:
             )
 
         assert exc.value.status_code == 404
+
+
+class TestTierAssignRequestValidation:
+    """AI4IDS-2216 / budget precision ticket: budget=0 must be rejected (422)."""
+
+    def _kwargs(self, budget):
+        now = datetime.now(timezone.utc)
+        return dict(
+            tenant_id="1",
+            tier_id=str(uuid4()),
+            budget=budget,
+            effective_from=now,
+            effective_to=now + timedelta(days=30),
+        )
+
+    def test_zero_budget_is_rejected(self):
+        with pytest.raises(ValidationError):
+            TierAssignRequest(**self._kwargs(Decimal("0")))
+
+    def test_negative_budget_is_rejected(self):
+        with pytest.raises(ValidationError):
+            TierAssignRequest(**self._kwargs(Decimal("-1")))
+
+    def test_positive_budget_is_accepted(self):
+        request = TierAssignRequest(**self._kwargs(Decimal("100")))
+        assert request.budget == Decimal("100")
 
 
 @pytest.mark.asyncio

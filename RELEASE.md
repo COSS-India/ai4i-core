@@ -1,7 +1,7 @@
 # Release Guide
 
-This document describes the release process for **AI4I-Core** — how new versions are
-branched, versioned, tested, tagged, and published. AI4I-Core is an open-source platform and every release is a public commitment to
+This document describes the release process for **AI4I-Orchestrate** — how new versions are
+branched, versioned, tested, tagged, and published. AI4I-Orchestrate is an open-source platform and every release is a public commitment to
 stability. This guide covers the full lifecycle: from opening a feature branch to
 publishing the shared library on PyPI and cutting a GitHub Release.
 
@@ -22,7 +22,7 @@ publishing the shared library on PyPI and cutting a GitHub Release.
 
 ## Release Cadence
 
-AI4I-Core follows a **milestone-driven release cadence**. A new minor or major release is
+AI4I-Orchestrate follows a **milestone-driven release cadence**. A new minor or major release is
 cut when a planned set of features and fixes is complete and stable. Patch releases are cut as needed to address critical bugs or security
 vulnerabilities.
 
@@ -47,7 +47,7 @@ vulnerabilities.
 
 ## Versioning Scheme
 
-AI4I-Core uses **Semantic Versioning** ([SemVer](https://semver.org/)) — `MAJOR.MINOR.PATCH`.
+AI4I-Orchestrate uses **Semantic Versioning** ([SemVer](https://semver.org/)) — `MAJOR.MINOR.PATCH`.
 
 The project has a single version tracked via Git tags. The only separately versioned
 artifact is the shared Python library published to PyPI.

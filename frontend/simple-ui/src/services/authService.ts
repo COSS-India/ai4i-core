@@ -2,6 +2,7 @@
  * Authentication service
  */
 import {
+  ChangePasswordResponse,
   LoginRequest,
   LoginResponse,
   RegisterRequest,
@@ -27,7 +28,7 @@ import {
 } from '../types/auth';
 import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
-import { API_BASE_URL, apiService } from './api';
+import { getApiBaseUrl, apiService } from './api';
 import { ApiValidationError } from './dto/apiValidationError';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import {
@@ -35,6 +36,7 @@ import {
   apiKeyListResponseSchema,
   apiKeyListUnionSchema,
   apiKeyResponseSchema,
+  changePasswordResponseSchema,
   checkEmailExistsResponseSchema,
   createApiKeyResponseSchema,
   guestServicesListSchema,
@@ -66,10 +68,8 @@ import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInact
 const authPath = apiEndpoints.auth.paths;
 
 class AuthService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.base}`;
+  private get baseUrl(): string {
+    return `${getApiBaseUrl()}${apiEndpoints.auth.base}`;
   }
 
   private async validatedRequest<S extends ZodTypeAny>(
@@ -386,11 +386,23 @@ class AuthService {
     });
   }
 
-  async changePassword(data: PasswordChangeRequest): Promise<{ message: string }> {
-    return this.validatedRequest(authPath.changePassword, authUnwrappedSchema(messageResponseSchema), {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+  async changePassword(data: PasswordChangeRequest): Promise<ChangePasswordResponse> {
+    const response = await this.validatedRequest(
+      authPath.changePassword,
+      authUnwrappedSchema(changePasswordResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+
+    // The old tokens were just revoked server-side; store the fresh pair so
+    // this session keeps working without a round-trip through /auth/refresh.
+    const rememberMe = getRememberMeFromStorage();
+    this.setAccessToken(response.access_token, rememberMe);
+    this.setRefreshToken(response.refresh_token, rememberMe);
+
+    return response;
   }
 
   async requestPasswordReset(data: PasswordResetRequest): Promise<{ message: string }> {

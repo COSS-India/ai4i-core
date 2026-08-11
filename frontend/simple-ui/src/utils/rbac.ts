@@ -65,6 +65,18 @@ export function canSelfDeleteAccount(roles?: string[]): boolean {
   return userHasRole(roles, "USER") || isTenantAdminUser(roles);
 }
 
+/** Profile User Details edit — guests cannot update their profile (API denies it). */
+export function canEditOwnProfile(roles?: string[]): boolean {
+  if (!roles?.length) return false;
+  return !userHasRole(roles, "GUEST");
+}
+
+/** Change Password tab — hidden for shared Guest accounts. */
+export function canChangeOwnPassword(roles?: string[]): boolean {
+  if (!roles?.length) return false;
+  return !userHasRole(roles, "GUEST");
+}
+
 export type MeteringRoleView = "adopter" | "tenant";
 
 export interface MeteringRoleViewConfig {

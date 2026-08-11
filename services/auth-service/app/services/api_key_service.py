@@ -6,13 +6,18 @@ The raw hex key is stored directly in Postgres (api_key column = primary key).
 Redis is the sole validation path at inference time — zero DB calls per request.
 Revocation immediately deletes the Redis entry; subsequent lookups find nothing.
 
-Tenant/user access changes only evict or refresh Redis. ``api_key.is_active`` is for
-explicit revoke only; ``user.is_tenant_active`` / tenant status gate auth via cache refresh.
+Effective key status (no separate DB status column):
+  * Active   — ``is_active=True`` and user/tenant allow access (Redis cached)
+  * Inactive — ``is_active=True`` but tenant SUSPENDED / user locked (Redis evicted;
+               auto-resumes to Active on reactivation via cache refresh)
+  * Revoked  — ``is_active=False`` (tenant DEACTIVATED or explicit revoke;
+               reactivation does not restore the key)
 """
 
 import logging
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
@@ -23,6 +28,7 @@ from sqlalchemy import text
 from ai4i_core.ppu import get_inference_types
 
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.models.tenant import Tenant, TenantStatus
@@ -36,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 _HEX_KEY_RE = re.compile(r"[0-9a-f]{32}")
 _USERS_PAGE_SIZE = 500
+
+# Ad hoc, short-lived session for validate_api_key's DB fallback — opened only
+# on an actual Redis miss, independent of any repository injected into a
+# given APIKeyService instance. Wraps the same session factory/rollback logic
+# FastAPI's own Depends(get_db) uses; borrows a connection from the app's one
+# already-initialized engine, not a separate pool.
+_open_db_session = asynccontextmanager(get_db)
 
 
 class APIKeyService:
@@ -130,33 +143,98 @@ class APIKeyService:
             return {}
         return await self._repo.get_permission_names_by_ids(list(all_ids))
 
+    @staticmethod
+    def _compute_cache_ttl(db_key: APIKey) -> int:
+        """Seconds until ``db_key`` expires, or the configured default TTL
+        when it never expires. Never negative."""
+        if db_key.expires_at:
+            return max(0, int((db_key.expires_at - datetime.now(timezone.utc)).total_seconds()))
+        return int(timedelta(days=settings.api_key_expire_days).total_seconds())
+
+    @staticmethod
+    def _build_cache_payload(
+        db_key: APIKey, tenant_id: Optional[str], extra_fields: Optional[dict] = None
+    ) -> dict:
+        """The canonical Redis-hash shape for an API key — defined once so
+        every writer (create, refresh, DB-fallback rehydrate) stays in sync."""
+        return {
+            "api_key": db_key.api_key,
+            "permissions": db_key.permissions or [],
+            "user_id": str(db_key.user_id),
+            "tenant_id": tenant_id,
+            **(extra_fields or {}),
+        }
+
+    @staticmethod
+    def _preserved_billing_fields(db_key: APIKey) -> dict:
+        """budget-exhausted/quota-* already in cached_data, carried forward so a
+        refresh never erases billing state the PPU write-through path
+        (patch_cached_data_field_for_tenant et al.) wrote directly into
+        cached_data — mirrors how _refresh_redis_cache's own ``preserved``
+        carries the same fields forward from the live Redis hash."""
+        return {
+            k: v
+            for k, v in (db_key.cached_data or {}).items()
+            if k == "budget-exhausted" or k.startswith("quota-")
+        }
+
+    async def _persist_cache_snapshot(self, db_key: APIKey, payload: dict) -> None:
+        """Mirror ``payload`` onto ``api_key.cached_data`` so a future Redis
+        miss can repopulate the cache without rejoining users/tenants.
+        Merges forward any billing flags already in cached_data that
+        ``payload`` doesn't itself carry — payload's own values (e.g.
+        preserved from a live Redis hash) still win when present, since
+        they're fresher."""
+        snapshot = {**self._preserved_billing_fields(db_key), **payload}
+        await self._repo.update(db_key, {"cached_data": snapshot})
+        await self._repo.commit()
+
+    @staticmethod
+    def _preserved_tier_id(db_key: APIKey) -> dict:
+        """tier_id is only ever correctly computed once, at create_api_key
+        time (a platform-core PPU lookup) — every other writer must carry
+        forward whatever's already in cached_data instead of recomputing it."""
+        if db_key.cached_data and "tier_id" in db_key.cached_data:
+            return {"tier_id": db_key.cached_data["tier_id"]}
+        return {}
+
     async def _refresh_redis_cache(
         self, db_key: APIKey, tenant_id: Optional[str]
     ) -> None:
-        expires_at = db_key.expires_at
-        if expires_at:
-            ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
-        else:
-            ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
+        ttl = self._compute_cache_ttl(db_key)
         if ttl <= 0:
             return
         existing = await self._cache.get_api_key_cache(db_key.api_key)
-        preserved = {
+        # No value filter: a live "0" is evidence too — filtering to v == "1"
+        # would let a stale "1" in cached_data win the merge below and
+        # resurrect a cleared budget-exhausted flag into both stores.
+        preserved_from_redis = {
             k: v
             for k, v in (existing or {}).items()
-            if v == "1" and (k == "budget-exhausted" or k.startswith("quota-"))
+            if k == "budget-exhausted" or k.startswith("quota-")
         }
-        await self._cache.set_api_key_cache(
-            db_key.api_key,
-            ttl,
-            {
-                "api_key": db_key.api_key,
-                "permissions": db_key.permissions or [],
-                "user_id": str(db_key.user_id),
-                "tenant_id": tenant_id,
-                **preserved,
-            },
+        # cached_data's own billing state is the base (covers a cold/evicted Redis
+        # hash with nothing to preserve); Redis's live state, if any, overrides it —
+        # keeps both stores converging on the same values instead of just one.
+        preserved = {**self._preserved_billing_fields(db_key), **preserved_from_redis}
+        payload = self._build_cache_payload(
+            db_key, tenant_id, {**self._preserved_tier_id(db_key), **preserved}
         )
+        await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
+        await self._persist_cache_snapshot(db_key, payload)
+
+    async def _persist_current_state_to_cached_data(
+        self, db_key: APIKey, tenant_id: Optional[str]
+    ) -> None:
+        """Write-through even while the key isn't currently eligible to be
+        served (revoked, or owner/tenant temporarily inactive): cached_data
+        must never silently drift from the row an admin just edited, or a
+        later reactivation/DB-fallback rehydrate would serve stale
+        permissions/expiry. Redis is deliberately left alone here — only
+        the DB snapshot updates, since the key must not become servable
+        again just because its details changed."""
+        payload = self._build_cache_payload(db_key, tenant_id, self._preserved_tier_id(db_key))
+        await self._persist_cache_snapshot(db_key, payload)
 
     async def evict_keys_for_user(self, user_id: UUID) -> None:
         """Remove Redis entries for all keys owned by ``user_id``. No DB writes."""
@@ -166,7 +244,11 @@ class APIKeyService:
             await self._cache.delete_api_key_cache(key.api_key)
 
     async def evict_keys_for_tenant(self, tenant_id: int) -> None:
-        """Evict Redis cache for all tenant users' keys. No DB writes."""
+        """Evict Redis cache for all tenant users' keys. No DB writes.
+
+        Used for tenant SUSPENDED: keys stay ``is_active=True`` (Inactive) so
+        reactivation can repopulate Redis without issuing a new key.
+        """
         if self._repo is None or self._users is None:
             logger.warning(
                 "evict_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
@@ -185,6 +267,51 @@ class APIKeyService:
             if len(users) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
+
+    async def revoke_keys_for_tenant(self, tenant_id: int) -> None:
+        """Permanently revoke all active API keys for a tenant (DEACTIVATED).
+
+        Bulk-sets ``is_active=False``, commits, then deletes Redis entries.
+        Commit-before-Redis matches ``revoke_by_obj`` ordering so a failed
+        commit cannot leave Redis empty while keys remain active (which would
+        let a later reactivation refresh restore them). Reactivating the
+        tenant will not restore revoked keys — an admin must create new ones.
+        """
+        if self._repo is None or self._users is None:
+            logger.warning(
+                "revoke_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
+                tenant_id,
+            )
+            return
+        revoked_keys: list[str] = []
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            page_keys = await self._repo.revoke_active_for_users(
+                [user.id for user in users]
+            )
+            revoked_keys.extend(page_keys)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+        if not revoked_keys:
+            logger.info(
+                "Revoked 0 API key(s) for deactivated tenant_id=%s",
+                tenant_id,
+            )
+            return
+        await self._repo.commit()
+        for api_key in revoked_keys:
+            await self._cache.delete_api_key_cache(api_key)
+        logger.info(
+            "Revoked %s API key(s) for deactivated tenant_id=%s",
+            len(revoked_keys),
+            tenant_id,
+        )
 
     async def refresh_keys_cache_for_user(
         self,
@@ -253,13 +380,18 @@ class APIKeyService:
     async def _patch_all_tenant_key_caches(
         self, tenant_id: int, field: str, value: str
     ) -> None:
-        """Patch a single Redis hash field on every cached API key for the tenant."""
+        """Patch a single Redis hash field on every cached API key for the
+        tenant, and mirror the same field/value onto cached_data (write-
+        through) so it survives a cache eviction instead of resetting to
+        unset on the next DB-fallback rehydrate."""
         if self._repo is None or self._users is None:
             return
         await self._for_each_active_tenant_key(
             tenant_id,
             lambda key: self._cache.patch_api_key_cache_field(key.api_key, field, value),
         )
+        await self._repo.patch_cached_data_field_for_tenant(tenant_id, field, value)
+        await self._repo.commit()
 
     async def set_budget_exhausted_for_tenant(self, tenant_id: int, exhausted: bool) -> None:
         """Flip budget-exhausted on all cached API key hashes for the tenant."""
@@ -268,14 +400,19 @@ class APIKeyService:
         )
 
     async def reset_all_quota_fields(self) -> None:
-        """HDEL every quota-* field from all active API key hashes across all tenants.
-        Called by the monthly cron on the 1st of each month.
+        """HDEL every quota-* field from all active API key hashes across all tenants,
+        and remove the same fields from cached_data. Called by the monthly cron on
+        the 1st of each month.
 
         Reads api_keys directly, paginated by key id — no join through users
         (list_active_keys), and clears each page via one pipelined Redis call
         (delete_api_key_cache_fields_bulk) instead of one HDEL per key. This
         was previously one DB query per user plus one serial HDEL per key,
-        which doesn't scale to a large (lakhs-of-keys) tenant population.
+        which doesn't scale to a large (lakhs-of-keys) tenant population. The
+        cached_data side is likewise cleared in id-keyset batches
+        (remove_cached_data_fields_globally), each its own transaction, so
+        neither side holds table-wide locks or builds one oversized
+        transaction.
         """
         if self._repo is None:
             logger.warning("reset_all_quota_fields skipped: missing repositories")
@@ -292,6 +429,8 @@ class APIKeyService:
             if len(keys) < _USERS_PAGE_SIZE:
                 break
             offset += _USERS_PAGE_SIZE
+        # Commits per batch internally (keyset-paginated); no trailing commit needed.
+        await self._repo.remove_cached_data_fields_globally(inference_fields)
 
     async def set_quota_exhausted_for_tenant(
         self, tenant_id: int, inference_name: str
@@ -302,7 +441,8 @@ class APIKeyService:
         )
 
     async def clear_quota_flags_for_tenant(self, tenant_id: int) -> None:
-        """HDEL every quota-* field from this tenant's cached API key hashes.
+        """HDEL every quota-* field from this tenant's cached API key hashes,
+        and remove the same fields from cached_data.
 
         Used when a tenant is reassigned to a new tier: ppu_quota_usage starts
         a fresh row under the new tier_id, so any quota-exhausted flag set
@@ -320,6 +460,8 @@ class APIKeyService:
             tenant_id,
             lambda key: self._cache.delete_api_key_cache_fields(key.api_key, inference_fields),
         )
+        await self._repo.remove_cached_data_fields_for_tenant(tenant_id, inference_fields)
+        await self._repo.commit()
 
     async def create_api_key(
         self,
@@ -422,38 +564,94 @@ class APIKeyService:
         await self._repo.commit()
 
         if owner_active:
-            await self._cache.set_api_key_cache(
-                raw_key,
-                ttl,
-                {
-                    "api_key": raw_key,
-                    "permissions": permission_ids,
-                    "user_id": str(user_id),
-                    "tenant_id": tenant_id,
-                    "tier_id": tier_id,
-                },
-            )
+            payload = self._build_cache_payload(api_key, tenant_id, {"tier_id": tier_id})
+            await self._cache.set_api_key_cache(raw_key, ttl, payload)
+            await self._persist_cache_snapshot(api_key, payload)
 
         logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
         return raw_key, api_key
 
+    @staticmethod
+    def _is_cache_entry_invalid(cached: dict) -> bool:
+        """True for a negatively-cached (tombstoned) token."""
+        return cached.get("is_already_invalid") == "1" if isinstance(cached, dict) else False
+
+    @staticmethod
+    def _shape_validation_result(payload: dict) -> dict:
+        return {
+            **payload,
+            "valid": True,
+            "permission_ids": payload.get("permissions", []),
+        }
+
+    @staticmethod
+    async def _get_api_key_from_db(repo: APIKeyRepository, token: str) -> Optional[APIKey]:
+        """DB fallback for a Redis miss. ``repo`` eager-loads user/tenant so
+        eligibility can be checked without further queries."""
+        return await repo.get_by_api_key_if_valid(token)
+
+    def _is_key_eligible(self, db_key: APIKey) -> bool:
+        """Beyond is_active/expiry (already filtered in the DB query): the
+        owning user and tenant must still allow API-key authentication."""
+        if db_key.user is None:
+            logger.warning(
+                "API key %s has no owning user row; treating as ineligible", db_key.api_key
+            )
+            return False
+        return self.user_may_use_api_keys(db_key.user, db_key.user.tenant)
+
+    async def _rehydrate_cache_from_db(self, db_key: APIKey) -> dict:
+        """Repopulate Redis for an eligible key found on a cache miss —
+        verbatim from its persisted ``cached_data`` snapshot, the only source
+        of truth for this path (write-through: cached_data is kept in sync on
+        every create/update; never synthesized here — the PPU tier lookup it
+        can carry isn't safe to redo on this hot path)."""
+        if not db_key.cached_data:
+            raise InvalidAPIKeyError()
+        payload = db_key.cached_data
+        ttl = self._compute_cache_ttl(db_key)
+        if ttl <= 0:
+            return payload
+        await self._cache.set_api_key_cache(db_key.api_key, ttl, payload)
+        return payload
+
+    async def _tombstone_invalid_token(self, token: str) -> None:
+        """Negative-cache a token confirmed absent/ineligible, so repeat
+        requests fail fast from Redis instead of re-querying the DB."""
+        await self._cache.set_api_key_cache(
+            token, settings.invalid_api_key_cache_ttl_seconds, {"is_already_invalid": "1"}
+        )
+
+    async def _resolve_from_db_or_tombstone(self, token: str) -> dict:
+        """Owns the DB session for the whole miss-handling flow — opened here
+        lazily (only on an actual cache miss), not injected via the
+        constructor, so the validation hot path never carries a DB
+        dependency unless one is genuinely needed."""
+        async with _open_db_session() as session:
+            repo = APIKeyRepository(session)
+            db_key = await self._get_api_key_from_db(repo, token)
+            if db_key is None or not self._is_key_eligible(db_key):
+                await self._tombstone_invalid_token(token)
+                raise InvalidAPIKeyError()
+            return await self._rehydrate_cache_from_db(db_key)
+
     async def validate_api_key(self, token: str) -> dict:
         """
-        Validate a hex API key. Redis-only — zero DB calls.
-        Raises InvalidAPIKeyError when the key is absent from Redis (revoked or never existed).
+        Validate a hex API key. Redis-first: a cache hit is zero-DB. On a
+        miss, falls back to Postgres to repopulate the cache; a token that's
+        absent or no longer eligible is negatively cached before raising.
         """
         if not self._is_api_key(token):
             return {"valid": False, "message": "Invalid API key format."}
 
         cached = await self._cache.get_api_key_cache(token)
-        if cached is None:
-            raise InvalidAPIKeyError()
+        if cached is not None:
+            if self._is_cache_entry_invalid(cached):
+                raise InvalidAPIKeyError()
+            return self._shape_validation_result(cached)
 
-        return {
-            **cached,
-            "valid": True,
-            "permission_ids": cached.get("permissions", []),
-        }
+        payload = await self._resolve_from_db_or_tombstone(token)
+        return self._shape_validation_result(payload)
 
     async def revoke_api_key(
         self,
@@ -531,7 +729,6 @@ class APIKeyService:
             data["updated_by"] = str(user_id)
 
         await self._repo.update(db_key, data)
-        await self._repo.refresh(db_key)
         await self._repo.commit()
 
         tenant_id_str: Optional[str] = None
@@ -541,16 +738,19 @@ class APIKeyService:
             if owner and owner.tenant_id is not None and self._tenants is not None:
                 tenant = await self._tenants.get_by_id(owner.tenant_id)
                 tenant_id_str = str(owner.tenant_id)
-            if owner:
-                if self.effective_is_active(db_key, owner, tenant):
-                    await self._refresh_redis_cache(db_key, tenant_id_str)
-                else:
-                    await self._cache.delete_api_key_cache(db_key.api_key)
+            if owner and self.effective_is_active(db_key, owner, tenant):
+                await self._refresh_redis_cache(db_key, tenant_id_str)
             else:
+                # Not currently eligible (revoked, or owner/tenant inactive) — Redis
+                # must stay evicted, but cached_data still has to mirror the edit
+                # just committed, or a later reactivation/DB-fallback rehydrate
+                # would serve stale permissions/expiry.
                 await self._cache.delete_api_key_cache(db_key.api_key)
+                await self._persist_current_state_to_cached_data(db_key, tenant_id_str)
         elif data.get("is_active") is False:
             await self._cache.delete_api_key_cache(db_key.api_key)
 
+        await self._repo.refresh(db_key)
         logger.info("API key updated: api_key=%s user=%s", db_key.api_key, db_key.user_id)
         return db_key
 

@@ -35,35 +35,6 @@ export interface Submitter {
   team?: TeamMember[];
 }
 
-export interface InferenceApiKey {
-  /** Defaults to "Authorization" */
-  name?: string;
-  /** Always "[REDACTED]" on every read */
-  value: string;
-}
-
-export interface AsyncApiDetails {
-  pollingUrl: string;
-  /** Poll interval in milliseconds */
-  pollInterval: number;
-  asyncApiSchema?: Record<string, unknown>;
-  asyncApiPollingSchema?: Record<string, unknown>;
-}
-
-/** ULCA inference endpoint (callbackUrl + schema required on create). */
-export interface InferenceEndPoint {
-  callbackUrl: string;
-  inferenceApiKey?: InferenceApiKey;
-  isMultilingualEnabled?: boolean;
-  schema: Record<string, unknown>;
-  isSyncApi?: boolean;
-  asyncApiDetails?: AsyncApiDetails;
-  /** Platform-specific Triton I/O mapping — not part of ULCA */
-  adapterConfig?: Record<string, unknown>;
-}
-
-export type InferenceEndPointPatch = Partial<InferenceEndPoint>;
-
 export interface TaskSpec {
   type: string;
 }
@@ -235,7 +206,8 @@ export interface ModelResponse {
   submitter?: Submitter | null;
   license?: License | string | null;
   licenseUrl?: string | null;
-  inferenceEndPoint?: InferenceEndPoint | null;
+  adapterConfig?: Record<string, unknown> | null;
+  schema?: Record<string, unknown> | null;
   /** GET/list returns refUrl as `source` — there is no `refUrl` key in responses. */
   source?: string | null;
   task?: TaskSpec;
@@ -262,6 +234,8 @@ export interface ModelListParams {
   offset?: number;
   limit?: number;
   taskType?: string;
+  /** Comma-separated yaml task types → `task_types=` query param */
+  taskTypes?: string;
   versionStatus?: string;
   createdBy?: string;
 }
@@ -297,7 +271,17 @@ export interface ModelCreateRequest {
   license: License;
   licenseUrl?: string;
   domain: Domain[];
-  inferenceEndPoint: InferenceEndPoint;
+  adapterConfig?: Record<string, unknown>;
+  schema?: Record<string, unknown>;
+  callbackUrl?: string;
+  inferenceApiKey?: { name: string; value: string };
+  isSyncApi?: boolean;
+  asyncApiDetails?: {
+    pollingUrl: string;
+    pollInterval: number;
+    asyncApiSchema?: Record<string, unknown>;
+    asyncApiPollingSchema?: Record<string, unknown>;
+  } | null;
   trainingDataset: TrainingDataset;
   classInstance?: string;
   benchmarks?: Benchmark[];
@@ -318,7 +302,17 @@ export interface ModelUpdateRequest {
   license?: License;
   licenseUrl?: string;
   domain?: Domain[];
-  inferenceEndPoint?: InferenceEndPointPatch;
+  adapterConfig?: Record<string, unknown>;
+  schema?: Record<string, unknown>;
+  callbackUrl?: string;
+  inferenceApiKey?: { name: string; value: string };
+  isSyncApi?: boolean;
+  asyncApiDetails?: {
+    pollingUrl: string;
+    pollInterval: number;
+    asyncApiSchema?: Record<string, unknown>;
+    asyncApiPollingSchema?: Record<string, unknown>;
+  } | null;
   trainingDataset?: TrainingDataset;
   classInstance?: string;
   benchmarks?: Benchmark[];
@@ -361,8 +355,11 @@ export interface ServiceResponse {
   apiKey?: string | null;
   healthStatus?: ServiceStatus | null;
   benchmarks?: Record<string, unknown> | null;
+  expectedResponseSchema?: Record<string, unknown> | null;
   policy?: Record<string, unknown> | ServicePolicy | null;
   isPublished: boolean;
+  /** When true, anonymous Try-It should prefer this service for its task type. */
+  isTryItDefault?: boolean;
   publishedAt?: string | null;
   unpublishedAt?: string | null;
   createdBy?: string | null;
@@ -397,6 +394,8 @@ export interface ServiceListParams {
   offset?: number;
   limit?: number;
   taskType?: string;
+  /** Comma-separated task types to include (frontend allowlist). */
+  taskTypes?: string;
   isPublished?: boolean;
   createdBy?: string;
 }
@@ -436,7 +435,7 @@ export type Service = ServiceListItem & ServiceLegacyFields;
 
 export interface ServiceCreateRequest {
   name: string;
-  serviceDescription: string;
+  serviceDescription?: string;
   hardwareDescription: string;
   modelId: string;
   modelVersion: string;
@@ -446,6 +445,7 @@ export interface ServiceCreateRequest {
   sslVerify?: boolean;
   healthStatus?: ServiceStatus;
   benchmarks?: Record<string, unknown>;
+  expectedResponseSchema?: Record<string, unknown> | null;
   isPublished?: boolean;
 }
 
@@ -459,7 +459,10 @@ export interface ServiceUpdateRequest {
   sslVerify?: boolean;
   healthStatus?: string | ServiceStatus;
   benchmarks?: Record<string, unknown>;
+  expectedResponseSchema?: Record<string, unknown> | null;
   isPublished?: boolean;
+  /** Mark this service as the anonymous Try-It default for its task type. */
+  isTryItDefault?: boolean;
   policy?: ServicePolicy;
   taskType?: string;
   costPerUnit?: number;

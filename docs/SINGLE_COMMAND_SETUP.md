@@ -1,6 +1,6 @@
 # Single-Command Setup
 
-Get AI4I Core running on a fresh machine with **one command**. It clones the
+Get AI4I-Orchestrate running on a fresh machine with **one command**. It clones the
 repo, installs anything that's missing, and brings up the **core** profile
 (postgres, redis, and the auth / platform-core / inference backend services).
 
@@ -225,7 +225,7 @@ versioned. To publish it as a Gist (or refresh an existing one) with the
 gh gist edit fbaa8b89366887bb288c132199341d81 scripts/bootstrap.sh
 
 # …or create a brand-new gist (you'd then update the raw URLs in this doc)
-gh gist create scripts/bootstrap.sh --public --desc "AI4I Core one-command dev setup"
+gh gist create scripts/bootstrap.sh --public --desc "AI4I-Orchestrate one-command dev setup"
 ```
 
 The unpinned raw URL

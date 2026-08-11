@@ -43,6 +43,11 @@ THROUGHPUT_BUCKET_CONFIG: dict = {
 # Anchored in Prometheus =~ so /api/v1/chat(/completions)? matches both label forms.
 INFERENCE_ENDPOINT_REGEX = r"(.*/inference|/api/v1/chat(/completions)?)"
 
+# LLM chat paths only — narrower than INFERENCE_ENDPOINT_REGEX, which also
+# matches non-LLM /inference endpoints. Used by the model-consumption tab,
+# which is LLM-only.
+LLM_CHAT_ENDPOINT_REGEX = r"/api/v1/chat(/completions)?"
+
 # Regex for service-breakdown queries — same coverage as INFERENCE_ENDPOINT_REGEX.
 SERVICE_BREAKDOWN_ENDPOINT_REGEX = r"/api/v1/(.+/inference|chat(/completions)?)"
 
@@ -51,6 +56,9 @@ SERVICE_BREAKDOWN_ENDPOINT_REGEX = r"/api/v1/(.+/inference|chat(/completions)?)"
 ENDPOINT_TO_TASK: dict = {
     "/api/v1/chat": "llm",
     "/api/v1/chat/completions": "llm",
+    # inference-service abbreviates this route to "audio-lang-detection" —
+    # doesn't match the "audio_language_detection" config key via hyphenation.
+    "/api/v1/audio-lang-detection/inference": "audio_language_detection",
 }
 
 # Bucket size for the Request Volume range chart — chosen so each window renders a
@@ -66,6 +74,46 @@ WINDOW_STEP: dict = {
     "7d":  "1d",
     "30d": "7d",
 }
+
+
+def build_task_type_selector(task_types: list[str] | None) -> str | None:
+    """Build an extra label-selector fragment restricting queries to specific task types.
+
+    Reverses ENDPOINT_TO_TASK for tasks with a non-standard endpoint (e.g. "llm" ->
+    /api/v1/chat, /api/v1/chat/completions) and falls back to the standard
+    /api/v1/{task}/inference pattern (hyphenated, matching SERVICE_BREAKDOWN_CONFIG's
+    underscore-separated keys) for everything else. Callers are expected to have
+    already rejected unrecognized task types (see `_parse_task_types` in
+    routes/metering.py, which 422s on anything outside SERVICE_BREAKDOWN_CONFIG)
+    before reaching this helper.
+
+    Returns None when task_types is falsy, so callers can skip the selector entirely.
+    """
+    if not task_types:
+        return None
+    patterns: list[str] = []
+    for task in task_types:
+        # No re.escape(): these are fixed, config-controlled endpoint strings (not
+        # user input), and PromQL's regex dialect rejects Python's `\-` escape for
+        # hyphens with a parse error, so escaping would break e.g. audio-lang-detection.
+        literal_endpoints = [ep for ep, t in ENDPOINT_TO_TASK.items() if t == task]
+        if literal_endpoints:
+            patterns.extend(literal_endpoints)
+        else:
+            patterns.append(f"/api/v1/{task.replace('_', '-')}/inference")
+    regex = "|".join(patterns)
+    return f'{PROMETHEUS_API_PATH_LABEL}=~"{regex}"'
+
+
+def escape_label_value(value: str) -> str:
+    """Escape a value for interpolation into a PromQL string literal.
+
+    The ``tenant`` label now carries the tenant's organisation name (free
+    text set by an admin), not a numeric id — unlike an id, it can contain
+    ``"`` or ``\\``, which would otherwise break out of the label selector's
+    quotes and let one value inject extra selectors into the query.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def apply_time_range(metric_expr: str, time_range: str | None) -> str:
@@ -111,17 +159,39 @@ def sum_over_window(metric_expr: str, time_range: str | None) -> str:
     )
 
 
+def sum_over_window_by(metric_expr: str, by_label: str, time_range: str | None) -> str:
+    """Same reset-aware hybrid as sum_over_window(), grouped by ``by_label``.
+
+    Used to break a counter down per label value (e.g. per model) instead of
+    collapsing it to a single total.
+    """
+    window = TIME_RANGES.get(time_range or "all") or (
+        time_range if time_range and time_range != "all" else None
+    )
+    if not window:
+        return f"sum by({by_label}) ({metric_expr})"
+    return (
+        f"sum by({by_label}) ("
+        f"({metric_expr} unless {metric_expr} offset {window})"
+        f" or (increase({metric_expr}[{window}]) > 0)"
+        f")"
+    )
+
+
 # Per-task display metadata for the service breakdown table.
 # Keys match the URL task segment: /api/v1/{task}/inference.
 #
 # native_metric: the Prometheus Histogram _sum series that accumulates the
-#   native unit (characters, seconds, tokens). Use the _sum suffix because
-#   that is what Prometheus appends to a Histogram name.  None means the
-#   task has no dedicated native-unit metric — the API returns null for
+#   native unit (characters, minutes, tokens, images). Use the _sum suffix
+#   because that is what Prometheus appends to a Histogram name. None means
+#   the task has no dedicated native-unit metric — the API returns null for
 #   native_units in that case.
 # native_extra_labels: additional label selectors applied only to the
 #   native query (e.g. token_type="total" for LLM to avoid double-counting
 #   prompt + completion + total series).
+# round_2dp: the underlying histogram already reports minutes (not seconds),
+#   so display at 2-decimal precision instead of the whole-number rounding
+#   used for character/token/image counts.
 SERVICE_BREAKDOWN_CONFIG: dict = {
     "nmt": {
         "display_name": "NMT",
@@ -134,9 +204,9 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "display_name": "ASR",
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
-        "native_metric": "telemetry_obsv_asr_audio_seconds_processed_sum",
+        "native_metric": "telemetry_obsv_asr_audio_minutes_processed_sum",
         "native_extra_labels": None,
-        "divide_by_60": True,
+        "round_2dp": True,
     },
     "tts": {
         "display_name": "TTS",
@@ -156,9 +226,9 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
     },
     "ocr": {
         "display_name": "OCR",
-        "metering_unit": "Image KB processed",
-        "native_unit_suffix": "KB",
-        "native_metric": "telemetry_obsv_ocr_image_size_kb_sum",
+        "metering_unit": "Images processed",
+        "native_unit_suffix": "images",
+        "native_metric": "telemetry_obsv_ocr_images_processed_sum",
         "native_extra_labels": None,
     },
     "transliteration": {
@@ -196,17 +266,25 @@ SERVICE_BREAKDOWN_CONFIG: dict = {
         "display_name": "Speaker Diarization",
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
-        "native_metric": "telemetry_obsv_speaker_diarization_seconds_processed_sum",
+        "native_metric": "telemetry_obsv_speaker_diarization_minutes_processed_sum",
         "native_extra_labels": None,
-        "divide_by_60": True,
+        "round_2dp": True,
+    },
+    "language_diarization": {
+        "display_name": "Language Diarization",
+        "metering_unit": "Audio minutes processed",
+        "native_unit_suffix": "min",
+        "native_metric": "telemetry_obsv_language_diarization_minutes_processed_sum",
+        "native_extra_labels": None,
+        "round_2dp": True,
     },
     "audio_language_detection": {
         "display_name": "Audio Language Detection",
         "metering_unit": "Audio minutes processed",
         "native_unit_suffix": "min",
-        "native_metric": "telemetry_obsv_audio_lang_detection_seconds_processed_sum",
+        "native_metric": "telemetry_obsv_audio_lang_detection_minutes_processed_sum",
         "native_extra_labels": None,
-        "divide_by_60": True,
+        "round_2dp": True,
     },
 }
 
@@ -216,17 +294,20 @@ def build_base_selectors(
     tenant: str | None = None,
     service_id: str | None = None,
     extra: list[str] | None = None,
+    endpoint_regex: str | None = None,
 ) -> str:
     """Build a PromQL label selector string for telemetry_obsv_requests_total.
 
     Returns a brace-enclosed string like '{exported_endpoint=~"...",tenant="foo"}'
-    or an empty string when no filters apply.
+    or an empty string when no filters apply. ``endpoint_regex`` overrides the
+    default INFERENCE_ENDPOINT_REGEX (e.g. to scope to LLM-only endpoints);
+    ignored when ``inference_only`` is False.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
-        selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{INFERENCE_ENDPOINT_REGEX}"')
+        selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{endpoint_regex or INFERENCE_ENDPOINT_REGEX}"')
     if tenant:
-        selectors.append(f'tenant="{tenant}"')
+        selectors.append(f'tenant="{escape_label_value(tenant)}"')
     if service_id:
         selectors.append(f'service_id="{service_id}"')
     if extra:

@@ -132,6 +132,27 @@ class CoreSettings(BaseSettings):
     # identically. See endpoint_validator._VALIDATION_MODE_THRESHOLDS.
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
+    # Trusted-network escape hatch. Deployments whose model fleet lives entirely
+    # on private infrastructure cannot register any endpoint, because the SSRF
+    # guard rejects private addresses by class before it ever attempts a
+    # connection.
+    # When true, private/reserved addresses are accepted as endpoint hosts.
+    # Cloud metadata, loopback, link-local, unspecified, multicast and
+    # cluster-internal hostnames stay blocked either way (see
+    # security.is_always_blocked_ip). Leave this false on any deployment where
+    # service creation is not restricted to trusted admins: enabling it lets
+    # anyone who can reach the create-service form probe internal hosts.
+    endpoint_validation_allow_private_hosts: bool = False
+    # Cap on PATCH /services bulk endpoint-update array size. Each item runs
+    # a live probe with endpoint_validation_timeout_seconds, so an unbounded
+    # array can outlast a proxy timeout even with concurrent probing.
+    bulk_endpoint_update_max_items: int = 50
+    # Async (poll-until-done) probes cap both attempts and total wall-clock
+    # time so a slow/stuck partner endpoint can't hang a create/update
+    # request indefinitely — ULCA's reference implementation polls in an
+    # unbounded `while (true)` loop, which we deliberately do not copy.
+    endpoint_validation_max_poll_attempts: int = 10
+    endpoint_validation_max_poll_wait_seconds: float = 60.0
 
     # ── External services ──
     auth_service_url: str = ""

@@ -19,10 +19,8 @@ def _base_payload(**overrides):
         description="A test model used for automated unit testing.",
         refUrl="http://example.com/model",
         task={"type": "nmt"},
-        languages=[{"sourceLanguage": "en"}],
         license="mit",
         domain=["general"],
-        inferenceEndPoint={"callbackUrl": "http://localhost:8000/infer", "schema": {}},
         submitter={"name": "Test User"},
         trainingDataset={"description": "test training dataset"},
     )
@@ -91,24 +89,105 @@ def test_license_url_over_max_length_rejected():
         ModelCreateRequest(**_base_payload(licenseUrl="http://example.com/" + "x" * 500))
 
 
-# ── Partial PATCH of inferenceEndPoint doesn't need callbackUrl/schema ─────
+# ── inferenceEndPoint rejected with a clear error ─────────────────────────────
 
 
-def test_patch_inference_endpoint_adapter_config_only():
+def test_create_with_inference_end_point_rejected():
+    with pytest.raises(ValidationError, match="inferenceEndPoint.*removed"):
+        ModelCreateRequest(**_base_payload(inferenceEndPoint={"callbackUrl": "http://x", "schema": {}}))
+
+
+def test_patch_with_inference_end_point_rejected():
+    with pytest.raises(ValidationError, match="inferenceEndPoint.*removed"):
+        ModelUpdateRequest(modelId="abc123", version="1.0", inferenceEndPoint={"callbackUrl": "http://x"})
+
+
+# ── schema requires model_name ─────────────────────────────────────────────────
+
+
+def test_create_schema_without_model_name_rejected():
+    with pytest.raises(ValidationError, match="model_name"):
+        ModelCreateRequest(**_base_payload(**{"schema": {"taskType": "translation"}}))
+
+
+def test_create_schema_with_model_name_accepted():
+    req = ModelCreateRequest(**_base_payload(**{"schema": {"model_name": "my-model"}}))
+    assert req.endpoint_schema == {"model_name": "my-model"}
+
+
+def test_patch_schema_without_model_name_rejected():
+    with pytest.raises(ValidationError, match="model_name"):
+        ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": {"taskType": "translation"}})
+
+
+# ── adapterConfig requires inputs and outputs ──────────────────────────────────
+
+
+def test_create_adapter_config_without_inputs_rejected():
+    with pytest.raises(ValidationError, match="inputs"):
+        ModelCreateRequest(**_base_payload(adapterConfig={"outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text"}]}))
+
+
+def test_create_adapter_config_without_outputs_rejected():
+    with pytest.raises(ValidationError, match="outputs"):
+        ModelCreateRequest(**_base_payload(adapterConfig={"inputs": [{"tensor": "IN", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}]}))
+
+
+def test_create_adapter_config_with_inputs_and_outputs_accepted():
+    adapter = {
+        "inputs": [{"tensor": "IN", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.source"}],
+        "outputs": [{"tensor": "OUT", "dtype": "BYTES", "maps_to": "text"}],
+    }
+    req = ModelCreateRequest(**_base_payload(adapterConfig=adapter))
+    assert req.adapterConfig == adapter
+
+
+# ── Partial PATCH — adapterConfig and schema are now top-level fields ─────────
+
+
+def test_patch_adapter_config_only():
     payload = ModelUpdateRequest(
         modelId="abc123",
         version="1.0",
-        inferenceEndPoint={"adapterConfig": {"version": "1"}},
+        adapterConfig={"version": "1"},
     )
-    assert payload.inferenceEndPoint.adapter_config == {"version": "1"}
-    assert payload.inferenceEndPoint.callbackUrl is None
+    assert payload.adapterConfig == {"version": "1"}
+    assert payload.endpoint_schema is None
 
 
-def test_patch_inference_endpoint_is_multilingual_enabled_only():
+def test_patch_is_multilingual_only():
     payload = ModelUpdateRequest(
         modelId="abc123",
         version="1.0",
-        inferenceEndPoint={"isMultilingualEnabled": True},
+        isMultilingual=True,
     )
-    assert payload.inferenceEndPoint.isMultilingualEnabled is True
-    assert payload.inferenceEndPoint.endpoint_schema is None
+    assert payload.isMultilingual is True
+    assert payload.adapterConfig is None
+
+
+# ── StrictBool rejects strings for boolean fields ─────────────────────────────
+
+
+@pytest.mark.parametrize("field", ["isLangDetectionEnabled", "isMultilingual", "isSyncApi"])
+def test_create_boolean_field_rejects_string(field):
+    with pytest.raises(ValidationError, match=field):
+        ModelCreateRequest(**_base_payload(**{field: "true"}))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("isLangDetectionEnabled", True),
+    ("isLangDetectionEnabled", False),
+    ("isMultilingual", True),
+    ("isMultilingual", False),
+    ("isSyncApi", True),
+    ("isSyncApi", False),
+])
+def test_create_boolean_field_accepts_bool(field, value):
+    req = ModelCreateRequest(**_base_payload(**{field: value}))
+    assert getattr(req, field) is value
+
+
+@pytest.mark.parametrize("field", ["isLangDetectionEnabled", "isMultilingual", "isSyncApi"])
+def test_patch_boolean_field_rejects_string(field):
+    with pytest.raises(ValidationError, match=field):
+        ModelUpdateRequest(modelId="abc123", version="1.0", **{field: "false"})

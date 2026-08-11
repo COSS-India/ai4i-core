@@ -338,10 +338,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         # JSONResponse never crashes on ctx contents.
         sanitized: list[dict] = []
         for err in errors:
-            entry = dict(err)
-            if isinstance(entry.get("ctx"), dict):
-                entry["ctx"] = _json_safe(entry["ctx"])
-            sanitized.append(entry)
+            # Sanitize the whole entry: ctx may contain Decimal bounds (gt/ge),
+            # and input may be a Decimal instance for Decimal-typed fields.
+            sanitized.append(_json_safe(dict(err)))
 
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

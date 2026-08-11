@@ -50,6 +50,7 @@ import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
+import { generateUUID } from "../../utils/uuid";
 
 function getTaskTypeBadgeColor(taskType: string): string {
   switch (taskType.toUpperCase()) {
@@ -97,8 +98,8 @@ function formatQuotaAmount(
 const TIER_NAME_COLUMN: AdminTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
-  thProps: { w: "450px", maxW: "450px" },
-  tdProps: { maxW: "450px" },
+  thProps: { w: "420px", maxW: "420px" },
+  tdProps: { maxW: "420px" },
   cell: (tier) => (
     <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
       <Text fontSize="sm" fontWeight="medium" isTruncated maxW="430px">
@@ -113,8 +114,10 @@ const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 const TIER_TASK_TYPES_COLUMN: AdminTableColumn<Tier> = {
   id: "taskTypes",
   header: "Model Task Types",
+  thProps: { textAlign: "center" },
+  tdProps: { textAlign: "center" },
   cell: (tier) => (
-    <HStack spacing={1} flexWrap="wrap">
+    <HStack spacing={1} flexWrap="wrap" justify="center">
       {(tier.quotas ?? []).slice(0, TIER_TASK_TYPES_VISIBLE_COUNT).map((q) => (
         <Badge
           key={q.modelTaskType}
@@ -156,7 +159,7 @@ function TierActionsCell({
   onDelete,
 }: TierActionsCellProps) {
   return (
-    <HStack spacing={1}>
+    <HStack spacing={1} justify="center">
       <Tooltip label="View" placement="top" hasArrow>
         <IconButton
           aria-label="View tier"
@@ -205,7 +208,11 @@ function makeTierActionsColumn(
   return {
     id: "actions",
     header: "Actions",
-    tdProps: { onClick: (e: React.MouseEvent) => e.stopPropagation() },
+    thProps: { textAlign: "center" },
+    tdProps: {
+      textAlign: "center",
+      onClick: (e: React.MouseEvent) => e.stopPropagation(),
+    },
     cell: (tier) => (
       <TierActionsCell
         tier={tier}
@@ -238,7 +245,9 @@ function isUnitInvalid(quota: TierFormQuota): boolean {
 
 function isLimitInvalid(quota: TierFormQuota): boolean {
   const limitNum = Number(quota.limit);
-  return quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0;
+  return (
+    quota.limit.trim() === "" || !Number.isFinite(limitNum) || limitNum <= 0
+  );
 }
 
 function QuotaEditor({
@@ -275,7 +284,7 @@ function QuotaEditor({
     onChange([
       ...quotas,
       {
-        _key: crypto.randomUUID(),
+        _key: generateUUID(),
         modelTaskType: "",
         unit: "",
         limit: "",
@@ -286,13 +295,18 @@ function QuotaEditor({
   const removeQuota = (idx: number) =>
     onChange(quotas.filter((_, i) => i !== idx));
 
+  // "Add Quota" only makes sense when there's more than one model task type
+  // to choose from, and only while there's an unused type left to add.
+  const canAddQuota =
+    taskTypeNames.length > 1 && quotas.length < taskTypeNames.length;
+
   return (
     <VStack align="stretch" spacing={3}>
       <HStack justify="space-between">
         <Text fontSize="sm" fontWeight="semibold" color="gray.700">
           Quotas
         </Text>
-        {!isEditMode && (
+        {!isEditMode && canAddQuota && (
           <Button
             size="xs"
             leftIcon={<AddIcon />}
@@ -789,7 +803,6 @@ const TierManagement: React.FC = () => {
               formControlProps={{ w: { base: "full", sm: "210px" }, mb: 0 }}
               selectProps={{ size: "sm" }}
             >
-              <option value="">Filter by Model Task Type - All</option>
               {taskTypeNames.map((t) => (
                 <option key={t} value={t}>
                   {formatModelTaskTypeLabel(t)}

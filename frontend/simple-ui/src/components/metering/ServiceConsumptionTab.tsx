@@ -28,6 +28,8 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
   errorMessage,
 }) => {
   const section = METERING.SECTIONS.SERVICE;
+  // Backend query-filters service_breakdown via `task_types=` query param;
+  // so the rows come back already scoped — no client-side filter here.
   const breakdown = data?.service_breakdown ?? [];
 
   const { slices } = useMemo(() => buildServiceBreakdownChart(breakdown), [breakdown]);
@@ -95,11 +97,21 @@ const ServiceConsumptionTab: React.FC<ServiceConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">Service</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Total requests</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Native consumption</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Success rate %</Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>Failure rate %</Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">
+                    {section.TABLE_SERVICE}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_TOTAL_REQUESTS}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_NATIVE}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_SUCCESS}
+                  </Th>
+                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
+                    {section.TABLE_FAILURE}
+                  </Th>
                 </Tr>
               </Thead>
               <Tbody>

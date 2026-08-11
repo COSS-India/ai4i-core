@@ -55,6 +55,7 @@ from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
+    assert_default_tenant_not_targeted,
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -66,6 +67,7 @@ from app.services.email_helpers import (
     setup_token_expires_at,
 )
 from app.services.role_service import RoleService
+from app.services.tenant_name_cache import tenant_name_cache
 from app.services.token_service import TokenService
 from app.utils.masking import drop_masked_pii, mask_pii_in_dict
 from app.utils.username import allocate_unique_username, derive_username_from_email
@@ -491,6 +493,7 @@ class TenantService:
 
         # provision_user committed; refresh to surface server-side defaults.
         await self._tenants.refresh(tenant)
+        tenant_name_cache.set_name(tenant.id, tenant.organisation)
 
         if body.plan_id:
             try:
@@ -550,6 +553,119 @@ class TenantService:
             )
         return mask_pii_in_dict(data)
 
+    @staticmethod
+    def _prepare_tenant_update_payload(body: TenantUpdate) -> dict:
+        """Shape the incoming PATCH body into the tenant-column update dict.
+
+        Drops a masked email/phone a client echoed back unchanged (responses
+        return masked PII, so an unmodified value must never overwrite the
+        stored plaintext), removes ``status`` (that goes through PATCH
+        /status to keep authorization split clean), and renames the
+        frontend-aligned ``contact_name`` to the model's ``name`` column.
+        """
+        data = body.model_dump(exclude_unset=True)
+        data = drop_masked_pii(data)
+        data.pop("status", None)
+        if "contact_name" in data:
+            data["name"] = data.pop("contact_name")
+        return data
+
+    async def _assert_organisation_available(self, data: dict, tenant_id: int) -> None:
+        if "organisation" not in data:
+            return
+        existing = await self._tenants.get_by_organisation(data["organisation"])
+        if existing and existing.id != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_TENANT_ORGANISATION",
+                    "message": "A tenant with this organisation name already exists.",
+                },
+            )
+
+    async def _resolve_pending_email_admin(
+        self, tenant: Tenant, data: dict
+    ) -> tuple[str, str, Optional[User]]:
+        """Determine whether this update is a PENDING-tenant email change and,
+        if so, load + validate the admin user that must be re-aligned.
+
+        Returns (old_email, new_email, admin) — admin is None unless this is
+        a pending-tenant email change, in which case it's guaranteed non-None
+        (a missing admin raises rather than returning None) so the caller can
+        use ``admin is not None`` as the single signal for "reissue needed".
+        """
+        old_email = (tenant.email or "").lower().strip()
+        new_email_raw = data.get("email")
+        new_email = (new_email_raw or "").lower().strip() if new_email_raw else ""
+        email_changed = bool(new_email) and new_email != old_email
+        if not (email_changed and tenant.status == TenantStatus.PENDING):
+            return old_email, new_email, None
+
+        # Look up the admin user BEFORE the email-uniqueness check below, so
+        # that check can be admin-aware (a user row whose id matches the
+        # admin we're about to re-align is not a real collision).
+        admin = await self._users.get_by_email(old_email)
+        if admin is None or admin.tenant_id != tenant.id:
+            # No admin to re-issue against → fail loudly. Otherwise the
+            # tenant.email would change while the original activation link
+            # (bound to whichever user actually exists) stays live, which
+            # is the inconsistency this flow exists to prevent.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "TENANT_ADMIN_NOT_FOUND",
+                    "message": (
+                        "Cannot update tenant email: the tenant's admin "
+                        "user could not be located, so the existing "
+                        "activation link cannot be invalidated."
+                    ),
+                },
+            )
+        return old_email, new_email, admin
+
+    async def _assert_email_available(
+        self, data: dict, tenant_id: int, admin: Optional[User]
+    ) -> None:
+        """Single, admin-aware email-uniqueness check. Consolidates what
+        PR #828 added (cross-tenant tenant+user collision) with the
+        reissue-time check this PR needed (any non-admin user collision),
+        so there is exactly one query per table and one place that owns
+        email uniqueness for this endpoint.
+        """
+        if "email" not in data:
+            return
+        existing_tenant = await self._tenants.get_by_email(data["email"])
+        if existing_tenant and existing_tenant.id != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_TENANT_EMAIL",
+                    "message": "A tenant with this email already exists.",
+                },
+            )
+        existing_user = await self._users.get_by_email(data["email"])
+        if existing_user is None:
+            return
+        if admin is not None:
+            # Reissue flow will assign ``admin.email = new_email``. Any other
+            # holder — same-tenant or cross-tenant — breaks the users.email
+            # UNIQUE constraint at flush time, so only the admin themselves
+            # is an allowed match.
+            collides = existing_user.id != admin.id
+        else:
+            # No reissue planned: tenant.email is independent of users.email,
+            # so a same-tenant user happening to share the address is
+            # harmless. Only reject cross-tenant.
+            collides = existing_user.tenant_id != tenant_id
+        if collides:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_EMAIL",
+                    "message": "This email is already in use.",
+                },
+            )
+
     async def update_tenant(
         self,
         current_user: User,
@@ -578,100 +694,24 @@ class TenantService:
         # non-admins to their own tenant (system admins pass through).
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
-        data = body.model_dump(exclude_unset=True)
-        # Responses return masked PII; drop a masked email/phone a client echoed
-        # back unchanged so it can't overwrite the stored plaintext. Scoped to
-        # PII keys so other fields containing ``*`` are not silently dropped.
-        data = drop_masked_pii(data)
-        # Status changes go through PATCH /status to keep authorization split clean.
-        data.pop("status", None)
-        # Schema uses `contact_name` (frontend-aligned); model column is `name`.
-        if "contact_name" in data:
-            data["name"] = data.pop("contact_name")
+        data = self._prepare_tenant_update_payload(body)
+        if "organisation" in data and data["organisation"].strip().casefold() != tenant.organisation.strip().casefold():
+            # The Default Organisation guards (status, TENANT ADMIN) key off
+            # this name — renaming it would silently disable all of them.
+            # Compare against the stored value (not just presence) so the
+            # Edit Tenant form, which always echoes organisation back, can
+            # still save unrelated field changes.
+            assert_default_tenant_not_targeted(
+                tenant,
+                message="The Default Organisation cannot be renamed.",
+            )
 
         # ── Pre-validation. Every failure-prone check runs BEFORE any write,
         # so the tenant.email change is never committed without the matching
         # admin-email update + token invalidation.
-        if "organisation" in data:
-            existing = await self._tenants.get_by_organisation(data["organisation"])
-            if existing and existing.id != tenant_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "DUPLICATE_TENANT_ORGANISATION",
-                        "message": "A tenant with this organisation name already exists.",
-                    },
-                )
-
-        # Normalise old/new email and decide whether this is a PENDING-tenant
-        # email change (the only case that triggers admin re-alignment).
-        old_email = (tenant.email or "").lower().strip()
-        new_email_raw = data.get("email")
-        new_email = (new_email_raw or "").lower().strip() if new_email_raw else ""
-        email_changed = bool(new_email) and new_email != old_email
-        is_pending_email_change = (
-            email_changed and tenant.status == TenantStatus.PENDING
-        )
-
-        # Look up the admin user BEFORE the email-uniqueness check below, so
-        # that check can be admin-aware (a user row whose id matches the
-        # admin we're about to re-align is not a real collision).
-        admin: Optional[User] = None
-        if is_pending_email_change:
-            admin = await self._users.get_by_email(old_email)
-            if admin is None or admin.tenant_id != tenant.id:
-                # No admin to re-issue against → fail loudly. Otherwise the
-                # tenant.email would change while the original activation link
-                # (bound to whichever user actually exists) stays live, which
-                # is the inconsistency this flow exists to prevent.
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "TENANT_ADMIN_NOT_FOUND",
-                        "message": (
-                            "Cannot update tenant email: the tenant's admin "
-                            "user could not be located, so the existing "
-                            "activation link cannot be invalidated."
-                        ),
-                    },
-                )
-
-        # ── Single, admin-aware email-uniqueness check. Consolidates what
-        # PR #828 added (cross-tenant tenant+user collision) with the
-        # reissue-time check this PR needed (any non-admin user collision),
-        # so there is exactly one query per table and one place that owns
-        # email uniqueness for this endpoint.
-        if "email" in data:
-            existing_tenant = await self._tenants.get_by_email(data["email"])
-            if existing_tenant and existing_tenant.id != tenant_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "DUPLICATE_TENANT_EMAIL",
-                        "message": "A tenant with this email already exists.",
-                    },
-                )
-            existing_user = await self._users.get_by_email(data["email"])
-            if existing_user is not None:
-                if admin is not None:
-                    # Reissue flow will assign ``admin.email = new_email``.
-                    # Any other holder — same-tenant or cross-tenant — breaks
-                    # the users.email UNIQUE constraint at flush time, so
-                    # only the admin themselves is an allowed match.
-                    collides = existing_user.id != admin.id
-                else:
-                    # No reissue planned: tenant.email is independent of
-                    # users.email, so a same-tenant user happening to share
-                    # the address is harmless. Only reject cross-tenant.
-                    collides = existing_user.tenant_id != tenant_id
-                if collides:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "code": "DUPLICATE_EMAIL",
-                            "message": "This email is already in use.",
-                        },
-                    )
+        await self._assert_organisation_available(data, tenant_id)
+        old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
+        await self._assert_email_available(data, tenant_id, admin)
 
         # ── Stage writes against the open session (flush only, no commit).
         data["updated_by"] = current_user.id
@@ -695,6 +735,8 @@ class TenantService:
         # ── Single atomic commit + refresh.
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
+        if "organisation" in data:
+            tenant_name_cache.set_name(tenant.id, tenant.organisation)
 
         # ── Email enqueue happens AFTER the commit so a rolled-back tx can't
         # leak a delivered email whose token row was never persisted.
@@ -727,6 +769,11 @@ class TenantService:
                 },
             )
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
+        if body.status != TenantStatus.ACTIVE:
+            assert_default_tenant_not_targeted(
+                tenant,
+                message="The Default Organisation cannot be suspended or deactivated.",
+            )
         assert_valid_tenant_status_transition(tenant.status, body.status)
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
@@ -736,10 +783,14 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
         if self._api_keys is not None:
-            if body.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
-                # Stale Redis entries would still authorize after tenant lockout.
+            if body.status == TenantStatus.SUSPENDED:
+                # Keep is_active=True (Inactive): same key auto-resumes on reactivation.
                 await self._api_keys.evict_keys_for_tenant(tenant_id)
+            elif body.status == TenantStatus.DEACTIVATED:
+                # Permanent revoke (is_active=False): reactivation requires a new key.
+                await self._api_keys.revoke_keys_for_tenant(tenant_id)
             elif body.status == TenantStatus.ACTIVE:
+                # Repopulates Redis only for keys that are still is_active=True.
                 await self._api_keys.refresh_keys_cache_for_tenant(tenant_id)
         return tenant
 
@@ -801,6 +852,8 @@ class TenantService:
         # between the ACTIVE check and user insert in the same request.
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
         self._assert_tenant_active_for_user_creation(tenant)
+        if body.role == TenantUserRole.TENANT_ADMIN:
+            assert_default_tenant_not_targeted(tenant)
         email = body.email.lower().strip()
         username = await allocate_unique_username(
             self._users.list_usernames_in_collision_family,
@@ -826,13 +879,15 @@ class TenantService:
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
-        await self._load_tenant_or_404(tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         # Drop masked email/phone a client echoed back unchanged (responses are
         # masked); scoped to PII keys so other ``*``-bearing fields survive.
         payload = drop_masked_pii(payload)
         role_update = payload.pop("role", None)
+        if role_update == TenantUserRole.TENANT_ADMIN.value:
+            assert_default_tenant_not_targeted(tenant)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
         if role_update is not None:

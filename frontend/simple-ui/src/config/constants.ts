@@ -152,6 +152,9 @@ export const MAX_TEXT_LENGTH = 512;
 /** Guest users may make this many inference requests per service per hour. */
 export const GUEST_REQUESTS_PER_HOUR_PER_SERVICE = 10;
 
+/** Sidebar section label (was "Services"). */
+export const MODEL_TASK_TYPE_NAV_LABEL = "Model task type";
+
 // Minimum recording duration in seconds
 export const MIN_RECORDING_DURATION = 1;
 
@@ -1253,13 +1256,16 @@ export function userMayUseApiKeys(context: ApiKeyAccessContext): boolean {
 
 /**
  * Effective API key status for UI badges/filters.
- * DB ``is_active`` false = Revoked; otherwise blocked access = Inactive.
+ * Revoked: DB flag or tenant deactivated. Inactive: suspended/locked/expired.
  */
 export function resolveApiKeyDisplayStatus(
   key: ApiKeyStatusSource,
   context: ApiKeyAccessContext = {}
 ): ApiKeyDisplayStatusValue {
   if (key.is_active === false || key.is_revoked === true) {
+    return API_KEY.DISPLAY_STATUS.REVOKED;
+  }
+  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
     return API_KEY.DISPLAY_STATUS.REVOKED;
   }
   if (isApiKeyExpired(key.expires_at)) {
@@ -1287,12 +1293,17 @@ export function getApiKeyInactiveReason(context: ApiKeyAccessContext): string {
     return "Tenant access is suspended for your account.";
   }
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.SUSPENDED)) {
-    return "Tenant is suspended — API keys are not usable until the tenant is reactivated.";
-  }
-  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
-    return "Tenant is deactivated — API keys are not usable until the tenant is reactivated.";
+    return "Tenant is suspended — API keys are temporarily inactive and will resume automatically when the tenant is reactivated.";
   }
   return "API key access is currently blocked.";
+}
+
+/** Human-readable reason when status is Revoked due to tenant deactivation. */
+export function getApiKeyRevokedReason(context: ApiKeyAccessContext): string | null {
+  if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
+    return "Tenant was deactivated — this API key is revoked. Create a new key after the tenant is reactivated.";
+  }
+  return null;
 }
 
 export function getApiKeyDisplayStatusColorScheme(

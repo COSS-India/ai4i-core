@@ -27,6 +27,7 @@ export const METERING = {
       OVERVIEW: "overview",
       TENANT: "tenant",
       SERVICE: "service",
+      MODEL: "model",
     },
     HEATMAP_SERVICES_ALL: "all",
     SCROLL_ROOT_MARGIN: "100px",
@@ -35,8 +36,8 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
-    /** Tenant Admin lands on Usage and Spend (not legacy My Usage overview). */
-    TENANT_SUB_TAB: "usage-spend" as const,
+    /** AI4IDS-2719: Tenant Admin lands on Overview (same as Adopter Admin). */
+    TENANT_SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
   },
@@ -44,6 +45,7 @@ export const METERING = {
     OVERVIEW: "overview",
     TENANT: "tenant",
     SERVICE: "service",
+    MODEL: "model",
     USAGE_SPEND: "usage-spend",
   } as const,
   KPI: {
@@ -52,6 +54,9 @@ export const METERING = {
       SUCCESSFUL: "successful",
       FAILED: "failed",
       AVG_RPS: "avg_rps",
+    },
+    LABELS: {
+      avg_rps: "Avg RPS",
     },
     HELPERS: {
       total_requests: "across all services and tenants",
@@ -87,13 +92,16 @@ export const METERING = {
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
-    { id: "service", label: "Service Consumption" },
-    { id: "usage-spend", label: "Usage and Spend" },
+    { id: "service", label: "Service Usage" },
+    // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
+    { id: "model", label: "Model Usage" },
+    { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "service", label: "Service Consumption" },
-    { id: "usage-spend", label: "Usage and Spend" },
+    { id: "service", label: "Service Usage" },
+    { id: "model", label: "Model Usage" },
+    { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -233,6 +241,7 @@ export const METERING = {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: "No tenant consumption data available.",
     SERVICE_CONSUMPTION: "No service consumption data available.",
+    MODEL_CONSUMPTION: "No model consumption data available.",
     CHART: "No data available for the selected time window.",
   },
   REFRESH: {
@@ -281,17 +290,42 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
+    // AI4IDS-2588: Model Consumption tab — per-service LLM usage from /model-consumption
+    MODEL: {
+      TITLE: "Model consumption",
+      SUBTITLE:
+        "Per-service LLM request distribution · reflects selected time window",
+      BREAKDOWN_TITLE: "Model breakdown",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across LLM services ·",
+      DONUT_PRIMARY: "All",
+      DONUT_SECONDARY: "Models",
+      MOST_USED: "Most used model",
+      OVERALL_SUCCESS: "Overall success rate",
+      SUCCESS_RATE_SUFFIX: "across all models",
+      REQUESTS_SUFFIX: "requests",
+      TABLE_SERVICE: "Service",
+      TABLE_MODEL: "Model",
+      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_NATIVE: "Native consumption",
+      TABLE_SUCCESS: "Success rate %",
+      TABLE_FAILURE: "Failure rate %",
+    },
     SERVICE: {
       TITLE: "Service consumption",
       SUBTITLE:
         "Platform-wide request distribution · reflects selected time window",
       BREAKDOWN_TITLE: "Service breakdown",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all services ·",
+      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Services",
       MOST_USED: "Most used service",
       HIGHEST_FAILURE: "Highest failure rate",
       REQUESTS_SUFFIX: "requests",
+      TABLE_SERVICE: "Service",
+      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_NATIVE: "Native consumption",
+      TABLE_SUCCESS: "Success rate %",
+      TABLE_FAILURE: "Failure rate %",
     },
     RANKED_SHARE: {
       HEADER_LEFT: "Request volume & share",

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useDisclosure } from "@chakra-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSessionExpiry } from "./useSessionExpiry";
@@ -15,13 +15,14 @@ import {
 import { listTenants } from "../services/tenantService";
 import { fetchAllServicesMatchingFilters } from "../services/servicesManagementService";
 import { useInferenceTypes } from "./useInferenceTypes";
+import { generateUUID } from "../utils/uuid";
 import type { TierFormData, TierFormQuota } from "../types/tierManagement";
 
 const TIER_QUERY_KEY = "tiers";
 
 function newQuota(): TierFormQuota {
   return {
-    _key: crypto.randomUUID(),
+    _key: generateUUID(),
     modelTaskType: "",
     unit: "",
     limit: "",
@@ -58,10 +59,22 @@ export function useTierManagement() {
   const toast = useToastWithDeduplication();
   const queryClient = useQueryClient();
   const { checkSessionExpiry } = useSessionExpiry();
-  const { unitByTaskType } = useInferenceTypes();
+  const {
+    unitByTaskType,
+    taskTypeNames,
+    isLoading: isLoadingTaskTypes,
+  } = useInferenceTypes();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTaskType, setFilterTaskType] = useState("");
+  const didInitTaskTypeFilter = useRef(false);
+  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
+  useEffect(() => {
+    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
+    didInitTaskTypeFilter.current = true;
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+    setTaskTypeFilterReady(true);
+  }, [isLoadingTaskTypes, taskTypeNames]);
 
   const [tierToDelete, setTierToDelete] = useState<Tier | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -113,6 +126,7 @@ export function useTierManagement() {
     queryFn: () => fetchTiers(filterTaskType || undefined),
     staleTime: 30 * 1000,
     retry: 1,
+    enabled: taskTypeFilterReady,
   });
 
   const tiers = tiersQuery.data?.data ?? [];
@@ -219,12 +233,12 @@ export function useTierManagement() {
     return result;
   }, [tiers, searchQuery, filterTaskType]);
 
-  const hasActiveFilters = searchQuery.trim() !== "" || filterTaskType !== "";
+  const hasActiveFilters = searchQuery.trim() !== "";
 
   const clearFilters = useCallback(() => {
     setSearchQuery("");
-    setFilterTaskType("");
-  }, []);
+    if (taskTypeNames.length > 0) setFilterTaskType(taskTypeNames[0]);
+  }, [taskTypeNames]);
 
   const refreshTiers = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: [TIER_QUERY_KEY] });
@@ -347,7 +361,7 @@ export function useTierManagement() {
         description: tier.description ?? "",
         quotas: tier.quotas?.length
           ? tier.quotas.map((q) => ({
-              _key: crypto.randomUUID(),
+              _key: generateUUID(),
               modelTaskType: q.modelTaskType,
               unit: q.unit || unitByTaskType[q.modelTaskType] || "",
               limit: String(q.limit),

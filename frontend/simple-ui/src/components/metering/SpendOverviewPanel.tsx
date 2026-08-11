@@ -9,15 +9,19 @@ import {
   hasPopulatedQuotaUsage,
   isMultiTaskQuotaTenant,
   taskTypeColor,
+  USAGE_SPEND_ACCENT,
+  USAGE_SPEND_DANGER,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem, UsageSummaryResponse } from "../../types/usageSpend";
 import MeteringChartPanel from "./MeteringChartPanel";
 import { TaskTypeLabel, UsageCell } from "./UsageSpendCells";
 
+const SPEND_CARD_BG = "#eef3fb";
+
 function spendChangeColor(spendChangePercent: number | null): string | undefined {
   if (spendChangePercent == null) return undefined;
-  if (spendChangePercent > 0) return "#a8f0c6";
-  if (spendChangePercent < 0) return "#ffb3ac";
+  if (spendChangePercent > 0) return "#c0392b";
+  if (spendChangePercent < 0) return "#2f9e44";
   return undefined;
 }
 
@@ -63,29 +67,40 @@ function TenantBudgetCard({
   const over = spent - limit;
 
   return (
-    <Box bgGradient="linear(135deg, #184a9e, #4676d0)" borderRadius="12px" p="22px 24px" color="white">
+    <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="22px 24px">
       {isLoading ? (
-        <Center minH="120px"><Spinner color="whiteAlpha.700" /></Center>
+        <Center minH="120px"><Spinner color="blue.500" /></Center>
       ) : (
         <>
-          <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" opacity={0.85} mb={2}>
+          <Text
+            fontSize="11px"
+            fontWeight="semibold"
+            letterSpacing="0.04em"
+            color={USAGE_SPEND_ACCENT}
+            mb={2}
+          >
             {METERING.USAGE_SPEND.BUDGET_SUMMARY}
           </Text>
-          <Text fontSize="28px" fontWeight="bold" lineHeight="1">
+          <Text fontSize="28px" fontWeight="bold" lineHeight="1" color="gray.800">
             {formatSpendMoney(spent, cur)}
           </Text>
-          <Text fontSize="12.5px" opacity={0.8} mt={1} mb={3}>
+          <Text fontSize="12.5px" color="gray.500" mt={1} mb={3}>
             of {formatSpendMoney(limit, cur)} · {pct.toFixed(0)}% used
           </Text>
-          <Box h="6px" borderRadius="3px" bg="whiteAlpha.300" overflow="hidden">
+          <Box h="6px" borderRadius="3px" bg="blackAlpha.100" overflow="hidden">
             <Box
               h="100%"
               w={`${Math.min(Math.max(pct, 0), 100)}%`}
-              bg={over > 0 ? "#ffd7a8" : "white"}
+              bg={over > 0 ? USAGE_SPEND_DANGER : USAGE_SPEND_ACCENT}
               borderRadius="3px"
             />
           </Box>
-          <Text fontSize="12px" mt={2} opacity={0.9} fontWeight="semibold">
+          <Text
+            fontSize="12px"
+            mt={2}
+            fontWeight="semibold"
+            color={over > 0 ? USAGE_SPEND_DANGER : "gray.600"}
+          >
             {over > 0
               ? `${formatSpendMoney(over, cur)} over budget`
               : `${formatSpendMoney(remaining, cur)} remaining`}
@@ -206,47 +221,62 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     </VStack>
   ) : (
     <Box
-      bgGradient="linear(135deg, #12224f, #2a67d6)"
+      bg={SPEND_CARD_BG}
       borderRadius="12px"
+      borderWidth="1px"
+      borderColor="gray.200"
       p="22px 24px"
-      color="white"
-      {...cardFlex}
+      w="full"
     >
       {isLoading ? (
-        <Center minH="140px"><Spinner color="whiteAlpha.700" /></Center>
+        <Center minH="140px"><Spinner color="blue.500" /></Center>
       ) : (
         <>
-          <Text fontSize="11px" fontWeight="semibold" letterSpacing="0.04em" opacity={0.85} mb={2}>
+          <Text
+            fontSize="11px"
+            fontWeight="semibold"
+            letterSpacing="0.04em"
+            color={USAGE_SPEND_ACCENT}
+            mb={2}
+          >
             TOTAL SPEND
           </Text>
-          <Text fontSize="28px" fontWeight="bold" lineHeight="1">
+          <Text fontSize="28px" fontWeight="bold" lineHeight="1" color="gray.800">
             {summary ? formatSpendMoney(summary.totalSpend, currency) : "—"}
           </Text>
-          <Box mt="18px" pt="14px" borderTopWidth="1px" borderColor="whiteAlpha.300">
-            <VStack align="stretch" spacing="9px">
-              <Flex justify="space-between" fontSize="12.5px">
-                <Text opacity={0.8}>Active tenants</Text>
-                <Text fontWeight="semibold">{summary?.activeTenants ?? "—"}</Text>
-              </Flex>
-              <Flex justify="space-between" fontSize="12.5px">
-                <Text opacity={0.8}>Budget exceeded</Text>
-                <Text
-                  fontWeight="semibold"
-                  color={(summary?.budgetExceededTenants ?? 0) > 0 ? "#ffd7a8" : undefined}
-                >
-                  {budgetExceededLabel(summary?.budgetExceededTenants)}
-                </Text>
-              </Flex>
-              <Flex justify="space-between" fontSize="12.5px">
-                <Text opacity={0.8}>vs last month</Text>
-                <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent)}>
-                  {spendChangePercent == null
-                    ? "—"
-                    : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
-                </Text>
-              </Flex>
-            </VStack>
-          </Box>
+          <Flex
+            mt="18px"
+            pt="14px"
+            borderTopWidth="1px"
+            borderColor="gray.200"
+            direction={{ base: "column", sm: "row" }}
+            gap={{ base: "9px", sm: 6 }}
+            justify="space-between"
+            fontSize="12.5px"
+            flexWrap="wrap"
+          >
+            <HStack spacing={1.5}>
+              <Text color="gray.500">Active tenants:</Text>
+              <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
+            </HStack>
+            <HStack spacing={1.5}>
+              <Text color="gray.500">Budget exceeded:</Text>
+              <Text
+                fontWeight="semibold"
+                color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
+              >
+                {budgetExceededLabel(summary?.budgetExceededTenants)}
+              </Text>
+            </HStack>
+            <HStack spacing={1.5}>
+              <Text color="gray.500">vs last month:</Text>
+              <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
+                {spendChangePercent == null
+                  ? "—"
+                  : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+              </Text>
+            </HStack>
+          </Flex>
         </>
       )}
     </Box>
@@ -343,12 +373,17 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   return (
     <Flex gap={4} direction={{ base: "column", md: "row" }} align="stretch">
       {leftPanel}
+      {/* AI4IDS-2602: SPEND BY MODEL TASK TYPE removed from adopter Usage & Spend.
+          UNDO — restore the panel below (and keep spendBody / donut logic above).
       <Box flex={1} bg="white" borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="20px 24px">
         <Text fontSize="12px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb={4}>
           {METERING.USAGE_SPEND.SPEND_BY_TASK_TYPE}
         </Text>
         {spendBody}
       </Box>
+      */}
+      {/* Keep spendBody referenced so the unused-code path stays easy to restore. */}
+      {false ? spendBody : null}
     </Flex>
   );
 };

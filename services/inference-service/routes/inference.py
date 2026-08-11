@@ -7,26 +7,27 @@ Integrates orchestration, factory, and telemetry.
 import logging
 from typing import Any, Dict, Optional, Tuple
 
+from ai4i_core.context import (
+    get_llm_usage_input_tokens,
+    get_llm_usage_model_name,
+    get_llm_usage_output_tokens,
+)
 from fastapi import (
     APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile,
 )
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
-from orchestrator import Orchestrator
+from ai4i_core.observability import set_billed_state, set_metric_labels
+
 from models.common import GenericInferenceResponse
+from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
+from swagger_docs import _CHAT_OPENAPI_RESPONSES, _CHAT_EXAMPLE
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
-
-
-_CHAT_EXAMPLE = {
-    "model": "llm-service-1",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": False,
-}
-
 
 # Module-level singleton: a fresh Orchestrator per request would rebuild the
 # InferenceServerResolver each time, so its in-memory service cache never got
@@ -220,6 +221,35 @@ async def run_nmt_try_it(
     if top_service_id and not (inner.get("config") or {}).get("serviceId"):
         inner = {**inner, "config": {**(inner.get("config") or {}), "serviceId": top_service_id}}
     return await _run_inference(request, inner, orchestrator, default_task_type="NMT")
+
+
+@router.post(
+    "/llm/try-it",
+    summary="LLM Try-It Endpoint (anonymous)",
+    description=(
+        "Anonymous try-it endpoint. Accepts an OpenAI-compatible chat completions "
+        "payload (same shape as /api/v1/chat). Also accepts a TryItRequest envelope "
+        "({ service_name, serviceId?, payload: ... }) when APISIX forwards the "
+        "wrapped body."
+    ),
+    responses=_CHAT_OPENAPI_RESPONSES,
+)
+async def run_llm_try_it(
+    request: Request,
+    body: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+) -> Response:
+    # Unwrap TryItRequest envelope if present; otherwise treat body as the
+    # OpenAI-compatible chat payload (what the portal try-it UI sends).
+    inner = body.get("payload")
+    if isinstance(inner, dict) and "service_name" in body:
+        payload = dict(inner)
+    else:
+        payload = body
+    # OpenAIProxyService resolves MMS via `model`; accept top-level serviceId too.
+    service_id = payload.get("model") or body.get("serviceId")
+    if service_id and not payload.get("model"):
+        payload = {**payload, "model": service_id}
+    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
 @router.post(
@@ -427,22 +457,29 @@ async def run_ocr_inference(
     """Dedicated endpoint for OCR inference requests."""
     return await _run_inference(request, payload, orchestrator, default_task_type="OCR")
 
-async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
-    """
-    Shared handler for LLM chat routes. Owns only the request span — MMS
-    resolution, tier gate, model + ai_inference spans are managed inside
-    OpenAIProxyService.proxy_traced(), mirroring the Orchestrator +
-    BaseTaskService pattern for Triton services.
-    """
-    # Set service_id on request state so the observability middleware picks it
-    # up for Prometheus metrics without reading the body a second time.
-    # LLM follows the OpenAI spec: the client sends the model name in `model`,
-    # and we treat that as the service ID (used for MMS resolution and PPU
-    # billing). Reading the same field proxy_traced resolves/bills on keeps
-    # metrics tagging from ever diverging from what's billed downstream.
-    service_id = payload.get("model", "")
-    request.state.service_id = service_id
 
+def _bridge_llm_usage_to_request(request: Request) -> None:
+    """
+    Copy the LLM token counts and model name from the ai4i_core context vars
+    onto ``request.state`` via the set_billed_state/set_metric_labels contract
+    ObservabilityMiddleware reads.
+
+    ContextVars set inside the app task are not visible in the
+    BaseHTTPMiddleware task where ObservabilityMiddleware drains the response
+    body, but ``request.state`` is backed by the shared ASGI scope, which does
+    cross that boundary. This is the handoff that lets the middleware emit
+    token metrics without buffering (and re-parsing) the response — essential
+    for the SSE stream, where usage only exists after the final chunk.
+    """
+    set_billed_state(
+        request,
+        billed_input=get_llm_usage_input_tokens() or 0,
+        billed_output=get_llm_usage_output_tokens() or 0,
+    )
+    set_metric_labels(request, model=get_llm_usage_model_name() or "")
+
+
+async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         req_attrs["url"] = request.url.path
         req_attrs["method"] = request.method
@@ -451,6 +488,11 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
+        # Same values llm_service.py already read from the vLLM `usage` block
+        # onto the ai-inference span (via ai4i_core.context) — bridged here so
+        # ObservabilityMiddleware reads one shared count instead of re-parsing
+        # this response body itself.
+        _bridge_llm_usage_to_request(request)
 
         if status_code >= 400:
             req_attrs["status"] = "failure"
@@ -458,28 +500,110 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
 
     return JSONResponse(status_code=status_code, content=body)
 
+
+async def _run_llm_chat_stream(
+    request: Request,
+    payload: Dict[str, Any],
+    path: str) -> StreamingResponse | JSONResponse:
+    """
+    Streaming counterpart to _run_llm_chat. The upstream connection (and its
+    status code) is resolved eagerly so a misconfiguration, entitlement
+    rejection or upstream failure can still return a normal JSON error — only
+    a genuine 200 SSE stream turns into a StreamingResponse.
+
+    The "request" span can't be closed when this function returns (the client
+    is still reading the body at that point), so on the success path it's
+    opened inside the generator and kept alive until the stream ends, the same
+    trick proxy_traced_stream() uses for the model/ai-inference spans.
+    """
+    kind, status_code, result = await OpenAIProxyService().proxy_traced_stream(
+        path=path, payload=payload, request=request,
+    )
+
+    if kind == "error":
+        with traced_span("request", root=True, classify_status=True) as req_attrs:
+            req_attrs["url"] = request.url.path
+            req_attrs["method"] = request.method
+            req_attrs.update(get_context_attributes())
+            req_attrs["status"] = "failure"
+            req_attrs["status_code"] = status_code
+        return JSONResponse(status_code=status_code, content=result)
+
+    async def gen():
+        with traced_span("request", root=True, classify_status=True) as req_attrs:
+            req_attrs["url"] = request.url.path
+            req_attrs["method"] = request.method
+            req_attrs.update(get_context_attributes())
+            async for chunk in result:
+                yield chunk
+        # Token usage only arrives in the final SSE chunk, so this must run
+        # after the stream is fully drained. The bridge writes the billed
+        # counts + model label via set_billed_state/set_metric_labels — the
+        # contract ObservabilityMiddleware._wrap_llm_response reads after
+        # this generator completes.
+        _bridge_llm_usage_to_request(request)
+
+    return StreamingResponse(
+        gen(),
+        status_code=status_code,
+        media_type="text/event-stream",
+        # Anti-buffering headers: without these an intermediate proxy can
+        # accumulate the whole SSE body and defeat live streaming.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse | StreamingResponse:
+    """
+    Shared handler for LLM chat routes. Owns only the request span — MMS
+    resolution, tier gate, model + ai_inference spans are managed inside
+    OpenAIProxyService.proxy_traced(), mirroring the Orchestrator +
+    BaseTaskService pattern for Triton services.
+
+    Requests with a truthy "stream" field are delegated to
+    _run_llm_chat_stream, which returns a real text/event-stream response
+    instead of buffering the upstream SSE body into a JSON payload.
+    """
+    # Set service_id on request state so the observability middleware picks it
+    # up for Prometheus metrics without reading the body a second time.
+    # LLM follows the OpenAI spec: the client sends the model name in `model`,
+    # and we treat that as the service ID (used for MMS resolution and PPU
+    # billing). Reading the same field proxy_traced resolves/bills on keeps
+    # metrics tagging from ever diverging from what's billed downstream.
+
+    is_stream_enabled = True if (isinstance(payload, dict) and payload.get("stream")) else False
+    service_id = payload.get("model", "")
+    request.state.service_id = service_id
+    if is_stream_enabled:
+        return await _run_llm_chat_stream(request, payload, path)
+    return await _run_llm_chat_consolidated(request, payload, path)
+
+
 @router.post(
     "/chat/completions",
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat_completions(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
-) -> JSONResponse:
+) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
 
 @router.post(
     "/chat",
     summary="LLM Chat",
-    description="Forwards the request to the upstream LLM at /v1/chat",
+    description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat(
     request: Request,
     payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
-) -> JSONResponse:
-    return await _run_llm_chat(request, payload, path="/v1/chat")
+) -> Response:
+    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OpenAI-compatible audio endpoints — pure multipart passthrough.
@@ -702,4 +826,5 @@ async def health_check() -> Dict[str, str]:
 )
 async def list_available_tasks() -> Dict[str, list]:
     """List all available inference task types."""
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION",
+                      "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}

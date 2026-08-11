@@ -31,6 +31,7 @@ export const meteringScopeSchema = z.object({
   tenant_id: z.string().nullable(),
   organisation: z.string().nullable(),
   window: meteringWindowSchema,
+  task_types: z.array(z.string()).nullable().optional(),
 });
 
 export const platformAdoptionSchema = z.object({
@@ -165,5 +166,35 @@ export const serviceConsumptionResponseSchema = z.object({
   service_breakdown: z.array(serviceRowSchema),
   throughput: throughputDataSchema.optional(),
   request_volume: meteringGraphSchema.nullable().optional(),
+  ...meteringResponseMetaSchema,
+});
+
+export const modelConsumptionRowSchema = z.object({
+  service_id: z.string(),
+  name: z.string(),
+  model_name: z.string().nullable().optional(),
+  requests: z.number(),
+  native_units: z.number(),
+  native_unit_suffix: z.string(),
+  success_pct: z.number(),
+  failure_rate_pct: z.number(),
+});
+
+export const modelConsumptionSummarySchema = z.object({
+  most_used: z
+    .object({
+      service_id: z.string().nullable().optional(),
+      name: z.string().nullable().optional(),
+      requests: z.number(),
+    })
+    .nullable()
+    .optional(),
+  overall_success_rate_pct: z.number().nullable().optional(),
+});
+
+export const modelConsumptionResponseSchema = z.object({
+  scope: meteringScopeSchema,
+  summary: modelConsumptionSummarySchema.nullable().optional(),
+  breakdown: z.array(modelConsumptionRowSchema),
   ...meteringResponseMetaSchema,
 });
