@@ -61,6 +61,7 @@ import {
   resolveDefaultOrgFormRole,
 } from "../../../utils/defaultTenant";
 import {
+  applyDefaultOrgManagedRoleToUser,
   enrichDefaultOrgTenantUser,
   syncDefaultOrgUserRole,
 } from "../../../utils/defaultOrgUserRoles";
@@ -334,6 +335,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     );
     setTenantDetailView((prev) =>
       prev?.tenant_id === tenantId ? { ...prev, ...fields } : prev,
+    );
+  };
+
+  /** Patch one row in the open users list (e.g. default-org role after sync). */
+  const patchTenantUserLocal = (
+    userId: string,
+    patch: (row: TenantUserView) => TenantUserView,
+  ) => {
+    setTenantUsers((prev) =>
+      prev.map((row) => (row.user_id === userId ? patch(row) : row)),
     );
   };
 
@@ -951,7 +962,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           "User provisioned under tenant. The username is auto-generated from email.",
       });
       closeUserModal();
+      const createdRole = userForm.role;
       await refreshTenantAndUserLists(tenantId);
+      if (
+        isDefaultOrg &&
+        isDefaultOrgUserRole(createdRole) &&
+        createdRole !== DEFAULT_TENANT_USER_ROLE
+      ) {
+        patchTenantUserLocal(created.user_id, (row) =>
+          applyDefaultOrgManagedRoleToUser(row, createdRole),
+        );
+      }
     } catch (err) {
       console.error("Failed to register user:", err);
       showError(err);
@@ -1549,29 +1570,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setIsEditUserModalOpen(false);
       setEditUserRow(null);
       setEditUserRolesLoaded(true);
-      // Default org role updates may be eventually consistent across endpoints.
-      // Ensure the users list role column is updated to avoid stale UI state.
+      const editedUserId = editUserForm.user_id;
+      const editedTenantId = editUserForm.tenant_id;
+      await refreshTenantAndUserLists(editedTenantId);
+      // List users API collapses MODERATOR/GUEST → USER; re-apply the role we
+      // just wrote so the Role column matches View/Edit.
       if (didSyncDefaultOrgRole && syncedDefaultOrgRole) {
-        const tenantId = editUserForm.tenant_id;
-        const targetRole = syncedDefaultOrgRole;
-        const finalUsers = await refreshUntil(
-          () => loadTenantUsersForTenant(tenantId),
-          (rows) =>
-            rows.some(
-              (row) =>
-                row.user_id === editUserForm.user_id &&
-                tenantUserHasRole(row, targetRole),
-            ),
-          6,
-          500,
+        const roleToShow = syncedDefaultOrgRole;
+        patchTenantUserLocal(editedUserId, (row) =>
+          applyDefaultOrgManagedRoleToUser(row, roleToShow),
         );
-        setTenantUsers(finalUsers);
-        setKnownUserEmails(collectUserEmails(finalUsers));
-        if (isAdmin) {
-          await handleFetchTenants();
-        }
-      } else {
-        await refreshTenantAndUserLists(editUserForm.tenant_id);
       }
     } catch (err) {
       console.error("Failed to update user:", err);
