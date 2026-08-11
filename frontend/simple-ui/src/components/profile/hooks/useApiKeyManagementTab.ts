@@ -27,25 +27,31 @@ export interface UseApiKeyManagementTabOptions {
   user: User | null;
 }
 
+function isPermissionEnabledForTaskTypes(
+  permissionName: string,
+  taskTypeNames: string[],
+  inferenceTypes: InferenceTypeItem[],
+): boolean {
+  if (taskTypeNames.length === 0) return true;
+  const prefix = permissionName.split(".")[0]?.toLowerCase() ?? "";
+  const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
+  const knownTaskTypes = new Set(
+    inferenceTypes.map((t) => t.name.trim().toLowerCase()),
+  );
+  return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
+}
+
 /** Gate permission catalog by ENABLED_TASK_TYPES (same rules as create API key). */
 function filterPermissionsByEnabledTaskTypes(
   permissions: Permission[],
   taskTypeNames: string[],
   inferenceTypes: InferenceTypeItem[],
 ): Permission[] {
-  const named = [...permissions].filter((p) => p.name);
-  if (taskTypeNames.length === 0) {
-    return named.sort((a, b) => a.label.localeCompare(b.label));
-  }
-  const enabled = new Set(taskTypeNames.map((t) => t.trim().toLowerCase()));
-  const knownTaskTypes = new Set(
-    inferenceTypes.map((t) => t.name.trim().toLowerCase()),
-  );
-  return named
-    .filter((p) => {
-      const prefix = p.name.split(".")[0]?.toLowerCase() ?? "";
-      return knownTaskTypes.has(prefix) ? enabled.has(prefix) : true;
-    })
+  return [...permissions]
+    .filter((p) => p.name)
+    .filter((p) =>
+      isPermissionEnabledForTaskTypes(p.name, taskTypeNames, inferenceTypes),
+    )
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
@@ -311,6 +317,11 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const filteredApiKeys = useMemo(
     () =>
       [...allApiKeys]
+        .filter((key) =>
+          (key.permissions ?? []).every((name) =>
+            isPermissionEnabledForTaskTypes(name, taskTypeNames, inferenceTypes),
+          ),
+        )
         .filter((key) => {
           const search = keyNameSearch.trim().toLowerCase();
           if (search && !(key.key_name ?? "").toLowerCase().includes(search)) {
@@ -326,7 +337,15 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
           return true;
         })
         .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
-    [allApiKeys, apiKeyAccessContext, filterPermission, filterActive, keyNameSearch, permissions],
+    [
+      allApiKeys,
+      apiKeyAccessContext,
+      filterPermission,
+      filterActive,
+      keyNameSearch,
+      taskTypeNames,
+      inferenceTypes,
+    ],
   );
 
   const formatPermission = (permissionName: string) =>
