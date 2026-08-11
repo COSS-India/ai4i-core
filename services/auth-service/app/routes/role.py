@@ -74,12 +74,12 @@ async def remove_role(
 async def get_user_roles(
     request: Request,
     user_id: UUID,
-    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)),
     svc: RoleService = Depends(get_role_service),
     db: AsyncSession = Depends(get_db),
 ):
     await enforce_target_user_same_tenant(
-        request, _admin, user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
+        request, _admin, user_id, db, bypass_roles=(RoleName.ADMIN,)
     )
     roles = await svc.get_user_roles(user_id)
     return success_response(data={"user_id": str(user_id), "roles": roles})
