@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from app.schemas.telemetry import SearchTracesResponse, TraceResponse
 from app.utils.opensearch_client import OpenSearchTraceClient
 from app.core.exceptions import InsufficientPermissionsError
+from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
@@ -347,8 +348,8 @@ async def get_trace_by_id(
             trace_id=trace_id,
             service="ai4x-inference",
             tenant_id=tenant_scope or "system",
-            service_version="1.0.0",
-            environment="development",
+            service_version=settings.service_version,
+            environment=settings.environment,
             hostname="unknown",
             spans=spans
         )
