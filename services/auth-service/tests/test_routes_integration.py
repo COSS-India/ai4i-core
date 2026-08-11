@@ -278,3 +278,31 @@ class TestRequireSelfOrAnyRole:
             request, caller, target_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
         )
         assert result is caller
+
+    @pytest.mark.asyncio
+    async def test_admin_bypasses_cross_tenant_check_for_real(self):
+        """ADMIN reaches a genuinely cross-tenant target with no exception.
+
+        Unlike test_privileged_role_delegates_to_tenant_enforcement above,
+        this does NOT mock out enforce_target_user_same_tenant — only its
+        own RoleRepository/UserRepository — so the real bypass_roles check
+        inside that helper actually runs for a real cross-tenant target.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.dependencies.permissions import require_self_or_any_role
+        from app.models.role_name import RoleName
+
+        caller = self._make_user(tenant_id=1)
+        target = self._make_user(tenant_id=2)
+        check = require_self_or_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)
+
+        with patch("app.dependencies.permissions.RoleRepository") as MockPermRoleRepo, \
+             patch("app.dependencies.tenant_scope.RoleRepository") as MockTenantRoleRepo, \
+             patch("app.dependencies.tenant_scope.UserRepository") as MockUserRepo:
+            MockPermRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+            MockTenantRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=target)
+
+            result = await check(self._mock_request(), target.id, caller, MagicMock())
+
+        assert result is caller
