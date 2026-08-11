@@ -109,6 +109,10 @@ import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
+import {
+  addDaysToDateInputValue,
+  getTodayDateInputValue,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -474,6 +478,10 @@ export default function TenantManagementTab({
       return;
     }
 
+    if (assignEffectiveFrom < getTodayDateInputValue()) {
+      setAssignTierError("Effective From cannot be in the past.");
+      return;
+    }
     if (assignEffectiveFrom === assignEffectiveTo) {
       setAssignTierError(
         "Effective From and Effective To cannot be the same date.",
@@ -2107,6 +2115,14 @@ export default function TenantManagementTab({
       !selectedTierHasNoServices &&
       !servicesForTiersQuery.isLoading &&
       !servicesForTiersQuery.isError;
+    const today = getTodayDateInputValue();
+    const effectiveFromMinDate = today;
+    const effectiveToMinDate = assignEffectiveFrom
+      ? (() => {
+          const dayAfterFrom = addDaysToDateInputValue(assignEffectiveFrom, 1);
+          return dayAfterFrom > today ? dayAfterFrom : today;
+        })()
+      : today;
     return (
       <Modal
         isOpen={isAssignTierOpen}
@@ -2184,6 +2200,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveFrom}
+                    min={effectiveFromMinDate}
                     onChange={(e) => setAssignEffectiveFrom(e.target.value)}
                     isDisabled={isAssigning}
                   />
@@ -2196,7 +2213,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveTo}
-                    min={assignEffectiveFrom}
+                    min={effectiveToMinDate}
                     onChange={(e) => setAssignEffectiveTo(e.target.value)}
                     isDisabled={isAssigning}
                   />
