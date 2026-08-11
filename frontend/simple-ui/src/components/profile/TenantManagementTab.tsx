@@ -109,7 +109,10 @@ import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
-import { getTodayDateInputValue } from "../../utils/helpers";
+import {
+  addDaysToDateInputValue,
+  getTodayDateInputValue,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -2112,6 +2115,14 @@ export default function TenantManagementTab({
       !selectedTierHasNoServices &&
       !servicesForTiersQuery.isLoading &&
       !servicesForTiersQuery.isError;
+    const today = getTodayDateInputValue();
+    const effectiveFromMinDate = today;
+    const effectiveToMinDate = assignEffectiveFrom
+      ? (() => {
+          const dayAfterFrom = addDaysToDateInputValue(assignEffectiveFrom, 1);
+          return dayAfterFrom > today ? dayAfterFrom : today;
+        })()
+      : today;
     return (
       <Modal
         isOpen={isAssignTierOpen}
@@ -2189,7 +2200,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveFrom}
-                    min={getTodayDateInputValue()}
+                    min={effectiveFromMinDate}
                     onChange={(e) => setAssignEffectiveFrom(e.target.value)}
                     isDisabled={isAssigning}
                   />
@@ -2202,11 +2213,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveTo}
-                    min={
-                      assignEffectiveFrom > getTodayDateInputValue()
-                        ? assignEffectiveFrom
-                        : getTodayDateInputValue()
-                    }
+                    min={effectiveToMinDate}
                     onChange={(e) => setAssignEffectiveTo(e.target.value)}
                     isDisabled={isAssigning}
                   />
