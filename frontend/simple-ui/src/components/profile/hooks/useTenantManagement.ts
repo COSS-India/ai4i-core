@@ -1501,6 +1501,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     setIsSubmittingEditUser(true);
     try {
+      let didSyncDefaultOrgRole = false;
+      let syncedDefaultOrgRole: string | null = null;
       if (isDefaultOrg) {
         await tenantService.updateUser({
           tenant_id: editUserForm.tenant_id,
@@ -1526,6 +1528,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
               nextRole,
               editUserRow?.roles,
             );
+            didSyncDefaultOrgRole = true;
+            syncedDefaultOrgRole = nextRole;
           }
         }
       } else {
@@ -1545,7 +1549,30 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setIsEditUserModalOpen(false);
       setEditUserRow(null);
       setEditUserRolesLoaded(true);
-      await refreshTenantAndUserLists(editUserForm.tenant_id);
+      // Default org role updates may be eventually consistent across endpoints.
+      // Ensure the users list role column is updated to avoid stale UI state.
+      if (didSyncDefaultOrgRole && syncedDefaultOrgRole) {
+        const tenantId = editUserForm.tenant_id;
+        const targetRole = syncedDefaultOrgRole;
+        const finalUsers = await refreshUntil(
+          () => loadTenantUsersForTenant(tenantId),
+          (rows) =>
+            rows.some(
+              (row) =>
+                row.user_id === editUserForm.user_id &&
+                tenantUserHasRole(row, targetRole),
+            ),
+          6,
+          500,
+        );
+        setTenantUsers(finalUsers);
+        setKnownUserEmails(collectUserEmails(finalUsers));
+        if (isAdmin) {
+          await handleFetchTenants();
+        }
+      } else {
+        await refreshTenantAndUserLists(editUserForm.tenant_id);
+      }
     } catch (err) {
       console.error("Failed to update user:", err);
       showError(err);
