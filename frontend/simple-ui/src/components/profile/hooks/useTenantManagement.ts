@@ -1,6 +1,6 @@
 // Tenant Management state + handlers, backed by auth-service tenant endpoints.
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
@@ -111,6 +111,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [tenantUsers, setTenantUsers] = useState<TenantUserView[]>([]);
   const [isLoadingTenants, setIsLoadingTenants] = useState(false);
   const [isLoadingTenantUsers, setIsLoadingTenantUsers] = useState(false);
+  // GET /tenants/{id}/users collapses MODERATOR/GUEST → USER. Remember roles we
+  // just synced so list reloads do not wipe the Role column until a backend fix.
+  const defaultOrgRoleOverridesRef = useRef<Map<string, string>>(new Map());
 
   const [tenantFilterStatus, setTenantFilterStatus] = useState<string>("all");
   const [tenantSearch, setTenantSearch] = useState("");
@@ -287,6 +290,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserFilterRole("all");
   }, [activeUserListTenant?.tenant_id]);
 
+  useEffect(() => {
+    defaultOrgRoleOverridesRef.current.clear();
+  }, [activeUserListTenant?.tenant_id]);
+
   // ----- Fetchers -----
   /** Read tenants without committing React state (for refreshUntil polls). */
   const loadTenants = async (): Promise<TenantView[]> => {
@@ -348,6 +355,29 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     );
   };
 
+  const rememberDefaultOrgRoleOverride = (userId: string, role: string) => {
+    const target = role.trim().toUpperCase();
+    if (!isDefaultOrgUserRole(target)) return;
+    defaultOrgRoleOverridesRef.current.set(userId, target);
+  };
+
+  const applyDefaultOrgRoleOverrides = (
+    users: TenantUserView[],
+  ): TenantUserView[] => {
+    const overrides = defaultOrgRoleOverridesRef.current;
+    if (overrides.size === 0) return users;
+    return users.map((row) => {
+      const role = overrides.get(row.user_id);
+      return role ? applyDefaultOrgManagedRoleToUser(row, role) : row;
+    });
+  };
+
+  const commitTenantUsers = (users: TenantUserView[]) => {
+    const next = applyDefaultOrgRoleOverrides(users);
+    setTenantUsers(next);
+    setKnownUserEmails(collectUserEmails(next));
+  };
+
   const loadTenantUsersForTenant = async (
     tenantId: string,
   ): Promise<TenantUserView[]> => {
@@ -373,8 +403,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsLoadingTenantUsers(true);
     try {
       const users = await loadTenantUsersForTenant(tenantId);
-      setTenantUsers(users);
-      setKnownUserEmails(collectUserEmails(users));
+      commitTenantUsers(users);
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
       showError(err);
@@ -969,6 +998,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         isDefaultOrgUserRole(createdRole) &&
         createdRole !== DEFAULT_TENANT_USER_ROLE
       ) {
+        rememberDefaultOrgRoleOverride(created.user_id, createdRole);
         patchTenantUserLocal(created.user_id, (row) =>
           applyDefaultOrgManagedRoleToUser(row, createdRole),
         );
@@ -1057,8 +1087,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setTenantDetailSubTab("overview");
     try {
       const users = await loadTenantUsersForTenant(t.tenant_id);
-      setTenantUsers(users);
-      setKnownUserEmails(collectUserEmails(users));
+      commitTenantUsers(users);
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
       showError(err);
@@ -1577,6 +1606,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       // just wrote so the Role column matches View/Edit.
       if (didSyncDefaultOrgRole && syncedDefaultOrgRole) {
         const roleToShow = syncedDefaultOrgRole;
+        rememberDefaultOrgRoleOverride(editedUserId, roleToShow);
         patchTenantUserLocal(editedUserId, (row) =>
           applyDefaultOrgManagedRoleToUser(row, roleToShow),
         );
