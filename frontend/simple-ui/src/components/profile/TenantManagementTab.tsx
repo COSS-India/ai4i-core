@@ -81,6 +81,7 @@ import {
   ViewIcon,
 } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
@@ -191,6 +192,9 @@ export default function TenantManagementTab({
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const { taskTypeNames } = useInferenceTypes();
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const userListTenantStatus = tm.activeUserListTenant?.status ?? null;
 
   const resolveUserDisplayStatus = (u: TenantUserView) =>
@@ -247,11 +251,12 @@ export default function TenantManagementTab({
   });
   const tierOptions = tiersQuery.data?.data ?? [];
 
-  // Shared with Tier Management so service↔tier mappings stay consistent.
-  // Used to block assigning a tier that has no services mapped.
+  // Shared with Tier Management so service↔tier mappings stay consistent
+  // (same taskTypes filter + cache key as useTierManagement).
   const servicesForTiersQuery = useQuery({
-    queryKey: ["services-for-tiers"],
-    queryFn: () => fetchAllServicesMatchingFilters({}),
+    queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
+    queryFn: () =>
+      fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
     enabled: isAdmin && (isAssignTierOpen || isViewTierOpen),
   });
@@ -402,7 +407,7 @@ export default function TenantManagementTab({
         duration: 4000,
         isClosable: true,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       handleCloseManagePlan();
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
@@ -505,7 +510,7 @@ export default function TenantManagementTab({
         effective_from: effectiveFromIso,
         effective_to: effectiveToIso,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
@@ -569,7 +574,7 @@ export default function TenantManagementTab({
         isClosable: true,
       });
 
-      queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["tenant-tiers"],
       });
     } catch (err: any) {

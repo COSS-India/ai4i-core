@@ -29,7 +29,6 @@ export const METERING = {
       SERVICE: "service",
       MODEL: "model",
     },
-    HEATMAP_SERVICES_ALL: "all",
     SCROLL_ROOT_MARGIN: "100px",
   },
   DEFAULTS: {

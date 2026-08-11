@@ -15,8 +15,6 @@ interface TenantConsumptionTabProps {
   data?: TenantConsumptionResponse;
   topN: MeteringTopN;
   onTopNChange: (n: MeteringTopN) => void;
-  // UNDO: restore when re-enabling heatmap "Select services".
-  // onHeatmapServicesChange?: (services: string[] | null) => void;
   tenantOrganisationById?: Record<string, string>;
   isLoading?: boolean;
   errorMessage?: string | null;
@@ -26,7 +24,6 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
   data,
   topN,
   onTopNChange,
-  // onHeatmapServicesChange,
   tenantOrganisationById = {},
   isLoading,
   errorMessage,
@@ -139,7 +136,6 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
           <TenantServiceHeatmapSection
             rows={data.usage_by_service}
             topN={topN}
-            // UNDO: onServicesFilterChange={onHeatmapServicesChange}
             windowLabel={windowLabel}
             tenantOrganisationById={tenantOrganisationById}
           />

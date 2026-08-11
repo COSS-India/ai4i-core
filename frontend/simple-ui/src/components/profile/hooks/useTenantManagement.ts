@@ -6,6 +6,7 @@ import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
 import { showError } from "../../../utils/errorHandler";
+import { refreshUntil } from "../../../utils/postMutationRefresh";
 import {
   collectTenantContactEmails,
   collectUserEmails,
@@ -286,31 +287,36 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   }, [activeUserListTenant?.tenant_id]);
 
   // ----- Fetchers -----
-  const handleFetchTenants = async () => {
+  /** Read tenants without committing React state (for refreshUntil polls). */
+  const loadTenants = async (): Promise<TenantView[]> => {
+    if (isTenantScopedUser) {
+      const tenantId = user?.tenant_id?.trim();
+      if (!tenantId) return [];
+      const tenant = await tenantService.getViewTenant(tenantId);
+      return tenant ? applyTenantPendingSoftDeleteFlags([tenant]) : [];
+    }
+    const res = await tenantService.listTenants();
+    return applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
+  };
+
+  const commitTenants = (rows: TenantView[]) => {
+    setTenants(rows);
+    if (!isTenantScopedUser) {
+      setKnownTenantEmails(collectTenantContactEmails(rows));
+    }
+  };
+
+  const handleFetchTenants = async (): Promise<TenantView[]> => {
     setIsLoadingTenants(true);
     try {
-      if (isTenantScopedUser) {
-        const tenantId = user?.tenant_id?.trim();
-        if (!tenantId) {
-          setTenants([]);
-          return;
-        }
-        const tenant = await tenantService.getViewTenant(tenantId);
-        setTenants(
-          tenant
-            ? applyTenantPendingSoftDeleteFlags([tenant])
-            : [],
-        );
-        return;
-      }
-      const res = await tenantService.listTenants();
-      const rows = applyTenantPendingSoftDeleteFlags(res.tenants ?? []);
-      setTenants(rows);
-      setKnownTenantEmails(collectTenantContactEmails(rows));
+      const rows = await loadTenants();
+      commitTenants(rows);
+      return rows;
     } catch (err) {
       console.error("Failed to fetch tenants:", err);
       showError(err);
       setTenants([]);
+      return [];
     } finally {
       setIsLoadingTenants(false);
     }
@@ -320,6 +326,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (tenantDetailView?.tenant_id === tenantId) return tenantDetailView;
     if (activeUserListTenant?.tenant_id === tenantId) return activeUserListTenant;
     return tenants.find((row) => row.tenant_id === tenantId) ?? null;
+  };
+
+  const patchTenantLocal = (tenantId: string, fields: Partial<TenantView>) => {
+    setTenants((prev) =>
+      prev.map((t) => (t.tenant_id === tenantId ? { ...t, ...fields } : t)),
+    );
+    setTenantDetailView((prev) =>
+      prev?.tenant_id === tenantId ? { ...prev, ...fields } : prev,
+    );
   };
 
   const loadTenantUsersForTenant = async (
@@ -358,9 +373,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const refreshTenantAndUserLists = async (tenantIdOverride?: string) => {
+  const refreshTenantAndUserLists = async (
+    tenantIdOverride?: string,
+    expectReady?: (rows: TenantView[]) => boolean,
+  ) => {
     if (isAdmin) {
-      await handleFetchTenants();
+      if (expectReady) {
+        const rows = await refreshUntil(loadTenants, expectReady);
+        commitTenants(rows);
+      } else {
+        await handleFetchTenants();
+      }
     }
     const tenantId =
       tenantIdOverride ??
@@ -788,12 +811,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         email: tenantForm.email.trim(),
         phone_number: tenantForm.phone_number.trim() || undefined,
       });
+      setTenants((prev) => {
+        if (prev.some((t) => t.tenant_id === created.tenant_id)) return prev;
+        return applyTenantPendingSoftDeleteFlags([created, ...prev]);
+      });
       showToast({
         type: "success",
         message: `${created.organisation} is pending activation. The contact will receive a setup link by email.`,
       });
       closeTenantModal();
-      await refreshTenantAndUserLists(created.tenant_id);
+      await refreshTenantAndUserLists(
+        created.tenant_id,
+        (rows) => rows.some((t) => t.tenant_id === created.tenant_id),
+      );
     } catch (err) {
       console.error("Failed to register tenant:", err);
       showError(err);
@@ -1073,7 +1103,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
     setIsSubmittingEditTenant(true);
     try {
-      await tenantService.updateTenant({
+      const patch = {
         tenant_id: editTenantForm.tenant_id,
         organisation: editTenantForm.organisation,
         contact_name: editTenantForm.contact_name,
@@ -1081,7 +1111,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         ...(isEditTenantEmailEditable
           ? { email: editTenantForm.email }
           : {}),
+      };
+      await tenantService.updateTenant(patch);
+
+      patchTenantLocal(patch.tenant_id, {
+        organisation: patch.organisation,
+        contact_name: patch.contact_name,
+        phone_number: patch.phone_number,
+        ...(isEditTenantEmailEditable && !emailChanged
+          ? { email: patch.email }
+          : {}),
       });
+
       if (emailChanged) {
         showToast({
           type: "info",
@@ -1093,7 +1134,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
-      await refreshTenantAndUserLists(editTenantForm.tenant_id);
+      const expectedOrg = patch.organisation;
+      const expectedContact = patch.contact_name;
+      await refreshTenantAndUserLists(editTenantForm.tenant_id, (rows) =>
+        rows.some(
+          (t) =>
+            t.tenant_id === editTenantForm.tenant_id &&
+            t.organisation === expectedOrg &&
+            t.contact_name === expectedContact,
+        ),
+      );
     } catch (err) {
       console.error("Failed to update tenant:", err);
       showError(err);
@@ -1280,8 +1330,20 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         if (wasPendingDeactivate) {
           markPendingSoftDeletedTenant(statusUpdateTarget.tenant_id);
         }
+        patchTenantLocal(statusUpdateTarget.tenant_id, {
+          status: statusUpdateNewStatus as TenantStatus,
+        });
         showToast({ type: "success", message: "Tenant status updated" });
-        await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
+        const expectedStatus = statusUpdateNewStatus as TenantStatus;
+        const targetTenantId = statusUpdateTarget.tenant_id;
+        await refreshTenantAndUserLists(targetTenantId, (rows) =>
+          rows.some(
+            (t) =>
+              t.tenant_id === targetTenantId &&
+              normalizeTenantStatus(t.status) ===
+                normalizeTenantStatus(expectedStatus),
+          ),
+        );
       } else {
         const isActive = statusUpdateNewStatus === TENANT.USER_STATUS.ACTIVE;
         await tenantService.updateUserStatus({

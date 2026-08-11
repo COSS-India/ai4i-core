@@ -1,13 +1,7 @@
 import {
   Box,
-  // Button,
-  // Checkbox,
   Flex,
   HStack,
-  // Menu,
-  // MenuButton,
-  // MenuItem,
-  // MenuList,
   Progress,
   Tbody,
   Td,
@@ -17,13 +11,7 @@ import {
   Tr,
   VStack,
 } from "@chakra-ui/react";
-// import { ChevronDownIcon } from "@chakra-ui/icons";
-import React, {
-  useMemo,
-  // useEffect,
-  // useRef,
-  // useState,
-} from "react";
+import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
 import { formatTenantLabel } from "../../utils/meteringFormatters";
@@ -42,24 +30,15 @@ import MeteringTableText from "./MeteringTableText";
 interface TenantServiceHeatmapSectionProps {
   rows: TenantServiceRow[];
   topN: MeteringTopN;
-  // UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
-  // TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
-  // onServicesFilterChange?: (services: string[] | null) => void;
   windowLabel: string;
   tenantOrganisationById?: Record<string, string>;
 }
-
-/** UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
- * TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
- */
-// (Select-services UI kept commented below; columns now follow BE response keys.)
 
 const TenantServiceHeatmapSection: React.FC<
   TenantServiceHeatmapSectionProps
 > = ({
   rows,
   topN,
-  // onServicesFilterChange,
   windowLabel,
   tenantOrganisationById = {},
 }) => {
@@ -67,84 +46,13 @@ const TenantServiceHeatmapSection: React.FC<
   const catalogServices = heatmap.SERVICES;
   const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
 
-  /*
-   * UNDO — multi-service "Select services" dropdown:
-   *
-   * const [selectedServices, setSelectedServices] = useState<Set<string>>(
-   *   () => new Set(catalogServices.map((s) => s.key)),
-   * );
-   *
-   * const didMountRef = useRef(false);
-   * useEffect(() => {
-   *   if (!didMountRef.current) {
-   *     didMountRef.current = true;
-   *     return;
-   *   }
-   *   if (!onServicesFilterChange) return;
-   *   const allKeys = catalogServices.map((s) => s.key);
-   *   const isAllSelected =
-   *     allKeys.length > 0 && allKeys.every((key) => selectedServices.has(key));
-   *   onServicesFilterChange(
-   *     isAllSelected
-   *       ? null
-   *       : Array.from(selectedServices).sort((a, b) => a.localeCompare(b)),
-   *   );
-   * }, [selectedServices, onServicesFilterChange, catalogServices]);
-   *
-   * const visibleServices = useMemo(
-   *   () => catalogServices.filter((s) => selectedServices.has(s.key)),
-   *   [catalogServices, selectedServices],
-   * );
-   *
-   * const toggleService = (key: string) => {
-   *   setSelectedServices((prev) => {
-   *     const next = new Set(prev);
-   *     if (next.has(key)) {
-   *       if (next.size > 1) next.delete(key);
-   *     } else {
-   *       next.add(key);
-   *     }
-   *     return next;
-   *   });
-   * };
-   *
-   * const serviceFilter = (
-   *   <Menu closeOnSelect={false}>
-   *     <MenuButton
-   *       as={Button}
-   *       size="sm"
-   *       variant="outline"
-   *       rightIcon={<ChevronDownIcon />}
-   *       bg="white"
-   *       fontWeight="normal"
-   *     >
-   *       Select services ({selectedServices.size})
-   *     </MenuButton>
-   *     <MenuList maxH="320px" overflowY="auto" minW="220px">
-   *       {catalogServices.map((svc) => (
-   *         <MenuItem key={svc.key} onClick={() => toggleService(svc.key)}>
-   *           <Checkbox
-   *             isChecked={selectedServices.has(svc.key)}
-   *             pointerEvents="none"
-   *             mr={2}
-   *             colorScheme="orange"
-   *           />
-   *           {svc.displayName}
-   *         </MenuItem>
-   *       ))}
-   *     </MenuList>
-   *   </Menu>
-   * );
-   */
-
-  // Columns follow whatever service keys the BE heatmap payload includes
-  // (ENABLED_TASK_TYPES today may be LLM-only; later LLM+others without FE changes).
+  // Columns follow enabled task types returned in the BE heatmap payload
+  // (task_types= from ENABLED_TASK_TYPES). No static "all services" fallback.
   const visibleServices = useMemo(() => {
     const present = new Set<string>();
     rows.forEach((row) => {
       Object.keys(row.services ?? {}).forEach((key) => present.add(key));
     });
-    if (present.size === 0) return [...catalogServices];
     return catalogServices.filter((s) => present.has(s.key));
   }, [rows, catalogServices]);
 
@@ -170,12 +78,6 @@ const TenantServiceHeatmapSection: React.FC<
         title={heatmap.TITLE}
         subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
         sectionLabel
-        // UNDO: restore selector action
-        // action={
-        //   <HStack spacing={3} flexWrap="wrap">
-        //     {serviceFilter}
-        //   </HStack>
-        // }
       >
         <MeteringEmptyState height={200} message={heatmap.EMPTY} />
       </MeteringSectionCard>
@@ -187,12 +89,6 @@ const TenantServiceHeatmapSection: React.FC<
       title={heatmap.TITLE}
       subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
       sectionLabel
-      // UNDO: restore selector action
-      // action={
-      //   <HStack spacing={3} flexWrap="wrap" justify="flex-end">
-      //     {serviceFilter}
-      //   </HStack>
-      // }
     >
       <MeteringDataTable w="auto" minW="100%">
         <Thead>

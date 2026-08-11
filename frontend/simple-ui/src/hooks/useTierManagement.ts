@@ -183,9 +183,12 @@ export function useTierManagement() {
 
   // Services carry their tier mapping as an array of tier UUIDs (tierIds).
   // There's no server-side tier filter, so fetch all services and filter here.
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const servicesQuery = useQuery({
-    queryKey: ["services-for-tiers"],
-    queryFn: () => fetchAllServicesMatchingFilters({}),
+    queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
+    queryFn: () =>
+      fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60 * 1000,
     enabled: !!viewTierId,
   });
