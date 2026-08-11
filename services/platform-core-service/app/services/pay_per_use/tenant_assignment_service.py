@@ -253,6 +253,12 @@ async def assign_tier(
 
     now = datetime.now(timezone.utc)
 
+    if body.effective_from < now:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="effective_from cannot be in the past",
+        )
+
     # 4. Reject if the new date range overlaps with any existing assignment.
     existing = await db.execute(
         select(PPUTenantTierAssignment).where(
