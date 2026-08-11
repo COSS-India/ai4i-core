@@ -190,78 +190,91 @@ class TestTenantAdminRoleRemoval:
         assert exc_info.value.detail["code"] == "TENANT_FORBIDDEN"
 
 
-class TestGetUserRolesSelfAccess:
-    """USER/GUEST may view only their own roles; privileged roles keep full access."""
+class TestRequireSelfOrAnyRole:
+    """require_self_or_any_role: self-access allowed for any role; privileged
+    roles delegate to enforce_target_user_same_tenant for any user_id.
+
+    MODERATOR is exercised as a self-access-only role (alongside USER/GUEST),
+    not as privileged: migration e3f4a5b6c7d8 revoked its ability to view any
+    user's roles, and fe0092e08b62 re-grants roles.read at the gateway only
+    for the self-view case covered here.
+    """
 
     def _make_user(self, tenant_id: int = 1):
         from uuid import uuid4
         from app.models.user import User
         return User(id=uuid4(), email="u@example.com", username="u", tenant_id=tenant_id)
 
-    def _mock_request(self, user_roles):
+    def _mock_request(self):
         from unittest.mock import MagicMock
         req = MagicMock()
-        req.state.user_roles = user_roles
         req.state.tenant_id = None
         return req
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("role_name", ["USER", "GUEST"])
+    @pytest.mark.parametrize("role_name", ["USER", "GUEST", "MODERATOR"])
     async def test_self_access_allowed(self, role_name):
-        from unittest.mock import AsyncMock, MagicMock
-        from app.routes.role import get_user_roles
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.dependencies.permissions import require_self_or_any_role
+        from app.models.role_name import RoleName
 
         caller = self._make_user()
-        svc = MagicMock()
-        svc.get_user_roles = AsyncMock(return_value=[role_name])
-        db = MagicMock()
+        check = require_self_or_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)
 
-        result = await get_user_roles(
-            self._mock_request([role_name]), caller.id, caller, svc, db
-        )
+        with patch("app.dependencies.permissions.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.permissions.enforce_target_user_same_tenant", new=AsyncMock()) as mock_enforce:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[role_name])
+            result = await check(self._mock_request(), caller.id, caller, MagicMock())
 
-        assert result["success"] is True
-        assert result["data"]["user_id"] == str(caller.id)
-        svc.get_user_roles.assert_awaited_once_with(caller.id)
+        assert result is caller
+        mock_enforce.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("role_name", ["USER", "GUEST"])
+    @pytest.mark.parametrize("role_name", ["USER", "GUEST", "MODERATOR"])
     async def test_cross_user_access_forbidden(self, role_name):
         from uuid import uuid4
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
         from app.core.exceptions import InsufficientPermissionsError
-        from app.routes.role import get_user_roles
+        from app.dependencies.permissions import require_self_or_any_role
+        from app.models.role_name import RoleName
 
         caller = self._make_user()
         other_user_id = uuid4()
-        svc = MagicMock()
-        svc.get_user_roles = AsyncMock(return_value=[role_name])
-        db = MagicMock()
+        check = require_self_or_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)
 
-        with pytest.raises(InsufficientPermissionsError):
-            await get_user_roles(
-                self._mock_request([role_name]), other_user_id, caller, svc, db
-            )
-        svc.get_user_roles.assert_not_awaited()
+        with patch("app.dependencies.permissions.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.permissions.enforce_target_user_same_tenant", new=AsyncMock()) as mock_enforce:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[role_name])
+            with pytest.raises(InsufficientPermissionsError):
+                await check(self._mock_request(), other_user_id, caller, MagicMock())
+        mock_enforce.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("role_name", ["ADMIN", "MODERATOR", "TENANT ADMIN"])
-    async def test_privileged_role_can_view_any_user(self, role_name):
+    @pytest.mark.parametrize("role_name", ["ADMIN", "TENANT ADMIN"])
+    async def test_privileged_role_delegates_to_tenant_enforcement(self, role_name):
+        """Privileged roles reach enforce_target_user_same_tenant for any user_id.
+
+        This only proves delegation happens with the right arguments — the
+        actual same-tenant-allowed / cross-tenant-forbidden behavior is
+        covered by that helper's own tests in TestTenantAdminRoleRemoval.
+        """
         from uuid import uuid4
         from unittest.mock import AsyncMock, MagicMock, patch
-        from app.routes.role import get_user_roles
+        from app.dependencies.permissions import require_self_or_any_role
+        from app.models.role_name import RoleName
 
         caller = self._make_user()
         target_id = uuid4()
-        svc = MagicMock()
-        svc.get_user_roles = AsyncMock(return_value=["USER"])
         db = MagicMock()
+        request = self._mock_request()
+        check = require_self_or_any_role(RoleName.ADMIN, RoleName.TENANT_ADMIN)
 
-        with patch("app.routes.role.enforce_target_user_same_tenant", new=AsyncMock()) as mock_enforce:
-            result = await get_user_roles(
-                self._mock_request([role_name]), target_id, caller, svc, db
-            )
+        with patch("app.dependencies.permissions.RoleRepository") as MockRoleRepo, \
+             patch("app.dependencies.permissions.enforce_target_user_same_tenant", new=AsyncMock()) as mock_enforce:
+            MockRoleRepo.return_value.get_user_roles = AsyncMock(return_value=[role_name])
+            result = await check(request, target_id, caller, db)
 
-        mock_enforce.assert_awaited_once()
-        assert result["data"]["user_id"] == str(target_id)
-        svc.get_user_roles.assert_awaited_once_with(target_id)
+        mock_enforce.assert_awaited_once_with(
+            request, caller, target_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
+        )
+        assert result is caller
