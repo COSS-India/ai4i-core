@@ -188,3 +188,80 @@ class TestTenantAdminRoleRemoval:
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["code"] == "TENANT_FORBIDDEN"
+
+
+class TestGetUserRolesSelfAccess:
+    """USER/GUEST may view only their own roles; privileged roles keep full access."""
+
+    def _make_user(self, tenant_id: int = 1):
+        from uuid import uuid4
+        from app.models.user import User
+        return User(id=uuid4(), email="u@example.com", username="u", tenant_id=tenant_id)
+
+    def _mock_request(self, user_roles):
+        from unittest.mock import MagicMock
+        req = MagicMock()
+        req.state.user_roles = user_roles
+        req.state.tenant_id = None
+        return req
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role_name", ["USER", "GUEST"])
+    async def test_self_access_allowed(self, role_name):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.routes.role import get_user_roles
+
+        caller = self._make_user()
+        svc = MagicMock()
+        svc.get_user_roles = AsyncMock(return_value=[role_name])
+        db = MagicMock()
+
+        result = await get_user_roles(
+            self._mock_request([role_name]), caller.id, caller, svc, db
+        )
+
+        assert result["success"] is True
+        assert result["data"]["user_id"] == str(caller.id)
+        svc.get_user_roles.assert_awaited_once_with(caller.id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role_name", ["USER", "GUEST"])
+    async def test_cross_user_access_forbidden(self, role_name):
+        from uuid import uuid4
+        from unittest.mock import AsyncMock, MagicMock
+        from app.core.exceptions import InsufficientPermissionsError
+        from app.routes.role import get_user_roles
+
+        caller = self._make_user()
+        other_user_id = uuid4()
+        svc = MagicMock()
+        svc.get_user_roles = AsyncMock(return_value=[role_name])
+        db = MagicMock()
+
+        with pytest.raises(InsufficientPermissionsError):
+            await get_user_roles(
+                self._mock_request([role_name]), other_user_id, caller, svc, db
+            )
+        svc.get_user_roles.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role_name", ["ADMIN", "MODERATOR", "TENANT ADMIN"])
+    async def test_privileged_role_can_view_any_user(self, role_name):
+        from uuid import uuid4
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.routes.role import get_user_roles
+
+        caller = self._make_user()
+        target_id = uuid4()
+        svc = MagicMock()
+        svc.get_user_roles = AsyncMock(return_value=["USER"])
+        db = MagicMock()
+
+        with patch("app.routes.role.enforce_target_user_same_tenant", new=AsyncMock()) as mock_enforce:
+            result = await get_user_roles(
+                self._mock_request([role_name]), target_id, caller, svc, db
+            )
+
+        mock_enforce.assert_awaited_once()
+        assert result["data"]["user_id"] == str(target_id)
+        svc.get_user_roles.assert_awaited_once_with(target_id)

@@ -8,13 +8,14 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.exceptions import EntityNotFoundError
+from app.core.exceptions import EntityNotFoundError, InsufficientPermissionsError
+from app.core.permission_checker import PermissionChecker
 from app.core.responses import success_response, to_response
 from app.dependencies.auth import get_current_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
-from app.models.role_name import RoleName
+from app.models.role_name import RoleName, role_name_to_str
 from app.models.user import User
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
@@ -74,13 +75,26 @@ async def remove_role(
 async def get_user_roles(
     request: Request,
     user_id: UUID,
-    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
+    _admin: User = Depends(
+        require_any_role(
+            RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN, RoleName.USER, RoleName.GUEST
+        )
+    ),
     svc: RoleService = Depends(get_role_service),
     db: AsyncSession = Depends(get_db),
 ):
-    await enforce_target_user_same_tenant(
-        request, _admin, user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
+    caller_roles = getattr(request.state, "user_roles", [])
+    is_privileged = PermissionChecker.has_any_role(
+        [role_name_to_str(r) for r in (RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)],
+        caller_roles,
     )
+    if is_privileged:
+        await enforce_target_user_same_tenant(
+            request, _admin, user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
+        )
+    elif user_id != _admin.id:
+        # USER / GUEST may only view their own role assignments.
+        raise InsufficientPermissionsError()
     roles = await svc.get_user_roles(user_id)
     return success_response(data={"user_id": str(user_id), "roles": roles})
 
