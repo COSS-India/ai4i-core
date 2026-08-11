@@ -73,8 +73,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const [timeWindow, setTimeWindow] = useState<MeteringWindow>(METERING.DEFAULTS.TIME_WINDOW);
   const [topN, setTopN] = useState<MeteringTopN>(METERING.DEFAULTS.TOP_N);
   const [scopeTenantId, setScopeTenantId] = useState("");
-  // UNDO: restore heatmap service-filter state when re-enabling "Select services".
-  // const [tenantHeatmapServices, setTenantHeatmapServices] = useState<string[] | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   // Honor ?tab= so login/Home can deep-link to Overview (and refresh keeps the tab).
@@ -84,11 +82,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     if (typeof raw !== "string" || !isMeteringSubTab(raw, availableSubTabs)) return;
     setSubTab(raw);
   }, [router.isReady, router.query.tab, availableSubTabs]);
-
-  // UNDO: reset heatmap service filter when controls change.
-  // useEffect(() => {
-  //   setTenantHeatmapServices(null);
-  // }, [subTab, timeWindow, topN]);
 
   const tenantsQuery = useQuery({
     queryKey: meteringQueryKey(METERING.QUERY.SCOPES.TENANT_DIRECTORY),
@@ -134,6 +127,10 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const queryTenantId = scopeTenantId || (isTenantView ? effectiveTenantId : null);
 
+  // Wait for ENABLED_TASK_TYPES before metering fetches — no "all services" path.
+  const enabledServicesKey = enabledServices?.join(",") ?? "";
+  const enabledServicesReady = enabledServices != null;
+
   const overviewQuery = useQuery({
     queryKey: meteringQueryKey(
       METERING.QUERY.SCOPES.OVERVIEW,
@@ -141,12 +138,12 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
-      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      enabledServicesKey,
       refreshNonce,
     ),
     queryFn: () =>
       fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices),
-    enabled: isAdopterView || tenantOverviewEnabled,
+    enabled: enabledServicesReady && (isAdopterView || tenantOverviewEnabled),
     ...meteringQueryDefaults,
   });
 
@@ -157,8 +154,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       METERING.QUERY.SCOPES.TENANT,
       timeWindow,
       topN,
-      // UNDO: tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
-      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      enabledServicesKey,
       queryTenantId,
       refreshNonce,
     ),
@@ -169,11 +165,15 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
         enabledServices,
         queryTenantId,
       ),
-    enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
+    enabled:
+      enabledServicesReady &&
+      isAdopterView &&
+      subTab === METERING.SUB_TAB.TENANT,
     ...meteringQueryDefaults,
   });
 
   const serviceQueryEnabled =
+    enabledServicesReady &&
     subTab === METERING.SUB_TAB.SERVICE &&
     (isAdopterView || tenantOverviewEnabled);
 
@@ -184,7 +184,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
-      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      enabledServicesKey,
       refreshNonce,
     ),
     queryFn: () =>
@@ -297,7 +297,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     setTopN,
     scopeTenantId,
     setScopeTenantId,
-    // UNDO: setTenantHeatmapServices,
     isAdopterView,
     isTenantView,
     previewTenants,
