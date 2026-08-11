@@ -184,6 +184,19 @@ export const formatTimestamp = (timestamp: number): string => {
 };
 
 /**
+ * Today's date as a local `<input type="date">` value (YYYY-MM-DD).
+ * Use as the `min` attribute on date inputs that must disallow past dates.
+ * @returns Today's date in YYYY-MM-DD format (local time)
+ */
+export const getTodayDateInputValue = (): string => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+/**
  * Validate email format
  * @param email - Email string to validate
  * @returns True if valid email format
