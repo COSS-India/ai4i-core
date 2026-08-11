@@ -244,7 +244,6 @@ export default function TenantManagementTab({
   const tierOptions = tiersQuery.data?.data ?? [];
 
   // Shared with Tier Management so service↔tier mappings stay consistent.
-  // Used to block assigning a tier that has no services mapped.
   const servicesForTiersQuery = useQuery({
     queryKey: ["services-for-tiers"],
     queryFn: () => fetchAllServicesMatchingFilters({}),
@@ -398,7 +397,7 @@ export default function TenantManagementTab({
         duration: 4000,
         isClosable: true,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       handleCloseManagePlan();
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
@@ -497,7 +496,7 @@ export default function TenantManagementTab({
         effective_from: effectiveFromIso,
         effective_to: effectiveToIso,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
@@ -561,7 +560,7 @@ export default function TenantManagementTab({
         isClosable: true,
       });
 
-      queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["tenant-tiers"],
       });
     } catch (err: any) {

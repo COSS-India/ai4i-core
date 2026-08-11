@@ -22,6 +22,7 @@ import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
 import { showError } from "../utils/errorHandler";
 import { showToast } from "../utils/toast";
+import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
 
 /** Query keys of per-task service lists that must refresh after registry mutations. */
@@ -195,7 +196,7 @@ export function useServicesManagement() {
   // re-create fetchServices every render and re-fire the fetch effect below.
   const enabledTaskTypesParam = taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
-  const fetchServices = useCallback(async (options?: { silent?: boolean }) => {
+  const fetchServices = useCallback(async (options?: { silent?: boolean }): Promise<Service[]> => {
     if (!options?.silent) setIsLoading(true);
     try {
       const isPublishedFilter =
@@ -213,14 +214,32 @@ export function useServicesManagement() {
         isPublished: isPublishedFilter,
       });
       setServices(result.items);
+      return result.items;
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
       showError(error);
       setServices([]);
+      return [];
     } finally {
       if (!options?.silent) setIsLoading(false);
     }
   }, [filterTaskType, filterStatus, enabledTaskTypesParam]);
+
+  const serviceKey = (s: Pick<Service, "serviceId"> & { service_id?: string }) =>
+    s.serviceId || s.service_id || "";
+
+  const upsertLocalService = useCallback((service: Service) => {
+    const id = serviceKey(service);
+    if (!id) return;
+    setServices((prev) => [
+      service,
+      ...prev.filter((s) => serviceKey(s) !== id),
+    ]);
+    setSelectedService((prev) =>
+      prev && serviceKey(prev) === id ? { ...prev, ...service } : prev,
+    );
+    setRegistryEpoch((e) => e + 1);
+  }, []);
 
   /**
    * Keep registry + detail UI in sync after publish/unpublish.
@@ -484,10 +503,15 @@ export function useServicesManagement() {
           modelDetails?.model_id ||
           "";
 
+        const modelTaskType =
+          modelDetails?.task?.type ||
+          modelDetails?.task_type ||
+          modelDetails?.taskType ||
+          "";
+
         setFormData((prev) => {
-          const taskIsLlm =
-            (prev.task_type || "").trim().toLowerCase() === "llm";
-          // AI4IDS-2692: LLM Service ID pre-filled with "{modelName}/"
+          const task_type = modelTaskType || prev.task_type || "";
+          const taskIsLlm = task_type.trim().toLowerCase() === "llm";
           // Sanitize to BE service-name charset (no underscore) since name=serviceId.
           const sanitizeLlmId = (s: string) =>
             s.replaceAll(/[^a-zA-Z0-9/-]/g, "");
@@ -519,6 +543,7 @@ export function useServicesManagement() {
             modelName: modelName,
             modelSubmissionDate: modelSubmissionDate,
             modelVersion: modelVersion,
+            task_type,
             ...(taskIsLlm && !editingService
               ? { serviceId: nextServiceId }
               : {}),
@@ -573,10 +598,14 @@ export function useServicesManagement() {
     setIsSubmitting(true);
 
     try {
+      let mutatedServiceId = "";
+
       if (editingService) {
         // Edit mode: PATCH only the fields the edit form allows changing
+        const serviceId =
+          editingService.serviceId || editingService.service_id || "";
         const updateData: Partial<Service> = {
-          serviceId: editingService.serviceId || editingService.service_id,
+          serviceId,
           serviceDescription: formData.serviceDescription,
           task_type: formData.task_type,
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
@@ -588,7 +617,15 @@ export function useServicesManagement() {
         if (formData.endpoint !== storedEndpoint) {
           updateData.endpoint = formData.endpoint;
         }
+        // PATCH returns only `{ serviceId }` — do not treat it as a full Service
         await updateService(updateData);
+        mutatedServiceId = serviceId;
+        upsertLocalService({
+          ...editingService,
+          ...updateData,
+          serviceId,
+          task_type: formData.task_type || editingService.task_type,
+        });
 
         showToast({
           type: "success",
@@ -599,7 +636,7 @@ export function useServicesManagement() {
         const serviceId = formData.serviceId?.trim() || "";
         const taskIsLlm =
           (formData.task_type || "").trim().toLowerCase() === "llm";
-        // AI4IDS-2692: for LLM, Service ID is copied to Service Name
+        // For LLM, Service ID is copied to Service Name
         const serviceName = taskIsLlm
           ? serviceId
           : formData.name?.trim() || "";
@@ -623,7 +660,16 @@ export function useServicesManagement() {
           tierIds,
         };
 
-        await createService(serviceData);
+        const created = await createService(serviceData);
+        mutatedServiceId =
+          created.serviceId || created.service_id || serviceId;
+        upsertLocalService({
+          ...serviceData,
+          serviceId: mutatedServiceId,
+          name: created.name || serviceName,
+          isPublished: false,
+          task_type: formData.task_type,
+        } as Service);
 
         showToast({
           type: "success",
@@ -632,22 +678,30 @@ export function useServicesManagement() {
       }
 
       invalidateServiceQueries();
-
-      // Reset form and leave edit mode
       setEditingService(null);
       resetCreateForm();
-
-      await fetchServices();
-      await loadExistingServiceIds();
-      setRegistryEpoch((e) => e + 1);
-
-      // Switch to list tab and clear tab/edit query params
       setActiveTab(0);
       router.replace(
         { pathname: "/services-management", query: {} },
         undefined,
         { shallow: true },
       );
+
+      const targetId = mutatedServiceId;
+      if (targetId) {
+        try {
+          upsertLocalService(await getServiceById(targetId));
+        } catch (e) {
+          console.warn("Failed to refresh service after create/update:", e);
+        }
+        await refreshUntil(
+          () => fetchServices({ silent: true }),
+          (items) => items.some((s) => serviceKey(s) === targetId),
+        );
+      } else {
+        await fetchServices({ silent: true });
+      }
+      await loadExistingServiceIds();
     } catch (error: any) {
       showError(error);
     } finally {
@@ -1010,21 +1064,27 @@ export function useServicesManagement() {
       onClose();
       return;
     }
-    setDeletingServiceUuid(serviceToDelete.serviceId);
+    const deletedId = serviceToDelete.serviceId;
+    setDeletingServiceUuid(deletedId);
     try {
-      await deleteService(serviceToDelete.serviceId);
+      await deleteService(deletedId);
+      setServices((prev) => prev.filter((s) => serviceKey(s) !== deletedId));
+      setRegistryEpoch((e) => e + 1);
       showToast({
         type: "success",
         message: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
       });
       invalidateServiceQueries();
-      await fetchServices();
-      if (selectedService?.serviceId === serviceToDelete.serviceId) {
+      if (selectedService?.serviceId === deletedId) {
         setIsViewingService(false);
         setSelectedService(null);
         setSelectedServiceModelDeprecated(null);
         setActiveTab(0);
       }
+      await refreshUntil(
+        () => fetchServices({ silent: true }),
+        (items) => !items.some((s) => serviceKey(s) === deletedId),
+      );
     } catch (error: any) {
       showError(error);
     } finally {

@@ -142,6 +142,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       roleViewConfig.defaultView,
       isAdopterView,
       enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      refreshNonce,
     ),
     queryFn: () =>
       fetchMeteringOverview(timeWindow, ctx, queryTenantId, enabledServices),
@@ -159,6 +160,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       // UNDO: tenantHeatmapServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
       enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
       queryTenantId,
+      refreshNonce,
     ),
     queryFn: () =>
       fetchMeteringTenantConsumption(
@@ -184,6 +186,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       roleViewConfig.defaultView,
       isAdopterView,
       enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
+      refreshNonce,
     ),
     queryFn: () =>
       fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId, enabledServices),
@@ -202,6 +205,7 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       queryTenantId,
       roleViewConfig.defaultView,
       isAdopterView,
+      refreshNonce,
     ),
     queryFn: () => fetchMeteringModelConsumption(timeWindow, ctx, queryTenantId),
     enabled: modelQueryEnabled,
@@ -254,16 +258,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
 
   const handleRefresh = () => {
     setRefreshNonce((n) => n + 1);
-    overviewQuery.refetch();
-    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT) {
-      tenantQuery.refetch();
-    }
-    if (serviceQueryEnabled) {
-      serviceQuery.refetch();
-    }
-    if (modelQueryEnabled) {
-      modelQuery.refetch();
-    }
   };
 
   const organisationLabel = overview?.scope.organisation ?? null;
