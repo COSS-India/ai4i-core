@@ -19,7 +19,6 @@ from consumers.payperuse_consumer._billing import (
     _get_billing_data,
     _get_billed_key, _update_billing_on_cache,
 )
-from consumers.registry import kafka_listener
 
 logger = get_logger(__name__)
 
@@ -280,7 +279,6 @@ async def _bill_usage(db, ctx: BillingContext) -> Optional[BillingOutcome]:
     )
 
 
-@kafka_listener(settings.topics.TOPIC_PAY_PER_USE)
 async def handle_ppu_usage(msg: Message) -> None:
     ctx = await _prepare_billing_context(msg)
     if ctx is None:
