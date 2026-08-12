@@ -26,7 +26,6 @@ export const METERING = {
       TENANT_DIRECTORY: "tenant-directory",
       OVERVIEW: "overview",
       TENANT: "tenant",
-      SERVICE: "service",
       MODEL: "model",
     },
     SCROLL_ROOT_MARGIN: "100px",
@@ -43,7 +42,6 @@ export const METERING = {
   SUB_TAB: {
     OVERVIEW: "overview",
     TENANT: "tenant",
-    SERVICE: "service",
     MODEL: "model",
     USAGE_SPEND: "usage-spend",
   } as const,
@@ -91,14 +89,12 @@ export const METERING = {
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
-    { id: "service", label: "Service Usage" },
     // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
     { id: "model", label: "Model Usage" },
     { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "service", label: "Service Usage" },
     { id: "model", label: "Model Usage" },
     { id: "usage-spend", label: "Cost and Budget" },
   ] as const,
@@ -239,7 +235,6 @@ export const METERING = {
   EMPTY: {
     DEFAULT: "No data available.",
     TENANT_CONSUMPTION: "No tenant consumption data available.",
-    SERVICE_CONSUMPTION: "No service consumption data available.",
     MODEL_CONSUMPTION: "No model consumption data available.",
     CHART: "No data available for the selected time window.",
   },
@@ -304,23 +299,6 @@ export const METERING = {
       REQUESTS_SUFFIX: "requests",
       TABLE_SERVICE: "Service",
       TABLE_MODEL: "Model",
-      TABLE_TOTAL_REQUESTS: "Total requests",
-      TABLE_NATIVE: "Native consumption",
-      TABLE_SUCCESS: "Success rate %",
-      TABLE_FAILURE: "Failure rate %",
-    },
-    SERVICE: {
-      TITLE: "Service consumption",
-      SUBTITLE:
-        "Platform-wide request distribution · reflects selected time window",
-      BREAKDOWN_TITLE: "Service breakdown",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
-      DONUT_PRIMARY: "All",
-      DONUT_SECONDARY: "Services",
-      MOST_USED: "Most used service",
-      HIGHEST_FAILURE: "Highest failure rate",
-      REQUESTS_SUFFIX: "requests",
-      TABLE_SERVICE: "Service",
       TABLE_TOTAL_REQUESTS: "Total requests",
       TABLE_NATIVE: "Native consumption",
       TABLE_SUCCESS: "Success rate %",
