@@ -105,20 +105,23 @@ export default function ApiKeyManagementTab({
       {
         id: "permissions",
         header: "Permissions",
-        cell: (key) => (
-          <HStack flexWrap="wrap" spacing={1}>
-            {(key.permissions ?? []).slice(0, 3).map((perm) => (
-              <Badge key={String(perm)} colorScheme="blue" fontSize="xs">
-                {mgmt.formatPermission(perm)}
-              </Badge>
-            ))}
-            {(key.permissions ?? []).length > 3 && (
-              <Badge colorScheme="gray" fontSize="xs">
-                +{(key.permissions ?? []).length - 3}
-              </Badge>
-            )}
-          </HStack>
-        ),
+        cell: (key) => {
+          const visiblePerms = mgmt.visiblePermissionsForKey(key);
+          return (
+            <HStack flexWrap="wrap" spacing={1}>
+              {visiblePerms.slice(0, 3).map((perm) => (
+                <Badge key={String(perm)} colorScheme="blue" fontSize="xs">
+                  {mgmt.formatPermission(perm)}
+                </Badge>
+              ))}
+              {visiblePerms.length > 3 && (
+                <Badge colorScheme="gray" fontSize="xs">
+                  +{visiblePerms.length - 3}
+                </Badge>
+              )}
+            </HStack>
+          );
+        },
       },
       {
         id: "status",
@@ -268,7 +271,7 @@ export default function ApiKeyManagementTab({
             loadingMessage="Loading API keys..."
             emptyMessage="No API keys found. Click 'Refresh' to load API keys."
             noResultsMessage="No API keys match the current filters."
-            unfilteredCount={mgmt.allApiKeys.length}
+            unfilteredCount={mgmt.visibleApiKeysCount}
             hasActiveFilters={hasActiveFilters}
             onClearFilters={mgmt.handleResetFilters}
             showFiltersHeading
@@ -348,19 +351,24 @@ export default function ApiKeyManagementTab({
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
                     Permissions
                   </Text>
-                  {(mgmt.selectedKeyForView.permissions ?? []).length > 0 ? (
-                    <HStack flexWrap="wrap" spacing={2}>
-                      {(mgmt.selectedKeyForView.permissions ?? []).map((perm) => (
-                        <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
-                          {mgmt.formatPermission(perm)}
-                        </Badge>
-                      ))}
-                    </HStack>
-                  ) : (
-                    <Text fontSize="sm" color="gray.500">
-                      No permissions assigned
-                    </Text>
-                  )}
+                  {(() => {
+                    const visiblePerms = mgmt.visiblePermissionsForKey(
+                      mgmt.selectedKeyForView,
+                    );
+                    return visiblePerms.length > 0 ? (
+                      <HStack flexWrap="wrap" spacing={2}>
+                        {visiblePerms.map((perm) => (
+                          <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
+                            {mgmt.formatPermission(perm)}
+                          </Badge>
+                        ))}
+                      </HStack>
+                    ) : (
+                      <Text fontSize="sm" color="gray.500">
+                        No permissions assigned
+                      </Text>
+                    );
+                  })()}
                 </Box>
                 <Box>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
