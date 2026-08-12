@@ -110,6 +110,7 @@ class TenantUserRole(str, Enum):
 
     USER = "USER"
     TENANT_ADMIN = "TENANT ADMIN"
+    PROGRAM_ADMIN = "PROGRAM ADMIN"
 
 
 class TenantCreate(BaseSchema):

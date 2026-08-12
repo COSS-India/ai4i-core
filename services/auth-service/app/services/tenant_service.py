@@ -113,7 +113,7 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
         logger.exception("TenantPlan DB insert failed for tenant %s: %s", tenant_id, e)
 
 
-_TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
+_TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN, RoleName.PROGRAM_ADMIN)
 
 
 def _assert_tenant_active_for_user_deactivation(
@@ -251,12 +251,14 @@ class TenantService:
     def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
         if RoleName.TENANT_ADMIN.value in roles:
             return TenantUserRole.TENANT_ADMIN
+        if RoleName.PROGRAM_ADMIN.value in roles:
+            return TenantUserRole.PROGRAM_ADMIN
         return TenantUserRole.USER
 
     async def _set_tenant_user_role(
         self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
     ) -> None:
-        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN).
+        """Ensure the user has exactly one tenant-assignable role (USER, TENANT ADMIN, or PROGRAM ADMIN).
 
         ``commit=False`` leaves role changes in the open transaction so the caller
         can commit once with other updates (e.g. ``update_tenant_user`` →
