@@ -4,7 +4,6 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   modelConsumptionResponseSchema,
   overviewResponseSchema,
-  serviceConsumptionResponseSchema,
   tenantConsumptionResponseSchema,
 } from "./dto/schemas/metering";
 import type {
@@ -12,7 +11,6 @@ import type {
   MeteringWindow,
   ModelConsumptionResponse,
   OverviewResponse,
-  ServiceConsumptionResponse,
   TenantConsumptionResponse,
 } from "../types/metering";
 
@@ -106,22 +104,6 @@ export async function fetchMeteringTenantConsumption(
   const { data } = await apiService.get<TenantConsumptionResponse>(
     withQuery(apiEndpoints.metering.tenantConsumption, params),
     { responseSchema: tenantConsumptionResponseSchema },
-  );
-  return data;
-}
-
-/** GET /api/v1/metering/service-consumption */
-export async function fetchMeteringServiceConsumption(
-  timeWindow: MeteringWindow,
-  ctx: MeteringContext,
-  tenantId?: string | null,
-  taskTypes?: string[] | null,
-): Promise<ServiceConsumptionResponse> {
-  const params = buildMeteringParams(timeWindow, ctx, tenantId);
-  appendTaskTypesParam(params, taskTypes);
-  const { data } = await apiService.get<ServiceConsumptionResponse>(
-    withQuery(apiEndpoints.metering.serviceConsumption, params),
-    { responseSchema: serviceConsumptionResponseSchema },
   );
   return data;
 }

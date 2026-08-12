@@ -4,7 +4,6 @@ import { METERING } from "../../config/meteringConstants";
 import type { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import { OverviewKpiCards, ConsumptionOverviewSection } from "./OverviewSections";
 import ModelConsumptionTab from "./ModelConsumptionTab";
-import ServiceConsumptionTab from "./ServiceConsumptionTab";
 import TenantConsumptionTab from "./TenantConsumptionTab";
 import UsageAndSpendTab from "./UsageAndSpendTab";
 
@@ -34,7 +33,6 @@ interface TenantPanelsProps {
   subTab: MeteringDashboardState["subTab"];
   overview: MeteringDashboardState["overview"];
   requestVolumeSection: React.ReactNode;
-  serviceQuery: MeteringDashboardState["serviceQuery"];
   modelQuery: MeteringDashboardState["modelQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
   tenantId?: string | null;
@@ -46,7 +44,6 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   subTab,
   overview,
   requestVolumeSection,
-  serviceQuery,
   modelQuery,
   parseQueryError,
   tenantId,
@@ -60,13 +57,6 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
         {requestVolumeSection}
       </VStack>
     ) : null}
-    {subTab === METERING.SUB_TAB.SERVICE && (
-      <ServiceConsumptionTab
-        data={serviceQuery.data}
-        isLoading={serviceQuery.isLoading}
-        errorMessage={parseQueryError(serviceQuery.error)}
-      />
-    )}
     {subTab === METERING.SUB_TAB.MODEL && (
       <ModelConsumptionTab
         data={modelQuery.data}
@@ -94,7 +84,6 @@ interface AdopterPanelsProps {
   onTopNChange: MeteringDashboardState["setTopN"];
   // UNDO: onHeatmapServicesChange: MeteringDashboardState["setTenantHeatmapServices"];
   tenantQuery: MeteringDashboardState["tenantQuery"];
-  serviceQuery: MeteringDashboardState["serviceQuery"];
   modelQuery: MeteringDashboardState["modelQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
   scopeTenantId?: string | null;
@@ -110,7 +99,6 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   onTopNChange,
   // onHeatmapServicesChange,
   tenantQuery,
-  serviceQuery,
   modelQuery,
   parseQueryError,
   scopeTenantId,
@@ -136,13 +124,6 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         tenantOrganisationById={tenantOrganisationById}
         isLoading={tenantQuery.isLoading}
         errorMessage={parseQueryError(tenantQuery.error)}
-      />
-    )}
-    {subTab === METERING.SUB_TAB.SERVICE && (
-      <ServiceConsumptionTab
-        data={serviceQuery.data}
-        isLoading={serviceQuery.isLoading}
-        errorMessage={parseQueryError(serviceQuery.error)}
       />
     )}
     {subTab === METERING.SUB_TAB.MODEL && (

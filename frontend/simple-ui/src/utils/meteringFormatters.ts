@@ -4,8 +4,6 @@ import type {
   MeteringWindow,
   ModelConsumptionRow,
   ModelConsumptionSummary,
-  ServiceConsumptionSummary,
-  ServiceRow,
 } from "../types/metering";
 import { METERING } from "../config/meteringConstants";
 import { meteringServiceColor } from "./meteringColors";
@@ -250,70 +248,6 @@ export interface ServiceChartSlice {
   value: number;
   color: string;
   pct: number;
-}
-
-/** Donut + legend data for service breakdown charts. Zero-traffic rows omitted (AI4IDS-2673). */
-export function buildServiceBreakdownChart(breakdown: ServiceRow[]): {
-  slices: ServiceChartSlice[];
-  totalRequests: number;
-} {
-  const withTraffic = breakdown.filter((s) => s.requests > 0);
-  const totalRequests = withTraffic.reduce((sum, s) => sum + s.requests, 0);
-  const slices = withTraffic.map((s, i) => {
-    const value = s.requests;
-    const pct =
-      s.percentage ?? (totalRequests > 0 ? (value / totalRequests) * 100 : 0);
-    return {
-      name: s.service,
-      value,
-      color: meteringServiceColor(s.service, i),
-      pct,
-    };
-  });
-  return { slices, totalRequests };
-}
-
-export interface ServiceInsights {
-  mostUsed: { service: string; requests: number };
-  highestFailureRate: number;
-  highestFailureService: string;
-}
-
-/** Service tab KPI row — prefers API summary, derives from breakdown when absent. */
-export function deriveServiceInsights(
-  summary: ServiceConsumptionSummary | null | undefined,
-  breakdown: ServiceRow[],
-): ServiceInsights | null {
-  if (summary?.most_used && summary.highest_failure_rate) {
-    return {
-      mostUsed: summary.most_used,
-      highestFailureRate: summary.highest_failure_rate.failure_rate_pct,
-      highestFailureService: summary.highest_failure_rate.service,
-    };
-  }
-  if (!breakdown.length) return null;
-
-  // Match backend + model-consumption: only services with traffic (AI4IDS-2689).
-  const withTraffic = breakdown.filter((r) => r.requests > 0);
-  const pool = withTraffic.length ? withTraffic : breakdown;
-  const mostUsed = [...pool].sort((a, b) => b.requests - a.requests)[0];
-  const highestFailure = [...pool].sort(
-    (a, b) =>
-      (b.failure_rate_pct ?? 100 - b.success_pct) -
-      (a.failure_rate_pct ?? 100 - a.success_pct),
-  )[0];
-
-  if (!mostUsed || !highestFailure) return null;
-
-  return {
-    mostUsed: { service: mostUsed.service, requests: mostUsed.requests },
-    highestFailureRate: highestFailure.failure_rate_pct ?? 100 - highestFailure.success_pct,
-    highestFailureService: highestFailure.service,
-  };
-}
-
-export function serviceFailureRate(row: ServiceRow): number {
-  return row.failure_rate_pct ?? 100 - row.success_pct;
 }
 
 /** Donut + legend data for model-consumption breakdown charts. */
