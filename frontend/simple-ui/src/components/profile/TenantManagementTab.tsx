@@ -110,7 +110,11 @@ import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
-import { addDaysToDateInputValue } from "../../utils/helpers";
+import {
+  addDaysToDateInputValue,
+  dateInputToStartOfDayIso,
+  dateInputToEndOfDayIso,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -118,21 +122,6 @@ const BUDGET_MAX_INTEGER_DIGITS = 7;
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
-
-/**
- * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp
- * anchored at UTC midnight, matching the backend's UTC-day "not in the past"
- * check (local midnight would shift the day boundary in any UTC+ timezone).
- */
-function dateInputToStartOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0)).toISOString();
-}
-
-function dateInputToEndOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
-}
 
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
