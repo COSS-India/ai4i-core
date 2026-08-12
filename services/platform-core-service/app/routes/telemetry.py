@@ -297,7 +297,8 @@ async def get_trace_by_id(
             "context.trace_id",
             "context.parent_span_id",
             "status",
-            "attributes"
+            "attributes",
+            "service_name"
         ])
         hits = response.get("hits", {}).get("hits", [])
 
@@ -326,8 +327,11 @@ async def get_trace_by_id(
 
         # Transform spans from response
         spans = []
+        service = None
         for hit in hits:
             source = hit.get("_source", {})
+            if not service and source.get("service_name"):
+                service = source.get("service_name")
             spans.append({
                 "name": source.get("name"),
                 "context": source.get("context", {}),
@@ -346,9 +350,8 @@ async def get_trace_by_id(
 
         trace_response = TraceResponse(
             trace_id=trace_id,
-            service="ai4x-inference",
+            service=service or "ai4x-inference",
             tenant_id=tenant_scope or "system",
-            service_version=settings.service_version,
             environment=settings.environment,
             hostname="unknown",
             spans=spans

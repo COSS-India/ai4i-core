@@ -29,7 +29,7 @@ class CoreSettings(BaseSettings):
     service_version: str
     api_version: str
     debug: bool = False
-    environment: str = "development"
+    environment: str = "unknown"
 
     # ── Server ──
     host: str = "0.0.0.0"
