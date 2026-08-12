@@ -254,7 +254,7 @@ class TestTierAssignRequestValidation:
 
 @pytest.mark.asyncio
 class TestAssignTierEffectiveFromValidation:
-    """AI4IDS-2506: assign_tier must reject past dates but allow today, in UTC day terms."""
+    """AI4IDS-2783: assign_tier must reject past dates but allow today, in UTC day terms."""
 
     def _request(self, effective_from):
         return TierAssignRequest(
