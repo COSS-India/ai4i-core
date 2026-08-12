@@ -123,13 +123,13 @@ const TIER_NO_SERVICES_MSG =
   "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
 
 /**
- * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
- * Uses local calendar day bounds so "Effective To = today" stays active
- * through the end of that day (not midnight UTC, which expires immediately).
+ * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp
+ * anchored at UTC midnight, matching the backend's UTC-day "not in the past"
+ * check (local midnight would shift the day boundary in any UTC+ timezone).
  */
 function dateInputToStartOfDayIso(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0)).toISOString();
 }
 
 function dateInputToEndOfDayIso(dateStr: string): string {
