@@ -17,6 +17,11 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
+/** Program Admin — restricted role, sees Usage Dashboard (and Profile) only. */
+export function isProgramAdminUser(roles?: string[]): boolean {
+  return userHasRole(roles, "PROGRAM ADMIN");
+}
+
 /** Tenant Admin without platform ADMIN — model registry is read-only. */
 export function isRegistryReadOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !isPlatformAdminUser(roles);
@@ -27,10 +32,10 @@ export function canAccessServicesManagement(roles?: string[]): boolean {
   return !isRegistryReadOnlyUser(roles);
 }
 
-/** Usage Dashboard — platform ADMIN (adopter view) or Tenant Admin only. */
+/** Usage Dashboard — platform ADMIN (adopter view), Tenant Admin, or Program Admin. */
 export function canAccessUsageDashboard(roles?: string[]): boolean {
   if (!roles?.length) return false;
-  return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
+  return isDefaultAdminUser(roles) || isTenantAdminUser(roles) || isProgramAdminUser(roles);
 }
 
 /** Platform-wide metering tabs (tenant ranking, adoption) — ADMIN/MODERATOR only. */

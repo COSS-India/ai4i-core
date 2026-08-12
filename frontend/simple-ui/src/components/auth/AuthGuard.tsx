@@ -5,7 +5,7 @@ import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { Spinner, Center } from '@chakra-ui/react';
 import { useAuth } from '../../hooks/useAuth';
-import { canAccessUsageDashboard } from '../../utils/rbac';
+import { canAccessUsageDashboard, isProgramAdminUser } from '../../utils/rbac';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -32,6 +32,10 @@ const usageDashboardRoutes = new Set(['/usage-dashboard']);
 // AI4IDS-2688: LLM try-it for anonymous users (replaces NMT as primary try-it surface)
 const tryItRoutes = new Set(['/llm', '/nmt']);
 
+// PROGRAM ADMIN is a restricted role — only these routes are reachable, everything
+// else (including '/') redirects to the Usage Dashboard.
+const programAdminAllowedRoutes = new Set(['/usage-dashboard', '/profile']);
+
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -45,6 +49,8 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   const canAccessUsage = canAccessUsageDashboard(user?.roles);
+  const isProgramAdmin = isProgramAdminUser(user?.roles);
+  const isBlockedForProgramAdmin = isProgramAdmin && !programAdminAllowedRoutes.has(router.pathname);
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -71,6 +77,15 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     }
   }, [isLoading, isUsageDashboardRoute, isAuthenticated, canAccessUsage, router]);
 
+  // PROGRAM ADMIN is restricted to Usage Dashboard (and Profile) — redirect away from
+  // any other route, including '/', which is otherwise unguarded.
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && isBlockedForProgramAdmin) {
+      console.log('AuthGuard: Program Admin route not allowed, redirecting to usage dashboard');
+      router.push('/usage-dashboard');
+    }
+  }, [isLoading, isAuthenticated, isBlockedForProgramAdmin, router]);
+
   // Show loading spinner while checking auth
   if (isLoading) {
     return (
@@ -93,6 +108,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 
   // If usage dashboard route and user lacks access, don't render children (will redirect)
   if (isUsageDashboardRoute && isAuthenticated && !canAccessUsage) {
+    return null;
+  }
+
+  // Program Admin on a non-allowed route — don't render children (will redirect)
+  if (isAuthenticated && isBlockedForProgramAdmin) {
     return null;
   }
 
