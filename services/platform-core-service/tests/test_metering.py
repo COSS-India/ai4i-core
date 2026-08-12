@@ -646,6 +646,42 @@ class TestActiveTenantsExcludesUnknown:
 
         assert result["count"] == 2
 
+    async def test_valid_tenant_names_query_filters_by_active_status(self):
+        """The DB lookup backing the active-tenants filter only returns
+        ACTIVE-status organisations, so PENDING/SUSPENDED/DEACTIVATED
+        tenants can't inflate the Active Tenants count."""
+        auth_db = AsyncMock()
+        db_result = MagicMock()
+        db_result.all.return_value = []
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(query_return=[], auth_db=auth_db)
+        await svc.active_tenants("24h")
+
+        executed_sql = str(auth_db.execute.call_args[0][0])
+        assert "status = 'ACTIVE'" in executed_sql
+
+    async def test_excludes_pending_tenant_traffic(self):
+        """A tenant whose status is PENDING (not yet ACTIVE) must not count
+        as an active tenant, even if stale Prometheus series exist for it."""
+        prom_rows = [
+            {"metric": {"tenant": "acme"}, "value": [0, "5"]},  # ACTIVE
+            {"metric": {"tenant": "pending-org"}, "value": [0, "3"]},  # PENDING
+        ]
+        # DB WHERE status='ACTIVE' would only ever return active orgs.
+        auth_db = AsyncMock()
+        db_result = MagicMock()
+        db_result.all.return_value = [("acme",)]
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("24h")
+
+        assert result["count"] == 1
+        returned = {t["tenant"] for t in result["active_tenants"]}
+        assert returned == {"acme"}
+        assert "pending-org" not in returned
+
 
 class TestFormatCount:
     def test_millions(self):
