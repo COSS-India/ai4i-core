@@ -239,6 +239,64 @@ class TestTierAssignRequestValidation:
         request = TierAssignRequest(**self._kwargs(Decimal("100")))
         assert request.budget == Decimal("100")
 
+    def test_naive_effective_from_is_rejected(self):
+        kwargs = self._kwargs(Decimal("100"))
+        kwargs["effective_from"] = datetime.now()
+        with pytest.raises(ValidationError):
+            TierAssignRequest(**kwargs)
+
+    def test_naive_effective_to_is_rejected(self):
+        kwargs = self._kwargs(Decimal("100"))
+        kwargs["effective_to"] = datetime.now() + timedelta(days=30)
+        with pytest.raises(ValidationError):
+            TierAssignRequest(**kwargs)
+
+
+@pytest.mark.asyncio
+class TestAssignTierEffectiveFromValidation:
+    """AI4IDS-2506: assign_tier must reject past dates but allow today, in UTC day terms."""
+
+    def _request(self, effective_from):
+        return TierAssignRequest(
+            tenant_id="1",
+            tier_id=str(uuid4()),
+            budget=Decimal("100"),
+            effective_from=effective_from,
+            effective_to=effective_from + timedelta(days=30),
+        )
+
+    async def test_yesterday_is_rejected(self):
+        db = _make_db([
+            _exec_result(scalar_one_or_none=_tier()),
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.assign_tier(self._request(yesterday), db, auth_db, user_id="admin")
+
+        assert exc.value.status_code == 422
+        assert "past" in exc.value.detail
+
+    async def test_today_start_of_day_is_accepted(self):
+        tier = _tier()
+        db = _make_db([
+            _exec_result(scalar_one_or_none=tier),
+            _exec_result(scalars_first=None),  # no overlap
+        ])
+        auth_db = _make_auth_db(_tenant_row("ACTIVE"))
+        today_utc_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        result = await svc.assign_tier(
+            self._request(today_utc_start), db, auth_db, user_id="admin"
+        )
+
+        assert result.tier_id == str(tier.id)
+        db.add.assert_called_once()
+        db.commit.assert_awaited_once()
+
 
 @pytest.mark.asyncio
 class TestListTenantTiers:
