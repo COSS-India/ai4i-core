@@ -110,10 +110,7 @@ import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
-import {
-  addDaysToDateInputValue,
-  getTodayDateInputValue,
-} from "../../utils/helpers";
+import { addDaysToDateInputValue } from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -483,7 +480,7 @@ export default function TenantManagementTab({
       return;
     }
 
-    if (assignEffectiveFrom < getTodayDateInputValue()) {
+    if (assignEffectiveFrom < new Date().toISOString().slice(0, 10)) {
       setAssignTierError("Effective From cannot be in the past.");
       return;
     }
@@ -2120,7 +2117,7 @@ export default function TenantManagementTab({
       !selectedTierHasNoServices &&
       !servicesForTiersQuery.isLoading &&
       !servicesForTiersQuery.isError;
-    const today = getTodayDateInputValue();
+    const today = new Date().toISOString().slice(0, 10);
     const effectiveFromMinDate = today;
     const effectiveToMinDate = assignEffectiveFrom
       ? (() => {
