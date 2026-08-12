@@ -1,21 +1,24 @@
 import {
   addDaysToDateInputValue,
-  getTodayDateInputValue,
+  dateInputToStartOfDayIso,
+  dateInputToEndOfDayIso,
 } from '../../src/utils/helpers';
 
-describe('getTodayDateInputValue', () => {
-  afterEach(() => {
-    jest.useRealTimers();
+describe('dateInputToStartOfDayIso / dateInputToEndOfDayIso', () => {
+  // Both helpers build the timestamp via Date.UTC, so their output does not
+  // depend on the host's local timezone (unlike a plain `new Date(y, m, d)`).
+  it('anchors start-of-day to UTC midnight', () => {
+    expect(dateInputToStartOfDayIso('2026-08-12')).toBe('2026-08-12T00:00:00.000Z');
   });
 
-  it('returns today in YYYY-MM-DD format', () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-08-11T10:00:00'));
-    expect(getTodayDateInputValue()).toBe('2026-08-11');
+  it('anchors end-of-day to UTC end-of-day', () => {
+    expect(dateInputToEndOfDayIso('2026-08-12')).toBe('2026-08-12T23:59:59.999Z');
   });
 
-  it('pads single-digit months and days', () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-01-05T10:00:00'));
-    expect(getTodayDateInputValue()).toBe('2026-01-05');
+  it('keeps effective_from/effective_to on adjacent days contiguous with no gap or overlap', () => {
+    const from = dateInputToStartOfDayIso('2026-08-14');
+    const to = dateInputToEndOfDayIso('2026-08-13');
+    expect(new Date(from).getTime() - new Date(to).getTime()).toBe(1);
   });
 });
 

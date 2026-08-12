@@ -268,6 +268,13 @@ async def assign_tier(
         )
 
     now = datetime.now(timezone.utc)
+    today_utc = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if body.effective_from < today_utc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="effective_from cannot be in the past",
+        )
 
     # 4. Reject if the new date range overlaps with any existing assignment.
     existing = await db.execute(

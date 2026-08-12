@@ -112,7 +112,8 @@ import {
 } from "../../utils/defaultTenant";
 import {
   addDaysToDateInputValue,
-  getTodayDateInputValue,
+  dateInputToStartOfDayIso,
+  dateInputToEndOfDayIso,
 } from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
@@ -121,21 +122,6 @@ const BUDGET_MAX_INTEGER_DIGITS = 7;
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   "This Tier has no services mapped. Please map at least one service before assigning to a tenant.";
-
-/**
- * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
- * Uses local calendar day bounds so "Effective To = today" stays active
- * through the end of that day (not midnight UTC, which expires immediately).
- */
-function dateInputToStartOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
-}
-
-function dateInputToEndOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
-}
 
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
@@ -483,7 +469,7 @@ export default function TenantManagementTab({
       return;
     }
 
-    if (assignEffectiveFrom < getTodayDateInputValue()) {
+    if (assignEffectiveFrom < new Date().toISOString().slice(0, 10)) {
       setAssignTierError("Effective From cannot be in the past.");
       return;
     }
@@ -2120,7 +2106,7 @@ export default function TenantManagementTab({
       !selectedTierHasNoServices &&
       !servicesForTiersQuery.isLoading &&
       !servicesForTiersQuery.isError;
-    const today = getTodayDateInputValue();
+    const today = new Date().toISOString().slice(0, 10);
     const effectiveFromMinDate = today;
     const effectiveToMinDate = assignEffectiveFrom
       ? (() => {

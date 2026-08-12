@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 # Pydantic v2 embeds the raw Decimal bound (e.g. ctx={"ge": Decimal("0")}) in
 # the error context for gt/ge/lt/le constraint failures on a Decimal field.
@@ -17,8 +17,8 @@ class TierAssignRequest(BaseModel):
     tenant_id: str = Field(..., description="ID of the tenant to assign the tier to")
     tier_id: str = Field(..., description="UUID of the PPU tier to assign")
     budget: Decimal = Field(..., gt=0, max_digits=15, decimal_places=8, description="Budget limit in INR (paise precision)")
-    effective_from: datetime = Field(..., description="Assignment start date (UTC)")
-    effective_to: datetime = Field(..., description="Assignment end date (UTC)")
+    effective_from: AwareDatetime = Field(..., description="Assignment start date (UTC)")
+    effective_to: AwareDatetime = Field(..., description="Assignment end date (UTC)")
 
 
 class TierReassignRequest(BaseModel):
