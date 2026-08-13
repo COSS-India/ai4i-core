@@ -79,6 +79,18 @@ class TenantHierarchicalItem(BaseModel):
     budget: TenantBudget
     usage: TenantUsageCount
     tierBreakdown: list[TierUsageBreakdown]
+    # Flat convenience mirrors of budget.limit/remaining and usage.quotaLimit/consumed/
+    # remaining, named identically to UsageSummaryResponse's totals so the same "Total
+    # allocated / used / remaining" summary-card component can read one field set
+    # whether it's showing the platform-wide (admin) or a single tenant's (tenant admin)
+    # totals. Token fields follow the same single-task-type gating as usage.quotaLimit —
+    # null when the tenant has more than one task type in scope this period.
+    totalAllocatedBudget: float = 0
+    totalRemainingBudget: float = 0
+    tokenUnit: Optional[str] = None
+    totalUsedTokens: Optional[float] = None
+    totalAllocatedTokens: Optional[float] = None
+    totalRemainingTokens: Optional[float] = None
 
 
 class TenantHierarchicalListResponse(BaseModel):

@@ -78,6 +78,17 @@ export interface TenantUsageItem {
   budget: TenantBudget;
   usage: TenantUsageAggregate;
   tierBreakdown: TenantTierBreakdown[];
+  /**
+   * Flat mirrors of budget.limit/remaining and usage.quotaLimit/consumed/remaining,
+   * named identically to UsageSummaryResponse's totals — same "Total allocated / used /
+   * remaining" field set whether the card is showing platform-wide or single-tenant data.
+   */
+  totalAllocatedBudget?: number;
+  totalRemainingBudget?: number;
+  tokenUnit?: string | null;
+  totalUsedTokens?: number | null;
+  totalAllocatedTokens?: number | null;
+  totalRemainingTokens?: number | null;
 }
 
 export interface TenantUsageListResponse {

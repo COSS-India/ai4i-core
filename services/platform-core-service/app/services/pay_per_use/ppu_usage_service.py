@@ -245,6 +245,22 @@ def _build_hierarchical_item(
             percentage=percentage,
         )
 
+    # Token totals mirror usage_count only when a single task type is actually in scope
+    # (effective_task_type truthy) — the same "nothing to disambiguate" case leaves
+    # usage_count.quotaLimit/consumed/remaining at their None defaults above, so mirroring
+    # unconditionally would just copy those Nones through anyway; this gate only matters
+    # for tokenUnit, which would otherwise pick up the multi-type "Units" placeholder.
+    token_totals = (
+        dict(
+            tokenUnit=usage_count.unit,
+            totalUsedTokens=usage_count.consumed,
+            totalAllocatedTokens=usage_count.quotaLimit,
+            totalRemainingTokens=usage_count.remaining,
+        )
+        if effective_task_type
+        else {}
+    )
+
     return TenantHierarchicalItem(
         tenantId=assignment.tenant_id,
         tenantName=tenant_name,
@@ -260,6 +276,9 @@ def _build_hierarchical_item(
         ),
         usage=usage_count,
         tierBreakdown=tier_breakdown,
+        totalAllocatedBudget=budget_limit,
+        totalRemainingBudget=remaining_budget,
+        **token_totals,
     )
 
 
@@ -603,6 +622,15 @@ class PPUUsageService:
                 tier_id = "unassigned"
                 tier_name = "Unassigned"
 
+            # A tenant with a live assignment but no usage yet this period still has a
+            # real allocated/remaining budget — this must not collapse to 0 just because
+            # there's nothing to build a hierarchical item from (previously it did,
+            # which is exactly what showed "Total allocated"/"Total remaining" as 0 for
+            # a freshly-assigned or not-yet-active tenant).
+            budget_limit, available_balance, _ = _resolve_budget(tenant_id, budgets)
+            budget_limit = round(budget_limit, 2)
+            available_balance = round(available_balance, 2)
+
             return TenantHierarchicalItem(
                 tenantId=tenant_id,
                 tenantName=org_map.get(tenant_id, tenant_id),
@@ -611,13 +639,15 @@ class PPUUsageService:
                 currency=_CURRENCY,
                 spend=Decimal("0"),
                 budget=TenantBudget(
-                    limit=Decimal("0"),
+                    limit=budget_limit,
                     spent=Decimal("0"),
-                    remaining=Decimal("0"),
+                    remaining=available_balance,
                     percentageUsed=Decimal("0"),
                 ),
                 usage=TenantUsageCount(taskTypeCount=0),
                 tierBreakdown=[],
+                totalAllocatedBudget=budget_limit,
+                totalRemainingBudget=available_balance,
             )
 
         async def _fetch_tenant_data():
