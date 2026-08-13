@@ -250,16 +250,16 @@ def _build_hierarchical_item(
     # usage_count.quotaLimit/consumed/remaining at their None defaults above, so mirroring
     # unconditionally would just copy those Nones through anyway; this gate only matters
     # for tokenUnit, which would otherwise pick up the multi-type "Units" placeholder.
-    token_totals = (
-        dict(
-            tokenUnit=usage_count.unit,
-            totalUsedTokens=usage_count.consumed,
-            totalAllocatedTokens=usage_count.quotaLimit,
-            totalRemainingTokens=usage_count.remaining,
-        )
-        if effective_task_type
-        else {}
-    )
+    # Same pre-declare/reassign shape get_summary uses for its own token totals below.
+    token_unit = None
+    total_used_tokens = None
+    total_allocated_tokens = None
+    total_remaining_tokens = None
+    if effective_task_type:
+        token_unit = usage_count.unit
+        total_used_tokens = usage_count.consumed
+        total_allocated_tokens = usage_count.quotaLimit
+        total_remaining_tokens = usage_count.remaining
 
     return TenantHierarchicalItem(
         tenantId=assignment.tenant_id,
@@ -278,7 +278,10 @@ def _build_hierarchical_item(
         tierBreakdown=tier_breakdown,
         totalAllocatedBudget=budget_limit,
         totalRemainingBudget=remaining_budget,
-        **token_totals,
+        tokenUnit=token_unit,
+        totalUsedTokens=total_used_tokens,
+        totalAllocatedTokens=total_allocated_tokens,
+        totalRemainingTokens=total_remaining_tokens,
     )
 
 

@@ -12,7 +12,32 @@ class SpendItem(BaseModel):
     percentage: float
 
 
-class UsageSummaryResponse(BaseModel):
+class TokenTotalsMixin(BaseModel):
+    """Shared by UsageSummaryResponse (platform-wide) and TenantHierarchicalItem
+    (single tenant) so both expose identical field names — one frontend summary-card
+    component can read either response the same way, whether it's showing admin or
+    tenant-admin totals.
+
+    Money totals (totalAllocatedBudget/totalRemainingBudget) are always computable
+    (single currency), summed across every tenant/assignment with a budget covering
+    this billing_month (see PPUUsageService._resolve_budget's has_budget).
+
+    Token totals (tokenUnit/totalUsedTokens/totalAllocatedTokens/totalRemainingTokens)
+    are only meaningful when scoped to a single task type — either the caller passed
+    one `task_types` value, or only one type has usage this period. Different task
+    types use incompatible units (tokens/characters/images/minutes), so these are null
+    rather than a nonsensical cross-unit sum whenever more than one type is in play.
+    tokenUnit names the unit the three token figures are in.
+    """
+    totalAllocatedBudget: float = 0
+    totalRemainingBudget: float = 0
+    tokenUnit: Optional[str] = None
+    totalUsedTokens: Optional[float] = None
+    totalAllocatedTokens: Optional[float] = None
+    totalRemainingTokens: Optional[float] = None
+
+
+class UsageSummaryResponse(TokenTotalsMixin):
     billingPeriod: str
     totalSpend: float
     currency: str
@@ -20,20 +45,6 @@ class UsageSummaryResponse(BaseModel):
     budgetExceededTenants: int
     spendChangePercent: Optional[float] = None
     spendByModelTaskType: list[SpendItem]
-    # Money totals: always computable (single currency, one INR figure per tenant),
-    # summed across every tenant with a budget assignment covering this billing_month
-    # (see PPUUsageService.get_summary / _resolve_budget's has_budget).
-    totalAllocatedBudget: float = 0
-    totalRemainingBudget: float = 0
-    # Token totals: only meaningful when the response is scoped to a single task type
-    # (either the caller passed one `task_types` value, or only one type has usage this
-    # period) — different task types use incompatible units (tokens/characters/images/
-    # minutes), so these are null rather than a nonsensical cross-unit sum whenever more
-    # than one type is in play. tokenUnit names the unit these three figures are in.
-    tokenUnit: Optional[str] = None
-    totalUsedTokens: Optional[float] = None
-    totalAllocatedTokens: Optional[float] = None
-    totalRemainingTokens: Optional[float] = None
 
 
 class TaskTypeUsage(BaseModel):
@@ -69,7 +80,12 @@ class TenantUsageCount(BaseModel):
     percentage: Optional[float] = None
 
 
-class TenantHierarchicalItem(BaseModel):
+class TenantHierarchicalItem(TokenTotalsMixin):
+    """totalAllocatedBudget/totalRemainingBudget mirror budget.limit/remaining;
+    totalUsedTokens/totalAllocatedTokens/totalRemainingTokens mirror
+    usage.consumed/quotaLimit/remaining — see TokenTotalsMixin for the shared gating
+    rule these six fields follow.
+    """
     tenantId: str
     tenantName: str
     tier: str
@@ -79,18 +95,6 @@ class TenantHierarchicalItem(BaseModel):
     budget: TenantBudget
     usage: TenantUsageCount
     tierBreakdown: list[TierUsageBreakdown]
-    # Flat convenience mirrors of budget.limit/remaining and usage.quotaLimit/consumed/
-    # remaining, named identically to UsageSummaryResponse's totals so the same "Total
-    # allocated / used / remaining" summary-card component can read one field set
-    # whether it's showing the platform-wide (admin) or a single tenant's (tenant admin)
-    # totals. Token fields follow the same single-task-type gating as usage.quotaLimit —
-    # null when the tenant has more than one task type in scope this period.
-    totalAllocatedBudget: float = 0
-    totalRemainingBudget: float = 0
-    tokenUnit: Optional[str] = None
-    totalUsedTokens: Optional[float] = None
-    totalAllocatedTokens: Optional[float] = None
-    totalRemainingTokens: Optional[float] = None
 
 
 class TenantHierarchicalListResponse(BaseModel):
