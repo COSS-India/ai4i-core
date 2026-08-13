@@ -112,26 +112,6 @@ export function taskTypeColor(taskType: string, index: number): string {
   return METERING.COLORS.TASK_TYPE[key] ?? meteringColorAt(index);
 }
 
-/** Client-side tier/task-type filter for a single tenant's breakdown (no server round-trip). */
-export function filterTierBreakdown(
-  tierBreakdown: TenantTierBreakdown[],
-  filterTierId: string,
-  filterTaskType: string,
-): TenantTierBreakdown[] {
-  const normalizedTaskType = filterTaskType.trim().toLowerCase();
-  return tierBreakdown
-    .filter((tier) => !filterTierId || tier.tierId === filterTierId)
-    .map((tier) => ({
-      ...tier,
-      taskTypes: normalizedTaskType
-        ? (tier.taskTypes ?? []).filter(
-            (t) => t.taskType.trim().toLowerCase() === normalizedTaskType,
-          )
-        : tier.taskTypes,
-    }))
-    .filter((tier) => (tier.taskTypes ?? []).length > 0);
-}
-
 /** Flat task list aggregated across tiers (quota from last tier write). */
 export function aggregateTasks(breakdown: TenantTierBreakdown[]): AggregatedTaskUsage[] {
   const map = new Map<string, AggregatedTaskUsage>();

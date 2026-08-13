@@ -1,4 +1,4 @@
-import { Box, Center, Flex, HStack, Text } from "@chakra-ui/react";
+import { Box, Center, Flex, HStack, Text, Tooltip } from "@chakra-ui/react";
 import React from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import {
@@ -11,24 +11,68 @@ import {
   tenantInitials,
 } from "../../utils/usageSpendHelpers";
 
+export type RatioBarCaptionTone = "over" | "warn" | "muted";
+/** "topRight": used amount top-right, available amount bottom-left, with a hover tooltip. */
+export type RatioBarLayout = "standard" | "topRight";
+
 export function RatioBar({
   pct,
   main,
   of,
   caption,
   captionTone,
+  layout = "standard",
+  tooltip,
 }: {
   pct: number;
   main: string;
-  of: string;
+  of?: string;
   caption: string;
-  captionTone?: "over" | "warn" | "muted";
+  captionTone?: RatioBarCaptionTone;
+  layout?: RatioBarLayout;
+  /** Hover tooltip over the bar itself, e.g. "72% used · 28% remaining". */
+  tooltip?: string;
 }) {
   const fillPct = Math.min(Math.max(pct, 0), 100);
   // Keep a visible sliver for tiny-but-nonzero usage that would otherwise round to a 0px fill.
   const visualFillPct = fillPct > 0 && fillPct < 2 ? 2 : fillPct;
   const captionColor =
     captionTone === "over" ? USAGE_SPEND_DANGER : captionTone === "warn" ? USAGE_SPEND_WARNING : "gray.500";
+  const captionWeight = captionTone === "over" || captionTone === "warn" ? "semibold" : "normal";
+
+  const bar = (
+    <Box
+      h="6px"
+      borderRadius="3px"
+      bg="gray.200"
+      borderWidth="1px"
+      borderColor="gray.300"
+      overflow="hidden"
+    >
+      <Box h="100%" w={`${visualFillPct}%`} bg={spendBarColor(pct)} borderRadius="3px" />
+    </Box>
+  );
+  const wrappedBar = tooltip ? (
+    <Tooltip label={tooltip} hasArrow placement="top" openDelay={200}>
+      <Box>{bar}</Box>
+    </Tooltip>
+  ) : (
+    bar
+  );
+
+  if (layout === "topRight") {
+    return (
+      <Box minW="170px">
+        <Flex justify="flex-end" fontSize="12.5px" mb="6px">
+          <Text fontWeight="semibold">{main}</Text>
+        </Flex>
+        {wrappedBar}
+        <Text fontSize="11.5px" mt="5px" color={captionColor} fontWeight={captionWeight} textAlign="left">
+          {caption}
+        </Text>
+      </Box>
+    );
+  }
 
   return (
     <Box minW="170px">
@@ -38,26 +82,18 @@ export function RatioBar({
           {of}
         </Text>
       </Flex>
-      <Box
-        h="6px"
-        borderRadius="3px"
-        bg="gray.200"
-        borderWidth="1px"
-        borderColor="gray.300"
-        overflow="hidden"
-      >
-        <Box h="100%" w={`${visualFillPct}%`} bg={spendBarColor(pct)} borderRadius="3px" />
-      </Box>
-      <Text
-        fontSize="11.5px"
-        mt="5px"
-        color={captionColor}
-        fontWeight={captionTone === "over" || captionTone === "warn" ? "semibold" : "normal"}
-      >
+      {wrappedBar}
+      <Text fontSize="11.5px" mt="5px" color={captionColor} fontWeight={captionWeight}>
         {caption}
       </Text>
     </Box>
   );
+}
+
+export function ratioTooltip(pct: number): string {
+  const used = Math.max(0, Math.round(pct));
+  const remaining = Math.max(0, Math.round(100 - pct));
+  return `${used}% used · ${remaining}% remaining`;
 }
 
 export function BudgetCell({
@@ -66,17 +102,40 @@ export function BudgetCell({
   remaining,
   percentageUsed,
   currency,
+  layout = "standard",
 }: {
   limit: number;
   spent: number;
   remaining: number;
   percentageUsed: number;
   currency: string;
+  layout?: RatioBarLayout;
 }) {
   const pct = percentageUsed || (limit > 0 ? (spent / limit) * 100 : 0);
   const over = spent - limit;
+
+  if (layout === "topRight") {
+    const caption =
+      over > 0
+        ? `${formatSpendMoney(over, currency)} over budget`
+        : `${formatSpendMoney(remaining, currency)} available`;
+    let tone: RatioBarCaptionTone = "muted";
+    if (over > 0) tone = "over";
+    else if (pct >= 90) tone = "warn";
+    return (
+      <RatioBar
+        pct={pct}
+        main={formatSpendMoney(spent, currency)}
+        caption={caption}
+        captionTone={tone}
+        layout="topRight"
+        tooltip={ratioTooltip(pct)}
+      />
+    );
+  }
+
   let caption: string;
-  let tone: "over" | "warn" | "muted" = "muted";
+  let tone: RatioBarCaptionTone = "muted";
   if (over > 0) {
     caption = `${formatSpendMoney(over, currency)} over budget`;
     tone = "over";
@@ -104,17 +163,33 @@ export function UsageCell({
   remaining,
   percentage,
   unit,
+  layout = "standard",
 }: Readonly<{
   consumed: number;
   quotaLimit?: number | null;
   remaining?: number | null;
   percentage?: number | null;
   unit: string;
+  layout?: RatioBarLayout;
 }>) {
   const limit = quotaLimit ?? 0;
   const used = consumed ?? 0;
   const left = remaining ?? Math.max(0, limit - used);
   const pct = percentage ?? (limit > 0 ? (used / limit) * 100 : 0);
+
+  if (layout === "topRight") {
+    return (
+      <RatioBar
+        pct={pct}
+        main={formatSpendUnit(used, unit)}
+        caption={`${formatSpendUnit(Math.max(left, 0), unit)} available`}
+        captionTone={pct >= 90 ? "warn" : "muted"}
+        layout="topRight"
+        tooltip={ratioTooltip(pct)}
+      />
+    );
+  }
+
   return (
     <RatioBar
       pct={pct}
