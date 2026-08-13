@@ -41,7 +41,15 @@ export const tenantUserViewSchema = z
     role: z.string().nullable().optional(),
     roles: z.array(z.string()).optional(),
   })
-  .passthrough();
+  .passthrough()
+  .transform((u) => {
+    const fromArray = (u.roles ?? []).map((r) => r.trim()).filter(Boolean);
+    const fallback = typeof u.role === "string" ? u.role.trim() : "";
+    return {
+      ...u,
+      roles: fromArray.length > 0 ? fromArray : fallback ? [fallback] : [],
+    };
+  });
 
 export const userRegisterResponseSchema = z.object({
   user_id: z.string(),

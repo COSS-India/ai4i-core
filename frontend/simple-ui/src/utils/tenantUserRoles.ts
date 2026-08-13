@@ -22,7 +22,7 @@ export function isTenantAssignableRole(role: string): role is TenantAssignableRo
   return (TENANT_ASSIGNABLE_ROLE_VALUES as readonly string[]).includes(normalized);
 }
 
-/** List-users API shape: upcoming `role` string and/or legacy `roles` array. */
+/** User payload role fields. `roles[]` is the API source of truth; `role` is legacy. */
 export type TenantUserRoleSource = Pick<TenantUserView, "role" | "roles">;
 
 export function normalizeTenantUserRole(role: string): string {
@@ -40,10 +40,6 @@ export function formatTenantUserRoleLabel(role: string): string {
   return role;
 }
 
-/**
- * Resolve roles from list-users API (frontend-only).
- * Upcoming shape: singular `role`. Also accepts `roles[]` from profile/detail endpoints.
- */
 /** Primary tenant-assignable role for create/edit forms (USER or TENANT ADMIN). */
 export function resolvePrimaryTenantAssignableRole(
   source: TenantUserRoleSource,
@@ -53,13 +49,15 @@ export function resolvePrimaryTenantAssignableRole(
   return "USER";
 }
 
+/** Prefer `roles[]` (BE source of truth); fall back to legacy singular `role`. */
 export function resolveTenantUserRoles(source: TenantUserRoleSource): string[] {
+  const fromArray = Array.isArray(source.roles)
+    ? source.roles.map((r) => String(r).trim()).filter(Boolean)
+    : [];
+  if (fromArray.length > 0) return fromArray;
   const single = source.role;
   if (single != null && String(single).trim()) {
     return [String(single).trim()];
-  }
-  if (Array.isArray(source.roles)) {
-    return source.roles.map((r) => String(r).trim()).filter(Boolean);
   }
   return [];
 }

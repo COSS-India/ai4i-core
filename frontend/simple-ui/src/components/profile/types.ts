@@ -44,7 +44,8 @@ import { INSTITUTION } from "../../config/constants";
 export type TenantUserFormRole =
   | TenantAssignableRole
   | DefaultOrgUserRole
-  | "ADMIN";
+  | "ADMIN"
+  | "PROGRAM ADMIN";
 
 export interface TenantFormState {
   organisation: string;
@@ -96,7 +97,7 @@ export interface StatusUpdateUserTarget {
   tenant_id: string;
   user_id: string;
   currentStatus: string;
-  role?: string;
+  roles?: string[];
 }
 
 export type StatusUpdateTargetUnion = StatusUpdateTarget | StatusUpdateUserTarget;

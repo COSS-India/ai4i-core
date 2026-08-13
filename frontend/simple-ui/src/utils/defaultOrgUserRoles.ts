@@ -25,7 +25,7 @@ export async function enrichDefaultOrgTenantUser(
       user: {
         ...user,
         roles: cleaned,
-        role: resolveDefaultOrgFormRole(cleaned, user.role),
+        role: resolveDefaultOrgFormRole(cleaned),
       },
       rolesLoaded: true,
     };

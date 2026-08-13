@@ -111,6 +111,7 @@ import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
+  formatPlatformRoleLabel,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
 import type { TenantUserView, TenantView } from "../../types/tenant";
@@ -324,7 +325,7 @@ export default function TenantManagementTab({
       return [
         {
           value: current,
-          label: current === "ADMIN" ? "Admin" : current,
+          label: formatPlatformRoleLabel(current),
         },
         ...DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
       ];
@@ -707,7 +708,7 @@ export default function TenantManagementTab({
       { id: "full_name", header: "Full Name", cell: (u) => dash(u.full_name) },
       {
         id: "roles",
-        header: "Role",
+        header: "Roles",
         cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
       },
       {
