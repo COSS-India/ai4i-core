@@ -1,5 +1,5 @@
 import { METERING } from "../config/meteringConstants";
-import { replaceTenantCopy } from "../config/constants";
+import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
