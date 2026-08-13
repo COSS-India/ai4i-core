@@ -5,7 +5,6 @@ import {
   resolveTenantUserRoles,
   type TenantUserRoleSource,
 } from "../../utils/tenantUserRoles";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 
 export interface TenantUserRoleBadgesProps extends TenantUserRoleSource {
   emptyLabel?: string;
@@ -28,7 +27,7 @@ export default function TenantUserRoleBadges({
       {list.map((role) => (
         <WrapItem key={role}>
           <Badge colorScheme="purple" fontSize={badgeFontSize}>
-            {formatInstitutionCopy(formatTenantUserRoleLabel(role))}
+            {formatTenantUserRoleLabel(role)}
           </Badge>
         </WrapItem>
       ))}

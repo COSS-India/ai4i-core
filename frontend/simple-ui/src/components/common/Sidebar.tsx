@@ -38,7 +38,7 @@ import {
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
+import { INSTITUTION, MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
@@ -47,7 +47,6 @@ import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getUsageDashboardOverviewPath } from "../../utils/navigation";
 import { canAccessServicesManagement, canAccessUsageDashboard, isProgramAdminUser } from "../../utils/rbac";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -246,7 +245,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.tenantManagement,
-    label: "Tenant Management",
+    label: `${INSTITUTION} Management`,
     path: `/${TABS.tenantManagement}`,
     icon: IoPeopleOutline,
     iconSize: 10,
@@ -705,7 +704,7 @@ const Sidebar: React.FC = () => {
               >
                 {isExpanded ? (
                   <Heading size="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
-                    {formatInstitutionCopy(item.label)}
+                    {item.label}
                   </Heading>
                 ) : (
                   <Icon
@@ -808,7 +807,7 @@ const Sidebar: React.FC = () => {
                     px={1}
                   >
                     <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
-                      {formatInstitutionCopy(item.label)}
+                      {item.label}
                     </Text>
                   </Button>
                 );

@@ -18,10 +18,10 @@ import {
   SPEAKER_DIARIZATION_ERRORS,
   AUDIO_LANGUAGE_DETECTION_ERRORS,
   NER_ERRORS,
+  replaceTenantCopy,
 } from '../../config/constants';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import { combineMessages, extractMessagesFromValue } from './extractMessages';
-import { formatInstitutionCopy } from '../institutionCopy';
 import type { ToastType } from '../toast';
 
 export type { ToastType };
@@ -239,8 +239,8 @@ function resolveDetailObjectMessage(detail: Record<string, unknown>): string | n
 function withInstitutionCopy(info: ErrorInfo): ErrorInfo {
   return {
     ...info,
-    title: formatInstitutionCopy(info.title),
-    message: formatInstitutionCopy(info.message),
+    title: replaceTenantCopy(info.title),
+    message: replaceTenantCopy(info.message),
   };
 }
 
@@ -408,7 +408,7 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     if (error instanceof ApiValidationError) {
       return {
         title: 'API Contract Mismatch',
-        message: formatInstitutionCopy(error.message),
+        message: replaceTenantCopy(error.message),
         statusCode: null,
         type: 'error',
       };
@@ -435,15 +435,15 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     if (isNetworkError(error) && messages.length === 0) {
       return {
         title: 'Network connection lost',
-        message: formatInstitutionCopy(NETWORK_ERROR_MESSAGE),
+        message: replaceTenantCopy(NETWORK_ERROR_MESSAGE),
         statusCode,
         type: 'error',
       };
     }
 
     return {
-      title: formatInstitutionCopy(getTitleForStatusCode(statusCode)),
-      message: formatInstitutionCopy(combineMessages(messages) || GENERIC_FALLBACK_MESSAGE),
+      title: replaceTenantCopy(getTitleForStatusCode(statusCode)),
+      message: replaceTenantCopy(combineMessages(messages) || GENERIC_FALLBACK_MESSAGE),
       statusCode,
       type: statusToToastType(statusCode),
     };
@@ -453,7 +453,7 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     }
     return {
       title: UNKNOWN_ERROR_TITLE,
-      message: formatInstitutionCopy(GENERIC_FALLBACK_MESSAGE),
+      message: replaceTenantCopy(GENERIC_FALLBACK_MESSAGE),
       statusCode: null,
       type: 'error',
     };

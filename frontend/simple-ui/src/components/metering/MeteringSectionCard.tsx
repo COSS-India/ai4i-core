@@ -9,7 +9,6 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 
 interface MeteringSectionCardProps {
   title: string;
@@ -41,16 +40,16 @@ const MeteringSectionCard: React.FC<MeteringSectionCardProps> = ({
             textTransform="uppercase"
             letterSpacing="wider"
           >
-            {formatInstitutionCopy(title)}
+            {title}
           </Text>
         ) : (
           <Heading size="sm" color="gray.800">
-            {formatInstitutionCopy(title)}
+            {title}
           </Heading>
         )}
         {subtitle ? (
           <Text fontSize="xs" color="gray.500" mt={0.5}>
-            {formatInstitutionCopy(subtitle)}
+            {subtitle}
           </Text>
         ) : null}
       </VStack>
@@ -112,7 +111,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
             textTransform="uppercase"
             letterSpacing="wider"
           >
-            {formatInstitutionCopy(label)}
+            {label}
           </Text>
           <Text fontSize="3xl" fontWeight="bold" color={valueColor} lineHeight="1.1">
             {value ?? "—"}
@@ -125,7 +124,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
           )}
           {helper ? (
             <Text fontSize="xs" color="gray.500" lineHeight="short">
-              {formatInstitutionCopy(helper)}
+              {helper}
             </Text>
           ) : null}
         </VStack>

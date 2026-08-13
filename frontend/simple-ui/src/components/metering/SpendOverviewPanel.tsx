@@ -2,6 +2,7 @@ import { Box, Center, Flex, HStack, Spinner, Text, VStack } from "@chakra-ui/rea
 import React, { useMemo, useState } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 import { METERING } from "../../config/meteringConstants";
+import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
 import {
   aggregateTasks,
   formatSpendMoney,
@@ -33,7 +34,7 @@ function spendChangeArrow(spendChangePercent: number): string {
 
 function budgetExceededLabel(count: number | null | undefined): string {
   if (count == null) return "—";
-  return `${count} tenant${count === 1 ? "" : "s"}`;
+  return `${count} ${count === 1 ? INSTITUTION.toLowerCase() : INSTITUTIONS.toLowerCase()}`;
 }
 
 interface SpendOverviewPanelProps {
@@ -256,7 +257,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
             flexWrap="wrap"
           >
             <HStack spacing={1.5}>
-              <Text color="gray.500">Active tenants:</Text>
+              <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
               <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
             </HStack>
             <HStack spacing={1.5}>

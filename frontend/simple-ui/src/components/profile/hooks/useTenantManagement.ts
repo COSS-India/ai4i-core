@@ -25,6 +25,7 @@ import {
   validateOrganisationUnique,
 } from "../../../utils/tenantFormValidation";
 import {
+  INSTITUTION,
   TENANT,
   TENANT_ADMIN_UPDATABLE_STATUSES,
   isTenantStatus,
@@ -339,7 +340,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!tenantId) {
       showToast({
         type: "warning",
-        message: "Unable to load users because no tenant ID is available.",
+        message: `Unable to load users because no ${INSTITUTION.toLowerCase()} ID is available.`,
       });
       setTenantUsers([]);
       return;
@@ -706,7 +707,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const collectAddUserErrors = (): Record<string, string> => {
     const errors: Record<string, string> = {};
     const tenantId = lockedUserFormTenantId ?? userForm.tenant_id?.trim() ?? "";
-    if (!tenantId) errors.tenant_id = "Tenant is required.";
+    if (!tenantId) errors.tenant_id = `${INSTITUTION} is required.`;
     const fullNameError = validateFullName(userForm.full_name);
     if (fullNameError) errors.full_name = fullNameError;
     const emailError = validateTenantUserEmail(
@@ -918,7 +919,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({
         type: "success",
         message:
-          "User provisioned under tenant. The username is auto-generated from email.",
+          `User provisioned under ${INSTITUTION.toLowerCase()}. The username is auto-generated from email.`,
       });
       closeUserModal();
       await refreshTenantAndUserLists(tenantId);
@@ -1086,10 +1087,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         showToast({
           type: "info",
           message:
-            "A verification link was sent to the new contact email. The tenant contact email will update after it is verified.",
+            `A verification link was sent to the new contact email. The ${INSTITUTION.toLowerCase()} contact email will update after it is verified.`,
         });
       } else {
-        showToast({ type: "success", message: "Tenant updated" });
+        showToast({ type: "success", message: `${INSTITUTION} updated` });
       }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
@@ -1176,7 +1177,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!email) {
       showToast({
         type: "warning",
-        message: "This tenant has no contact email to resend verification.",
+        message: `This ${INSTITUTION.toLowerCase()} has no contact email to resend verification.`,
       });
       return;
     }
@@ -1184,7 +1185,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!Number.isFinite(tenantIdNum) || tenantIdNum < 1) {
       showToast({
         type: "warning",
-        message: "This tenant has no valid tenant ID to resend the setup link.",
+        message: `This ${INSTITUTION.toLowerCase()} has no valid ${INSTITUTION.toLowerCase()} ID to resend the setup link.`,
       });
       return;
     }
@@ -1213,7 +1214,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!tenantId || !u.user_id) {
       showToast({
         type: "warning",
-        message: "Missing tenant or user ID to resend the setup link.",
+        message: `Missing ${INSTITUTION.toLowerCase()} or user ID to resend the setup link.`,
       });
       return;
     }
@@ -1280,7 +1281,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         if (wasPendingDeactivate) {
           markPendingSoftDeletedTenant(statusUpdateTarget.tenant_id);
         }
-        showToast({ type: "success", message: "Tenant status updated" });
+        showToast({ type: "success", message: `${INSTITUTION} status updated` });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
         const isActive = statusUpdateNewStatus === TENANT.USER_STATUS.ACTIVE;
@@ -1303,7 +1304,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           showToast({
             type: "warning",
             message:
-              "Your tenant admin account is no longer active. Sign in again when it is reactivated.",
+              `Your ${INSTITUTION.toLowerCase()} admin account is no longer active. Sign in again when it is reactivated.`,
           });
           forceFrontendSessionEnd();
           return;
@@ -1333,7 +1334,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!tenantId) {
       showToast({
         type: "error",
-        message: "Tenant is required to edit user.",
+        message: `${INSTITUTION} is required to edit user.`,
       });
       return;
     }

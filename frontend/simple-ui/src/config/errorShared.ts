@@ -27,7 +27,7 @@ export const SHARED_SERVICE_ERRORS = {
     action: 'Re-authenticate',
   },
   TENANT_SUSPENDED: {
-    title: 'Tenant suspended',
+    title: 'Account suspended',
     description: 'Your account access has been suspended. Please contact support.',
     action: 'Contact support',
   },

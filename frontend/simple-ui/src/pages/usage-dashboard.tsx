@@ -12,7 +12,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import UsageDashboard from "../components/metering/UsageDashboard";
 import { useAuth } from "../hooks/useAuth";
 import { showToast } from "../utils/toast";
-import { formatInstitutionCopy } from "../utils/institutionCopy";
+import { INSTITUTION } from "../config/constants";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   canAccessUsageDashboard,
@@ -78,7 +78,7 @@ const UsageDashboardPage: React.FC = () => {
         <title>Usage Dashboard - AI4Inclusion Console</title>
         <meta
           name="description"
-          content={formatInstitutionCopy("Monitor service consumption, model consumption, tenant activity, and platform throughput")}
+          content={`Monitor service consumption, model consumption, ${INSTITUTION.toLowerCase()} activity, and platform throughput`}
         />
       </Head>
 

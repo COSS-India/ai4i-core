@@ -1,7 +1,6 @@
 import { Alert, AlertDescription, AlertIcon, Center, Spinner, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 
 interface MeteringAlertsProps {
   errorMessage?: string | null;
@@ -20,13 +19,13 @@ export const MeteringAlerts: React.FC<MeteringAlertsProps> = ({
       {errorMessage ? (
         <Alert status="error" borderRadius="md" fontSize="sm">
           <AlertIcon />
-          <AlertDescription>{formatInstitutionCopy(errorMessage)}</AlertDescription>
+          <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       ) : null}
       {dataStateBanner ? (
         <Alert status={dataStateBanner.status} borderRadius="md" fontSize="sm">
           <AlertIcon />
-          <AlertDescription>{formatInstitutionCopy(dataStateBanner.message)}</AlertDescription>
+          <AlertDescription>{dataStateBanner.message}</AlertDescription>
         </Alert>
       ) : null}
     </VStack>
@@ -63,7 +62,7 @@ const MeteringAsyncState: React.FC<MeteringAsyncStateProps> = ({
     return (
       <Alert status="error" borderRadius="md" fontSize="sm">
         <AlertIcon />
-        <AlertDescription>{formatInstitutionCopy(errorMessage)}</AlertDescription>
+        <AlertDescription>{errorMessage}</AlertDescription>
       </Alert>
     );
   }
@@ -71,7 +70,7 @@ const MeteringAsyncState: React.FC<MeteringAsyncStateProps> = ({
   if (isEmpty) {
     return (
       <Center h={height}>
-        <Text color="gray.500">{formatInstitutionCopy(emptyMessage)}</Text>
+        <Text color="gray.500">{emptyMessage}</Text>
       </Center>
     );
   }

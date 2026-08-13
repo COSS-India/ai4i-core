@@ -12,6 +12,33 @@ import {
 
 export { UI_ERROR_MESSAGES, PARSE_ERROR_MESSAGES } from './errorShared';
 
+/** UI labels for tenant terminology. Change these to rename the concept everywhere. */
+export const INSTITUTION = "Institution";
+export const INSTITUTIONS = "Institutions";
+export const INSTITUTION_ARTICLE = /^[aeiou]/i.test(INSTITUTION) ? "an" : "a";
+export const INSTITUTION_ARTICLE_CAP = INSTITUTION_ARTICLE === "an" ? "An" : "A";
+
+/** If copy still says tenant/tenants (e.g. BE), show INSTITUTION / INSTITUTIONS instead. */
+export function replaceTenantCopy(value: string | null | undefined): string {
+  if (value == null || value === "") return value ?? "";
+  const next = String(value).replace(/\btenants?\b/gi, (match) => {
+    const replacement = match.toLowerCase() === "tenants" ? INSTITUTIONS : INSTITUTION;
+    if (match === match.toUpperCase()) return replacement.toUpperCase();
+    if (match[0] === match[0].toUpperCase()) {
+      return replacement[0].toUpperCase() + replacement.slice(1).toLowerCase();
+    }
+    return replacement.toLowerCase();
+  });
+  if (INSTITUTION_ARTICLE !== "an") return next;
+  const alts = [INSTITUTION, INSTITUTIONS, INSTITUTION.toLowerCase(), INSTITUTIONS.toLowerCase()]
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  return next
+    .replace(new RegExp(`\\bA(\\s+)(${alts})\\b`, "g"), `${INSTITUTION_ARTICLE_CAP}$1$2`)
+    .replace(new RegExp(`\\ba(\\s+)(${alts})\\b`, "g"), `${INSTITUTION_ARTICLE}$1$2`);
+}
+
 // Supported languages with script codes
 export const SUPPORTED_LANGUAGES = [
   { code: "en", label: "English", scriptCode: "Latn" },
@@ -820,8 +847,8 @@ export const COMMON_ERRORS = {
     action: 'Contact admin',
   },
   INVALID_TENANT: {
-    title: 'Invalid tenant',
-    description: 'Invalid tenant configuration. Please contact support.',
+    title: `Invalid ${INSTITUTION.toLowerCase()}`,
+    description: `Invalid ${INSTITUTION.toLowerCase()} configuration. Please contact support.`,
     action: 'Contact support',
   },
   NOT_FOUND: {
@@ -1290,10 +1317,10 @@ export function getApiKeyInactiveReason(context: ApiKeyAccessContext): string {
     return "Your account is inactive.";
   }
   if (context.userTenantActive === false) {
-    return "Tenant access is suspended for your account.";
+    return `${INSTITUTION} access is suspended for your account.`;
   }
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.SUSPENDED)) {
-    return "Tenant is suspended — API keys are temporarily inactive and will resume automatically when the tenant is reactivated.";
+    return `${INSTITUTION} is suspended — API keys are temporarily inactive and will resume automatically when the ${INSTITUTION.toLowerCase()} is reactivated.`;
   }
   return "API key access is currently blocked.";
 }
@@ -1301,7 +1328,7 @@ export function getApiKeyInactiveReason(context: ApiKeyAccessContext): string {
 /** Human-readable reason when status is Revoked due to tenant deactivation. */
 export function getApiKeyRevokedReason(context: ApiKeyAccessContext): string | null {
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
-    return "Tenant was deactivated — this API key is revoked. Create a new key after the tenant is reactivated.";
+    return `${INSTITUTION} was deactivated — this API key is revoked. Create a new key after the ${INSTITUTION.toLowerCase()} is reactivated.`;
   }
   return null;
 }

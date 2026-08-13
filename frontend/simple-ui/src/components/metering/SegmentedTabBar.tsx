@@ -1,6 +1,5 @@
 import { Button, ButtonGroup, HStack } from "@chakra-ui/react";
 import React from "react";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 
 export interface SegmentedTabOption<T extends string> {
   id: T;
@@ -46,7 +45,7 @@ function SegmentedTabBar<T extends string>({
             _hover={{ bg: activeId === option.id ? "white" : "gray.50" }}
             px={4}
           >
-            {formatInstitutionCopy(option.label)}
+            {option.label}
           </Button>
         ))}
       </ButtonGroup>

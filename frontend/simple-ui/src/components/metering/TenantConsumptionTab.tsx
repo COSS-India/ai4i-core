@@ -1,6 +1,7 @@
 import { Badge, HStack, Progress, Tbody, Td, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
+import { INSTITUTION } from "../../config/constants";
 import type { MeteringTopN, TenantConsumptionResponse } from "../../types/metering";
 import { meteringColorAt } from "../../utils/meteringColors";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
@@ -44,7 +45,7 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           <KpiCard
-            label={data.avg_requests_per_tenant?.label ?? "Average requests per tenant"}
+            label={data.avg_requests_per_tenant?.label ?? `Average requests per ${INSTITUTION.toLowerCase()}`}
             value={data.avg_requests_per_tenant?.value ?? "—"}
             pctChange={data.avg_requests_per_tenant?.pct_change}
             helper={data.avg_requests_per_tenant?.helper ?? undefined}

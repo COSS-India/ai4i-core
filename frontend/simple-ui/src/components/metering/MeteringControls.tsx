@@ -15,7 +15,6 @@ import {
 } from "../../config/meteringConstants";
 import type { MeteringTopN, MeteringWindow } from "../../types/metering";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 import SegmentedTabBar from "./SegmentedTabBar";
 
 interface MeteringControlsProps {
@@ -98,7 +97,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
             onChange={(e) => onTenantChange?.(e.target.value)}
             bg="white"
           >
-            <option value="">{formatInstitutionCopy(METERING.CONTROLS.ALL_TENANTS)}</option>
+            <option value="">{METERING.CONTROLS.ALL_TENANTS}</option>
             {tenantOptions.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.label}

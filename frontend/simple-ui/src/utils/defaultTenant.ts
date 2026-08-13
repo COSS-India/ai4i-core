@@ -1,5 +1,6 @@
 import type { User } from "../types/auth";
 import type { TenantUserView, TenantView } from "../types/tenant";
+import { INSTITUTION } from "../config/constants";
 
 /** Must match auth-service `default_tenant_org` / seed migration. */
 export const DEFAULT_TENANT_ORGANISATION =
@@ -78,7 +79,7 @@ const PLATFORM_ROLE_LABELS: Record<string, string> = {
   USER: "User",
   MODERATOR: "Moderator",
   GUEST: "Guest",
-  "TENANT ADMIN": "Tenant Admin",
+  "TENANT ADMIN": `${INSTITUTION} Admin`,
 };
 
 export function isDefaultOrgUserRole(role: string): role is DefaultOrgUserRole {

@@ -9,22 +9,6 @@ import {
   Button,
   useColorModeValue,
 } from "@chakra-ui/react";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
-
-function copyBody(node: React.ReactNode): React.ReactNode {
-  if (typeof node === "string" || typeof node === "number") {
-    return formatInstitutionCopy(String(node));
-  }
-  if (Array.isArray(node)) return React.Children.map(node, copyBody);
-  if (React.isValidElement(node) && node.type === React.Fragment) {
-    return React.cloneElement(
-      node,
-      undefined,
-      copyBody((node.props as { children?: React.ReactNode }).children),
-    );
-  }
-  return node;
-}
 
 export interface ConfirmDialogProps {
   /** Whether the dialog is visible. */
@@ -84,9 +68,9 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       <AlertDialogOverlay>
         <AlertDialogContent bg={dialogBg}>
           <AlertDialogHeader fontSize="lg" fontWeight="bold">
-            {formatInstitutionCopy(title)}
+            {title}
           </AlertDialogHeader>
-          <AlertDialogBody>{copyBody(body)}</AlertDialogBody>
+          <AlertDialogBody>{body}</AlertDialogBody>
           <AlertDialogFooter>
             <Button
               ref={leastDestructiveRef}

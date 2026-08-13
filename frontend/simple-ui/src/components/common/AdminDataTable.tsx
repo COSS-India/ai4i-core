@@ -42,7 +42,6 @@ import {
   useAdminDataTableServer,
   type UseAdminDataTableServerOptions,
 } from "../../hooks/useAdminDataTable";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
 
 export { DEFAULT_PAGE_SIZE_OPTIONS } from "../../hooks/useAdminDataTable";
 export { useAdminDataTable, useAdminDataTableServer } from "../../hooks/useAdminDataTable";
@@ -185,7 +184,7 @@ export function TableSearchField({
   return (
     <FormControl w={{ base: "full", md: "320px" }} {...formControlProps}>
       <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-        {formatInstitutionCopy(label)}
+        {label}
       </FormLabel>
       <InputGroup size="sm" {...inputGroupProps}>
         <InputLeftElement pointerEvents="none">
@@ -197,7 +196,7 @@ export function TableSearchField({
             onChange(e.target.value);
             resetPage();
           }}
-          placeholder={placeholder ? formatInstitutionCopy(placeholder) : placeholder}
+          placeholder={placeholder}
           bg={inputBg}
           pl={9}
           {...inputProps}
@@ -227,7 +226,7 @@ export function TableSelectField({
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
       <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-        {formatInstitutionCopy(label)}
+        {label}
       </FormLabel>
       <Select
         size="sm"
@@ -239,12 +238,7 @@ export function TableSelectField({
         bg={inputBg}
         {...selectProps}
       >
-        {React.Children.map(children, (child) => {
-          if (!React.isValidElement(child) || child.type !== "option") return child;
-          const text = (child.props as { children?: React.ReactNode }).children;
-          if (typeof text !== "string") return child;
-          return React.cloneElement(child, undefined, formatInstitutionCopy(text));
-        })}
+        {children}
       </Select>
     </FormControl>
   );
@@ -450,11 +444,10 @@ export default function AdminDataTable<T>({
         ? clientTable.totalItems === 0
         : items.length === 0);
 
-  const emptyText = formatInstitutionCopy(
+  const emptyText =
     hasActiveFilters || (unfilteredCount != null && unfilteredCount > 0)
       ? noResultsMessage
-      : emptyMessage,
-  );
+      : emptyMessage;
 
   const paginationBlock =
     paginate !== false && pagination ? (
@@ -528,25 +521,15 @@ export default function AdminDataTable<T>({
                         >
                           {col.sortable ? (
                             <TableSortHeader
-                              label={formatInstitutionCopy(col.sortable.label)}
+                              label={col.sortable.label}
                               direction={col.sortable.direction}
                               onAsc={col.sortable.onAsc}
                               onDesc={col.sortable.onDesc}
-                              ascAriaLabel={formatInstitutionCopy(col.sortable.ascAriaLabel)}
-                              descAriaLabel={formatInstitutionCopy(col.sortable.descAriaLabel)}
-                              ascTooltipLabel={
-                                col.sortable.ascTooltipLabel
-                                  ? formatInstitutionCopy(col.sortable.ascTooltipLabel)
-                                  : col.sortable.ascTooltipLabel
-                              }
-                              descTooltipLabel={
-                                col.sortable.descTooltipLabel
-                                  ? formatInstitutionCopy(col.sortable.descTooltipLabel)
-                                  : col.sortable.descTooltipLabel
-                              }
+                              ascAriaLabel={col.sortable.ascAriaLabel}
+                              descAriaLabel={col.sortable.descAriaLabel}
+                              ascTooltipLabel={col.sortable.ascTooltipLabel}
+                              descTooltipLabel={col.sortable.descTooltipLabel}
                             />
-                          ) : typeof col.header === "string" ? (
-                            formatInstitutionCopy(col.header)
                           ) : (
                             col.header
                           )}

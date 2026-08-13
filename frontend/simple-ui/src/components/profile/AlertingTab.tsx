@@ -66,7 +66,7 @@ import {
   EditIcon,
   LockIcon,
 } from "@chakra-ui/icons";
-import { isTenantStatus, TENANT } from "../../config/constants";
+import { INSTITUTION, isTenantStatus, TENANT } from "../../config/constants";
 import * as tenantService from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 import type { NotificationReceiver } from "../../types/alerting";
@@ -277,7 +277,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     if (!rules.createForm.severity) errors.severity = "Please select a severity.";
     if (!isInfrastructure && !createRuleScope) errors.scope = "Please select a scope.";
     if (!isInfrastructure && createRuleScope === "specific_tenant" && !createRuleTenant) {
-      errors.tenant = "Please select a target tenant.";
+      errors.tenant = `Please select a target ${INSTITUTION.toLowerCase()}.`;
     }
     setCreateRuleErrors(errors);
     if (Object.keys(errors).length > 0) return;
@@ -680,7 +680,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     },
     {
       id: "tenant",
-      header: "Tenant",
+      header: INSTITUTION,
       cell: (rule) =>
         rule.tenant ? (
           <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
@@ -2241,7 +2241,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       placeholder="Select scope"
                     >
                       <option value="global">Global</option>
-                      <option value="specific_tenant">Specific Tenant</option>
+                      <option value="specific_tenant">Specific {INSTITUTION}</option>
                     </Select>
                   )}
                   <FormErrorMessage>{createRuleErrors.scope}</FormErrorMessage>
@@ -2249,13 +2249,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 {rules.createForm.category !== "infrastructure" && createRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!createRuleErrors.tenant}>
                     <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
-                      Target Tenant
+                      Target {INSTITUTION}
                     </FormLabel>
                     <Select
                       value={createRuleTenant}
                       onChange={(e) => { setCreateRuleTenant(e.target.value); if (e.target.value) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
                       bg="white"
-                      placeholder="Select tenant"
+                      placeholder={`Select ${INSTITUTION.toLowerCase()}`}
                       isDisabled={isLoadingTenants}
                     >
                       {tenants.map((t) => (
@@ -2659,14 +2659,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       bg="white"
                     >
                       <option value="global">Global</option>
-                      <option value="specific_tenant">Specific Tenant</option>
+                      <option value="specific_tenant">Specific {INSTITUTION}</option>
                     </Select>
                   )}
                 </FormControl>
                 {editRuleCategory !== "infrastructure" && editRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!editRuleErrors.tenant}>
                     <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
-                      Target Tenant
+                      Target {INSTITUTION}
                     </FormLabel>
                     <Select
                       value={
@@ -2682,7 +2682,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         if (e.target.value) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
                       }}
                       bg="white"
-                      placeholder="Select tenant"
+                      placeholder={`Select ${INSTITUTION.toLowerCase()}`}
                       isDisabled={isLoadingTenants}
                     >
                       {tenants.map((t) => (
@@ -2757,7 +2757,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 const isInfrastructure = editRuleCategory === "infrastructure";
                 if (!rules.updateForm.rule_name?.trim()) errors.ruleName = "Rule name is required.";
                 if (!isInfrastructure && editRuleScope === "specific_tenant" && !rules.updateForm.tenant) {
-                  errors.tenant = "Please select a target tenant.";
+                  errors.tenant = `Please select a target ${INSTITUTION.toLowerCase()}.`;
                 }
                 setEditRuleErrors(errors);
                 if (Object.keys(errors).length > 0) return;
@@ -2911,7 +2911,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ["Resolved", history.viewItem.resolved_at ?? "—"],
                   ["Receiver", history.viewItem.receiver ?? "—"],
                   ["Notified", history.viewItem.notified_display || "—"],
-                  ["Tenant", history.viewItem.tenant ?? "—"],
+                  [INSTITUTION, history.viewItem.tenant ?? "—"],
                   ["Recorded", history.viewItem.created_at ?? "—"],
                   ["Id", String(history.viewItem.id)],
                 ].map(([label, val]) => (

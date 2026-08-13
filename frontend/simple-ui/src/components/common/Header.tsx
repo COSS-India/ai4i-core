@@ -19,7 +19,7 @@ import React, { useEffect, useState } from "react";
 import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
-import { formatInstitutionCopy } from "../../utils/institutionCopy";
+import { INSTITUTION } from "../../config/constants";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -100,7 +100,7 @@ const Header: React.FC = () => {
         break;
       case "/institution-management":
       case "/tenant-management":
-        setTitle("Tenant Management");
+        setTitle(`${INSTITUTION} Management`);
         break;
       case "/api-key-management":
         setTitle("API Key Management");
@@ -205,7 +205,7 @@ const Header: React.FC = () => {
               />
             )}
             <Heading size="md" color="gray.800">
-              {formatInstitutionCopy(title)}
+              {title}
             </Heading>
           </HStack>
 

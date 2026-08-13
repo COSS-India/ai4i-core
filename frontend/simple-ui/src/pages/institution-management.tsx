@@ -12,7 +12,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import TenantManagementTab from "../components/profile/TenantManagementTab";
-import { formatInstitutionCopy } from "../utils/institutionCopy";
+import { INSTITUTION, INSTITUTIONS } from "../config/constants";
 
 const InstitutionManagementPage: React.FC = () => {
   const router = useRouter();
@@ -56,15 +56,15 @@ const InstitutionManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{formatInstitutionCopy("Tenant Management")} - AI4I Platform</title>
-        <meta name="description" content={formatInstitutionCopy("Manage tenants and tenant users")} />
+        <title>{INSTITUTION} Management - AI4I Platform</title>
+        <meta name="description" content={`Manage ${INSTITUTIONS.toLowerCase()} and ${INSTITUTION.toLowerCase()} users`} />
       </Head>
 
       <ContentLayout>
         <Box maxW="full" mx="auto" py={8} px={4}>
           <ManagementPageHeader
-            title="Tenant Management"
-            description="Manage tenants and tenant users"
+            title={`${INSTITUTION} Management`}
+            description={`Manage ${INSTITUTIONS.toLowerCase()} and ${INSTITUTION.toLowerCase()} users`}
           />
           <TenantManagementTab isActive={true} />
         </Box>

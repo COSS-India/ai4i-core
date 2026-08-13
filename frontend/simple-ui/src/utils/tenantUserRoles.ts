@@ -1,6 +1,7 @@
 import { formatPlatformRoleLabel } from "./defaultTenant";
 import { TENANT_USER_ROLE_OPTIONS } from "../components/profile/types";
 import type { TenantAssignableRole, TenantUserView } from "../types/tenant";
+import { INSTITUTION } from "../config/constants";
 
 const TENANT_ASSIGNABLE_ROLE_VALUES: readonly TenantAssignableRole[] = [
   "USER",
@@ -13,7 +14,7 @@ export const TENANT_USER_ROLE_FILTER_LIST: ReadonlyArray<{
   label: string;
 }> = [
   { value: "USER", label: "User" },
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
+  { value: "TENANT ADMIN", label: `${INSTITUTION} Admin` },
 ] as const;
 
 export function isTenantAssignableRole(role: string): role is TenantAssignableRole {

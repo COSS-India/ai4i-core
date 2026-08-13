@@ -7,6 +7,7 @@ import {
 } from "../services/usageSpendService";
 import { fetchTiers } from "../services/tierManagementService";
 import { parseError } from "../utils/errorHandler";
+import { INSTITUTION } from "../config/constants";
 import {
   USAGE_SPEND_STALE_MS,
   billingPeriodValue,
@@ -72,7 +73,7 @@ export function useUsageAndSpendData({
   const scopedQuery = useQuery({
     queryKey: ["usage-tenant", scopedId, billingPeriod, enabledParam, refreshNonce],
     queryFn: () => {
-      if (!scopedId) throw new Error("Tenant id is required");
+      if (!scopedId) throw new Error(`${INSTITUTION} id is required`);
       return fetchTenantUsageById(scopedId, billingPeriod, enabledParam);
     },
     enabled: isScoped,
