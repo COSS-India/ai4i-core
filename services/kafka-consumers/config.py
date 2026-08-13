@@ -1,3 +1,24 @@
+"""SUPERSEDED by bootstrap/config.py — kept only until payperuse_consumer moves.
+
+This module is still imported by consumers/payperuse_consumer/{main,handler,
+_billing}.py, which have not been migrated yet, so it cannot be deleted.  Do not
+add anything to it and do not import it from new code.
+
+The two modules deliberately DISAGREE, so be sure which one you are reading:
+
+  * KAFKA_AUTO_OFFSET_RESET defaults to 'earliest' here and 'error' in
+    bootstrap/config.py.  'error' is the intended value (ARCHITECTURE.md §10) —
+    'earliest' silently replays the whole topic and re-bills every span in
+    retention when an offset ages out.  Changing it here is NOT a safe drive-by:
+    it would stop the current consumer starting, and the group-id cutover
+    runbook has to run first.
+  * settings is instantiated at import time here; bootstrap/config.py reads
+    settings lazily through @lru_cache accessors (§3.2).
+  * Topics and AUTH_SERVICE_URL do not move to bootstrap/config.py at all —
+    they are per-consumer (§3.1/§5).
+
+Deleted by IMPLEMENTATION_PLAN.md Phase 5, together with the consumer rewrite.
+"""
 from __future__ import annotations
 
 from typing import Optional

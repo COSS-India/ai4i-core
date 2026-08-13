@@ -598,13 +598,23 @@ violates them is a bug regardless of whether it appears to work. If a second
 consumer ends up with a byte-identical loop, that is the signal to promote the
 loop into `bootstrap/` — not a reason to have done so preemptively.
 
-### 3.6 `bootstrap/tests/`
+### 3.6 Tests for the shared code — now at `tests/unit/bootstrap/`
 
-> **`[PLANNED]`** — no `bootstrap/tests/` directory exists. The service
-> currently has no tracked test suite at all, so none of the assertions below
-> are enforced anywhere.
+> **`[SUPERSEDED]` — this section's location and its status banner are both out of
+> date. See [`tests/TESTPLAN.md`](./tests/TESTPLAN.md).**
+>
+> The old banner said *"no `bootstrap/tests/` directory exists … the service
+> currently has no tracked test suite at all"*. That has been false for some time:
+> the suite was written (**81 cases**), and has since moved. Every test asset for
+> this service now lives under `services/kafka-consumers/tests/` — test code,
+> `conftest.py`, `pytest.ini`, `requirements-dev.txt` and the test plan itself — so
+> the shared code's tests are at `tests/unit/bootstrap/`, **not** beside the code.
+> Run them with `python -m pytest tests/unit` (the path matters: `tests/` is the
+> pytest rootdir).
+>
+> The table below still describes the right assertions; only "beside it" is wrong.
 
-The shared code carries its own unit tests, beside it. Everything `bootstrap/`
+The shared code carries its own unit tests. Everything `bootstrap/`
 exposes is testable without a broker, a database or Redis:
 
 | Under test | What the tests assert |
@@ -728,8 +738,20 @@ happens if the compensation itself fails.
 
 ### Its own tests
 
-**Every consumer package carries its unit tests inside it**, at
-`consumers/<name>_consumer/tests/`. A consumer without them is not complete.
+> **`[SUPERSEDED]` — the *location* rule below is reversed.** Tests no longer live
+> inside the consumer package. Every test asset for this service is under
+> `services/kafka-consumers/tests/`, so a consumer's unit tests belong at
+> `tests/unit/consumers/<name>/`. See [`tests/TESTPLAN.md`](./tests/TESTPLAN.md) §4.0
+> for the layout and §10 for the conformance suites that let a new consumer inherit
+> the whole matrix by registering one row.
+>
+> **What a consumer must be covered for is unchanged** — the list below is still
+> correct, and so is the reason for it. One refinement: the loop-policy invariants
+> are *additionally* enforced centrally by a parameterized conformance suite
+> (TESTPLAN §10.1), because a contract that gets copied can still be checked once.
+
+~~**Every consumer package carries its unit tests inside it**, at
+`consumers/<name>_consumer/tests/`.~~ A consumer without tests is not complete.
 They cover:
 
 - **The handler** — message parsing, the success / skip / failure classification
