@@ -8,6 +8,12 @@ class SpendItem(BaseModel):
     modelTaskType: str
     unit: str
     consumption: float
+    # Quota allocated for this task type this billing_month, summed across tenants'
+    # CURRENT tier only (see PPUUsageService.get_summary) — None when no tenant in
+    # scope has a quota snapshot for it. consumption is the used-side counterpart,
+    # already in the same unit; a per-type field generalizes to any number of task
+    # types in scope (unlike a single flat total, which can only ever hold one unit).
+    allocated: Optional[float] = None
     spend: float
     percentage: float
 
@@ -25,17 +31,6 @@ class UsageSummaryResponse(BaseModel):
     # (see PPUUsageService.get_summary / _resolve_budget's has_budget).
     totalAllocatedBudget: float = 0
     totalRemainingBudget: float = 0
-    # Token totals: only meaningful when the response is scoped to a single task type
-    # (either the caller passed one `task_types` value, or only one type actually had
-    # usage this period) — different task types use incompatible units (tokens/
-    # characters/images/minutes), so these stay null otherwise rather than a
-    # nonsensical cross-unit sum. tokenUnit names the unit these three figures are in.
-    # (See PPUUsageService.get_summary for where these are computed and why
-    # "one type had usage" — not "the allowlist has one entry" — is the real signal.)
-    tokenUnit: Optional[str] = None
-    totalUsedTokens: Optional[float] = None
-    totalAllocatedTokens: Optional[float] = None
-    totalRemainingTokens: Optional[float] = None
 
 
 class TaskTypeUsage(BaseModel):

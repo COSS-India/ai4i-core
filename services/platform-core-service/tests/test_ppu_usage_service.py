@@ -222,7 +222,7 @@ class TestGetSummary:
         assert result.totalRemainingBudget == 0.0
 
     @pytest.mark.asyncio
-    async def test_token_totals_populated_when_single_task_type_requested(self):
+    async def test_spend_item_allocated_summed_across_tenants_current_tier(self):
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2", tier_id="2")],
             get_tenant_tier_usage_breakdown=[
@@ -233,23 +233,35 @@ class TestGetSummary:
             get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
-        result = await svc.get_summary("2026-06", task_types=["llm"])
+        result = await svc.get_summary("2026-06")
 
-        assert result.tokenUnit is not None
-        assert result.totalUsedTokens == 150.0
-        assert result.totalAllocatedTokens == 500.0
-        assert result.totalRemainingTokens == 350.0
+        llm_item = next(i for i in result.spendByModelTaskType if i.modelTaskType == "llm")
+        assert llm_item.consumption == 150.0
+        assert llm_item.allocated == 500.0
 
     @pytest.mark.asyncio
-    async def test_token_totals_null_when_multiple_task_types_present(self):
-        """Tokens can't be summed across task types with different units (e.g. LLM
-        tokens vs ASR minutes) when the caller didn't scope to one type and more
-        than one type has usage — so these stay null rather than a nonsense sum."""
+    async def test_spend_item_allocated_null_when_no_quota_snapshot(self):
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row(quota_snap=None)],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.spendByModelTaskType[0].allocated is None
+
+    @pytest.mark.asyncio
+    async def test_spend_item_allocated_populated_independently_per_task_type(self):
+        """Unlike a single flat total (which can only ever hold one unit), each
+        SpendItem carries its own allocated figure — LLM and ASR can both show
+        allocated at once, in their own units, on the same unfiltered call."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
-                _usage_row(inference_name="llm", total_cost=Decimal("30")),
-                _usage_row(inference_name="asr", total_cost=Decimal("20")),
+                _usage_row(inference_name="llm", total_units=100.0, total_cost=Decimal("30"), quota_snap=200.0),
+                _usage_row(inference_name="asr", total_units=10.0, total_cost=Decimal("20"), quota_snap=50.0),
             ],
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
@@ -257,32 +269,29 @@ class TestGetSummary:
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")
 
-        assert result.totalUsedTokens is None
-        assert result.totalAllocatedTokens is None
-        assert result.totalRemainingTokens is None
+        by_type = {i.modelTaskType: i for i in result.spendByModelTaskType}
+        assert by_type["llm"].allocated == 200.0
+        assert by_type["asr"].allocated == 50.0
 
     @pytest.mark.asyncio
-    async def test_token_totals_auto_detected_when_only_one_type_has_usage_without_filter(self):
-        """task_types is a deployment allowlist, not a single-type selector — the
-        frontend sends every ENABLED_TASK_TYPES value, so len(task_types) == 1 only
-        coincidentally means "one type" while just one type is enabled platform-wide.
-        The real single-type signal is that only one type actually had usage this
-        period; token totals must still populate on that basis even with no filter
-        (or a multi-value filter) passed, or they'd silently go dark the moment a
-        second type is enabled — see usageSpendService.ts/useUsageAndSpendData.ts."""
+    async def test_spend_item_allocated_excludes_quota_from_non_current_tier(self):
+        """Quota isn't cumulative across tiers a tenant held mid-period — only the
+        row matching the tenant's CURRENT (end-of-period) tier counts toward
+        allocated, though consumption still sums across every tier they used."""
         repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],  # only "llm" this period
+            get_tenants_with_usage_tier=[_tier_row(tier_id="2")],  # current tier is "2"
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tier_id="1", total_units=100.0, quota_snap=500.0),  # old tier, excluded
+                _usage_row(tier_id="2", total_units=50.0, quota_snap=100.0),  # current tier, counted
+            ],
             get_tenant_budgets=_budgets(),
             get_total_cost_for_month=0.0,
         )
         svc = PPUUsageService(repo)
-        result = await svc.get_summary("2026-06")  # no task_types passed
+        result = await svc.get_summary("2026-06")
 
-        assert result.tokenUnit is not None
-        assert result.totalUsedTokens == 100.0
-        assert result.totalAllocatedTokens == 200.0
-        assert result.totalRemainingTokens == 100.0
+        assert result.spendByModelTaskType[0].consumption == 150.0
+        assert result.spendByModelTaskType[0].allocated == 100.0
 
 
 class TestGetSummaryFiltered:

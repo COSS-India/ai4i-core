@@ -345,11 +345,29 @@ class PPUUsageService:
             cost_by_tenant[row.tenant_id] = cost_by_tenant.get(row.tenant_id, Decimal("0")) + cost
 
         total_spend = sum((b["cost"] for b in by_task_type.values()), Decimal("0"))
+
+        # Quota allocated per task type, summed across tenants' CURRENT tier only (not
+        # summed across every tier a tenant held that month) — same reasoning as
+        # _build_hierarchical_item's current_tier_row: a quota grant resets on
+        # reassignment, it isn't cumulative. Keyed by task type rather than gated to a
+        # single one in scope, so it generalizes to however many are actually present.
+        current_tier_by_tenant = {a.tenant_id: _tier_key(a.tier_id) for a in assignments}
+        allocated_by_task_type: dict[str, Decimal] = {}
+        for row in usage_rows:
+            if row.quota_snap is None:
+                continue
+            if current_tier_by_tenant.get(row.tenant_id) != _tier_key(row.tier_id):
+                continue
+            allocated_by_task_type[row.inference_name] = (
+                allocated_by_task_type.get(row.inference_name, Decimal("0")) + _to_decimal(row.quota_snap)
+            )
+
         spend_items = [
             SpendItem(
                 modelTaskType=name,
                 unit=b["unit"],
                 consumption=b["units"],
+                allocated=round(allocated_by_task_type[name], 2) if name in allocated_by_task_type else None,
                 spend=round(b["cost"], 2),
                 percentage=round(b["cost"] / total_spend * 100, 1) if total_spend > 0 else Decimal("0"),
             )
@@ -374,41 +392,6 @@ class PPUUsageService:
                 total_remaining_budget += available_balance
                 if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
                     budget_exceeded += 1
-
-        # Token totals: only meaningful when everything in scope shares one unit — see
-        # UsageSummaryResponse.tokenUnit for why. `task_types` is a deployment allowlist
-        # (the frontend sends every ENABLED_TASK_TYPES value, not a single-type filter —
-        # see useUsageAndSpendData.ts), so len(task_types) == 1 only coincidentally means
-        # "one type" today; it stops meaning that the moment a second type is enabled.
-        # The real single-type signal is len(by_task_type) == 1 — only one type actually
-        # had usage this period, regardless of how many the allowlist permits. An explicit
-        # single-value task_types still wins outright when both are true.
-        effective_task_type = task_types[0] if task_types and len(task_types) == 1 else None
-        if effective_task_type is None and len(by_task_type) == 1:
-            effective_task_type = next(iter(by_task_type))
-
-        token_unit = None
-        total_used_tokens = None
-        total_allocated_tokens = None
-        total_remaining_tokens = None
-        if effective_task_type:
-            token_unit = _UNIT_LABELS.get(effective_task_type, effective_task_type)
-            used = by_task_type.get(effective_task_type, {}).get("units", Decimal("0"))
-            # Quota is read from each tenant's CURRENT tier only (not summed across every
-            # tier they held that month) — same reasoning as _build_hierarchical_item's
-            # current_tier_row: a quota grant resets on reassignment, it isn't cumulative.
-            quota_by_tenant_tier: dict[tuple[str, str], Decimal] = {}
-            for row in usage_rows:
-                if row.inference_name == effective_task_type and row.quota_snap is not None:
-                    quota_by_tenant_tier[(row.tenant_id, _tier_key(row.tier_id))] = _to_decimal(row.quota_snap)
-            allocated = Decimal("0")
-            for a in assignments:
-                quota = quota_by_tenant_tier.get((a.tenant_id, _tier_key(a.tier_id)))
-                if quota is not None:
-                    allocated += quota
-            total_used_tokens = round(used, 2)
-            total_allocated_tokens = round(allocated, 2)
-            total_remaining_tokens = round(max(Decimal("0"), allocated - used), 2)
 
         prev_month = _prev_month(billing_month)
         if tier_id:
@@ -443,10 +426,6 @@ class PPUUsageService:
             spendByModelTaskType=spend_items,
             totalAllocatedBudget=round(total_allocated_budget, 2),
             totalRemainingBudget=round(total_remaining_budget, 2),
-            tokenUnit=token_unit,
-            totalUsedTokens=total_used_tokens,
-            totalAllocatedTokens=total_allocated_tokens,
-            totalRemainingTokens=total_remaining_tokens,
         )
 
     async def get_tenant_list(
