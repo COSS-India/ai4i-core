@@ -32,13 +32,13 @@ import {
   IoAppsOutline,
   IoChevronDownOutline,
   IoPulseOutline,
-  // AI4IDS-2604 / AI4IDS-2605: restore with Alerts / PII Guardrail nav items
+  // Restore with Alerts / PII Guardrail nav items
   // IoNotificationsOutline,
   // IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
   IoStatsChartOutline,
 } from "react-icons/io5";
-import { MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
+import { INSTITUTION, MODEL_TASK_TYPE_NAV_LABEL, TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
@@ -158,14 +158,14 @@ const safeColorMap = {
     400: "#AB47BC",
     600: "#8E24AA",
   },
-  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // Alerts Management removed from UI — uncomment to restore
   // [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
   //   50:  "#FFF8E1",
   //   300: "#FFD54F",
   //   400: "#FFCA28",
   //   600: "#F9A825",
   // },
-  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // PII Guardrail removed from UI — uncomment to restore
   // [TABS.piiManagement]: {
   //   50:  "#E8EAF6",
   //   300: "#9FA8DA",
@@ -245,7 +245,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.tenantManagement,
-    label: "Tenant Management",
+    label: `${INSTITUTION} Management`,
     path: `/${TABS.tenantManagement}`,
     icon: IoPeopleOutline,
     iconSize: 10,
@@ -290,7 +290,7 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
-  // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+  // Alerts Management removed from UI — uncomment to restore
   // {
   //   id: TABS.alertsManagement,
   //   label: "Alerts Management",
@@ -300,7 +300,7 @@ const topNavItems: NavItem[] = [
   //   iconColor: "", // Will be computed from safeColorMap
   //   requiresAuth: true,
   // },
-  // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+  // PII Guardrail removed from UI — uncomment to restore
   // {
   //   id: TABS.piiManagement,
   //   label: "PII Guardrail",
@@ -366,7 +366,7 @@ const baseNavItems: NavItem[] = [
     icon: IoSparklesOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: false, // AI4IDS-2688: anonymous try-it
+    requiresAuth: false, // anonymous try-it
   },
   {
     id: TABS.pipeline,
@@ -477,10 +477,10 @@ function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean 
       return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
     case TABS.usageDashboard:
       return canAccessUsageDashboard(ctx.userRoles);
-    // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+    // Alerts Management removed from UI — uncomment to restore
     // case TABS.alertsManagement:
     //   return ctx.isAdmin;
-    // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+    // PII Guardrail removed from UI — uncomment to restore
     // case TABS.piiManagement:
     //   return ctx.isAdmin || ctx.isTenantAdmin;
     case TABS.tierManagement:

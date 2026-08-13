@@ -1,4 +1,5 @@
 import { METERING } from "../config/meteringConstants";
+import { replaceTenantCopy } from "../config/constants";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
@@ -33,15 +34,15 @@ export function parseMeteringError(error: unknown): string {
     error instanceof Error ? error.message : METERING.ERRORS.LOAD_FAILED;
 
   if (status === 503) {
-    return METERING.ERRORS.UNAVAILABLE_503;
+    return replaceTenantCopy(METERING.ERRORS.UNAVAILABLE_503);
   }
   if (status === 403) {
-    return message || METERING.ERRORS.FORBIDDEN_403;
+    return replaceTenantCopy(message || METERING.ERRORS.FORBIDDEN_403);
   }
   if (status === 400) {
-    return message || METERING.ERRORS.BAD_REQUEST_400;
+    return replaceTenantCopy(message || METERING.ERRORS.BAD_REQUEST_400);
   }
-  return message;
+  return replaceTenantCopy(message);
 }
 
 function resolveScopedTenantId(

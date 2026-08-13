@@ -103,6 +103,16 @@ const nextConfig = {
   // Do not expose X-Powered-By: Next.js to reduce fingerprinting
   poweredByHeader: false,
 
+  async redirects() {
+    return [
+      {
+        source: '/tenant-management',
+        destination: '/institution-management',
+        permanent: true,
+      },
+    ];
+  },
+
   async headers() {
     const headers = [...getSecurityHeaders()];
 

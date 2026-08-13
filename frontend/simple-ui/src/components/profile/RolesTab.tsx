@@ -27,6 +27,7 @@ import { useRolesTab } from "./hooks/useRolesTab";
 import UserSearchableSelect from "../common/UserSearchableSelect";
 import StandardModal from "../common/StandardModal";
 import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenant";
+import { INSTITUTION } from "../../config/constants";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
@@ -92,7 +93,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                     ? "Loading users..."
                     : defaultTenantId
                       ? "Select a user"
-                      : "Default tenant not found"
+                      : `Default ${INSTITUTION.toLowerCase()} not found`
                 }
                 selectedPreview={rt.selectedUser}
                 allowClear

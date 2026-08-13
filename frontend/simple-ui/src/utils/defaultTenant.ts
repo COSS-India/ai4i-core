@@ -1,5 +1,6 @@
 import type { User } from "../types/auth";
 import type { TenantUserView, TenantView } from "../types/tenant";
+import { INSTITUTION } from "../config/constants";
 
 /** Must match auth-service `default_tenant_org` / seed migration. */
 export const DEFAULT_TENANT_ORGANISATION =
@@ -46,7 +47,7 @@ export function isDefaultTenant(tenant: { organisation?: string | null }): boole
 }
 
 /**
- * Default Organisation roles in Tenant Management (AI4IDS-2735).
+ * Default Organisation roles in Tenant Management.
  * Assignable via role API (not tenant-user role field, which only accepts
  * USER | TENANT ADMIN). Tenant Admin is never offered for default org.
  */
@@ -78,7 +79,7 @@ const PLATFORM_ROLE_LABELS: Record<string, string> = {
   USER: "User",
   MODERATOR: "Moderator",
   GUEST: "Guest",
-  "TENANT ADMIN": "Tenant Admin",
+  "TENANT ADMIN": `${INSTITUTION} Admin`,
 };
 
 export function isDefaultOrgUserRole(role: string): role is DefaultOrgUserRole {

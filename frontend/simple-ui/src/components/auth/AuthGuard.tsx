@@ -12,24 +12,24 @@ interface AuthGuardProps {
 }
 
 // Routes that require authentication
-// Note: /llm is excluded to allow anonymous "try-it" access (AI4IDS-2688)
+// Note: /llm is excluded to allow anonymous "try-it" access
 const protectedRoutes = new Set([
   '/asr', '/tts', '/pipeline', '/pipeline-builder', '/model-management',
-  '/services-management', '/tenant-management', '/api-key-management', '/profile',
+  '/services-management', '/institution-management', '/api-key-management', '/profile',
   '/logs', '/usage-dashboard', '/traces',
-  // AI4IDS-2604 / AI4IDS-2605: restore '/alerts-management', '/pii-management' when re-enabling UI
+  // Restore '/alerts-management', '/pii-management' when re-enabling UI
   '/policy-management',
 ]);
 
 // Routes that require ADMIN role
-// AI4IDS-2604: Alerts Management removed from UI — restore '/alerts-management' when re-enabling
+// Alerts Management removed from UI — restore '/alerts-management' when re-enabling
 const adminOnlyRoutes = new Set<string>([/* '/alerts-management' */]);
 
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
 const usageDashboardRoutes = new Set(['/usage-dashboard']);
 
 // Routes that allow anonymous access with limited functionality
-// AI4IDS-2688: LLM try-it for anonymous users (replaces NMT as primary try-it surface)
+// LLM try-it for anonymous users (replaces NMT as primary try-it surface)
 const tryItRoutes = new Set(['/llm', '/nmt']);
 
 // PROGRAM ADMIN is a restricted role — only these routes are reachable, everything

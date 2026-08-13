@@ -487,7 +487,7 @@ export function useServicesManagement() {
         setFormData((prev) => {
           const taskIsLlm =
             (prev.task_type || "").trim().toLowerCase() === "llm";
-          // AI4IDS-2692: LLM Service ID pre-filled with "{modelName}/"
+          // LLM Service ID pre-filled with "{modelName}/"
           // Sanitize to BE service-name charset (no underscore) since name=serviceId.
           const sanitizeLlmId = (s: string) =>
             s.replaceAll(/[^a-zA-Z0-9/-]/g, "");
@@ -599,7 +599,7 @@ export function useServicesManagement() {
         const serviceId = formData.serviceId?.trim() || "";
         const taskIsLlm =
           (formData.task_type || "").trim().toLowerCase() === "llm";
-        // AI4IDS-2692: for LLM, Service ID is copied to Service Name
+        // For LLM, Service ID is copied to Service Name
         const serviceName = taskIsLlm
           ? serviceId
           : formData.name?.trim() || "";

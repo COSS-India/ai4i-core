@@ -19,6 +19,7 @@ import React, { useEffect, useState } from "react";
 import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
+import { INSTITUTION } from "../../config/constants";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -97,17 +98,17 @@ const Header: React.FC = () => {
       case "/services-management":
         setTitle("Services Management");
         break;
-      case "/tenant-management":
-        setTitle("Tenant Management");
+      case "/institution-management":
+        setTitle(`${INSTITUTION} Management`);
         break;
       case "/api-key-management":
         setTitle("API Key Management");
         break;
-      // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+      // PII Guardrail removed from UI — uncomment to restore
       // case "/pii-management":
       //   setTitle("PII Guardrail");
       //   break;
-      // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+      // Alerts Management removed from UI — uncomment to restore
       // case "/alerts-management":
       //   setTitle("Alerts Management");
       //   break;
@@ -144,7 +145,7 @@ const Header: React.FC = () => {
       router.push("/profile");
       return;
     }
-    if (router.pathname === "/tenant-management") {
+    if (router.pathname === "/institution-management") {
       router.push("/");
       return;
     }

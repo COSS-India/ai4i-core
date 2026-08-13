@@ -11,7 +11,7 @@ import {
 } from "@chakra-ui/react";
 import { METERING } from "../../config/meteringConstants";
 import { fetchTenantUsageById } from "../../services/usageSpendService";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import { INSTITUTION, formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useUsageAndSpendData } from "../../hooks/useUsageAndSpendData";
 import { showToast } from "../../utils/toast";
@@ -248,8 +248,8 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         errorMessage={data.tenantsError}
         emptyMessage={
           data.isScoped
-            ? "No usage data available for this tenant."
-            : "No tenant usage data available."
+            ? `No usage data available for this ${INSTITUTION.toLowerCase()}.`
+            : `No ${INSTITUTION.toLowerCase()} usage data available.`
         }
         filterTaskType={filterTaskType}
         sortOrder={sortOrder}

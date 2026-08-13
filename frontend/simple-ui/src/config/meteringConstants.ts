@@ -1,4 +1,5 @@
 import type { MeteringTopN, MeteringWindow } from "../types/metering";
+import { INSTITUTION, INSTITUTIONS } from "./constants";
 
 /** Metering & usage dashboard — copy, defaults, and configuration. */
 export const METERING = {
@@ -35,7 +36,7 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
-    /** AI4IDS-2719: Tenant Admin lands on Overview (same as Adopter Admin). */
+    /** Tenant Admin lands on Overview (same as Adopter Admin). */
     TENANT_SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
@@ -57,7 +58,7 @@ export const METERING = {
       avg_rps: "Avg RPS",
     },
     HELPERS: {
-      total_requests: "across all services and tenants",
+      total_requests: `across all services and ${INSTITUTIONS.toLowerCase()}`,
       successful: "of all requests",
       failed: "of all requests",
       avg_rps: "requests per second",
@@ -89,8 +90,8 @@ export const METERING = {
   ] as const,
   SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "tenant", label: "Tenant Consumption" },
-    // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
+    { id: "tenant", label: `${INSTITUTION} Consumption` },
+    // Extra tab — per-service LLM via /model-consumption
     { id: "model", label: "Model Usage" },
     { id: "usage-spend", label: "Budget and usage" },
   ] as const,
@@ -101,10 +102,10 @@ export const METERING = {
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
-    tenant: "Tenant Admin",
+    tenant: `${INSTITUTION} Admin`,
   } as const,
   CONTROLS: {
-    ALL_TENANTS: "All Tenants",
+    ALL_TENANTS: `All ${INSTITUTIONS}`,
     TOP_N_PREFIX: "Top",
     LAST_REFRESHED_PREFIX: "Last refreshed:",
     REFRESH: "Refresh",
@@ -217,20 +218,20 @@ export const METERING = {
     ] as const,
     LEGEND_INDICES: [0, 2, 3, 4, 5, 6] as const,
     INTENSITY_TEXT_THRESHOLD: 0.55,
-    TITLE: "Usage by tenant & service",
-    SUBTITLE_PREFIX: "Heatmap of request volume per tenant per service ·",
-    EMPTY: "No tenant × service data for the selected window.",
-    TABLE_TENANT: "Tenant",
+    TITLE: `Usage by ${INSTITUTION.toLowerCase()} & service`,
+    SUBTITLE_PREFIX: `Heatmap of request volume per ${INSTITUTION.toLowerCase()} per service ·`,
+    EMPTY: `No ${INSTITUTION.toLowerCase()} × service data for the selected window.`,
+    TABLE_TENANT: INSTITUTION,
     TABLE_TOTAL: "Total",
     FOOTER_PRIMARY:
-      "Showing Top {topN} tenants by total request volume. Adjust using the selector above.",
+      `Showing Top {topN} ${INSTITUTIONS.toLowerCase()} by total request volume. Adjust using the selector above.`,
     FOOTER_SECONDARY: "Colour intensity = request volume",
     LEGEND_LOW: "Low",
     LEGEND_HIGH: "High",
   },
   EMPTY: {
     DEFAULT: "No data available.",
-    TENANT_CONSUMPTION: "No tenant consumption data available.",
+    TENANT_CONSUMPTION: `No ${INSTITUTION.toLowerCase()} consumption data available.`,
     MODEL_CONSUMPTION: "No model consumption data available.",
     CHART: "No data available for the selected time window.",
   },
@@ -247,20 +248,20 @@ export const METERING = {
       CONCENTRATION_SUBTITLE:
         "Top 5 by request volume · reflects selected time window",
       DONUT_PRIMARY: "Top 5",
-      DONUT_SECONDARY: "tenants",
+      DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
     },
     PLATFORM_ADOPTION: {
       TITLE: "Platform adoption",
-      SUBTITLE: "Tenant overview",
+      SUBTITLE: `${INSTITUTION} overview`,
       CARDS: [
         {
           key: "total_tenants",
-          label: "Total tenants",
+          label: `Total ${INSTITUTIONS.toLowerCase()}`,
           helper: "registered on platform",
         },
-        { key: "active_24h", label: "Active tenants", helper: "last 24 hours" },
-        { key: "active_7d", label: "Active tenants", helper: "last 7 days" },
-        { key: "active_30d", label: "Active tenants", helper: "last 30 days" },
+        { key: "active_24h", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 24 hours" },
+        { key: "active_7d", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 7 days" },
+        { key: "active_30d", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 30 days" },
         {
           key: "new_tenants_7d",
           label: "New — Last 7 days",
@@ -269,7 +270,7 @@ export const METERING = {
       ] as const,
     },
     TENANT_RANKING: {
-      TITLE: "Tenant ranking",
+      TITLE: `${INSTITUTION} ranking`,
       SUBTITLE_PREFIX: "By request volume ·",
     },
     REQUEST_VOLUME: {
@@ -280,7 +281,7 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
-    // AI4IDS-2588: Model Consumption tab — per-service LLM usage from /model-consumption
+    // Model Consumption tab — per-service LLM usage from /model-consumption
     MODEL: {
       TITLE: "Model consumption",
       SUBTITLE:

@@ -38,6 +38,7 @@ export type {
 
 import type { TenantAssignableRole } from "../../types/tenant";
 import type { DefaultOrgUserRole } from "../../utils/defaultTenant";
+import { INSTITUTION } from "../../config/constants";
 
 /** Role value in tenant-user create/edit forms (regular or default-org). */
 export type TenantUserFormRole =
@@ -63,7 +64,7 @@ export interface TenantUserFormState {
 /** Assignable tenant-user roles (create/edit forms for regular tenants). */
 export const TENANT_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
-  { value: "TENANT ADMIN", label: "Tenant Admin" },
+  { value: "TENANT ADMIN", label: `${INSTITUTION} Admin` },
 ] as const satisfies ReadonlyArray<{ value: TenantAssignableRole; label: string }>;
 
 export interface EditTenantFormState {
