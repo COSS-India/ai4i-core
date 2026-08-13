@@ -105,9 +105,9 @@ import {
   formatTenantUserStatusLabel,
   getTenantStatusColorScheme,
   isTenantStatus,
-  replaceTenantCopy,
   resolveTenantUserDisplayStatus,
 } from "../../config/constants";
+import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { EMAIL_AVAILABLE_MSG } from "../../utils/tenantEmailValidation";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,

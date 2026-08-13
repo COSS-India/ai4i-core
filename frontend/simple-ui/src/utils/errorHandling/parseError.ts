@@ -18,8 +18,8 @@ import {
   SPEAKER_DIARIZATION_ERRORS,
   AUDIO_LANGUAGE_DETECTION_ERRORS,
   NER_ERRORS,
-  replaceTenantCopy,
 } from '../../config/constants';
+import { replaceTenantCopy } from '../replaceTenantCopy';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import { combineMessages, extractMessagesFromValue } from './extractMessages';
 import type { ToastType } from '../toast';
