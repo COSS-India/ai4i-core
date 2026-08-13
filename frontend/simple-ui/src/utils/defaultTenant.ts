@@ -60,9 +60,10 @@ export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
 export type DefaultOrgUserRole =
   (typeof DEFAULT_ORG_USER_ROLE_OPTIONS)[number]["value"];
 
-/** Role filter options for Default Organisation users (`roles[]` may include Program Admin). */
+/** Role filter options for Default Organisation users (`roles[]` may include Admin / Program Admin). */
 export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
   ...DEFAULT_ORG_USER_ROLE_OPTIONS,
+  { value: "ADMIN", label: "Admin" },
   { value: "PROGRAM ADMIN", label: "Program Admin" },
 ] as const;
 
@@ -123,6 +124,6 @@ export function tenantUsersToAuthUsers(rows: TenantUserView[]): User[] {
     phone_number: u.phone_number ?? undefined,
     is_active: u.is_active,
     is_tenant_active: u.is_tenant_active ?? undefined,
-    roles: u.roles?.length ? u.roles : u.role ? [u.role] : [],
+    roles: u.roles ?? [],
   }));
 }

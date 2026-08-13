@@ -49,17 +49,11 @@ export function resolvePrimaryTenantAssignableRole(
   return "USER";
 }
 
-/** Prefer `roles[]` (BE source of truth); fall back to legacy singular `role`. */
+/** Read `roles[]`. Singular `role` is normalized upstream in `tenantUserViewSchema`. */
 export function resolveTenantUserRoles(source: TenantUserRoleSource): string[] {
-  const fromArray = Array.isArray(source.roles)
+  return Array.isArray(source.roles)
     ? source.roles.map((r) => String(r).trim()).filter(Boolean)
     : [];
-  if (fromArray.length > 0) return fromArray;
-  const single = source.role;
-  if (single != null && String(single).trim()) {
-    return [String(single).trim()];
-  }
-  return [];
 }
 
 export function tenantUserHasRole(user: TenantUserView, filterRole: string): boolean {
