@@ -18,7 +18,7 @@ export function UsageSpendExpandRows({ row }: { row: TenantUsageItem }) {
     <>
       {tiers.map((tier) => (
         <Tr key={`${row.tenantId}-${tier.tierId}`} bg="gray.50">
-          <Td pl={12} colSpan={4} {...childTd}>
+          <Td pl={12} colSpan={3} {...childTd}>
             <TierBadge label={tier.tierName} />
           </Td>
           <Td {...childTd}>
@@ -26,6 +26,7 @@ export function UsageSpendExpandRows({ row }: { row: TenantUsageItem }) {
               {formatSpendMoney(tier.spend, row.currency)}
             </Text>
           </Td>
+          <Td colSpan={2} {...childTd} />
         </Tr>
       ))}
     </>

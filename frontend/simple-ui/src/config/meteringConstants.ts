@@ -92,12 +92,12 @@ export const METERING = {
     { id: "tenant", label: "Tenant Consumption" },
     // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
     { id: "model", label: "Model Usage" },
-    { id: "usage-spend", label: "Cost and Budget" },
+    { id: "usage-spend", label: "Budget and usage" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "model", label: "Model Usage" },
-    { id: "usage-spend", label: "Cost and Budget" },
+    { id: "usage-spend", label: "Budget and usage" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
@@ -113,11 +113,6 @@ export const METERING = {
     TITLE: "My Usage",
   },
   USAGE_SPEND: {
-    TITLE: "Usage and Spend",
-    ADOPTER_SUBTITLE:
-      "Monitor model task type consumption and spend across all tenants",
-    TENANT_SUBTITLE_SUFFIX:
-      "consumption and spend for the selected billing period",
     BILLING_PERIOD: "BILLING PERIOD",
     CURRENT_MONTH: "Current month",
     LAST_MONTH: "Last month",

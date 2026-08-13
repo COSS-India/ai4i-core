@@ -16,6 +16,7 @@ import {
   USAGE_SPEND_ACCENT,
   aggregateTasks,
   formatSpendMoney,
+  formatSpendUnit,
   hasPopulatedQuotaUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
@@ -70,6 +71,7 @@ function TenantUsageColumn({
         remaining={row.usage.remaining}
         percentage={row.usage.percentage}
         unit={row.usage.unit ?? ""}
+        layout="topRight"
       />
     );
   }
@@ -137,13 +139,14 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <Th {...th} w="22%">TENANT</Th>
-            <Th {...th} w="10%">TIER</Th>
-            <Th {...th} w="14%" cursor="pointer" userSelect="none" onClick={onToggleSort}>
-              SPEND <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
+            <Th {...th} w="18%">INSTITUTION</Th>
+            <Th {...th} w="8%">TIER</Th>
+            <Th {...th} w="14%">ALLOCATED BUDGET (INR)</Th>
+            <Th {...th} w="20%" cursor="pointer" userSelect="none" onClick={onToggleSort}>
+              BUDGET <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
             </Th>
-            <Th {...th} w="22%">BUDGET</Th>
-            <Th {...th} w="32%">USAGE</Th>
+            <Th {...th} w="14%">ALLOCATED TOKENS</Th>
+            <Th {...th} w="26%">TOKEN USAGE</Th>
           </Tr>
         </Thead>
         <Tbody>
@@ -186,12 +189,19 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                   </Td>
                   <Td><TierBadge label={row.tier} /></Td>
                   <Td>
-                    <Text fontWeight="bold" fontSize="14px">
-                      {formatSpendMoney(row.spend, row.currency)}
+                    <Text fontWeight="semibold" fontSize="13px">
+                      {formatSpendMoney(row.budget.limit, row.currency)}
                     </Text>
                   </Td>
                   <Td>
-                    <BudgetCell {...row.budget} currency={row.currency} />
+                    <BudgetCell {...row.budget} currency={row.currency} layout="topRight" />
+                  </Td>
+                  <Td>
+                    <Text fontWeight="semibold" fontSize="13px">
+                      {hasPopulatedQuotaUsage(row.usage) && row.usage.quotaLimit != null
+                        ? formatSpendUnit(row.usage.quotaLimit, row.usage.unit ?? "tokens")
+                        : "—"}
+                    </Text>
                   </Td>
                   <Td>
                     <TenantUsageColumn
