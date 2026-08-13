@@ -9,6 +9,7 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
 } from "@chakra-ui/react";
 import React from "react";
@@ -143,7 +144,11 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
             <Th {...th} w="8%">TIER</Th>
             <Th {...th} w="14%">ALLOCATED BUDGET (INR)</Th>
             <Th {...th} w="20%" cursor="pointer" userSelect="none" onClick={onToggleSort}>
-              BUDGET <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
+              <Tooltip label="Sorted by amount spent" hasArrow placement="top" openDelay={200}>
+                <Text as="span">
+                  BUDGET <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
+                </Text>
+              </Tooltip>
             </Th>
             <Th {...th} w="14%">ALLOCATED TOKENS</Th>
             <Th {...th} w="26%">TOKEN USAGE</Th>

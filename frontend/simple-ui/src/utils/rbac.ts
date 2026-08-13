@@ -68,7 +68,7 @@ export function canSelfDeleteAccount(roles?: string[]): boolean {
   if (isPlatformAdminUser(roles)) return false;
   if (isAdopterAdminUser(roles)) return false;
   if (userHasRole(roles, "GUEST")) return false;
-  return userHasRole(roles, "USER") || isTenantAdminUser(roles) || isProgramAdminUser(roles);
+  return userHasRole(roles, "USER") || isTenantAdminUser(roles);
 }
 
 /** Profile User Details edit — guests cannot update their profile (API denies it). */
