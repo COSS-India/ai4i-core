@@ -103,6 +103,26 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
+    async def count_distinct_active_models(self) -> int:
+        """Count of distinct model NAMES with at least one ACTIVE version.
+
+        `model_id` is `generate_model_id(name, version)` — a hash of the
+        (name, version) PAIR (see app/utils/hashing.py) — so it's unique per
+        VERSION, not per logical model; a model with 3 versions is 3 rows and
+        3 distinct model_ids. Counting rows or `COUNT(DISTINCT model_id)`
+        both over-count a versioned model. Grouping by `name` instead collapses
+        those version rows back to "how many models exist"; the ACTIVE filter
+        excludes models whose every version has been deprecated (not
+        currently available, so shouldn't count as a registered model).
+
+        Used by the metering model-consumption summary's `total_models` KPI.
+        """
+        stmt = select(func.count(func.distinct(Model.name))).where(
+            Model.version_status == VersionStatus.ACTIVE
+        )
+        result = await self._db.execute(stmt)
+        return int(result.scalar() or 0)
+
     async def list_models(
         self,
         *,

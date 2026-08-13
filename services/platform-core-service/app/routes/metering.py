@@ -414,16 +414,14 @@ def _service_consumption_summary(breakdown: Optional[dict]) -> Optional[ServiceS
 def _model_consumption_summary(
     breakdown: Optional[dict], total_models: Optional[int], most_used: Optional[dict],
 ) -> Optional[ModelConsumptionSummary]:
-    """Model Consumption KPI cards (AI4IDS-2790) — active_models/overall_success_rate_pct
-    computed over services with traffic by MeteringService.model_consumption_kpis;
-    `most_used` is model-level (pre-aggregated by MeteringService.model_consumption_ranking),
+    """Model Consumption KPI cards (AI4IDS-2790) — active_models/overall_success_rate_pct/
+    worst all computed in one pass by MeteringService.model_consumption_kpis; `most_used`
+    is model-level (pre-aggregated by MeteringService.model_consumption_ranking),
     `highest_failure_rate` stays service-level."""
     if breakdown is None:
         return None
-    services = breakdown["services"]
-    active = [s for s in services if s["requests"] > 0]
-    worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
-    kpis = MeteringService.model_consumption_kpis(services)
+    kpis = MeteringService.model_consumption_kpis(breakdown["services"])
+    worst = kpis["worst"]
 
     return ModelConsumptionSummary(
         total_models=total_models,

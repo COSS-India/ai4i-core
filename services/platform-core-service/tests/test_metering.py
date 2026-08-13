@@ -570,17 +570,17 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock())
         assert await svc.registry_model_count() is None
 
-    async def test_delegates_to_model_repo_count_models(self):
+    async def test_delegates_to_model_repo_count_distinct_active_models(self):
         repo = MagicMock()
-        repo.count_models = AsyncMock(return_value=42)
+        repo.count_distinct_active_models = AsyncMock(return_value=42)
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() == 42
-        repo.count_models.assert_awaited_once_with()
+        repo.count_distinct_active_models.assert_awaited_once_with()
 
     async def test_db_failure_returns_none_not_raises(self):
         repo = MagicMock()
-        repo.count_models = AsyncMock(side_effect=RuntimeError("db down"))
+        repo.count_distinct_active_models = AsyncMock(side_effect=RuntimeError("db down"))
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() is None
@@ -619,9 +619,8 @@ class TestModelConsumptionRanking:
         assert ranked[1]["consumption_pct"] == 25.0
         assert ranked[0]["formatted_requests"] == "300"
 
-    def test_multi_service_model_sums_requests_and_averages_consumption_pct(self):
-        # gemma: two services, 300 + 100 = 400 requests, pcts 75% and 12.5%
-        # llama: one service, 300 requests -> 37.5%
+    def test_multi_service_model_sums_requests_and_shares(self):
+        # gemma: two services, 300 + 100 = 400 requests; llama: 300 requests. grand_total=700.
         services = [
             self._svc_row("s1", "Svc 1", "gemma", 300),
             self._svc_row("s2", "Svc 2", "gemma", 100),
@@ -631,18 +630,53 @@ class TestModelConsumptionRanking:
 
         gemma = next(m for m in ranked if m["model_name"] == "gemma")
         assert gemma["requests"] == 400
-        # average of (300/700*100=42.857..., 100/700*100=14.285...) = 28.571... -> 28.57
-        assert gemma["consumption_pct"] == round((300 / 700 * 100 + 100 / 700 * 100) / 2, 2)
-        # most_used ranks by total requests, not consumption_pct -> gemma (400) beats llama (300)
+        # SHARE of grand_total, not an average of the two services' individual shares
+        # (which would be (42.857...+14.285...)/2 = 28.57 — must NOT be that).
+        assert gemma["consumption_pct"] == round(400 / 700 * 100, 2)
+        # most_used ranks by total requests -> gemma (400) beats llama (300)
         assert most_used["model_name"] == "gemma"
         assert most_used["requests"] == 400
 
-    def test_falls_back_to_service_name_when_model_name_unresolved(self):
+    def test_most_used_always_agrees_with_top_ranked_model(self):
+        """Regression for the case where ranking by an averaged per-service %
+        could crown a different model than the one with the most requests —
+        A/a1=300, A/a2=100 (400 total), B/b1=250. A must win both `most_used`
+        and rank #1, since both are now derived from the same total-requests
+        ordering."""
+        services = [
+            self._svc_row("a1", "Svc A1", "A", 300),
+            self._svc_row("a2", "Svc A2", "A", 100),
+            self._svc_row("b1", "Svc B1", "B", 250),
+        ]
+        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert most_used["model_name"] == "A"
+        assert ranked[0]["model_name"] == "A"
+        # consumption_pct values sum to 100% across the full ranked list.
+        assert round(sum(m["consumption_pct"] for m in ranked), 2) == 100.0
+
+    def test_unresolved_model_name_excluded_entirely(self):
+        """A service whose model lookup failed isn't a model here — unlike
+        the old fallback-to-service-name behaviour, it contributes to neither
+        `most_used` nor `top_models` (it still appears in the raw per-service
+        `breakdown` list elsewhere, just not in this model-level view)."""
+        services = [
+            self._svc_row("s1", "Svc 1", "gemma", 50),
+            self._svc_row("s2", "Orphan Service", None, 500),
+        ]
+        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert most_used["model_name"] == "gemma"
+        assert [m["model_name"] for m in ranked] == ["gemma"]
+        # grand_total only counts resolved-model services, so gemma is 100% of it.
+        assert ranked[0]["consumption_pct"] == 100.0
+
+    def test_all_unresolved_returns_empty(self):
         services = [self._svc_row("s1", "Orphan Service", None, 50)]
         most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
 
-        assert most_used["model_name"] == "Orphan Service"
-        assert ranked[0]["model_name"] == "Orphan Service"
+        assert most_used is None
+        assert ranked == []
 
     def test_limit_caps_ranked_list(self):
         services = [
@@ -664,8 +698,8 @@ class TestModelConsumptionRanking:
 
 
 class TestModelConsumptionKpis:
-    """AI4IDS-2790 — overall_success_rate_pct is a PLAIN average of each
-    active service's success_pct, not weighted by request volume."""
+    """AI4IDS-2790 — overall_success_rate_pct is REQUEST-WEIGHTED (matches the
+    FE's existing fallback formula), not a plain average across services."""
 
     def _row(self, service_id, name, model_name, requests, success_pct):
         return {
@@ -677,14 +711,14 @@ class TestModelConsumptionKpis:
             "success_pct": success_pct,
         }
 
-    def test_plain_average_not_weighted_by_requests(self):
-        # Weighted would give (900*100 + 100*50) / 1000 = 95.0 — must NOT be that.
+    def test_request_weighted_not_plain_average(self):
+        # Plain average would give (100+50)/2 = 75.0 — must NOT be that.
         services = [
             self._row("s1", "Svc 1", "gemma", 900, 100.0),
             self._row("s2", "Svc 2", "llama", 100, 50.0),
         ]
         kpis = MeteringService.model_consumption_kpis(services)
-        assert kpis["overall_success_rate_pct"] == 75.0
+        assert kpis["overall_success_rate_pct"] == 95.0
 
     def test_zero_request_services_excluded_from_average(self):
         services = [
@@ -694,11 +728,14 @@ class TestModelConsumptionKpis:
         kpis = MeteringService.model_consumption_kpis(services)
         assert kpis["overall_success_rate_pct"] == 80.0
 
-    def test_no_traffic_gives_none(self):
+    def test_no_traffic_gives_none_rate_but_zero_active_models(self):
+        """0 is a real answer for active_models ("no models were active");
+        only overall_success_rate_pct is genuinely undefined with no data."""
         services = [self._row("s1", "Svc 1", "gemma", 0, 0.0)]
         kpis = MeteringService.model_consumption_kpis(services)
         assert kpis["overall_success_rate_pct"] is None
         assert kpis["active_models"] == 0
+        assert kpis["worst"] is None
 
     def test_active_models_counts_distinct_resolved_model_names(self):
         services = [
@@ -709,6 +746,15 @@ class TestModelConsumptionKpis:
         ]
         kpis = MeteringService.model_consumption_kpis(services)
         assert kpis["active_models"] == 2
+
+    def test_worst_picks_highest_failure_rate_among_active(self):
+        services = [
+            self._row("s1", "Svc 1", "gemma", 100, 90.0),   # 10% failure
+            self._row("s2", "Svc 2", "llama", 50, 60.0),    # 40% failure — worst
+            self._row("s3", "Svc 3", "idle-model", 0, 0.0),  # no traffic -> excluded
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["worst"]["service_id"] == "s2"
 
 
 @pytest.mark.asyncio

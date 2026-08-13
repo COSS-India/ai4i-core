@@ -463,9 +463,10 @@ class MeteringService:
         }
 
     async def registry_model_count(self) -> Optional[int]:
-        """Total number of models in the Registry (``mm_models`` — one row per
-        (model_id, version), same definition ModelService.list_models uses for
-        its own "total" count).
+        """Distinct models currently registered in the Registry — see
+        ModelRepository.count_distinct_active_models for why this is a
+        distinct-name/ACTIVE-only count rather than a raw `mm_models` row
+        count (which would over-count a model with several versions).
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -477,7 +478,7 @@ class MeteringService:
         if self._model_repo is None:
             return None
         try:
-            return await self._model_repo.count_models()
+            return await self._model_repo.count_distinct_active_models()
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
@@ -488,47 +489,48 @@ class MeteringService:
         model-level, for the Model Consumption summary's `most_used` KPI and
         the `top_models` ranking (AI4IDS-2790).
 
-        Grouping key is `model_name` when resolved, else the service's own
-        display `name` — so a service whose model lookup failed still
-        contributes to the ranking instead of being silently dropped.
+        Only services with a RESOLVED `model_name` are counted — the same
+        population `model_consumption_kpis`'s `active_models` counts. A
+        service whose model lookup failed isn't an identifiable Registry
+        model, so it can't be one on this ranking either; it still appears
+        in the raw per-service `breakdown` list, just not here.
 
-        consumption_pct per service = requests / grand_total * 100 (grand_total
-        over services with traffic only). A model backed by >1 service reports
-        the AVERAGE of its services' consumption_pct (per AC — not the sum) and
-        the SUM of their request counts.
+        consumption_pct per model = this model's total requests / grand_total
+        * 100 — its SHARE of total requests among resolved-model services
+        (grand_total). A model backed by >1 service is the SUM of those
+        services' requests (equivalently, the sum of their individual
+        shares) — not an average — which keeps two things true:
+          - consumption_pct values sum to 100% across the full ranked list, and
+          - `most_used` and `top_models[0]` always name the same model, since
+            both rank on total requests (dividing by the same grand_total
+            preserves order).
 
-        Returns (most_used, ranked) where `most_used` is the model-level dict
-        with the highest `requests` and `ranked` is every model sorted by
-        `consumption_pct` descending, capped to `limit` and rank-numbered —
-        both None/[] when there's no traffic at all.
+        Returns (most_used, ranked) — both None/[] when there's no traffic
+        from any resolved-model service.
         """
-        active = [s for s in services if s["requests"] > 0]
+        active = [s for s in services if s["requests"] > 0 and s.get("model_name")]
         grand_total = sum(s["requests"] for s in active)
         if not active or not grand_total:
             return None, []
 
-        groups: dict[str, dict] = {}
+        totals: dict[str, int] = {}
         for s in active:
-            key = s.get("model_name") or s["name"]
-            pct = s["requests"] / grand_total * 100
-            g = groups.setdefault(key, {"model_name": key, "requests": 0, "pcts": []})
-            g["requests"] += s["requests"]
-            g["pcts"].append(pct)
+            totals[s["model_name"]] = totals.get(s["model_name"], 0) + s["requests"]
 
         ranked = sorted(
             (
                 {
-                    "model_name": g["model_name"],
-                    "requests": g["requests"],
-                    "consumption_pct": round(sum(g["pcts"]) / len(g["pcts"]), 2),
+                    "model_name": name,
+                    "requests": reqs,
+                    "consumption_pct": round(reqs / grand_total * 100, 2),
                 }
-                for g in groups.values()
+                for name, reqs in totals.items()
             ),
-            key=lambda m: m["consumption_pct"],
+            key=lambda m: m["requests"],
             reverse=True,
         )
 
-        most_used = max(ranked, key=lambda m: m["requests"])
+        most_used = ranked[0]
 
         top = [
             {**m, "rank": idx + 1, "formatted_requests": MeteringService._format_count(m["requests"])}
@@ -539,25 +541,39 @@ class MeteringService:
     @staticmethod
     def model_consumption_kpis(services: list[dict]) -> dict:
         """Scalar KPIs for the Model Consumption summary (AI4IDS-2790), computed
-        over services with traffic:
+        over services with traffic (`requests > 0`):
 
-        - `active_models`: count of DISTINCT resolved Registry model names
-          (services whose `model_name` lookup failed are not counted here —
-          unlike model_consumption_ranking, which falls back to the service's
-          own name so it isn't silently dropped from the ranking).
-        - `overall_success_rate_pct`: the PLAIN (unweighted) average of each
-          active service's `success_pct` — per AC, NOT weighted by request
-          volume, so a low-traffic service counts the same as a high-traffic one.
-
-        Both are None when there's no traffic at all.
+        - `active_models`: count of DISTINCT resolved Registry model names —
+          the same population `model_consumption_ranking` groups by (a
+          service whose model lookup failed isn't a model here either).
+          Always an int; 0 (not None) when there's no traffic at all — 0 is
+          itself a real, meaningful answer ("no models were active"), unlike
+          `overall_success_rate_pct`, which is genuinely undefined with no
+          data to average.
+        - `overall_success_rate_pct`: REQUEST-WEIGHTED success rate across
+          all services with traffic — sum(requests * success_pct) /
+          sum(requests) — matching the FE's existing (previously dormant)
+          fallback formula, so this field doesn't silently change what the
+          dashboard already shows once populated. None when there's no
+          traffic to average over.
+        - `worst`: the active service with the highest failure rate — raw
+          dict, consumed by the caller to build `highest_failure_rate`
+          (which stays service-level, not aggregated to model-level). None
+          when there's no traffic.
         """
         active = [s for s in services if s["requests"] > 0]
         active_models = len({s["model_name"] for s in active if s.get("model_name")})
+        total_requests = sum(s["requests"] for s in active)
         overall_success_rate_pct = (
-            round(sum(s["success_pct"] for s in active) / len(active), 2)
-            if active else None
+            round(sum(s["requests"] * s["success_pct"] for s in active) / total_requests, 2)
+            if total_requests else None
         )
-        return {"active_models": active_models, "overall_success_rate_pct": overall_success_rate_pct}
+        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+        return {
+            "active_models": active_models,
+            "overall_success_rate_pct": overall_success_rate_pct,
+            "worst": worst,
+        }
 
     async def tenant_ranking(
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
