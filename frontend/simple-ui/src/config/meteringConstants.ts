@@ -55,10 +55,11 @@ export const METERING = {
       AVG_RPS: "avg_rps",
     },
     LABELS: {
-      avg_rps: "Avg RPS",
+      total_requests: "Total LLM Requests",
+      avg_rps: "Average RPS",
     },
     HELPERS: {
-      total_requests: `across all services and ${INSTITUTIONS.toLowerCase()}`,
+      total_requests: `across all ${INSTITUTIONS.toLowerCase()}`,
       successful: "of all requests",
       failed: "of all requests",
       avg_rps: "requests per second",
@@ -135,15 +136,6 @@ export const METERING = {
       "#B7791F",
       "#4FD1C5",
     ] as const,
-    HEATMAP: [
-      "#FFFAF5",
-      "#FFF7ED",
-      "#FFEDD5",
-      "#FED7AA",
-      "#FDBA74",
-      "#FB923C",
-      "#EA580C",
-    ] as const,
     SERVICE: {
       nmt: "#38A169",
       asr: "#FF7A61",
@@ -184,50 +176,6 @@ export const METERING = {
       TOOLTIP_BORDER: "#E2E8F0",
       DONUT_STROKE: "#FFFFFF",
     } as const,
-    HEATMAP_TEXT_HIGH: "#FFFFFF",
-  },
-  HEATMAP: {
-    SERVICES: [
-      { key: "nmt", shortLabel: "NMT", displayName: "NMT" },
-      { key: "asr", shortLabel: "ASR", displayName: "ASR" },
-      { key: "tts", shortLabel: "TTS", displayName: "TTS" },
-      { key: "llm", shortLabel: "LLM", displayName: "LLM" },
-      { key: "ocr", shortLabel: "OCR", displayName: "OCR" },
-      {
-        key: "transliteration",
-        shortLabel: "Translit",
-        displayName: "Transliteration",
-      },
-      { key: "pipeline", shortLabel: "Pipeline", displayName: "Pipeline" },
-      { key: "ner", shortLabel: "NER", displayName: "NER" },
-      {
-        key: "language_detection",
-        shortLabel: "Text LD",
-        displayName: "Language Detection",
-      },
-      {
-        key: "audio_language_detection",
-        shortLabel: "Audio LD",
-        displayName: "Audio Language Detection",
-      },
-      {
-        key: "speaker_diarization",
-        shortLabel: "Spk. Diar.",
-        displayName: "Speaker Diarization",
-      },
-    ] as const,
-    LEGEND_INDICES: [0, 2, 3, 4, 5, 6] as const,
-    INTENSITY_TEXT_THRESHOLD: 0.55,
-    TITLE: `Usage by ${INSTITUTION.toLowerCase()} & service`,
-    SUBTITLE_PREFIX: `Heatmap of request volume per ${INSTITUTION.toLowerCase()} per service ·`,
-    EMPTY: `No ${INSTITUTION.toLowerCase()} × service data for the selected window.`,
-    TABLE_TENANT: INSTITUTION,
-    TABLE_TOTAL: "Total",
-    FOOTER_PRIMARY:
-      `Showing Top {topN} ${INSTITUTIONS.toLowerCase()} by total request volume. Adjust using the selector above.`,
-    FOOTER_SECONDARY: "Colour intensity = request volume",
-    LEGEND_LOW: "Low",
-    LEGEND_HIGH: "High",
   },
   EMPTY: {
     DEFAULT: "No data available.",
@@ -242,11 +190,9 @@ export const METERING = {
   },
   SECTIONS: {
     CONSUMPTION_OVERVIEW: {
-      TITLE: "Consumption overview",
-      SUBTITLE_SUFFIX: "reflects selected time window ·",
-      CONCENTRATION_TITLE: "Usage concentration",
-      CONCENTRATION_SUBTITLE:
-        "Top 5 by request volume · reflects selected time window",
+      TITLE: "Usage concentration",
+      SUBTITLE:
+        "Top 5 Institutions by request volume · reflects selected time window",
       DONUT_PRIMARY: "Top 5",
       DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
     },
@@ -264,7 +210,7 @@ export const METERING = {
         { key: "active_30d", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 30 days" },
         {
           key: "new_tenants_7d",
-          label: "New — Last 7 days",
+          label: `New ${INSTITUTIONS.toLowerCase()}`,
           helper: "onboarded in last 7 days",
         },
       ] as const,
@@ -272,6 +218,11 @@ export const METERING = {
     TENANT_RANKING: {
       TITLE: `${INSTITUTION} ranking`,
       SUBTITLE_PREFIX: "By request volume ·",
+      TABLE_RANK: "Rank",
+      TABLE_INSTITUTION: INSTITUTION,
+      TABLE_REQUESTS: "Requests",
+      TABLE_SHARE: "Share",
+      AVG_REQUESTS_LABEL: `Average Requests Per Active ${INSTITUTION}`,
     },
     REQUEST_VOLUME: {
       TITLE: "Request volume & health",
@@ -302,7 +253,8 @@ export const METERING = {
       TABLE_FAILURE: "Failure rate %",
     },
     RANKED_SHARE: {
-      HEADER_LEFT: "Request volume & share",
+      HEADER_LEFT: INSTITUTION,
+      HEADER_TOTAL_REQUESTS: "Total requests",
       HEADER_RIGHT: "% of total",
     },
   },
@@ -321,8 +273,5 @@ export const METERING = {
     "Language Diarization": "language-diarization",
   } as const,
 } as const;
-
-export type MeteringHeatmapServiceKey =
-  (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 
 export type MeteringSubTab = (typeof METERING.SUB_TABS)[number]["id"];

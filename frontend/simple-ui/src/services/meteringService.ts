@@ -93,12 +93,10 @@ export async function fetchMeteringOverview(
 export async function fetchMeteringTenantConsumption(
   timeWindow: MeteringWindow,
   limit: MeteringTopN,
-  taskTypes?: string[] | null,
   tenantId?: string | null,
 ): Promise<TenantConsumptionResponse> {
   const extra: Record<string, string> = { limit: String(limit) };
   const params = new URLSearchParams({ window: timeWindow, ...extra });
-  appendTaskTypesParam(params, taskTypes);
   if (tenantId?.trim()) {
     params.set("tenant_id", tenantId.trim());
   }

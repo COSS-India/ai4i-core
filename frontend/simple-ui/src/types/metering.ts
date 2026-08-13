@@ -104,28 +104,10 @@ export interface OverviewResponse extends MeteringResponseMeta {
   throughput?: ThroughputData;
 }
 
-export interface ServiceEntry {
-  display_name: string;
-  requests: number;
-  formatted_requests: string;
-  percentage: number;          // this service's share of the tenant's total (row %)
-}
-
-export interface TenantServiceRow {
-  rank: number;
-  tenant: string;
-  organisation?: string | null;
-  services: Record<string, ServiceEntry>;
-  total: number;
-  formatted_total: string;
-  percentage: number;          // this tenant's share of all tenants' total (grand %)
-}
-
 export interface TenantConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
   avg_requests_per_tenant?: MeteringCell | null;   // KPI card shown above the ranking
   tenant_ranking: TenantRow[];
-  usage_by_service: TenantServiceRow[];
   throughput?: ThroughputData;
   request_volume?: MeteringGraph | null;
 }

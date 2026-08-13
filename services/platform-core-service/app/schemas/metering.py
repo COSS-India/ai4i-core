@@ -79,22 +79,6 @@ class PlatformAdoption(BaseModel):
     active_30d: Optional[int] = None
 
 
-class ServiceEntry(BaseModel):
-    display_name: str
-    requests: int
-    formatted_requests: str
-    percentage: float = 0.0       # this service's share of the tenant's total (row %)
-
-
-class TenantServiceRow(BaseModel):
-    rank: int
-    tenant: str
-    services: dict[str, ServiceEntry]
-    total: int
-    formatted_total: str
-    percentage: float = 0.0       # this tenant's share of all tenants' total (grand %)
-
-
 class MostUsedService(BaseModel):
     service: Optional[str] = None
     requests: int = 0
@@ -156,7 +140,6 @@ class TenantConsumptionResponse(BaseModel):
     scope: Scope
     avg_requests_per_tenant: Optional[Cell] = None   # KPI card shown above the ranking
     tenant_ranking: list[TenantRow]
-    usage_by_service: list[TenantServiceRow]
     degraded: bool = False
     generated_at: str
 
