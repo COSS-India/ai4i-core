@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.model_management.model_repository import ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.utils.prometheus_client import PrometheusClient
 from app.utils.metering_promql_builder import (
@@ -33,10 +34,12 @@ class MeteringService:
         client: PrometheusClient,
         auth_db: Optional[AsyncSession] = None,
         service_repo: Optional[ServiceRepository] = None,
+        model_repo: Optional[ModelRepository] = None,
     ) -> None:
         self._client = client
         self._auth_db = auth_db
         self._service_repo = service_repo
+        self._model_repo = model_repo
 
     # ── public methods ──────────────────────────────────────────────────────
 
@@ -458,6 +461,103 @@ class MeteringService:
             "services": services,
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
+
+    async def registry_model_count(self) -> Optional[int]:
+        """Total number of models in the Registry (``mm_models`` — one row per
+        (model_id, version), same definition ModelService.list_models uses for
+        its own "total" count).
+
+        Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
+        a shared catalog, not partitioned per institution — so this value is
+        the same platform-wide regardless of the caller's tenant_id. Returns
+        None (never raises) when the DB is unavailable, same pattern as
+        tenant_count(), so a Registry lookup failure degrades this one summary
+        field instead of the whole response.
+        """
+        if self._model_repo is None:
+            return None
+        try:
+            return await self._model_repo.count_models()
+        except Exception:
+            logger.warning("registry_model_count: DB query failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def model_consumption_ranking(services: list[dict], limit: int) -> tuple[Optional[dict], list[dict]]:
+        """Aggregate the service-level rows from `model_breakdown` up to
+        model-level, for the Model Consumption summary's `most_used` KPI and
+        the `top_models` ranking (AI4IDS-2790).
+
+        Grouping key is `model_name` when resolved, else the service's own
+        display `name` — so a service whose model lookup failed still
+        contributes to the ranking instead of being silently dropped.
+
+        consumption_pct per service = requests / grand_total * 100 (grand_total
+        over services with traffic only). A model backed by >1 service reports
+        the AVERAGE of its services' consumption_pct (per AC — not the sum) and
+        the SUM of their request counts.
+
+        Returns (most_used, ranked) where `most_used` is the model-level dict
+        with the highest `requests` and `ranked` is every model sorted by
+        `consumption_pct` descending, capped to `limit` and rank-numbered —
+        both None/[] when there's no traffic at all.
+        """
+        active = [s for s in services if s["requests"] > 0]
+        grand_total = sum(s["requests"] for s in active)
+        if not active or not grand_total:
+            return None, []
+
+        groups: dict[str, dict] = {}
+        for s in active:
+            key = s.get("model_name") or s["name"]
+            pct = s["requests"] / grand_total * 100
+            g = groups.setdefault(key, {"model_name": key, "requests": 0, "pcts": []})
+            g["requests"] += s["requests"]
+            g["pcts"].append(pct)
+
+        ranked = sorted(
+            (
+                {
+                    "model_name": g["model_name"],
+                    "requests": g["requests"],
+                    "consumption_pct": round(sum(g["pcts"]) / len(g["pcts"]), 2),
+                }
+                for g in groups.values()
+            ),
+            key=lambda m: m["consumption_pct"],
+            reverse=True,
+        )
+
+        most_used = max(ranked, key=lambda m: m["requests"])
+
+        top = [
+            {**m, "rank": idx + 1, "formatted_requests": MeteringService._format_count(m["requests"])}
+            for idx, m in enumerate(ranked[:limit])
+        ]
+        return most_used, top
+
+    @staticmethod
+    def model_consumption_kpis(services: list[dict]) -> dict:
+        """Scalar KPIs for the Model Consumption summary (AI4IDS-2790), computed
+        over services with traffic:
+
+        - `active_models`: count of DISTINCT resolved Registry model names
+          (services whose `model_name` lookup failed are not counted here —
+          unlike model_consumption_ranking, which falls back to the service's
+          own name so it isn't silently dropped from the ranking).
+        - `overall_success_rate_pct`: the PLAIN (unweighted) average of each
+          active service's `success_pct` — per AC, NOT weighted by request
+          volume, so a low-traffic service counts the same as a high-traffic one.
+
+        Both are None when there's no traffic at all.
+        """
+        active = [s for s in services if s["requests"] > 0]
+        active_models = len({s["model_name"] for s in active if s.get("model_name")})
+        overall_success_rate_pct = (
+            round(sum(s["success_pct"] for s in active) / len(active), 2)
+            if active else None
+        )
+        return {"active_models": active_models, "overall_success_rate_pct": overall_success_rate_pct}
 
     async def tenant_ranking(
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None

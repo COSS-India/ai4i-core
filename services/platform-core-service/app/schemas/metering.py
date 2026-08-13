@@ -123,6 +123,9 @@ class ServiceModelRow(BaseModel):
 
 
 class MostUsedModel(BaseModel):
+    """Model-level (not service-level) — ``requests`` is the sum across every
+    service backed by this model. ``service_id`` is omitted (None) since a
+    model can be fronted by more than one service."""
     service_id: Optional[str] = None
     name: Optional[str] = None
     requests: int = 0
@@ -134,8 +137,26 @@ class HighestFailureModel(BaseModel):
     failure_rate_pct: float = 0.0
 
 
+class TopModelRow(BaseModel):
+    """One row of the model-level consumption ranking (AI4IDS-2790).
+
+    ``consumption_pct`` is this model's share of total requests in the
+    window; when more than one service backs the model, it's the AVERAGE of
+    those services' individual consumption % (per AC), not the sum.
+    ``requests`` is the SUM of requests across the model's service(s).
+    """
+    rank: int
+    model_name: str
+    consumption_pct: float
+    requests: int
+    formatted_requests: str
+
+
 class ModelConsumptionSummary(BaseModel):
     """Model Consumption KPI cards (computed over services with traffic)."""
+    total_models: Optional[int] = None      # total models in the Registry (mm_models); platform-wide — see note in metering_service.registry_model_count
+    active_models: Optional[int] = None     # distinct Registry models with >=1 service that had traffic in the window
+    overall_success_rate_pct: Optional[float] = None  # plain average of success_pct across services with traffic — unweighted by request volume
     most_used: Optional[MostUsedModel] = None
     highest_failure_rate: Optional[HighestFailureModel] = None
 
@@ -172,6 +193,7 @@ class ServiceConsumptionResponse(BaseModel):
 class ModelConsumptionResponse(BaseModel):
     scope: Scope
     summary: Optional[ModelConsumptionSummary] = None
+    top_models: list[TopModelRow] = []   # ranked by consumption_pct desc; FE slices to Top 5 / Top 10
     breakdown: list[ServiceModelRow]
     degraded: bool = False
     generated_at: str
