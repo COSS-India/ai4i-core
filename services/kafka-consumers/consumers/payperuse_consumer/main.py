@@ -168,7 +168,7 @@ async def run() -> None:
         # asynchronous=False: block until the broker has acked the commit,
         # matching the previous AIOConsumer.commit()'s await semantics —
         # the default (asynchronous=True) would return immediately and
-        # completinit_databasee the round-trip in the background, which would let us
+        # complete the round-trip in the background, which would let us
         # clear pending_offsets before the commit is actually durable.
         await loop.run_in_executor(
             _kafka_executor,
