@@ -32,6 +32,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
+import { confirmCopy } from "../../utils/institutionCopy";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
 import { useAdminTableSurface } from "../common/TableControls";
@@ -204,7 +205,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   };
 
   const handleDeleteTenantMapping = async (tenantId: string, onSuccess?: () => void) => {
-    if (typeof window !== "undefined" && !window.confirm(`Remove mapping for tenant "${tenantId}"?`))
+    if (typeof window !== "undefined" && !confirmCopy(`Remove mapping for tenant "${tenantId}"?`))
       return;
     try {
       await piiService.deleteTenantDomainMapping(tenantId);

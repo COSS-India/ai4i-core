@@ -16,6 +16,7 @@ import type {
   ModalBodyProps,
   ModalFooterProps,
 } from "@chakra-ui/react";
+import { formatInstitutionCopy } from "../../utils/institutionCopy";
 
 type StandardModalSize = "xs" | "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl" | "6xl" | "full";
 
@@ -72,7 +73,7 @@ export default function StandardModal({
       <ModalContent borderRadius="lg" {...contentProps}>
         {!hideHeader && (
           <ModalHeader pb={3} {...headerProps}>
-            {title}
+            {typeof title === "string" ? formatInstitutionCopy(title) : title}
           </ModalHeader>
         )}
         {!hideCloseButton && <ModalCloseButton />}

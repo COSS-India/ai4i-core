@@ -36,7 +36,7 @@ const serviceIdOf = (service: TryItSelectable): string =>
   service.serviceId || service.service_id || '';
 
 /**
- * AI4IDS-2704: Prefer the service flagged `isTryItDefault`; otherwise use
+ * Prefer the service flagged `isTryItDefault`; otherwise use
  * `fallbackPick` (today's deterministic pick) so Try-It never goes blank.
  * If multiple services are flagged, tie-break with lowest service id so the
  * pick does not depend on API response order. Returns at most one service.

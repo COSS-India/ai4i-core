@@ -4,6 +4,7 @@
  */
 import { useEffect, useCallback, useRef } from "react";
 import { useToast, type UseToastOptions } from "@chakra-ui/react";
+import { formatInstitutionCopy } from "./institutionCopy";
 
 export type ToastType = "success" | "error" | "warning" | "info";
 
@@ -54,9 +55,23 @@ function shouldSkipDuplicateToast(key: string): boolean {
   return false;
 }
 
+function copyToastOptions(options: UseToastOptions): UseToastOptions {
+  return {
+    ...options,
+    title:
+      typeof options.title === "string"
+        ? formatInstitutionCopy(options.title)
+        : options.title,
+    description:
+      typeof options.description === "string"
+        ? formatInstitutionCopy(options.description)
+        : options.description,
+  };
+}
+
 function showGlobalToast(options: UseToastOptions): void {
   if (typeof window === "undefined") return;
-  const merged = { ...DEFAULT_OPTIONS, ...options };
+  const merged = copyToastOptions({ ...DEFAULT_OPTIONS, ...options });
 
   if (globalToast) {
     globalToast(merged);
@@ -118,7 +133,7 @@ export function useToastWithDeduplication() {
 
       const toastId = toast({
         ...DEFAULT_OPTIONS,
-        ...options,
+        ...copyToastOptions(options),
         onCloseComplete: cleanup,
       });
       const toastDuration =

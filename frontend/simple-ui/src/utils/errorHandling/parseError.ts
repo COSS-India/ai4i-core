@@ -21,6 +21,7 @@ import {
 } from '../../config/constants';
 import { ApiValidationError } from '../../services/dto/apiValidationError';
 import { combineMessages, extractMessagesFromValue } from './extractMessages';
+import { formatInstitutionCopy } from '../institutionCopy';
 import type { ToastType } from '../toast';
 
 export type { ToastType };
@@ -235,10 +236,18 @@ function resolveDetailObjectMessage(detail: Record<string, unknown>): string | n
   return messages[0] ?? String(detail.message);
 }
 
+function withInstitutionCopy(info: ErrorInfo): ErrorInfo {
+  return {
+    ...info,
+    title: formatInstitutionCopy(info.title),
+    message: formatInstitutionCopy(info.message),
+  };
+}
+
 /**
  * Service-aware error parser (replaces extractErrorInfo).
  */
-export function parseError(error: unknown, options?: ParseErrorOptions): ErrorInfo {
+function parseErrorRaw(error: unknown, options?: ParseErrorOptions): ErrorInfo {
   const service = options?.service;
   let errorMessage = DEFAULT_ERROR_MESSAGE;
   let errorTitle = 'Error';
@@ -384,6 +393,10 @@ export function parseError(error: unknown, options?: ParseErrorOptions): ErrorIn
   return { title: errorTitle, message: errorMessage, showOnlyMessage: false };
 }
 
+export function parseError(error: unknown, options?: ParseErrorOptions): ErrorInfo {
+  return withInstitutionCopy(parseErrorRaw(error, options));
+}
+
 /** @deprecated Use parseError */
 export const extractErrorInfo = parseError;
 
@@ -395,7 +408,7 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     if (error instanceof ApiValidationError) {
       return {
         title: 'API Contract Mismatch',
-        message: error.message,
+        message: formatInstitutionCopy(error.message),
         statusCode: null,
         type: 'error',
       };
@@ -422,15 +435,15 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     if (isNetworkError(error) && messages.length === 0) {
       return {
         title: 'Network connection lost',
-        message: NETWORK_ERROR_MESSAGE,
+        message: formatInstitutionCopy(NETWORK_ERROR_MESSAGE),
         statusCode,
         type: 'error',
       };
     }
 
     return {
-      title: getTitleForStatusCode(statusCode),
-      message: combineMessages(messages) || GENERIC_FALLBACK_MESSAGE,
+      title: formatInstitutionCopy(getTitleForStatusCode(statusCode)),
+      message: formatInstitutionCopy(combineMessages(messages) || GENERIC_FALLBACK_MESSAGE),
       statusCode,
       type: statusToToastType(statusCode),
     };
@@ -440,7 +453,7 @@ export function parseApiError(error: unknown, _options?: ParseErrorOptions): Par
     }
     return {
       title: UNKNOWN_ERROR_TITLE,
-      message: GENERIC_FALLBACK_MESSAGE,
+      message: formatInstitutionCopy(GENERIC_FALLBACK_MESSAGE),
       statusCode: null,
       type: 'error',
     };

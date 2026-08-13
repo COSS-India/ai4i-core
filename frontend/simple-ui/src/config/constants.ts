@@ -939,7 +939,7 @@ export const TABS = {
   home: "home",
   modelManagement: "model-management",
   servicesManagement: "services-management",
-  tenantManagement: "tenant-management",
+  tenantManagement: "institution-management",
   apiKeyManagement: "api-key-management",
   logs: "logs",
   usageDashboard: "usage-dashboard",
@@ -1416,7 +1416,7 @@ export function formatModelTaskTypeLabel(taskType: string): string {
 /** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
 export const MODEL_API_KEY_REDACTED = "[REDACTED]";
 
-/** ULCA field length limits (AI4IDS-2478) — used for client-side create validation. */
+/** ULCA field length limits — used for client-side create validation. */
 export const MODEL_FIELD_LIMITS = {
   NAME_MIN: 5,
   NAME_MAX: 100,

@@ -1,5 +1,5 @@
 /**
- * Default Organisation user roles (AI4IDS-2735).
+ * Default Organisation user roles.
  * Tenant-user API only accepts USER | TENANT ADMIN; Moderator/Guest go via role API.
  */
 

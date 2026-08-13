@@ -1,5 +1,5 @@
 // Create/Edit Service tab: single form shared between create and edit modes
-// Field order & LLM vs non-LLM Service ID behavior: AI4IDS-2692
+// Field order & LLM vs non-LLM Service ID behavior
 import {
   Box,
   Button,
@@ -33,7 +33,7 @@ import type { Service } from "../../services/servicesManagementService";
 import type { ModelDetails } from "../../types/platform";
 import type { Tier } from "../../types/tierManagement";
 
-/** Billing unit-size presets shown as a dropdown (AI4IDS-2692). */
+/** Billing unit-size presets shown as a dropdown. */
 export const UNIT_SIZE_OPTIONS = ["1", "100", "1000", "1000000"] as const;
 
 /** Currency reference list for the create form. */

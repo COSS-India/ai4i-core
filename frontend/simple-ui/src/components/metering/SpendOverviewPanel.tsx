@@ -373,7 +373,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   return (
     <Flex gap={4} direction={{ base: "column", md: "row" }} align="stretch">
       {leftPanel}
-      {/* AI4IDS-2602: SPEND BY MODEL TASK TYPE removed from adopter Usage & Spend.
+      {/* SPEND BY MODEL TASK TYPE removed from adopter Usage & Spend.
           UNDO — restore the panel below (and keep spendBody / donut logic above).
       <Box flex={1} bg="white" borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="20px 24px">
         <Text fontSize="12px" letterSpacing="0.04em" color="gray.600" fontWeight="semibold" mb={4}>

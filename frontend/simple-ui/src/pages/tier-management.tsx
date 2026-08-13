@@ -5,6 +5,7 @@ import React, { useEffect } from "react";
 import { useToastWithDeduplication } from "../utils/toast";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import { formatInstitutionCopy } from "../utils/institutionCopy";
 import TierManagement from "../components/tier-management/TierManagement";
 import { useAuth } from "../hooks/useAuth";
 import { useAdminTableSurface } from "../components/common/TableControls";
@@ -70,7 +71,7 @@ const TierManagementPage: React.FC = () => {
     <>
       <Head>
         <title>Tier Management - AI4I Platform</title>
-        <meta name="description" content="Configure tiers for tenant access" />
+        <meta name="description" content={formatInstitutionCopy("Configure tiers for tenant access")} />
       </Head>
 
       <ContentLayout>

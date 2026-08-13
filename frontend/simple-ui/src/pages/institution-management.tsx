@@ -1,7 +1,6 @@
 import {
   Box,
   Center,
-  Heading,
   Spinner,
   Text,
   VStack,
@@ -13,8 +12,9 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import TenantManagementTab from "../components/profile/TenantManagementTab";
+import { formatInstitutionCopy } from "../utils/institutionCopy";
 
-const TenantManagementPage: React.FC = () => {
+const InstitutionManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
@@ -22,13 +22,13 @@ const TenantManagementPage: React.FC = () => {
   const isTenantAdmin = Boolean(
     user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN")
   );
-  const showTenantManagement = isAdmin || isTenantAdmin;
+  const showInstitutionManagement = isAdmin || isTenantAdmin;
 
   React.useEffect(() => {
-    if (!authLoading && (!isAuthenticated || !showTenantManagement)) {
+    if (!authLoading && (!isAuthenticated || !showInstitutionManagement)) {
       router.push("/");
     }
-  }, [isAuthenticated, authLoading, showTenantManagement, router]);
+  }, [isAuthenticated, authLoading, showInstitutionManagement, router]);
 
   if (authLoading) {
     return (
@@ -40,7 +40,7 @@ const TenantManagementPage: React.FC = () => {
     );
   }
 
-  if (!isAuthenticated || !showTenantManagement) {
+  if (!isAuthenticated || !showInstitutionManagement) {
     return (
       <ContentLayout>
         <Center h="400px">
@@ -56,8 +56,8 @@ const TenantManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Tenant Management - AI4I Platform</title>
-        <meta name="description" content="Manage tenants and tenant users" />
+        <title>{formatInstitutionCopy("Tenant Management")} - AI4I Platform</title>
+        <meta name="description" content={formatInstitutionCopy("Manage tenants and tenant users")} />
       </Head>
 
       <ContentLayout>
@@ -73,4 +73,4 @@ const TenantManagementPage: React.FC = () => {
   );
 };
 
-export default TenantManagementPage;
+export default InstitutionManagementPage;

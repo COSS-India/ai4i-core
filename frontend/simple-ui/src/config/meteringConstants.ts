@@ -35,7 +35,7 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
-    /** AI4IDS-2719: Tenant Admin lands on Overview (same as Adopter Admin). */
+    /** Tenant Admin lands on Overview (same as Adopter Admin). */
     TENANT_SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
@@ -90,7 +90,7 @@ export const METERING = {
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: "Tenant Consumption" },
-    // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
+    // Extra tab — per-service LLM via /model-consumption
     { id: "model", label: "Model Usage" },
     { id: "usage-spend", label: "Budget and usage" },
   ] as const,
@@ -280,7 +280,7 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
-    // AI4IDS-2588: Model Consumption tab — per-service LLM usage from /model-consumption
+    // Model Consumption tab — per-service LLM usage from /model-consumption
     MODEL: {
       TITLE: "Model consumption",
       SUBTITLE:

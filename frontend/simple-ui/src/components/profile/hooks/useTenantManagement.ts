@@ -1149,7 +1149,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserForm.phone_number,
   ]);
 
-  // UI-only; server enforcement: AI4IDS-2750.
+  // UI-only; server also enforces this.
   const handleOpenTenantStatus = (t: TenantView, newStatus: TenantStatus) => {
     if (
       isDefaultTenant(t) &&

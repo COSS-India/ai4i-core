@@ -46,7 +46,7 @@ export function isDefaultTenant(tenant: { organisation?: string | null }): boole
 }
 
 /**
- * Default Organisation roles in Tenant Management (AI4IDS-2735).
+ * Default Organisation roles in Tenant Management.
  * Assignable via role API (not tenant-user role field, which only accepts
  * USER | TENANT ADMIN). Tenant Admin is never offered for default org.
  */
