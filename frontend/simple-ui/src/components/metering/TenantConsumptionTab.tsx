@@ -1,23 +1,24 @@
 import { Badge, HStack, Progress, Tbody, Td, Th, Thead, Tr, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
+import { INSTITUTION } from "../../config/constants";
 import type { MeteringTopN, TenantConsumptionResponse } from "../../types/metering";
 import { meteringColorAt } from "../../utils/meteringColors";
-import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
+import TenantServiceHeatmapSection from "./TenantServiceHeatmapSection";
 
 interface TenantConsumptionTabProps {
   data?: TenantConsumptionResponse;
   topN: MeteringTopN;
   onTopNChange: (n: MeteringTopN) => void;
+  // UNDO: restore when re-enabling heatmap "Select services".
+  // onHeatmapServicesChange?: (services: string[] | null) => void;
   tenantOrganisationById?: Record<string, string>;
-  /** True when the All Institutions filter is narrowed to one institution. */
-  isScopedTenant?: boolean;
   isLoading?: boolean;
   errorMessage?: string | null;
 }
@@ -26,8 +27,8 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
   data,
   topN,
   onTopNChange,
+  // onHeatmapServicesChange,
   tenantOrganisationById = {},
-  isScopedTenant = false,
   isLoading,
   errorMessage,
 }) => {
@@ -43,43 +44,39 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
     >
       {data ? (
         <VStack align="stretch" spacing={6}>
-          {isScopedTenant ? null : (
-            <KpiCard
-              label={section.AVG_REQUESTS_LABEL}
-              value={data.avg_requests_per_tenant?.value ?? "—"}
-              pctChange={data.avg_requests_per_tenant?.pct_change}
-              helper={data.avg_requests_per_tenant?.helper ?? undefined}
-              valueColor="gray.800"
-            />
-          )}
+          <KpiCard
+            label={data.avg_requests_per_tenant?.label ?? `Average requests per ${INSTITUTION.toLowerCase()}`}
+            value={data.avg_requests_per_tenant?.value ?? "—"}
+            pctChange={data.avg_requests_per_tenant?.pct_change}
+            helper={data.avg_requests_per_tenant?.helper ?? undefined}
+            valueColor="gray.800"
+          />
           <MeteringSectionCard
             title={section.TITLE}
             subtitle={`${section.SUBTITLE_PREFIX} ${windowLabel}`}
             sectionLabel
             action={
-              isScopedTenant ? undefined : (
-                <SegmentedTabBar
-                  options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
-                  activeId={String(topN)}
-                  onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
-                />
-              )
+              <SegmentedTabBar
+                options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
+                activeId={String(topN)}
+                onChange={(id) => onTopNChange(Number(id) as MeteringTopN)}
+              />
             }
           >
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500" w="72px">
-                    {section.TABLE_RANK}
+                    Rank
                   </Th>
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500" minW="240px">
-                    {replaceTenantCopy(section.TABLE_INSTITUTION)}
+                    Tenant
                   </Th>
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    {section.TABLE_REQUESTS}
+                    Requests
                   </Th>
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500" minW="180px">
-                    {section.TABLE_SHARE}
+                    Share
                   </Th>
                   <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
                     %
@@ -139,6 +136,14 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
               </Tbody>
             </MeteringDataTable>
           </MeteringSectionCard>
+
+          <TenantServiceHeatmapSection
+            rows={data.usage_by_service}
+            topN={topN}
+            // UNDO: onServicesFilterChange={onHeatmapServicesChange}
+            windowLabel={windowLabel}
+            tenantOrganisationById={tenantOrganisationById}
+          />
         </VStack>
       ) : null}
     </MeteringAsyncState>

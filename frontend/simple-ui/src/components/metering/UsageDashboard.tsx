@@ -29,6 +29,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     setTopN,
     scopeTenantId,
     setScopeTenantId,
+    // UNDO: setTenantHeatmapServices,
     isTenantView,
     previewTenants,
     tenantOrganisationById,
@@ -118,6 +119,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           requestVolumeSection={requestVolumeSection}
           topN={topN}
           onTopNChange={setTopN}
+          // UNDO: onHeatmapServicesChange={setTenantHeatmapServices}
           tenantQuery={tenantQuery}
           modelQuery={modelQuery}
           parseQueryError={parseQueryError}

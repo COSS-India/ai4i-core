@@ -1,10 +1,11 @@
-import { Box, Flex, SimpleGrid } from "@chakra-ui/react";
+import { Box, Flex, SimpleGrid, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { OverviewResponse, PlatformAdoption } from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
+  getWindowLabel,
 } from "../../utils/meteringFormatters";
 import { meteringColorAt } from "../../utils/meteringColors";
 import MeteringDonutChart from "./MeteringDonutChart";
@@ -13,8 +14,6 @@ import RankedShareList from "./RankedShareList";
 
 interface OverviewKpiCardsProps {
   data: OverviewResponse;
-  /** When false, omit the all-institutions helper on Total LLM Requests. */
-  isPlatformWide?: boolean;
 }
 
 // Value colour per KPI: successful = green, failed = red, others neutral.
@@ -25,29 +24,20 @@ const KPI_VALUE_COLORS: Record<string, string> = {
   avg_rps: "gray.800",
 };
 
-/** Top-row summary KPI cards (Total LLM Requests, Successful, Failed, Average RPS). */
-export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
-  data,
-  isPlatformWide = true,
-}) => (
+/** Top-row summary KPI cards (Total, Successful, Failed, Avg RPS). */
+export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({ data }) => (
   <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
-    {data.kpis.map((kpi) => {
-      const fallbackHelper =
-        kpi.key === METERING.KPI.KEYS.TOTAL_REQUESTS && !isPlatformWide
-          ? undefined
-          : METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS];
-      return (
-        <KpiCard
-          key={kpi.key}
-          label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
-          value={formatMeteringKpiValue(kpi.key, kpi.value)}
-          pctChange={kpi.pct_change}
-          valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
-          invertTrend={kpi.key === "failed"}
-          helper={kpi.helper ?? fallbackHelper}
-        />
-      );
-    })}
+    {data.kpis.map((kpi) => (
+      <KpiCard
+        key={kpi.key}
+        label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
+        value={formatMeteringKpiValue(kpi.key, kpi.value)}
+        pctChange={kpi.pct_change}
+        valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
+        invertTrend={kpi.key === "failed"}
+        helper={kpi.helper ?? METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS]}
+      />
+    ))}
   </SimpleGrid>
 );
 
@@ -56,12 +46,13 @@ interface ConsumptionOverviewSectionProps {
   tenantOrganisationById?: Record<string, string>;
 }
 
-/** Usage concentration — donut + top-institution list. */
+/** Consumption overview — usage concentration donut + top-tenant list. */
 export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProps> = ({
   data,
   tenantOrganisationById = {},
 }) => {
   const conc = data.usage_concentration;
+  const windowLabel = getWindowLabel(data.scope.window);
   const section = METERING.SECTIONS.CONSUMPTION_OVERVIEW;
 
   const pieData = useMemo(
@@ -79,31 +70,49 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
   return (
     <MeteringSectionCard
       title={section.TITLE}
-      subtitle={section.SUBTITLE}
+      subtitle={`${section.SUBTITLE_SUFFIX} ${windowLabel}`}
       sectionLabel
     >
-      <Flex direction={{ base: "column", lg: "row" }} gap={8} align="center">
-        <Box flex="1" w="full" maxW={{ lg: "360px" }} mx="auto">
-          <MeteringDonutChart
-            data={pieData}
-            height={260}
-            innerRadius={65}
-            outerRadius={100}
-            showTooltip
-            centerPrimary={section.DONUT_PRIMARY}
-            centerSecondary={section.DONUT_SECONDARY}
-          />
+      <VStack align="stretch" spacing={4}>
+        <Box>
+          <Text
+            fontSize="xs"
+            fontWeight="semibold"
+            color="gray.500"
+            textTransform="uppercase"
+            letterSpacing="wider"
+            mb={1}
+          >
+            {section.CONCENTRATION_TITLE}
+          </Text>
+          <Text fontSize="xs" color="gray.500">
+            {section.CONCENTRATION_SUBTITLE}
+          </Text>
         </Box>
 
-        <RankedShareList
-          rows={conc.top_tenants.map((row) => ({
-            rank: row.rank,
-            label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
-            formattedValue: row.formatted_requests,
-            percentage: row.percentage,
-          }))}
-        />
-      </Flex>
+        <Flex direction={{ base: "column", lg: "row" }} gap={8} align="center">
+          <Box flex="1" w="full" maxW={{ lg: "360px" }} mx="auto">
+            <MeteringDonutChart
+              data={pieData}
+              height={260}
+              innerRadius={65}
+              outerRadius={100}
+              showTooltip
+              centerPrimary={section.DONUT_PRIMARY}
+              centerSecondary={section.DONUT_SECONDARY}
+            />
+          </Box>
+
+          <RankedShareList
+            rows={conc.top_tenants.map((row) => ({
+              rank: row.rank,
+              label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
+              formattedValue: row.formatted_requests,
+              percentage: row.percentage,
+            }))}
+          />
+        </Flex>
+      </VStack>
     </MeteringSectionCard>
   );
 };
@@ -141,7 +150,7 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
           return (
             <KpiCard
               key={card.key}
-              label={card.label}
+              label={activeCell?.label ?? card.label}
               value={
                 activeCell?.value ??
                 adoptionValue ??

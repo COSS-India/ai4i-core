@@ -2,7 +2,6 @@ import { Box, Flex, HStack, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import { getMeteringChartColor } from "../../utils/meteringColors";
-import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import MeteringChartPanel from "./MeteringChartPanel";
 
 export interface DonutChartDatum {
@@ -160,11 +159,11 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
           zIndex={1}
         >
           <Text fontWeight="bold" fontSize="md" color="gray.700" lineHeight="1.2">
-            {replaceTenantCopy(centerPrimary)}
+            {centerPrimary}
           </Text>
           {centerSecondary ? (
             <Text fontSize="sm" color="gray.500">
-              {replaceTenantCopy(centerSecondary)}
+              {centerSecondary}
             </Text>
           ) : null}
         </Box>

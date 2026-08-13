@@ -53,7 +53,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
       <VStack align="stretch" spacing={6}>
-        <OverviewKpiCards data={overview} isPlatformWide={false} />
+        <OverviewKpiCards data={overview} />
         {requestVolumeSection}
       </VStack>
     ) : null}
@@ -82,6 +82,7 @@ interface AdopterPanelsProps {
   requestVolumeSection: React.ReactNode;
   topN: MeteringDashboardState["topN"];
   onTopNChange: MeteringDashboardState["setTopN"];
+  // UNDO: onHeatmapServicesChange: MeteringDashboardState["setTenantHeatmapServices"];
   tenantQuery: MeteringDashboardState["tenantQuery"];
   modelQuery: MeteringDashboardState["modelQuery"];
   parseQueryError: MeteringDashboardState["parseQueryError"];
@@ -96,6 +97,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   requestVolumeSection,
   topN,
   onTopNChange,
+  // onHeatmapServicesChange,
   tenantQuery,
   modelQuery,
   parseQueryError,
@@ -105,7 +107,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
       <VStack align="stretch" spacing={6}>
-        <OverviewKpiCards data={overview} isPlatformWide={!scopeTenantId} />
+        <OverviewKpiCards data={overview} />
         <ConsumptionOverviewSection
           data={overview}
           tenantOrganisationById={tenantOrganisationById}
@@ -118,8 +120,8 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         data={tenantQuery.data}
         topN={topN}
         onTopNChange={onTopNChange}
+        // UNDO: onHeatmapServicesChange={onHeatmapServicesChange}
         tenantOrganisationById={tenantOrganisationById}
-        isScopedTenant={Boolean(scopeTenantId)}
         isLoading={tenantQuery.isLoading}
         errorMessage={parseQueryError(tenantQuery.error)}
       />

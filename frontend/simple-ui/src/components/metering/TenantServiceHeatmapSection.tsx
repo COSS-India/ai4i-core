@@ -1,0 +1,383 @@
+import {
+  Box,
+  // Button,
+  // Checkbox,
+  Flex,
+  HStack,
+  // Menu,
+  // MenuButton,
+  // MenuItem,
+  // MenuList,
+  Progress,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tr,
+  VStack,
+} from "@chakra-ui/react";
+// import { ChevronDownIcon } from "@chakra-ui/icons";
+import React, {
+  useMemo,
+  // useEffect,
+  // useRef,
+  // useState,
+} from "react";
+import { METERING } from "../../config/meteringConstants";
+import type { MeteringTopN, TenantServiceRow } from "../../types/metering";
+import { formatTenantLabel } from "../../utils/meteringFormatters";
+import {
+  getHeatmapLegendColors,
+  heatmapIntensityColor,
+  heatmapTextColor,
+  meteringColorAt,
+  meteringServiceColor,
+} from "../../utils/meteringColors";
+import MeteringDataTable from "./MeteringDataTable";
+import { MeteringEmptyState } from "./MeteringChartPanel";
+import MeteringSectionCard from "./MeteringSectionCard";
+import MeteringTableText from "./MeteringTableText";
+
+interface TenantServiceHeatmapSectionProps {
+  rows: TenantServiceRow[];
+  topN: MeteringTopN;
+  // UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
+  // TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
+  // onServicesFilterChange?: (services: string[] | null) => void;
+  windowLabel: string;
+  tenantOrganisationById?: Record<string, string>;
+}
+
+/** UNDO: restore multi-service selector — also re-wire onServicesFilterChange in
+ * TenantConsumptionTab / UsageDashboardPanels / useMeteringDashboard.
+ */
+// (Select-services UI kept commented below; columns now follow BE response keys.)
+
+const TenantServiceHeatmapSection: React.FC<
+  TenantServiceHeatmapSectionProps
+> = ({
+  rows,
+  topN,
+  // onServicesFilterChange,
+  windowLabel,
+  tenantOrganisationById = {},
+}) => {
+  const heatmap = METERING.HEATMAP;
+  const catalogServices = heatmap.SERVICES;
+  const heatmapLegendColors = useMemo(() => getHeatmapLegendColors(), []);
+
+  /*
+   * UNDO — multi-service "Select services" dropdown:
+   *
+   * const [selectedServices, setSelectedServices] = useState<Set<string>>(
+   *   () => new Set(catalogServices.map((s) => s.key)),
+   * );
+   *
+   * const didMountRef = useRef(false);
+   * useEffect(() => {
+   *   if (!didMountRef.current) {
+   *     didMountRef.current = true;
+   *     return;
+   *   }
+   *   if (!onServicesFilterChange) return;
+   *   const allKeys = catalogServices.map((s) => s.key);
+   *   const isAllSelected =
+   *     allKeys.length > 0 && allKeys.every((key) => selectedServices.has(key));
+   *   onServicesFilterChange(
+   *     isAllSelected
+   *       ? null
+   *       : Array.from(selectedServices).sort((a, b) => a.localeCompare(b)),
+   *   );
+   * }, [selectedServices, onServicesFilterChange, catalogServices]);
+   *
+   * const visibleServices = useMemo(
+   *   () => catalogServices.filter((s) => selectedServices.has(s.key)),
+   *   [catalogServices, selectedServices],
+   * );
+   *
+   * const toggleService = (key: string) => {
+   *   setSelectedServices((prev) => {
+   *     const next = new Set(prev);
+   *     if (next.has(key)) {
+   *       if (next.size > 1) next.delete(key);
+   *     } else {
+   *       next.add(key);
+   *     }
+   *     return next;
+   *   });
+   * };
+   *
+   * const serviceFilter = (
+   *   <Menu closeOnSelect={false}>
+   *     <MenuButton
+   *       as={Button}
+   *       size="sm"
+   *       variant="outline"
+   *       rightIcon={<ChevronDownIcon />}
+   *       bg="white"
+   *       fontWeight="normal"
+   *     >
+   *       Select services ({selectedServices.size})
+   *     </MenuButton>
+   *     <MenuList maxH="320px" overflowY="auto" minW="220px">
+   *       {catalogServices.map((svc) => (
+   *         <MenuItem key={svc.key} onClick={() => toggleService(svc.key)}>
+   *           <Checkbox
+   *             isChecked={selectedServices.has(svc.key)}
+   *             pointerEvents="none"
+   *             mr={2}
+   *             colorScheme="orange"
+   *           />
+   *           {svc.displayName}
+   *         </MenuItem>
+   *       ))}
+   *     </MenuList>
+   *   </Menu>
+   * );
+   */
+
+  // Columns follow whatever service keys the BE heatmap payload includes
+  // (ENABLED_TASK_TYPES today may be LLM-only; later LLM+others without FE changes).
+  const visibleServices = useMemo(() => {
+    const present = new Set<string>();
+    rows.forEach((row) => {
+      Object.keys(row.services ?? {}).forEach((key) => present.add(key));
+    });
+    if (present.size === 0) return [...catalogServices];
+    return catalogServices.filter((s) => present.has(s.key));
+  }, [rows, catalogServices]);
+
+  const maxCellValue = useMemo(() => {
+    let max = 0;
+    rows.forEach((row) => {
+      visibleServices.forEach((svc) => {
+        const v = row.services[svc.key]?.requests ?? 0;
+        if (v > max) max = v;
+      });
+    });
+    return max;
+  }, [rows, visibleServices]);
+
+  const maxTotal = useMemo(
+    () => Math.max(...rows.map((r) => r.total), 0),
+    [rows],
+  );
+
+  if (!rows.length) {
+    return (
+      <MeteringSectionCard
+        title={heatmap.TITLE}
+        subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
+        sectionLabel
+        // UNDO: restore selector action
+        // action={
+        //   <HStack spacing={3} flexWrap="wrap">
+        //     {serviceFilter}
+        //   </HStack>
+        // }
+      >
+        <MeteringEmptyState height={200} message={heatmap.EMPTY} />
+      </MeteringSectionCard>
+    );
+  }
+
+  return (
+    <MeteringSectionCard
+      title={heatmap.TITLE}
+      subtitle={`${heatmap.SUBTITLE_PREFIX} ${windowLabel}`}
+      sectionLabel
+      // UNDO: restore selector action
+      // action={
+      //   <HStack spacing={3} flexWrap="wrap" justify="flex-end">
+      //     {serviceFilter}
+      //   </HStack>
+      // }
+    >
+      <MeteringDataTable w="auto" minW="100%">
+        <Thead>
+          <Tr>
+            <Th
+              fontSize="xs"
+              textTransform="uppercase"
+              color="gray.500"
+              bg="gray.50"
+              minW="220px"
+              w="50%"
+              position="sticky"
+              left={0}
+              zIndex={1}
+            >
+              {heatmap.TABLE_TENANT}
+            </Th>
+            {visibleServices.map((svc, i) => (
+              <Th
+                key={svc.key}
+                fontSize="xs"
+                textTransform="uppercase"
+                color="gray.500"
+                bg="gray.50"
+                isNumeric
+                px={3}
+                minW="120px"
+                w="25%"
+              >
+                <VStack spacing={1} align="center">
+                  <Box
+                    w="full"
+                    h="3px"
+                    borderRadius="sm"
+                    bg={meteringServiceColor(svc.displayName, i)}
+                  />
+                  <Text>{svc.shortLabel}</Text>
+                </VStack>
+              </Th>
+            ))}
+            <Th
+              fontSize="xs"
+              textTransform="uppercase"
+              color="gray.500"
+              bg="gray.50"
+              isNumeric
+              minW="120px"
+              w="25%"
+            >
+              <VStack spacing={0} align="flex-end">
+                <Text>{heatmap.TABLE_TOTAL}</Text>
+                <Text
+                  fontSize="2xs"
+                  fontWeight="normal"
+                  textTransform="none"
+                  color="gray.400"
+                >
+                  % of platform
+                </Text>
+              </VStack>
+            </Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {rows.map((row, rowIndex) => (
+            <Tr key={`${row.rank}-${row.tenant}`}>
+              <Td
+                bg="white"
+                position="sticky"
+                left={0}
+                zIndex={1}
+                borderRightWidth="1px"
+                borderColor="gray.100"
+              >
+                <HStack spacing={2} minW={0}>
+                  <Box
+                    w={2}
+                    h={2}
+                    borderRadius="full"
+                    bg={meteringColorAt(rowIndex)}
+                    flexShrink={0}
+                  />
+                  <MeteringTableText maxW="200px">
+                    {formatTenantLabel(
+                      row.tenant,
+                      row.organisation,
+                      tenantOrganisationById,
+                    )}
+                  </MeteringTableText>
+                </HStack>
+              </Td>
+              {visibleServices.map((svc) => {
+                const entry = row.services[svc.key];
+                const requests = entry?.requests ?? 0;
+                const intensity =
+                  maxCellValue > 0 ? requests / maxCellValue : 0;
+                return (
+                  <Td
+                    key={svc.key}
+                    isNumeric
+                    fontSize="sm"
+                    fontWeight="medium"
+                    px={3}
+                    bg={heatmapIntensityColor(intensity)}
+                    color={heatmapTextColor(intensity)}
+                  >
+                    <VStack spacing={0} align="flex-end">
+                      <Text>
+                        {entry?.formatted_requests ??
+                          (requests > 0 ? requests.toLocaleString() : "0")}
+                      </Text>
+                      <Text fontSize="xs" fontWeight="normal" opacity={0.7}>
+                        {(entry?.percentage ?? 0).toFixed(1)}%
+                      </Text>
+                    </VStack>
+                  </Td>
+                );
+              })}
+              <Td isNumeric bg="white" px={3}>
+                <VStack align="stretch" spacing={1}>
+                  <Text
+                    fontSize="sm"
+                    fontWeight="bold"
+                    color="gray.800"
+                    textAlign="right"
+                  >
+                    {row.formatted_total}
+                  </Text>
+                  <Text fontSize="xs" color="gray.500" textAlign="right">
+                    {(row.percentage ?? 0).toFixed(1)}%
+                  </Text>
+                  <Progress
+                    value={maxTotal > 0 ? (row.total / maxTotal) * 100 : 0}
+                    size="xs"
+                    borderRadius="full"
+                    colorScheme="orange"
+                    bg="gray.100"
+                  />
+                </VStack>
+              </Td>
+            </Tr>
+          ))}
+        </Tbody>
+      </MeteringDataTable>
+
+      <Flex
+        mt={4}
+        pt={3}
+        borderTopWidth="1px"
+        borderColor="gray.100"
+        justify="space-between"
+        align="center"
+        flexWrap="wrap"
+        gap={3}
+      >
+        <VStack align="flex-start" spacing={0}>
+          <Text fontSize="xs" color="gray.500">
+            {heatmap.FOOTER_PRIMARY.replace("{topN}", String(topN))}
+          </Text>
+          <Text fontSize="xs" color="gray.400">
+            {heatmap.FOOTER_SECONDARY}
+          </Text>
+        </VStack>
+        <HStack spacing={2}>
+          <Text fontSize="xs" color="gray.500">
+            {heatmap.LEGEND_LOW}
+          </Text>
+          {heatmapLegendColors.map((color) => (
+            <Box
+              key={color}
+              w={4}
+              h={4}
+              borderRadius="sm"
+              bg={color}
+              borderWidth="1px"
+              borderColor="gray.200"
+            />
+          ))}
+          <Text fontSize="xs" color="gray.500">
+            {heatmap.LEGEND_HIGH}
+          </Text>
+        </HStack>
+      </Flex>
+    </MeteringSectionCard>
+  );
+};
+
+export default TenantServiceHeatmapSection;
