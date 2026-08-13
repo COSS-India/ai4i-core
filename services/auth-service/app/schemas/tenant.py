@@ -289,4 +289,4 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    roles: list[str]
+    roles: list[TenantUserRole]
