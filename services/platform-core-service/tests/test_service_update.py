@@ -57,6 +57,7 @@ def _make_service_orm(
     task_type: str = None,
     expected_response_schema: dict = None,
     endpoint: str = "http://existing-endpoint",
+    inference_schema: list = None,
 ) -> MagicMock:
     instance = MagicMock()
     instance.service_id = service_id
@@ -66,6 +67,13 @@ def _make_service_orm(
     instance.task_type = task_type
     instance.expected_response_schema = expected_response_schema
     instance.endpoint = endpoint
+    # AI4IDS-2710 follow-up: explicit None (not an unconfigured MagicMock
+    # attribute) — update_service()'s taskType/schema consistency check
+    # reads this off the existing row, and a bare MagicMock here behaves
+    # like a truthy, empty-iterating value rather than "no schema on file",
+    # which would make that check misfire for every test in this file that
+    # isn't specifically exercising it.
+    instance.inference_schema = inference_schema
     return instance
 
 

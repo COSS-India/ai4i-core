@@ -323,6 +323,10 @@ class TestTierIdsExistenceCheck:
         svc._services.get_tier_names_by_ids = AsyncMock(return_value={})
         svc._services.get_by_service_id = AsyncMock(return_value=MagicMock(
             model_id="model-1", model_version="1.0", api_key=None,
+            # AI4IDS-2710 follow-up: explicit None, not an unconfigured
+            # MagicMock attribute — see test_service_update.py's
+            # _make_service_orm for why that distinction matters here.
+            inference_schema=None,
         ))
 
         payload = ServiceUpdateRequest(

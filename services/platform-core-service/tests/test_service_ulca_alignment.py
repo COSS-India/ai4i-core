@@ -60,6 +60,7 @@ _stub_svc("app.repositories.model_management")
 _stub_svc("app.repositories.model_management.model_repository", ModelRepository=MagicMock)
 _stub_svc("app.repositories.model_management.service_repository", ServiceRepository=MagicMock)
 
+from app.core.exceptions import ValidationError  # noqa: E402
 from app.schemas.model_management.service import (  # noqa: E402
     InferenceAPIEndPoint,
     ServiceCreateRequest,
@@ -214,13 +215,18 @@ class TestDescriptionRequired:
 
 
 class TestInferenceEndPointRequired:
-    def test_missing_schema_rejected(self) -> None:
+    def test_missing_schema_allowed_at_pydantic_level(self) -> None:
+        """`schema` requiredness moved to the service layer (AI4IDS-2710
+        follow-up), so it can be derived from the linked model there — see
+        TestSchemaDerivationAndTaskTypeConsistency for the actual
+        required/derived enforcement. At the Pydantic level, omitting it
+        is allowed."""
         base = {**_ULCA_BASE, "inferenceEndPoint": {
             "callbackUrl": "http://localhost:8080",
             "infraDescription": "test-hw-cluster",
         }}
-        with pytest.raises(PydanticValidationError, match="inferenceEndPoint.schema"):
-            ServiceCreateRequest(serviceId="svc-1", **base)
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.inferenceEndPoint.endpoint_schema is None
 
     def test_missing_callback_url_and_endpoint_rejected(self) -> None:
         base = {**_ULCA_BASE, "inferenceEndPoint": {
@@ -266,8 +272,10 @@ class TestInferenceEndPointRequired:
     def test_schema_accepts_ulca_translation_vocabulary(self) -> None:
         """`schema` entries may use ULCA's own discriminator strings
         (translation, txt-lang-detection) even where they differ from our
-        TaskTypeEnum values (nmt, language-detection)."""
-        base = {**_ULCA_BASE, "inferenceEndPoint": {
+        TaskTypeEnum values (nmt, language-detection) — task is 'nmt' here
+        specifically so this also satisfies the taskType/schema
+        cross-check below (nmt <-> translation are equivalent)."""
+        base = {**_ULCA_BASE, "task": {"type": "nmt"}, "inferenceEndPoint": {
             **_ULCA_BASE["inferenceEndPoint"],
             "schema": [{"taskType": "translation", "request": {}, "response": {}}],
         }}
@@ -287,6 +295,58 @@ class TestInferenceEndPointRequired:
         )
         assert req.inferenceEndPoint.callbackUrl == "http://new-endpoint"
         assert req.inferenceEndPoint.endpoint_schema is None
+
+
+# ── schema entries must match the service's own task type (follow-up) ──────
+
+
+class TestSchemaTaskTypeCrossCheck:
+    """AI4IDS-2710 follow-up: nothing previously stopped a TTS service from
+    shipping an `asr`-shaped schema entry — fixed by cross-checking
+    inferenceEndPoint.schema against the service's own task.type."""
+
+    def test_mismatched_schema_task_type_rejected_on_create(self) -> None:
+        base = {**_ULCA_BASE, "inferenceEndPoint": {
+            **_ULCA_BASE["inferenceEndPoint"],
+            "schema": [{"taskType": "tts", "request": {}, "response": {}}],
+        }}
+        with pytest.raises(PydanticValidationError, match="must include at least one entry"):
+            ServiceCreateRequest(serviceId="svc-1", **base)
+
+    def test_ulca_equivalent_task_type_is_accepted(self) -> None:
+        """Service task 'language-detection' + schema entry
+        'txt-lang-detection' are ULCA-equivalent — must not be rejected."""
+        base = {**_ULCA_BASE, "task": {"type": "language-detection"}, "inferenceEndPoint": {
+            **_ULCA_BASE["inferenceEndPoint"],
+            "schema": [{"taskType": "txt-lang-detection", "request": {}, "response": {}}],
+        }}
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.taskType == "language-detection"
+
+    def test_mismatch_rejected_on_update_when_both_touched_together(self) -> None:
+        with pytest.raises(PydanticValidationError, match="must include at least one entry"):
+            ServiceUpdateRequest(
+                serviceId="svc-1",
+                taskType="tts",
+                inferenceEndPoint={"schema": [{"taskType": "asr", "request": {}, "response": {}}]},
+                costPerUnit=1.0,
+                unitSize=1,
+                tierIds=["tier-1"],
+            )
+
+    def test_schema_omitted_on_update_skips_cross_check_at_pydantic_level(self) -> None:
+        """Nothing to compare against yet at the Pydantic layer when only
+        one side is touched — ServiceService.update_service checks that
+        case against the stored row instead (see
+        TestSchemaDerivationAndTaskTypeConsistency below)."""
+        req = ServiceUpdateRequest(
+            serviceId="svc-1",
+            taskType="tts",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+        assert req.taskType == "tts"
 
 
 # ── serviceId minimum length on create only ─────────────────────────────────
@@ -343,6 +403,10 @@ class TestNewFieldsPersistence:
         instance_mock = MagicMock(
             model_id="model-1", model_version="1.0", api_key=None,
             endpoint="http://existing", task_type="asr",
+            # AI4IDS-2710 follow-up: explicit None, not an unconfigured
+            # MagicMock attribute — see test_service_update.py's
+            # _make_service_orm for why that distinction matters here.
+            inference_schema=None,
         )
         service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
         service_repo.apply_updates = AsyncMock()
@@ -487,3 +551,139 @@ class TestRbacHidesInferenceEndPoint:
 
         assert "inferenceEndPoint" not in filtered
         assert filtered["description"] == _LONG_DESCRIPTION
+
+        assert "inferenceEndPoint" not in filtered
+
+
+# ── schema derivation from the linked model + update-side consistency ──────
+# (AI4IDS-2710 follow-up)
+
+
+class TestSchemaDerivationAndTaskTypeConsistency:
+    @pytest.mark.asyncio
+    async def test_create_derives_schema_from_model_when_omitted(self) -> None:
+        svc = _make_svc()
+        model_schema = {"taskType": "asr", "request": {"a": 1}, "response": {"b": 2}}
+        svc._models.get_by_id_version = AsyncMock(
+            return_value=MagicMock(
+                inference_endpoint={"schema": model_schema}, task={"type": "asr"}
+            )
+        )
+        base = {**_ULCA_BASE, "inferenceEndPoint": {
+            "callbackUrl": "http://localhost:8080",
+            "infraDescription": "test-hw-cluster",
+        }}
+        payload = ServiceCreateRequest(serviceId="svc-derived", **base)
+
+        await svc.create_service(payload, created_by="user-1")
+
+        instance = svc._services.add.await_args.args[0]
+        assert instance.inference_schema == [model_schema]
+
+    @pytest.mark.asyncio
+    async def test_create_raises_when_omitted_and_model_has_no_schema(self) -> None:
+        svc = _make_svc()  # _make_svc's model_mock.inference_endpoint == {} — no schema
+        base = {**_ULCA_BASE, "inferenceEndPoint": {
+            "callbackUrl": "http://localhost:8080",
+            "infraDescription": "test-hw-cluster",
+        }}
+        payload = ServiceCreateRequest(serviceId="svc-no-schema", **base)
+
+        with pytest.raises(ValidationError, match="inferenceEndPoint.schema is required"):
+            await svc.create_service(payload, created_by="user-1")
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_derived_schema_that_mismatches_task_type(self) -> None:
+        """Derivation goes through the exact same taskType cross-check a
+        manually-supplied schema gets — a model registered with a
+        mismatched schema can't silently poison a new service."""
+        svc = _make_svc()
+        model_schema = {"taskType": "tts", "request": {}, "response": {}}
+        svc._models.get_by_id_version = AsyncMock(
+            return_value=MagicMock(
+                inference_endpoint={"schema": model_schema}, task={"type": "asr"}
+            )
+        )
+        base = {**_ULCA_BASE, "inferenceEndPoint": {
+            "callbackUrl": "http://localhost:8080",
+            "infraDescription": "test-hw-cluster",
+        }}
+        payload = ServiceCreateRequest(serviceId="svc-mismatch", **base)  # task = asr
+
+        with pytest.raises(ValidationError, match="must include at least one entry"):
+            await svc.create_service(payload, created_by="user-1")
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_new_task_type_that_mismatches_existing_schema(self) -> None:
+        """The one taskType/schema-mismatch scenario reachable through the
+        real API: taskType is being changed (required whenever any
+        substantive edit happens, per AI4IDS-2524) while inferenceEndPoint
+        isn't touched at all — so the OLD, now-mismatched schema is still
+        the one on file."""
+        service_repo = MagicMock()
+        instance_mock = MagicMock(
+            model_id="model-1", model_version="1.0", api_key=None,
+            endpoint="http://existing", task_type="asr",
+            inference_schema=_SCHEMA_ENTRY,  # [{"taskType": "asr", ...}]
+        )
+        service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
+        service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
+        model_repo = MagicMock()
+        cache = MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        payload = ServiceUpdateRequest(
+            serviceId="svc-1",
+            taskType="tts",  # existing schema on file is asr-shaped
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+
+        with pytest.raises(ValidationError, match="must include at least one entry"):
+            await svc.update_service(payload, updated_by="user-1")
+
+    def test_consistency_helper_skips_when_neither_side_touched(self) -> None:
+        """Regression guard: a plain, unrelated update (e.g. isPublished)
+        on a legacy row whose stored task/schema predate this check must
+        not be rejected just because the row's OWN old data doesn't
+        satisfy today's rule."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        svc._validate_schema_task_type_consistency_on_update(
+            new_task_type=None,
+            new_schema=None,
+            existing_task_type="asr",
+            existing_schema=[{"taskType": "tts", "request": {}, "response": {}}],
+        )  # must not raise
+
+    def test_consistency_helper_skips_when_both_sides_touched(self) -> None:
+        """Both-touched-together is already validated by
+        ServiceUpdateRequest's own Pydantic-level check — re-checking here
+        would just be redundant."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        svc._validate_schema_task_type_consistency_on_update(
+            new_task_type="tts",
+            new_schema=[{"taskType": "asr", "request": {}, "response": {}}],
+            existing_task_type="asr",
+            existing_schema=_SCHEMA_ENTRY,
+        )  # must not raise, even though the two mismatch
+
+    def test_consistency_helper_catches_schema_only_change_against_existing_task_type(self) -> None:
+        """Not reachable via the public API today (any inferenceEndPoint
+        edit must resend taskType too, per AI4IDS-2524), but the helper is
+        written to handle it correctly regardless — e.g. if that billing
+        rule is ever relaxed, or for any internal caller that bypasses it."""
+        service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
+        svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
+
+        with pytest.raises(ValidationError, match="must include at least one entry"):
+            svc._validate_schema_task_type_consistency_on_update(
+                new_task_type=None,
+                new_schema=[{"taskType": "tts", "request": {}, "response": {}}],
+                existing_task_type="asr",
+                existing_schema=None,
+            )

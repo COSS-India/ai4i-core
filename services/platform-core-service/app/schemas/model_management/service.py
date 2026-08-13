@@ -99,13 +99,31 @@ _INFERENCE_SCHEMA_TASK_TYPES = {
     "ocr", "ner", "translation", "txt-lang-detection",
 }
 
+# Same nmt/translation and language-detection/txt-lang-detection equivalence
+# as _INFERENCE_SCHEMA_TASK_TYPES above, but keyed so both spellings of a
+# pair resolve to the same equivalence set — used to check a `schema` entry
+# actually describes the service's own task, not just *some* recognized
+# task (AI4IDS-2710 follow-up: a TTS service could otherwise ship an `asr`
+# schema entry and nothing would catch it).
+_TASK_TYPE_SCHEMA_EQUIVALENTS: Dict[str, set] = {
+    "nmt": {"nmt", "translation"},
+    "translation": {"nmt", "translation"},
+    "language-detection": {"language-detection", "txt-lang-detection"},
+    "txt-lang-detection": {"language-detection", "txt-lang-detection"},
+}
 
-def _validate_inference_schema(v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Shape check for ULCA's `schema` (InferenceSchemaArray): non-empty,
     each entry names a recognized taskType and carries `request`/`response`
     keys. Deliberately shallow — see AI4IDS-2710 plan §5: full discriminated-
     union validation of each task's exact contract (TranslationInference vs
-    ASRInference vs OCRInference, ...) is a separate, larger follow-up."""
+    ASRInference vs OCRInference, ...) is a separate, larger follow-up.
+
+    Public (not `_`-prefixed): also called from service_service.py against
+    a schema derived from the linked Model's own `schema`, since a derived
+    value deserves the exact same shape check a manually-supplied one gets.
+    """
     if not v:
         raise ValueError(
             "schema must be a non-empty array of per-task inference "
@@ -126,6 +144,20 @@ def _validate_inference_schema(v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if missing:
             raise ValueError(f"schema[{i}] is missing {missing}")
     return v
+
+
+def schema_matches_task_type(
+    task_type: Optional[str], schema_entries: Optional[List[Dict[str, Any]]]
+) -> bool:
+    """True if at least one `schema` entry's taskType is ULCA-equivalent to
+    `task_type` (AI4IDS-2710 follow-up). With nothing to compare
+    (`task_type`/`schema_entries` not yet known) this returns True — callers
+    decide separately whether either side is required at all; this only
+    catches an outright mismatch when both are present."""
+    if not task_type or not schema_entries:
+        return True
+    equivalents = _TASK_TYPE_SCHEMA_EQUIVALENTS.get(task_type, {task_type})
+    return any(entry.get("taskType") in equivalents for entry in schema_entries)
 
 
 class InferenceAPIEndPoint(BaseSchema):
@@ -172,11 +204,16 @@ class InferenceAPIEndPoint(BaseSchema):
         None,
         alias="schema",
         description=(
-            "Required (ULCA) on service create. Array of per-task-type "
-            "inference request/response contracts, e.g. "
+            "Required (ULCA) on service create — but may be omitted: when "
+            "not supplied, it's derived from the linked model's own "
+            "`schema` (see ServiceService.create_service); only rejected as "
+            "missing if the model has none on file either. Array of "
+            "per-task-type inference request/response contracts, e.g. "
             '[{"taskType": "asr", "request": {...}, "response": {...}}]. '
-            "See AI4IDS-2710 plan §5 for validation scope — this is a "
-            "declared contract, distinct from `expectedResponseSchema` "
+            "Whichever entries end up present (supplied or derived) must "
+            "include at least one whose taskType matches this service's "
+            "own task. See AI4IDS-2710 plan §5 for validation scope — this "
+            "is a declared contract, distinct from `expectedResponseSchema` "
             "(a live smoke-test fixture)."
         ),
     )
@@ -208,7 +245,7 @@ class InferenceAPIEndPoint(BaseSchema):
     def _validate_schema(cls, v: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         if v is None:
             return v
-        return _validate_inference_schema(v)
+        return validate_inference_schema_entries(v)
 
 
 def _rebuild_inference_endpoint(
@@ -477,7 +514,16 @@ class ServiceCreateRequest(BaseSchema):
         enforces ULCA's "required" rule on the merged result. Runs before
         `_require_billing_fields_on_substantive_edit`-equivalent checks don't
         apply here (create requires costPerUnit/unitSize/tierIds
-        unconditionally already)."""
+        unconditionally already).
+
+        Note: `inferenceEndPoint.schema` requiredness is NOT enforced here.
+        Unlike callbackUrl/infraDescription (genuinely deployment-specific,
+        nothing else could supply them), `schema` describes the underlying
+        model's request/response contract — a property of the Model, not
+        the deployment — so ServiceService.create_service derives it from
+        the linked Model's own `schema` when the caller omits it, and only
+        requires it manually as a fallback when the Model has none on file.
+        """
         self.description = _resolve_and_check_description(
             self.description, self.serviceDescription
         )
@@ -503,11 +549,21 @@ class ServiceCreateRequest(BaseSchema):
             missing.append("inferenceEndPoint.callbackUrl (or deprecated `endpoint`)")
         if not infra_description:
             missing.append("inferenceEndPoint.infraDescription (or deprecated `hardwareDescription`)")
-        if not ep.endpoint_schema:
-            missing.append("inferenceEndPoint.schema")
         if missing:
             raise ValueError(
                 "inferenceEndPoint is required and missing: " + ", ".join(missing)
+            )
+
+        # Fail fast when the caller DID supply a schema — no point waiting
+        # for the model lookup in the service layer to catch a mismatch we
+        # can already see here. When schema is omitted (to be derived from
+        # the model), there's nothing to check yet — ServiceService does
+        # this same check again once the derived value is known.
+        if ep.endpoint_schema and not schema_matches_task_type(self.taskType, ep.endpoint_schema):
+            raise ValueError(
+                f"inferenceEndPoint.schema must include at least one entry "
+                f"whose taskType matches this service's task ('{self.taskType}'); "
+                f"got: {[e.get('taskType') for e in ep.endpoint_schema]}"
             )
 
         self.inferenceEndPoint = _rebuild_inference_endpoint(
@@ -686,6 +742,23 @@ class ServiceUpdateRequest(BaseSchema):
             self.endpoint = callback_url
             self.hardwareDescription = infra_description
             self.api_key = inference_api_key.value if inference_api_key else self.api_key
+
+        # Cross-check only when BOTH the task and the schema are part of
+        # THIS update — if only one side is being changed, this schema
+        # (Pydantic layer, no DB access) can't see what the other side's
+        # current stored value is; ServiceService.update_service does that
+        # comparison against the existing row (AI4IDS-2710 follow-up).
+        if (
+            self.taskType is not None
+            and self.inferenceEndPoint is not None
+            and self.inferenceEndPoint.endpoint_schema is not None
+            and not schema_matches_task_type(self.taskType, self.inferenceEndPoint.endpoint_schema)
+        ):
+            raise ValueError(
+                f"inferenceEndPoint.schema must include at least one entry "
+                f"whose taskType matches this service's task ('{self.taskType}'); "
+                f"got: {[e.get('taskType') for e in self.inferenceEndPoint.endpoint_schema]}"
+            )
         return self
 
     @model_validator(mode="after")

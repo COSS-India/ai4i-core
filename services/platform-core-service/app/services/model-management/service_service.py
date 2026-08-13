@@ -46,6 +46,8 @@ from app.schemas.model_management.service import (
     ServiceCreateRequest,
     ServiceEndpointUpdateItem,
     ServiceUpdateRequest,
+    schema_matches_task_type,
+    validate_inference_schema_entries,
 )
 from app.services.cache_service import CacheService
 from .serializers import (
@@ -275,6 +277,12 @@ class ServiceService:
         # 5. Every tierId must reference an existing PPU tier
         await self._validate_tier_ids_exist(payload.tierIds)
 
+        # 5b. Resolve inferenceEndPoint.schema: supplied value wins,
+        # otherwise derive from the linked model's own schema.
+        effective_schema = self._resolve_inference_schema(
+            payload.inferenceEndPoint.endpoint_schema, model, task_type=payload.taskType,
+        )
+
         # 6. Persist
         service_id = payload.serviceId
         unit_rate = (
@@ -305,7 +313,7 @@ class ServiceService:
             ssl_verify=payload.sslVerify,
             api_key=payload.api_key,
             inference_api_key=jsonable_encoder(ep.inferenceApiKey) if ep.inferenceApiKey else None,
-            inference_schema=jsonable_encoder(ep.endpoint_schema),
+            inference_schema=jsonable_encoder(effective_schema),
             is_sync_api=ep.isSyncApi,
             async_api_details=jsonable_encoder(ep.asyncApiDetails) if ep.asyncApiDetails else None,
             is_multilingual_enabled=bool(ep.isMultilingualEnabled),
@@ -365,6 +373,22 @@ class ServiceService:
         instance = await self._services.get_by_service_id(payload.serviceId)
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
+
+        # AI4IDS-2710 follow-up: catch a taskType/schema mismatch even when
+        # only one side of the pair is being changed in this update (the
+        # Pydantic-layer check on ServiceUpdateRequest only catches it when
+        # both are touched together in the same payload, since it has no
+        # access to what's currently stored).
+        self._validate_schema_task_type_consistency_on_update(
+            new_task_type=payload.taskType,
+            new_schema=(
+                payload.inferenceEndPoint.endpoint_schema
+                if payload.inferenceEndPoint is not None
+                else None
+            ),
+            existing_task_type=instance.task_type,
+            existing_schema=instance.inference_schema,
+        )
 
         # Re-validate against the model schema whenever the endpoint changes,
         # or a new expectedResponseSchema is supplied on its own — the latter
@@ -683,6 +707,102 @@ class ServiceService:
                     f"tierIds references nonexistent tier(s): {', '.join(missing)}."
                 ),
                 code="TIER_NOT_FOUND",
+            )
+
+    def _resolve_inference_schema(
+        self,
+        supplied: Optional[List[Dict[str, Any]]],
+        model: Any,
+        *,
+        task_type: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        """Resolve the `inferenceEndPoint.schema` to persist for a new
+        service (AI4IDS-2710 follow-up).
+
+        The caller's explicit value wins. Otherwise, derive one from the
+        linked model's own `schema` — the request/response contract is a
+        fact about the model artifact, not something that varies per
+        deployment, so re-typing it at service-creation time is redundant
+        whenever the model already declares one. Only raises if neither is
+        available, or if the resolved value doesn't actually describe this
+        service's own task type.
+        """
+        if supplied:
+            schema = supplied
+        else:
+            model_schema = (model.inference_endpoint or {}).get("schema")
+            if not model_schema:
+                raise ValidationError(
+                    message=(
+                        "inferenceEndPoint.schema is required, and this "
+                        "service's model has no schema on file to derive "
+                        "it from — supply it manually."
+                    ),
+                    code="SCHEMA_REQUIRED",
+                )
+            schema = [model_schema]
+            try:
+                validate_inference_schema_entries(schema)
+            except ValueError as exc:
+                raise ValidationError(
+                    message=(
+                        f"inferenceEndPoint.schema could not be derived "
+                        f"from this model's schema ({exc}) — supply it "
+                        "manually."
+                    ),
+                    code="SCHEMA_REQUIRED",
+                )
+
+        if not schema_matches_task_type(task_type, schema):
+            raise ValidationError(
+                message=(
+                    f"inferenceEndPoint.schema must include at least one "
+                    f"entry whose taskType matches this service's task "
+                    f"('{task_type}'); got: "
+                    f"{[e.get('taskType') for e in schema]}"
+                ),
+                code="SCHEMA_TASK_TYPE_MISMATCH",
+            )
+        return schema
+
+    def _validate_schema_task_type_consistency_on_update(
+        self,
+        *,
+        new_task_type: Optional[str],
+        new_schema: Optional[List[Dict[str, Any]]],
+        existing_task_type: Optional[str],
+        existing_schema: Optional[List[Dict[str, Any]]],
+    ) -> None:
+        """Catches the "only one side of the pair changed" case that
+        ServiceUpdateRequest's own validator can't see (AI4IDS-2710
+        follow-up) — e.g. taskType is changed but schema isn't touched, so
+        the OLD schema (for the OLD task type) would otherwise silently
+        stick around on a service that now claims a different task.
+
+        When BOTH are being changed together, ServiceUpdateRequest already
+        validated the pair against each other — skip re-checking here to
+        avoid a redundant, harder-to-word error at this layer. When
+        NEITHER is being changed, also skip — this update doesn't touch
+        either field, so there's nothing to validate; re-checking the
+        existing stored pair against itself would risk rejecting an
+        unrelated edit (e.g. `isPublished`) on a legacy row whose
+        task/schema predate this consistency check.
+        """
+        task_type_changed = new_task_type is not None
+        schema_changed = new_schema is not None
+        if task_type_changed == schema_changed:
+            return
+        effective_task_type = new_task_type if task_type_changed else existing_task_type
+        effective_schema = new_schema if schema_changed else existing_schema
+        if not schema_matches_task_type(effective_task_type, effective_schema):
+            raise ValidationError(
+                message=(
+                    f"inferenceEndPoint.schema must include at least one "
+                    f"entry whose taskType matches this service's task "
+                    f"('{effective_task_type}'); got: "
+                    f"{[e.get('taskType') for e in (effective_schema or [])]}"
+                ),
+                code="SCHEMA_TASK_TYPE_MISMATCH",
             )
 
     async def _validate_endpoint_for_model(
