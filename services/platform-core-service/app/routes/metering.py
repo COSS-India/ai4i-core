@@ -795,8 +795,10 @@ async def get_model_consumption(
     services = breakdown["services"] if breakdown else []
     # most_used/top_models are model-level aggregations of the (service-level)
     # breakdown rows above — see MeteringService.model_consumption_ranking.
-    most_used, ranked_models = (
-        svc.model_consumption_ranking(services, limit) if breakdown is not None else (None, [])
+    # top_models_total_requests is the resolved-model-only denominator
+    # consumption_pct is computed against — NOT the full window's total.
+    most_used, ranked_models, top_models_total_requests = (
+        svc.model_consumption_ranking(services, limit) if breakdown is not None else (None, [], 0)
     )
     summary = _model_consumption_summary(breakdown, total_models, most_used)
     top_models = [TopModelRow(**m) for m in ranked_models]
@@ -807,6 +809,7 @@ async def get_model_consumption(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         summary=summary,
         top_models=top_models,
+        top_models_total_requests=top_models_total_requests,
         breakdown=[
             ServiceModelRow(
                 service_id=s["service_id"],

@@ -194,6 +194,12 @@ class ModelConsumptionResponse(BaseModel):
     scope: Scope
     summary: Optional[ModelConsumptionSummary] = None
     top_models: list[TopModelRow] = []   # ranked by consumption_pct desc; FE slices to Top 5 / Top 10
+    # Denominator for top_models[].consumption_pct — sum of requests across
+    # services with a RESOLVED model_name only. NOT the full window's total
+    # requests (that also includes traffic from services whose model lookup
+    # failed) — render this alongside consumption_pct, not some other total,
+    # or the percentages won't add up against what's displayed next to them.
+    top_models_total_requests: int = 0
     breakdown: list[ServiceModelRow]
     degraded: bool = False
     generated_at: str

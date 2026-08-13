@@ -570,17 +570,17 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock())
         assert await svc.registry_model_count() is None
 
-    async def test_delegates_to_model_repo_count_distinct_active_models(self):
+    async def test_delegates_to_model_repo_count_distinct_models(self):
         repo = MagicMock()
-        repo.count_distinct_active_models = AsyncMock(return_value=42)
+        repo.count_distinct_models = AsyncMock(return_value=42)
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() == 42
-        repo.count_distinct_active_models.assert_awaited_once_with()
+        repo.count_distinct_models.assert_awaited_once_with()
 
     async def test_db_failure_returns_none_not_raises(self):
         repo = MagicMock()
-        repo.count_distinct_active_models = AsyncMock(side_effect=RuntimeError("db down"))
+        repo.count_distinct_models = AsyncMock(side_effect=RuntimeError("db down"))
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() is None
@@ -601,18 +601,20 @@ class TestModelConsumptionRanking:
 
     def test_no_traffic_returns_empty(self):
         services = [self._svc_row("s1", "Svc 1", "gemma", 0)]
-        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
         assert most_used is None
         assert ranked == []
+        assert grand_total == 0
 
     def test_single_service_per_model(self):
         services = [
             self._svc_row("s1", "Svc 1", "gemma", 300),
             self._svc_row("s2", "Svc 2", "llama", 100),
         ]
-        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
 
         assert most_used == {"model_name": "gemma", "requests": 300, "consumption_pct": 75.0}
+        assert grand_total == 400
         assert [m["model_name"] for m in ranked] == ["gemma", "llama"]
         assert ranked[0]["rank"] == 1
         assert ranked[0]["consumption_pct"] == 75.0
@@ -626,8 +628,9 @@ class TestModelConsumptionRanking:
             self._svc_row("s2", "Svc 2", "gemma", 100),
             self._svc_row("s3", "Svc 3", "llama", 300),
         ]
-        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
 
+        assert grand_total == 700
         gemma = next(m for m in ranked if m["model_name"] == "gemma")
         assert gemma["requests"] == 400
         # SHARE of grand_total, not an average of the two services' individual shares
@@ -648,42 +651,68 @@ class TestModelConsumptionRanking:
             self._svc_row("a2", "Svc A2", "A", 100),
             self._svc_row("b1", "Svc B1", "B", 250),
         ]
-        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, _ = MeteringService.model_consumption_ranking(services, limit=10)
 
         assert most_used["model_name"] == "A"
         assert ranked[0]["model_name"] == "A"
-        # consumption_pct values sum to 100% across the full ranked list.
+        # consumption_pct values sum to ~100% across the full ranked list
+        # (exact here; in general only within a couple hundredths of 100 due
+        # to per-row 2dp rounding).
         assert round(sum(m["consumption_pct"] for m in ranked), 2) == 100.0
+
+    def test_case_insensitive_identity_merges_into_one_model(self):
+        """"Gemma" and "gemma" (e.g. two versions saved with different name
+        casing) must merge into a single ranked row, matching
+        generate_model_id's own case-insensitive identity rule — not split
+        the same model's traffic across two rows."""
+        services = [
+            self._svc_row("s1", "Svc 1", "Gemma", 300),
+            self._svc_row("s2", "Svc 2", "gemma", 100),
+        ]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert grand_total == 400
+        assert len(ranked) == 1
+        assert ranked[0]["requests"] == 400
+        assert ranked[0]["consumption_pct"] == 100.0
+        # First-seen casing is kept as the display name.
+        assert ranked[0]["model_name"] == "Gemma"
+        assert most_used["model_name"] == "Gemma"
 
     def test_unresolved_model_name_excluded_entirely(self):
         """A service whose model lookup failed isn't a model here — unlike
         the old fallback-to-service-name behaviour, it contributes to neither
         `most_used` nor `top_models` (it still appears in the raw per-service
-        `breakdown` list elsewhere, just not in this model-level view)."""
+        `breakdown` list elsewhere, just not in this model-level view), and
+        its requests are excluded from `grand_total` too."""
         services = [
             self._svc_row("s1", "Svc 1", "gemma", 50),
             self._svc_row("s2", "Orphan Service", None, 500),
         ]
-        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
 
         assert most_used["model_name"] == "gemma"
         assert [m["model_name"] for m in ranked] == ["gemma"]
-        # grand_total only counts resolved-model services, so gemma is 100% of it.
+        # grand_total only counts resolved-model services, so gemma is 100% of it —
+        # NOT 50/550. Callers must render this grand_total alongside
+        # consumption_pct, not the full window's total requests.
+        assert grand_total == 50
         assert ranked[0]["consumption_pct"] == 100.0
 
     def test_all_unresolved_returns_empty(self):
         services = [self._svc_row("s1", "Orphan Service", None, 50)]
-        most_used, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
 
         assert most_used is None
         assert ranked == []
+        assert grand_total == 0
 
     def test_limit_caps_ranked_list(self):
         services = [
             self._svc_row(f"s{i}", f"Svc {i}", f"model-{i}", 10 * (i + 1))
             for i in range(5)
         ]
-        _, ranked = MeteringService.model_consumption_ranking(services, limit=2)
+        _, ranked, _ = MeteringService.model_consumption_ranking(services, limit=2)
         assert len(ranked) == 2
         assert [m["rank"] for m in ranked] == [1, 2]
 
@@ -692,7 +721,7 @@ class TestModelConsumptionRanking:
             self._svc_row("s1", "Svc 1", "gemma", 100),
             self._svc_row("s2", "Svc 2", "unused-model", 0),
         ]
-        _, ranked = MeteringService.model_consumption_ranking(services, limit=10)
+        _, ranked, _ = MeteringService.model_consumption_ranking(services, limit=10)
         assert [m["model_name"] for m in ranked] == ["gemma"]
         assert ranked[0]["consumption_pct"] == 100.0
 
@@ -746,6 +775,16 @@ class TestModelConsumptionKpis:
         ]
         kpis = MeteringService.model_consumption_kpis(services)
         assert kpis["active_models"] == 2
+
+    def test_active_models_is_case_insensitive(self):
+        """"Gemma" and "gemma" must count as one model, matching
+        generate_model_id's case-insensitive identity rule — not two."""
+        services = [
+            self._row("s1", "Svc 1", "Gemma", 10, 100.0),
+            self._row("s2", "Svc 2", "gemma", 5, 100.0),
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["active_models"] == 1
 
     def test_worst_picks_highest_failure_rate_among_active(self):
         services = [
