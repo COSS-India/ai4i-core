@@ -262,12 +262,14 @@ class TestGetSummary:
         assert result.totalRemainingTokens is None
 
     @pytest.mark.asyncio
-    async def test_token_totals_null_without_explicit_filter_even_when_only_one_type_observed(self):
-        """Unlike the per-tenant `usage` block (which auto-detects a single observed
-        task type when nothing else disambiguates it), get_summary's token totals
-        require an explicit single-value `task_types` filter — an unfiltered period
-        that happens to have only one type in play does NOT auto-populate them.
-        Nothing in the ticket asked for that inference, so it's deliberately not done."""
+    async def test_token_totals_auto_detected_when_only_one_type_has_usage_without_filter(self):
+        """task_types is a deployment allowlist, not a single-type selector — the
+        frontend sends every ENABLED_TASK_TYPES value, so len(task_types) == 1 only
+        coincidentally means "one type" while just one type is enabled platform-wide.
+        The real single-type signal is that only one type actually had usage this
+        period; token totals must still populate on that basis even with no filter
+        (or a multi-value filter) passed, or they'd silently go dark the moment a
+        second type is enabled — see usageSpendService.ts/useUsageAndSpendData.ts."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row()],  # only "llm" this period
@@ -277,10 +279,10 @@ class TestGetSummary:
         svc = PPUUsageService(repo)
         result = await svc.get_summary("2026-06")  # no task_types passed
 
-        assert result.tokenUnit is None
-        assert result.totalUsedTokens is None
-        assert result.totalAllocatedTokens is None
-        assert result.totalRemainingTokens is None
+        assert result.tokenUnit is not None
+        assert result.totalUsedTokens == 100.0
+        assert result.totalAllocatedTokens == 200.0
+        assert result.totalRemainingTokens == 100.0
 
 
 class TestGetSummaryFiltered:

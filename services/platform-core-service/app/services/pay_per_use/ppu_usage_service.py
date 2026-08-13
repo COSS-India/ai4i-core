@@ -375,11 +375,17 @@ class PPUUsageService:
                 if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
                     budget_exceeded += 1
 
-        # Token totals: populated only when the caller filtered to exactly one task
-        # type — see UsageSummaryResponse.tokenUnit for why (incompatible cross-type
-        # units). No auto-detect fallback for an unfiltered single-type period: unlike
-        # the per-tenant `usage` block, nothing here asks for that.
+        # Token totals: only meaningful when everything in scope shares one unit — see
+        # UsageSummaryResponse.tokenUnit for why. `task_types` is a deployment allowlist
+        # (the frontend sends every ENABLED_TASK_TYPES value, not a single-type filter —
+        # see useUsageAndSpendData.ts), so len(task_types) == 1 only coincidentally means
+        # "one type" today; it stops meaning that the moment a second type is enabled.
+        # The real single-type signal is len(by_task_type) == 1 — only one type actually
+        # had usage this period, regardless of how many the allowlist permits. An explicit
+        # single-value task_types still wins outright when both are true.
         effective_task_type = task_types[0] if task_types and len(task_types) == 1 else None
+        if effective_task_type is None and len(by_task_type) == 1:
+            effective_task_type = next(iter(by_task_type))
 
         token_unit = None
         total_used_tokens = None

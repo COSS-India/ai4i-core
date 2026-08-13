@@ -25,12 +25,13 @@ class UsageSummaryResponse(BaseModel):
     # (see PPUUsageService.get_summary / _resolve_budget's has_budget).
     totalAllocatedBudget: float = 0
     totalRemainingBudget: float = 0
-    # Token totals: only populated when the caller filtered to exactly one task type
-    # via `task_types` — different task types use incompatible units (tokens/
+    # Token totals: only meaningful when the response is scoped to a single task type
+    # (either the caller passed one `task_types` value, or only one type actually had
+    # usage this period) — different task types use incompatible units (tokens/
     # characters/images/minutes), so these stay null otherwise rather than a
-    # nonsensical cross-unit sum. No auto-detect for an unfiltered single-type period —
-    # this must be an explicit request. tokenUnit names the unit these three figures
-    # are in. (See PPUUsageService.get_summary for where these are computed.)
+    # nonsensical cross-unit sum. tokenUnit names the unit these three figures are in.
+    # (See PPUUsageService.get_summary for where these are computed and why
+    # "one type had usage" — not "the allowlist has one entry" — is the real signal.)
     tokenUnit: Optional[str] = None
     totalUsedTokens: Optional[float] = None
     totalAllocatedTokens: Optional[float] = None
