@@ -2,6 +2,11 @@ export interface SpendByTaskType {
   modelTaskType: string;
   unit: string;
   consumption: number;
+  /**
+   * Quota allocated for this task type this billing period, summed across tenants'
+   * current tier only. Omitted when no tenant in scope has a quota snapshot for it.
+   */
+  allocated?: number | null;
   spend: number;
   percentage: number;
 }
@@ -15,6 +20,9 @@ export interface UsageSummaryResponse {
   budgetExceededTenants?: number;
   spendChangePercent?: number;
   spendByModelTaskType: SpendByTaskType[];
+  /** Summed across tenants with a budget assignment covering this billing period. */
+  totalAllocatedBudget?: number;
+  totalRemainingBudget?: number;
 }
 
 export interface TenantBudget {

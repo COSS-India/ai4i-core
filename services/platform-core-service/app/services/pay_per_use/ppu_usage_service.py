@@ -345,11 +345,29 @@ class PPUUsageService:
             cost_by_tenant[row.tenant_id] = cost_by_tenant.get(row.tenant_id, Decimal("0")) + cost
 
         total_spend = sum((b["cost"] for b in by_task_type.values()), Decimal("0"))
+
+        # Quota allocated per task type, summed across tenants' CURRENT tier only (not
+        # summed across every tier a tenant held that month) — same reasoning as
+        # _build_hierarchical_item's current_tier_row: a quota grant resets on
+        # reassignment, it isn't cumulative. Keyed by task type rather than gated to a
+        # single one in scope, so it generalizes to however many are actually present.
+        current_tier_by_tenant = {a.tenant_id: _tier_key(a.tier_id) for a in assignments}
+        allocated_by_task_type: dict[str, Decimal] = {}
+        for row in usage_rows:
+            if row.quota_snap is None:
+                continue
+            if current_tier_by_tenant.get(row.tenant_id) != _tier_key(row.tier_id):
+                continue
+            allocated_by_task_type[row.inference_name] = (
+                allocated_by_task_type.get(row.inference_name, Decimal("0")) + _to_decimal(row.quota_snap)
+            )
+
         spend_items = [
             SpendItem(
                 modelTaskType=name,
                 unit=b["unit"],
                 consumption=b["units"],
+                allocated=round(allocated_by_task_type[name], 2) if name in allocated_by_task_type else None,
                 spend=round(b["cost"], 2),
                 percentage=round(b["cost"] / total_spend * 100, 1) if total_spend > 0 else Decimal("0"),
             )
@@ -365,10 +383,15 @@ class PPUUsageService:
         # the summary card consistent with the tenant list/detail view, which shows the
         # same tenant at 0% used (see _resolve_budget) rather than "over budget."
         budget_exceeded = 0
+        total_allocated_budget = Decimal("0")
+        total_remaining_budget = Decimal("0")
         for a in assignments:
-            budget_limit, _, has_budget = _resolve_budget(a.tenant_id, budgets)
-            if has_budget and cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
-                budget_exceeded += 1
+            budget_limit, available_balance, has_budget = _resolve_budget(a.tenant_id, budgets)
+            if has_budget:
+                total_allocated_budget += budget_limit
+                total_remaining_budget += available_balance
+                if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
+                    budget_exceeded += 1
 
         prev_month = _prev_month(billing_month)
         if tier_id:
@@ -401,6 +424,8 @@ class PPUUsageService:
             budgetExceededTenants=budget_exceeded,
             spendChangePercent=spend_change_percent,
             spendByModelTaskType=spend_items,
+            totalAllocatedBudget=round(total_allocated_budget, 2),
+            totalRemainingBudget=round(total_remaining_budget, 2),
         )
 
     async def get_tenant_list(
@@ -558,6 +583,14 @@ class PPUUsageService:
                 tier_id = "unassigned"
                 tier_name = "Unassigned"
 
+            # A tenant with a live assignment but no usage yet this period still has a
+            # real allocated/remaining budget — budget.limit/remaining must not collapse
+            # to 0 just because there's nothing to build a hierarchical item from
+            # (previously it did, even with a real budget_limit/available_balance on file).
+            budget_limit, available_balance, _ = _resolve_budget(tenant_id, budgets)
+            budget_limit = round(budget_limit, 2)
+            available_balance = round(available_balance, 2)
+
             return TenantHierarchicalItem(
                 tenantId=tenant_id,
                 tenantName=org_map.get(tenant_id, tenant_id),
@@ -566,9 +599,9 @@ class PPUUsageService:
                 currency=_CURRENCY,
                 spend=Decimal("0"),
                 budget=TenantBudget(
-                    limit=Decimal("0"),
+                    limit=budget_limit,
                     spent=Decimal("0"),
-                    remaining=Decimal("0"),
+                    remaining=available_balance,
                     percentageUsed=Decimal("0"),
                 ),
                 usage=TenantUsageCount(taskTypeCount=0),
