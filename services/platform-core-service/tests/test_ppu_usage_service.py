@@ -261,6 +261,27 @@ class TestGetSummary:
         assert result.totalAllocatedTokens is None
         assert result.totalRemainingTokens is None
 
+    @pytest.mark.asyncio
+    async def test_token_totals_null_without_explicit_filter_even_when_only_one_type_observed(self):
+        """Unlike the per-tenant `usage` block (which auto-detects a single observed
+        task type when nothing else disambiguates it), get_summary's token totals
+        require an explicit single-value `task_types` filter — an unfiltered period
+        that happens to have only one type in play does NOT auto-populate them.
+        Nothing in the ticket asked for that inference, so it's deliberately not done."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],  # only "llm" this period
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")  # no task_types passed
+
+        assert result.tokenUnit is None
+        assert result.totalUsedTokens is None
+        assert result.totalAllocatedTokens is None
+        assert result.totalRemainingTokens is None
+
 
 class TestGetSummaryFiltered:
     """get_summary(tier_id=<id>) must keep using full tenant resolution for the prior

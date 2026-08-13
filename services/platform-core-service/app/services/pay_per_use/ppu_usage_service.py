@@ -58,21 +58,6 @@ def _resolve_tier_name(tier_id, tier_names: dict) -> str:
     return tier_names.get(str(tier_id), "Unassigned")
 
 
-def _effective_task_type(explicit: str | None, observed) -> str | None:
-    """The single task type in scope, if any — the rule both get_summary and
-    _build_hierarchical_item key their token/quota totals on. An explicit override
-    (a caller-specified single task type) always wins; otherwise auto-detect only
-    when exactly one type was actually observed this period (nothing to
-    disambiguate). Returns None when more than one type is in play and nothing
-    pinned it down — quota/token totals can't be summed across incompatible units
-    (tokens/characters/minutes/...).
-    """
-    if explicit:
-        return explicit
-    observed = list(observed)
-    return observed[0] if len(observed) == 1 else None
-
-
 def _resolve_budget(tenant_id: str, budgets_by_tenant: dict) -> tuple[Decimal, Decimal, bool]:
     """(budget_limit, available_balance, has_budget) for a tenant.
 
@@ -222,7 +207,9 @@ def _build_hierarchical_item(
     remaining_budget = round(_to_decimal(assignment.available_balance), 2)
     percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else Decimal("0")
 
-    effective_task_type = _effective_task_type(model_task_type, distinct_task_types)
+    effective_task_type = model_task_type
+    if effective_task_type is None and len(distinct_task_types) == 1:
+        effective_task_type = next(iter(distinct_task_types))
 
     # Multiple task types with nothing to disambiguate (no filter, no single-type
     # auto-detect): matches the old flat TenantUsageItem.quotaUnit contract, which was
@@ -388,16 +375,11 @@ class PPUUsageService:
                 if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
                     budget_exceeded += 1
 
-        # Tokens can only be totalled when everything in scope shares one unit: either
-        # the caller asked for a single task type, or only one type happened to have
-        # usage this period. Otherwise (e.g. task_types omitted and tenants used a mix
-        # of LLM/ASR/NMT) leave the token totals null rather than summing incompatible
-        # units — same discipline TenantUsageCount already applies per-tenant.
-        # task_types is the caller's requested filter (comma-separated list): it only
-        # counts as an explicit override when exactly one value was requested — more
-        # than one still leaves the unit ambiguous, same as not filtering at all.
-        explicit_task_type = task_types[0] if task_types and len(task_types) == 1 else None
-        effective_task_type = _effective_task_type(explicit_task_type, by_task_type.keys())
+        # Token totals: populated only when the caller filtered to exactly one task
+        # type — see UsageSummaryResponse.tokenUnit for why (incompatible cross-type
+        # units). No auto-detect fallback for an unfiltered single-type period: unlike
+        # the per-tenant `usage` block, nothing here asks for that.
+        effective_task_type = task_types[0] if task_types and len(task_types) == 1 else None
 
         token_unit = None
         total_used_tokens = None
