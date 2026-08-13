@@ -273,8 +273,8 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
 def _avg_requests_per_tenant_cell(
     ranking: Optional[dict], prev_avg: Optional[float]
 ) -> Optional[Cell]:
-    """KPI card shown above the institution ranking: avg requests per active
-    institution, with the vs-previous-window percentage change."""
+    """KPI card shown above the tenant ranking: avg requests per active
+    tenant, with the vs-previous-window percentage change."""
     if not (ranking and ranking.get("total_tenant_count")):
         return None
     cur_avg = ranking.get("avg_per_active_tenant")
@@ -575,6 +575,11 @@ async def get_tenant_consumption(
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     limit: int = Query(10, ge=1, le=50, description="Max tenants to return"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Scope to a single tenant (admin only)"),
+    task_types: Optional[str] = Query(
+        None,
+        description="Comma-separated task types for the heatmap columns (default: all). "
+        "Unsupported values are rejected with 422.",
+    ),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -593,8 +598,11 @@ async def get_tenant_consumption(
     # query that Scope.tenant_id would still report as tenant-scoped.
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, True)
 
+    task_type_filter = _parse_task_types(task_types)
+
     cache_key = (
-        f"metering:tenant-consumption:v3:{window}:{limit}:{scope_tenant_name or 'all'}"
+        f"metering:tenant-consumption:v2:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"{','.join(task_type_filter) if task_type_filter else 'all'}"
     )
     cached = await _cache_get(redis, cache_key)
     if cached:
@@ -602,12 +610,21 @@ async def get_tenant_consumption(
 
     results = await asyncio.gather(
         svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
+        svc.usage_by_tenant_service(
+            limit=limit, time_range=window, services=task_type_filter, tenant=scope_tenant_name
+        ),
         svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
         return_exceptions=True,
     )
-    (ranking, prev_avg), degraded = _partition_results(results)
+    (ranking, heatmap, prev_avg), degraded = _partition_results(results)
 
     ranking_tenants = ranking["tenants"] if ranking else []
+    heatmap_rows = heatmap["tenants"] if heatmap else []
+
+    # ``tenant`` IS the organisation name (the Prometheus label value)
+    # already — no DB lookup needed.
+    for r in heatmap_rows:
+        r["organisation"] = r["tenant"]
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -617,9 +634,11 @@ async def get_tenant_consumption(
             tenant_id=scope_tenant,
             organisation=scope_tenant_name,
             window=window,
+            task_types=task_type_filter,
         ),
         avg_requests_per_tenant=_avg_requests_per_tenant_cell(ranking, prev_avg),
         tenant_ranking=_tenant_ranking_rows(ranking_tenants),
+        usage_by_service=heatmap_rows,
         degraded=degraded,
         generated_at=generated_at,
     )

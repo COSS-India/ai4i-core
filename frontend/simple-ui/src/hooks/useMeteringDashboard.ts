@@ -148,12 +148,14 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       METERING.QUERY.SCOPES.TENANT,
       timeWindow,
       topN,
+      enabledServices?.join(",") ?? METERING.QUERY.HEATMAP_SERVICES_ALL,
       queryTenantId,
     ),
     queryFn: () =>
       fetchMeteringTenantConsumption(
         timeWindow,
         topN,
+        enabledServices,
         queryTenantId,
       ),
     enabled: isAdopterView && subTab === METERING.SUB_TAB.TENANT,
