@@ -38,6 +38,7 @@ from app.schemas.metering import (
     ServiceSummary,
     TenantConsumptionResponse,
     TenantRow,
+    TopModelRow,
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
@@ -410,6 +411,37 @@ def _service_consumption_summary(breakdown: Optional[dict]) -> Optional[ServiceS
     )
 
 
+def _model_consumption_summary(
+    breakdown: Optional[dict], total_models: Optional[int], most_used: Optional[dict],
+) -> Optional[ModelConsumptionSummary]:
+    """Model Consumption KPI cards (AI4IDS-2790) — active_models/overall_success_rate_pct/
+    worst all computed in one pass by MeteringService.model_consumption_kpis; `most_used`
+    is model-level (pre-aggregated by MeteringService.model_consumption_ranking),
+    `highest_failure_rate` stays service-level."""
+    if breakdown is None:
+        return None
+    kpis = MeteringService.model_consumption_kpis(breakdown["services"])
+    worst = kpis["worst"]
+
+    return ModelConsumptionSummary(
+        total_models=total_models,
+        active_models=kpis["active_models"],
+        overall_success_rate_pct=kpis["overall_success_rate_pct"],
+        most_used=(
+            MostUsedModel(name=most_used["model_name"], requests=most_used["requests"])
+            if most_used else None
+        ),
+        highest_failure_rate=(
+            HighestFailureModel(
+                service_id=worst["service_id"],
+                name=worst["name"],
+                failure_rate_pct=round(100 - worst["success_pct"], 2),
+            )
+            if worst else None
+        ),
+    )
+
+
 _STEP_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
@@ -729,6 +761,7 @@ async def get_model_consumption(
     request: Request,
     window: WindowParam = Query("24h", description="Time window: 1h | 24h | 7d | 30d"),
     tenant_id: Optional[int] = Query(None, ge=1, description="Narrow to a specific tenant (admin only)"),
+    limit: int = Query(10, ge=1, le=25, description="Max models to return in top_models"),
     svc: MeteringService = Depends(get_metering_service),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -737,7 +770,10 @@ async def get_model_consumption(
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
 
-    cache_key = f"metering:model-consumption:v1:{window}:{scope_tenant_name or 'all'}:{_caller_role_label(request)}"
+    cache_key = (
+        f"metering:model-consumption:v2:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"{_caller_role_label(request)}"
+    )
     cached = await _cache_get(redis, cache_key)
     if cached:
         return cached
@@ -747,41 +783,33 @@ async def get_model_consumption(
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
+    # Not gathered with model_breakdown above: both end up querying the same
+    # per-request AsyncSession (ServiceRepository(db) / ModelRepository(db) in
+    # get_metering_service share `db`), and AsyncSession is not safe for
+    # concurrent use — see the same note on tenant_count(). registry_model_count()
+    # never raises (catches internally), so it can't regress `degraded`.
+    total_models = await svc.registry_model_count()
 
     org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
-    # Summary KPIs — computed over services with traffic (a 0-request service
-    # must not win "highest failure rate").
-    summary: Optional[ModelConsumptionSummary] = None
-    if breakdown is not None:
-        active = [s for s in services if s["requests"] > 0]
-        most_used = max(active, key=lambda s: s["requests"]) if active else None
-        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
-        summary = ModelConsumptionSummary(
-            most_used=(
-                MostUsedModel(
-                    service_id=most_used["service_id"],
-                    name=most_used["name"],
-                    requests=most_used["requests"],
-                )
-                if most_used else None
-            ),
-            highest_failure_rate=(
-                HighestFailureModel(
-                    service_id=worst["service_id"],
-                    name=worst["name"],
-                    failure_rate_pct=round(100 - worst["success_pct"], 2),
-                )
-                if worst else None
-            ),
-        )
+    # most_used/top_models are model-level aggregations of the (service-level)
+    # breakdown rows above — see MeteringService.model_consumption_ranking.
+    # top_models_total_requests is the resolved-model-only denominator
+    # consumption_pct is computed against — NOT the full window's total.
+    most_used, ranked_models, top_models_total_requests = (
+        svc.model_consumption_ranking(services, limit) if breakdown is not None else (None, [], 0)
+    )
+    summary = _model_consumption_summary(breakdown, total_models, most_used)
+    top_models = [TopModelRow(**m) for m in ranked_models]
 
     generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     response = ModelConsumptionResponse(
         scope=Scope(role=_caller_role_label(request), tenant_id=scope_tenant, organisation=org, window=window),
         summary=summary,
+        top_models=top_models,
+        top_models_total_requests=top_models_total_requests,
         breakdown=[
             ServiceModelRow(
                 service_id=s["service_id"],

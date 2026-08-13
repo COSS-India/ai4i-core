@@ -103,6 +103,37 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
+    async def count_distinct_models(self) -> int:
+        """Count of distinct model NAMES registered in the Registry — ACTIVE
+        and DEPRECATED versions both count (a deprecated model is still "in
+        the Registry", just not the currently-recommended version to use).
+
+        Deliberately NOT filtered to ACTIVE-only: the metering model-consumption
+        summary pairs this with a traffic-side `active_models` count that
+        resolves a model's name through an outer join with no version_status
+        filter either (ServiceRepository.get_names_and_models_by_service_ids),
+        so a model fronted by a still-serving DEPRECATED version counts there.
+        Filtering this to ACTIVE-only would let `active_models` exceed
+        `total_models` — keeping both unfiltered on version_status keeps
+        active_models a true subset of this count.
+
+        `model_id` is `generate_model_id(name, version)` — a hash of the
+        LOWERCASED (name, version) pair (see app/utils/hashing.py) — so it's
+        unique per VERSION, not per logical model, and the platform treats
+        "Gemma" and "gemma" as the same model. Counting rows, distinct
+        model_id, or a case-sensitive DISTINCT name would all over-count: a
+        model with 3 versions is 3 rows/3 distinct model_ids, and two
+        versions saved with different name casing would be 2 distinct names
+        despite being the same model per generate_model_id's identity rule.
+        Lower-casing the name before DISTINCT collapses both cases back to
+        "how many models exist".
+
+        Used by the metering model-consumption summary's `total_models` KPI.
+        """
+        stmt = select(func.count(func.distinct(func.lower(Model.name))))
+        result = await self._db.execute(stmt)
+        return int(result.scalar() or 0)
+
     async def list_models(
         self,
         *,
