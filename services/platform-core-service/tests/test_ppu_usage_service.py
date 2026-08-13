@@ -185,6 +185,82 @@ class TestGetSummary:
         total_pct = sum(i.percentage for i in result.spendByModelTaskType)
         assert abs(total_pct - 100.0) < 0.2
 
+    @pytest.mark.asyncio
+    async def test_allocated_and_remaining_budget_summed_across_tenants(self):
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2")],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", total_cost=Decimal("50")),
+                _usage_row(tenant_id="t2", total_cost=Decimal("30")),
+            ],
+            get_tenant_budgets=_budgets(
+                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("700")),
+                _budget_row(tenant_id="t2", budget_limit=Decimal("500"), available_balance=Decimal("200")),
+            ),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.totalAllocatedBudget == 1500.0
+        assert result.totalRemainingBudget == 900.0
+
+    @pytest.mark.asyncio
+    async def test_tenant_with_no_budget_row_excluded_from_budget_totals(self):
+        """Same "unknown limit != 0" treatment as budgetExceededTenants — a tenant
+        with no assignment row on file must not contribute a 0 to either total."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row()],
+            get_tenant_budgets=_budgets(),  # no row for t1
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.totalAllocatedBudget == 0.0
+        assert result.totalRemainingBudget == 0.0
+
+    @pytest.mark.asyncio
+    async def test_token_totals_populated_when_single_task_type_requested(self):
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2", tier_id="2")],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", tier_id="1", total_units=100.0, quota_snap=200.0),
+                _usage_row(tenant_id="t2", tier_id="2", total_units=50.0, quota_snap=300.0),
+            ],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06", task_types=["llm"])
+
+        assert result.tokenUnit is not None
+        assert result.totalUsedTokens == 150.0
+        assert result.totalAllocatedTokens == 500.0
+        assert result.totalRemainingTokens == 350.0
+
+    @pytest.mark.asyncio
+    async def test_token_totals_null_when_multiple_task_types_present(self):
+        """Tokens can't be summed across task types with different units (e.g. LLM
+        tokens vs ASR minutes) when the caller didn't scope to one type and more
+        than one type has usage — so these stay null rather than a nonsense sum."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(inference_name="llm", total_cost=Decimal("30")),
+                _usage_row(inference_name="asr", total_cost=Decimal("20")),
+            ],
+            get_tenant_budgets=_budgets(),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        assert result.totalUsedTokens is None
+        assert result.totalAllocatedTokens is None
+        assert result.totalRemainingTokens is None
+
 
 class TestGetSummaryFiltered:
     """get_summary(tier_id=<id>) must keep using full tenant resolution for the prior

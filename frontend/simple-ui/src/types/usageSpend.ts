@@ -15,6 +15,18 @@ export interface UsageSummaryResponse {
   budgetExceededTenants?: number;
   spendChangePercent?: number;
   spendByModelTaskType: SpendByTaskType[];
+  /** Summed across tenants with a budget assignment covering this billing period. */
+  totalAllocatedBudget?: number;
+  totalRemainingBudget?: number;
+  /**
+   * Only populated when the response is scoped to a single task type (either one
+   * `taskTypes` value was requested, or only one type had usage this period) —
+   * different task types use incompatible units, so these are omitted otherwise.
+   */
+  tokenUnit?: string | null;
+  totalUsedTokens?: number | null;
+  totalAllocatedTokens?: number | null;
+  totalRemainingTokens?: number | null;
 }
 
 export interface TenantBudget {

@@ -365,10 +365,49 @@ class PPUUsageService:
         # the summary card consistent with the tenant list/detail view, which shows the
         # same tenant at 0% used (see _resolve_budget) rather than "over budget."
         budget_exceeded = 0
+        total_allocated_budget = Decimal("0")
+        total_remaining_budget = Decimal("0")
         for a in assignments:
-            budget_limit, _, has_budget = _resolve_budget(a.tenant_id, budgets)
-            if has_budget and cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
-                budget_exceeded += 1
+            budget_limit, available_balance, has_budget = _resolve_budget(a.tenant_id, budgets)
+            if has_budget:
+                total_allocated_budget += budget_limit
+                total_remaining_budget += available_balance
+                if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
+                    budget_exceeded += 1
+
+        # Tokens can only be totalled when everything in scope shares one unit: either
+        # the caller asked for a single task type, or only one type happened to have
+        # usage this period. Otherwise (e.g. task_types omitted and tenants used a mix
+        # of LLM/ASR/NMT) leave the token totals null rather than summing incompatible
+        # units — same discipline TenantUsageCount already applies per-tenant.
+        effective_task_type: str | None = None
+        if task_types and len(task_types) == 1:
+            effective_task_type = task_types[0]
+        elif len(by_task_type) == 1:
+            effective_task_type = next(iter(by_task_type))
+
+        token_unit = None
+        total_used_tokens = None
+        total_allocated_tokens = None
+        total_remaining_tokens = None
+        if effective_task_type:
+            token_unit = _UNIT_LABELS.get(effective_task_type, effective_task_type)
+            used = by_task_type.get(effective_task_type, {}).get("units", Decimal("0"))
+            # Quota is read from each tenant's CURRENT tier only (not summed across every
+            # tier they held that month) — same reasoning as _build_hierarchical_item's
+            # current_tier_row: a quota grant resets on reassignment, it isn't cumulative.
+            quota_by_tenant_tier: dict[tuple[str, str], Decimal] = {}
+            for row in usage_rows:
+                if row.inference_name == effective_task_type and row.quota_snap is not None:
+                    quota_by_tenant_tier[(row.tenant_id, _tier_key(row.tier_id))] = _to_decimal(row.quota_snap)
+            allocated = Decimal("0")
+            for a in assignments:
+                quota = quota_by_tenant_tier.get((a.tenant_id, _tier_key(a.tier_id)))
+                if quota is not None:
+                    allocated += quota
+            total_used_tokens = round(used, 2)
+            total_allocated_tokens = round(allocated, 2)
+            total_remaining_tokens = round(max(Decimal("0"), allocated - used), 2)
 
         prev_month = _prev_month(billing_month)
         if tier_id:
@@ -401,6 +440,12 @@ class PPUUsageService:
             budgetExceededTenants=budget_exceeded,
             spendChangePercent=spend_change_percent,
             spendByModelTaskType=spend_items,
+            totalAllocatedBudget=round(total_allocated_budget, 2),
+            totalRemainingBudget=round(total_remaining_budget, 2),
+            tokenUnit=token_unit,
+            totalUsedTokens=total_used_tokens,
+            totalAllocatedTokens=total_allocated_tokens,
+            totalRemainingTokens=total_remaining_tokens,
         )
 
     async def get_tenant_list(
