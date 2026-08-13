@@ -1476,7 +1476,6 @@ export function formatServicePublishFilterLabel(filter: string): string {
   return filter;
 }
 
-export { METERING } from "./meteringConstants";
 export type { MeteringHeatmapServiceKey } from "./meteringConstants";
 
 /** Password policy — keep in sync with auth-service PASSWORD_MIN/MAX_LENGTH. */

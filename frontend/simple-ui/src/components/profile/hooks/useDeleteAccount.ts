@@ -3,8 +3,9 @@ import type { User } from "../../../types/auth";
 import { deleteUser, getViewTenant, listUsers } from "../../../services/tenantService";
 import authService from "../../../services/authService";
 import { resetAuthInitPromise } from "../../../hooks/useAuth";
-import { isTenantAdminUser, normalizeRole, userHasRole } from "../../../utils/rbac";
+import { isTenantAdminUser } from "../../../utils/rbac";
 import { INSTITUTION } from "../../../config/constants";
+import { tenantUserHasRole } from "../../../utils/tenantUserRoles";
 import { showError } from "../../../utils/errorHandler";
 
 const AUTH_UPDATED_EVENT = "auth:updated";
@@ -74,9 +75,7 @@ export function useDeleteAccount(user: User | null) {
           getViewTenant(user.tenant_id),
         ]);
         const activeTenantAdmins = users.filter(
-          (u) =>
-            u.is_active &&
-            (normalizeRole(u.role) === "TENANT ADMIN" || userHasRole(u.roles, "TENANT ADMIN"))
+          (u) => u.is_active && tenantUserHasRole(u, "TENANT ADMIN")
         );
         if (activeTenantAdmins.length <= 1) {
           const tenantLabel = tenant.organisation || tenant.contact_name || "your organisation";

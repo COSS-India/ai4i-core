@@ -49,10 +49,13 @@ import type {
 import {
   normalizeTenantUserRow,
   normalizeTenantUserRoles,
+  resolvePrimaryTenantAssignableRole,
+  resolveTenantUserRoles,
   tenantUserHasRole,
   tenantUserMatchesSearch,
   TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
+import { userHasRole } from "../../../utils/rbac";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
@@ -84,10 +87,6 @@ function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
   return organisation.includes(search) || tenantId.includes(search);
 }
 
-function isTenantAdminRoleForSessionEnd(role?: string): boolean {
-  return (role ?? "").trim().toUpperCase() === "TENANT ADMIN";
-}
-
 export interface UseTenantManagementOptions {
   user: {
     user_id?: string;
@@ -98,9 +97,7 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const isTenantAdmin = Boolean(
-    user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)),
-  );
+  const isTenantAdmin = Boolean(userHasRole(user?.roles, "TENANT ADMIN"));
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantScopedUser = isTenantAdmin && !isAdmin;
   const userIdStr = user?.user_id ?? null;
@@ -1259,6 +1256,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
       user_id: u.user_id,
       currentStatus,
+      roles: resolveTenantUserRoles(u),
     });
     setStatusUpdateNewStatus(newStatus);
     setIsStatusDialogOpen(true);
@@ -1298,7 +1296,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           ended &&
           userIdStr != null &&
           statusUpdateTarget.user_id === userIdStr &&
-          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) ||
+          (userHasRole(statusUpdateTarget.roles, "TENANT ADMIN") ||
             isTenantAdmin);
         if (isCurrentTenantAdmin) {
           showToast({
@@ -1363,9 +1361,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         const enriched = await enrichDefaultOrgTenantUser(unmasked);
         editRow = enriched.user;
         rolesLoaded = enriched.rolesLoaded;
-        const resolved = resolveDefaultOrgFormRole(editRow.roles, editRow.role);
+        const resolved = resolveDefaultOrgFormRole(editRow.roles);
         role =
-          isDefaultOrgUserRole(resolved) || resolved === "ADMIN"
+          isDefaultOrgUserRole(resolved) ||
+          resolved === "ADMIN" ||
+          resolved === "PROGRAM ADMIN"
             ? (resolved as TenantUserFormRole)
             : DEFAULT_TENANT_USER_ROLE;
         editRow = { ...editRow, role };
@@ -1377,17 +1377,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           });
         }
       } else {
-        const normalizedRole = (
-          unmasked.role ??
-          unmasked.roles?.[0] ??
-          ""
-        )
-          .trim()
-          .toUpperCase();
-        role =
-          normalizedRole === "TENANT ADMIN"
-            ? "TENANT ADMIN"
-            : DEFAULT_TENANT_USER_ROLE;
+        role = resolvePrimaryTenantAssignableRole(unmasked);
       }
       setEditUserRow(editRow);
       setEditUserRolesLoaded(rolesLoaded);
@@ -1430,6 +1420,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (
       isDefaultOrg &&
       editUserForm.role !== "ADMIN" &&
+      editUserForm.role !== "PROGRAM ADMIN" &&
       !isDefaultOrgUserRole(editUserForm.role)
     ) {
       showToast({
@@ -1450,7 +1441,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         });
         // Sync only when the operator changed the role and we trust the loaded roles.
         // Avoids silent demotion on profile-only edits after a failed roles fetch.
-        const initialRole = (editUserRow?.role ?? "").trim().toUpperCase();
+        const initialRole = resolveDefaultOrgFormRole(editUserRow?.roles);
         const nextRole = editUserForm.role.trim().toUpperCase();
         if (isDefaultOrgUserRole(nextRole) && nextRole !== initialRole) {
           if (!editUserRolesLoaded) {

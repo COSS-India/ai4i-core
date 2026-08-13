@@ -60,9 +60,12 @@ export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
 export type DefaultOrgUserRole =
   (typeof DEFAULT_ORG_USER_ROLE_OPTIONS)[number]["value"];
 
-/** Role filter + create/edit options for Default Organisation users. */
-export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST =
-  DEFAULT_ORG_USER_ROLE_OPTIONS;
+/** Role filter options for Default Organisation users (`roles[]` may include Admin / Program Admin). */
+export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
+  ...DEFAULT_ORG_USER_ROLE_OPTIONS,
+  { value: "ADMIN", label: "Admin" },
+  { value: "PROGRAM ADMIN", label: "Program Admin" },
+] as const;
 
 export const DEFAULT_ORG_USER_FORM_ROLE_OPTIONS = DEFAULT_ORG_USER_ROLE_OPTIONS;
 
@@ -80,6 +83,7 @@ const PLATFORM_ROLE_LABELS: Record<string, string> = {
   MODERATOR: "Moderator",
   GUEST: "Guest",
   "TENANT ADMIN": `${INSTITUTION} Admin`,
+  "PROGRAM ADMIN": "Program Admin",
 };
 
 export function isDefaultOrgUserRole(role: string): role is DefaultOrgUserRole {
@@ -96,7 +100,7 @@ export function formatPlatformRoleLabel(role: string): string {
 
 /**
  * Pick the primary role to show/edit for a default-org user.
- * Prefers User / Moderator / Guest; falls back to the first role returned.
+ * Prefers User / Moderator / Guest when present in `roles[]`; otherwise first role.
  */
 export function resolveDefaultOrgFormRole(
   roles: string[] | undefined | null,
@@ -120,6 +124,6 @@ export function tenantUsersToAuthUsers(rows: TenantUserView[]): User[] {
     phone_number: u.phone_number ?? undefined,
     is_active: u.is_active,
     is_tenant_active: u.is_tenant_active ?? undefined,
-    roles: u.roles,
+    roles: u.roles ?? [],
   }));
 }
