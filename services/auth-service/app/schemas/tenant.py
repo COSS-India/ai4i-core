@@ -14,6 +14,7 @@ from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.models.tenant import TenantStatus
+from app.models.role_name import RoleName
 
 # Invisible Unicode characters that str.strip() does not remove:
 # soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
@@ -108,8 +109,11 @@ def _normalize_phone(v: Any, *, validate_e164: bool) -> Optional[str]:
 class TenantUserRole(str, Enum):
     """Roles assignable to users provisioned under a tenant."""
 
-    USER = "USER"
-    TENANT_ADMIN = "TENANT ADMIN"
+    USER = RoleName.USER.value
+    TENANT_ADMIN = RoleName.TENANT_ADMIN.value
+    PROGRAM_ADMIN = RoleName.PROGRAM_ADMIN.value
+    MODERATOR = RoleName.MODERATOR.value
+
 
 
 class TenantCreate(BaseSchema):
@@ -285,4 +289,4 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    role: TenantUserRole
+    roles: list[str]
