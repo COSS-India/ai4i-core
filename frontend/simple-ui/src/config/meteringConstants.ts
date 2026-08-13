@@ -121,6 +121,9 @@ export const METERING = {
     BUDGET_SUMMARY: "BUDGET SUMMARY",
     QUOTA_SUMMARY: "QUOTA SUMMARY",
     SPEND_BY_TASK_TYPE: "SPEND BY MODEL TASK TYPE",
+    TOTAL_ALLOCATED: "TOTAL ALLOCATED",
+    TOTAL_USED: "TOTAL USED",
+    TOTAL_REMAINING: "TOTAL REMAINING",
   },
   COLORS: {
     RANK: ["#DD6B20", "#3182CE", "#38A169", "#805AD5", "#00B5D8"] as const,
@@ -205,9 +208,21 @@ export const METERING = {
           label: `Total ${INSTITUTIONS.toLowerCase()}`,
           helper: "registered on platform",
         },
-        { key: "active_24h", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 24 hours" },
-        { key: "active_7d", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 7 days" },
-        { key: "active_30d", label: `Active ${INSTITUTIONS.toLowerCase()}`, helper: "last 30 days" },
+        {
+          key: "active_24h",
+          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          helper: "last 24 hours",
+        },
+        {
+          key: "active_7d",
+          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          helper: "last 7 days",
+        },
+        {
+          key: "active_30d",
+          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          helper: "last 30 days",
+        },
         {
           key: "new_tenants_7d",
           label: `New ${INSTITUTIONS.toLowerCase()}`,

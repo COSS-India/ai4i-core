@@ -1,6 +1,7 @@
 import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import type {
+  SpendByTaskType,
   TenantTierBreakdown,
   TenantUsageAggregate,
   TenantUsageDetail,
@@ -85,6 +86,30 @@ export function formatSpendUnit(n: number, unit: string): string {
   return `${Math.round(n).toLocaleString("en-IN")} ${unit || ""}`.trim();
 }
 
+export interface SpendTokenTotals {
+  unit: string;
+  tokensAllocated: number | null;
+  tokensUsed: number;
+  tokensRemaining: number | null;
+}
+
+export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals {
+  const withAllocated = rows.filter((r) => r.allocated != null);
+  const remainingPerRow = rows.map((r) => {
+    if (r.remaining != null) return r.remaining;
+    return r.allocated != null ? r.allocated - r.consumption : null;
+  });
+  const withRemaining = remainingPerRow.filter((r): r is number => r != null);
+  return {
+    unit: rows[0]?.unit ?? "",
+    tokensUsed: rows.reduce((s, r) => s + (r.consumption ?? 0), 0),
+    tokensAllocated: withAllocated.length
+      ? withAllocated.reduce((s, r) => s + (r.allocated ?? 0), 0)
+      : null,
+    tokensRemaining: withRemaining.length ? withRemaining.reduce((s, r) => s + r, 0) : null,
+  };
+}
+
 export function spendBarColor(pct: number): string {
   if (pct > 100) return USAGE_SPEND_DANGER;
   if (pct >= 90) return USAGE_SPEND_WARNING;
@@ -146,6 +171,8 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
     modelTaskType: i.taskType,
     unit: i.unit,
     consumption: i.consumed,
+    allocated: i.quotaLimit ?? null,
+    remaining: i.remaining ?? null,
     spend: i.spend,
     percentage: 0,
   }));
@@ -162,6 +189,8 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
       ...i,
       percentage: total > 0 ? Number(((i.spend / total) * 100).toFixed(1)) : 0,
     })),
+    totalAllocatedBudget: detail.budget.limit,
+    totalRemainingBudget: detail.budget.remaining,
   };
 }
 
