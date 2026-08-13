@@ -23,16 +23,8 @@ down_revision: Union[str, None] = 'a2b3c4d5e6f7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
-SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
+MIGRATION_ID = "5eed0000-0000-0000-0000-000000000000"
 ROLE_NAME = "PROGRAM ADMIN"
-
-# Permissions 1, 15, 17 are guaranteed to exist from the main seeder.
-# 133, 134, 135 are inserted here so this migration is self-sufficient.
-ENSURE_PERMISSIONS = [
-    (133, "metering.read",     "metering", "read"),
-    (134, "usage.read",        "usage",    "read"),
-    (135, "usage.tenant_read", "usage",    "tenant_read"),
-]
 
 GRANT_PERMISSION_NAMES = [
     "admin",
@@ -57,30 +49,15 @@ def upgrade() -> None:
         {
             "name": ROLE_NAME,
             "description": "Program administrator with usage dashboard access only",
-            "created_by": SEEDER_ID,
+            "created_by": MIGRATION_ID,
         },
     )
 
-    # 2. Ensure permissions 133, 134, 135 exist.
-    for pid, name, resource, action in ENSURE_PERMISSIONS:
-        conn.execute(
-            sa.text("""
-                INSERT INTO permissions (id, name, resource, action, created_by)
-                VALUES (:id, :name, :resource, :action, :created_by)
-                ON CONFLICT (id) DO NOTHING
-            """),
-            {"id": pid, "name": name, "resource": resource, "action": action, "created_by": SEEDER_ID},
-        )
-    conn.execute(sa.text(
-        "SELECT setval(pg_get_serial_sequence('permissions', 'id'),"
-        " GREATEST((SELECT MAX(id) FROM permissions), 135))"
-    ))
-
-    # 3. Grant all permissions to PROGRAM ADMIN by name.
+    # 2. Grant all permissions to PROGRAM ADMIN by name.
     conn.execute(
         sa.text(f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.id, p.id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{MIGRATION_ID}'
             FROM roles r
             JOIN permissions p ON p.name = ANY(:names)
             WHERE r.name = :role_name
