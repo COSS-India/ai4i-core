@@ -59,7 +59,7 @@ export const METERING = {
       avg_rps: "Average RPS",
     },
     HELPERS: {
-      total_requests: `across all ${INSTITUTIONS.toLowerCase()}`,
+      total_requests: `Across all ${INSTITUTIONS}`,
       successful: "of all requests",
       failed: "of all requests",
       avg_rps: "requests per second",
