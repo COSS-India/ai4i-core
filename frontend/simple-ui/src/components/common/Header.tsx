@@ -99,7 +99,6 @@ const Header: React.FC = () => {
         setTitle("Services Management");
         break;
       case "/institution-management":
-      case "/tenant-management":
         setTitle(`${INSTITUTION} Management`);
         break;
       case "/api-key-management":
@@ -146,10 +145,7 @@ const Header: React.FC = () => {
       router.push("/profile");
       return;
     }
-    if (
-      router.pathname === "/institution-management" ||
-      router.pathname === "/tenant-management"
-    ) {
+    if (router.pathname === "/institution-management") {
       router.push("/");
       return;
     }
