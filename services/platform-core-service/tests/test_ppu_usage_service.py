@@ -633,10 +633,9 @@ class TestGetTenantDetail:
     @pytest.mark.asyncio
     async def test_zero_usage_with_live_budget_shows_real_allocated_and_remaining(self):
         """A tenant with a live assignment but no usage yet this period has a real
-        allocated/remaining budget — it must not collapse to 0 just because there's no
-        usage to build a hierarchical item from (previously it did: budget.limit and
-        totalAllocatedBudget/totalRemainingBudget were hardcoded to 0 even when a real
-        budget_limit/available_balance was on file)."""
+        allocated/remaining budget — budget.limit/remaining must not collapse to 0
+        just because there's no usage to build a hierarchical item from (previously
+        it did, even with a real budget_limit/available_balance on file)."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[],
             get_tenant_budgets=_budgets(
@@ -648,8 +647,6 @@ class TestGetTenantDetail:
 
         assert result.budget.limit == 1000.0
         assert result.budget.remaining == 700.0
-        assert result.totalAllocatedBudget == 1000.0
-        assert result.totalRemainingBudget == 700.0
 
     @pytest.mark.asyncio
     async def test_returns_zero_value_item_when_tenant_exists_but_unassigned(self):
@@ -744,35 +741,6 @@ class TestGetTenantDetail:
         assert result.usage.taskTypeCount == 2
         assert result.usage.consumed is None
         assert result.usage.unit == "Units"
-        # token totals stay null too — same "can't sum incompatible units" rule as
-        # usage-summary's totalAllocatedTokens/totalUsedTokens/totalRemainingTokens.
-        assert result.tokenUnit is None
-        assert result.totalUsedTokens is None
-        assert result.totalAllocatedTokens is None
-        assert result.totalRemainingTokens is None
-
-    @pytest.mark.asyncio
-    async def test_flat_totals_mirror_budget_and_usage_for_single_task_type(self):
-        """totalAllocatedBudget/totalRemainingBudget/totalAllocatedTokens/
-        totalUsedTokens/totalRemainingTokens must mirror budget.limit/remaining and
-        usage.quotaLimit/consumed/remaining exactly — same field names as
-        UsageSummaryResponse, so a shared summary-card component can read either
-        response the same way."""
-        repo = _make_repo(
-            get_tenants_with_usage_tier=[_tier_row()],
-            get_tenant_tier_usage_breakdown=[_usage_row()],  # total_units=100, quota_snap=200
-            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
-            get_tenant_budgets=_budgets(_budget_row(budget_limit=Decimal("1000"), available_balance=Decimal("700"))),
-        )
-        svc = PPUUsageService(repo)
-        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None, task_types=["llm"])
-
-        assert result.totalAllocatedBudget == result.budget.limit == 1000.0
-        assert result.totalRemainingBudget == result.budget.remaining == 700.0
-        assert result.tokenUnit is not None
-        assert result.totalUsedTokens == result.usage.consumed == 100.0
-        assert result.totalAllocatedTokens == result.usage.quotaLimit == 200.0
-        assert result.totalRemainingTokens == result.usage.remaining == 100.0
 
 
 # ── _resolve_tenant_names ─────────────────────────────────────────────────────

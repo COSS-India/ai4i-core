@@ -58,6 +58,21 @@ def _resolve_tier_name(tier_id, tier_names: dict) -> str:
     return tier_names.get(str(tier_id), "Unassigned")
 
 
+def _effective_task_type(explicit: str | None, observed) -> str | None:
+    """The single task type in scope, if any — the rule both get_summary and
+    _build_hierarchical_item key their token/quota totals on. An explicit override
+    (a caller-specified single task type) always wins; otherwise auto-detect only
+    when exactly one type was actually observed this period (nothing to
+    disambiguate). Returns None when more than one type is in play and nothing
+    pinned it down — quota/token totals can't be summed across incompatible units
+    (tokens/characters/minutes/...).
+    """
+    if explicit:
+        return explicit
+    observed = list(observed)
+    return observed[0] if len(observed) == 1 else None
+
+
 def _resolve_budget(tenant_id: str, budgets_by_tenant: dict) -> tuple[Decimal, Decimal, bool]:
     """(budget_limit, available_balance, has_budget) for a tenant.
 
@@ -207,9 +222,7 @@ def _build_hierarchical_item(
     remaining_budget = round(_to_decimal(assignment.available_balance), 2)
     percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else Decimal("0")
 
-    effective_task_type = model_task_type
-    if effective_task_type is None and len(distinct_task_types) == 1:
-        effective_task_type = next(iter(distinct_task_types))
+    effective_task_type = _effective_task_type(model_task_type, distinct_task_types)
 
     # Multiple task types with nothing to disambiguate (no filter, no single-type
     # auto-detect): matches the old flat TenantUsageItem.quotaUnit contract, which was
@@ -245,22 +258,6 @@ def _build_hierarchical_item(
             percentage=percentage,
         )
 
-    # Token totals mirror usage_count only when a single task type is actually in scope
-    # (effective_task_type truthy) — the same "nothing to disambiguate" case leaves
-    # usage_count.quotaLimit/consumed/remaining at their None defaults above, so mirroring
-    # unconditionally would just copy those Nones through anyway; this gate only matters
-    # for tokenUnit, which would otherwise pick up the multi-type "Units" placeholder.
-    # Same pre-declare/reassign shape get_summary uses for its own token totals below.
-    token_unit = None
-    total_used_tokens = None
-    total_allocated_tokens = None
-    total_remaining_tokens = None
-    if effective_task_type:
-        token_unit = usage_count.unit
-        total_used_tokens = usage_count.consumed
-        total_allocated_tokens = usage_count.quotaLimit
-        total_remaining_tokens = usage_count.remaining
-
     return TenantHierarchicalItem(
         tenantId=assignment.tenant_id,
         tenantName=tenant_name,
@@ -276,12 +273,6 @@ def _build_hierarchical_item(
         ),
         usage=usage_count,
         tierBreakdown=tier_breakdown,
-        totalAllocatedBudget=budget_limit,
-        totalRemainingBudget=remaining_budget,
-        tokenUnit=token_unit,
-        totalUsedTokens=total_used_tokens,
-        totalAllocatedTokens=total_allocated_tokens,
-        totalRemainingTokens=total_remaining_tokens,
     )
 
 
@@ -402,11 +393,11 @@ class PPUUsageService:
         # usage this period. Otherwise (e.g. task_types omitted and tenants used a mix
         # of LLM/ASR/NMT) leave the token totals null rather than summing incompatible
         # units — same discipline TenantUsageCount already applies per-tenant.
-        effective_task_type: str | None = None
-        if task_types and len(task_types) == 1:
-            effective_task_type = task_types[0]
-        elif len(by_task_type) == 1:
-            effective_task_type = next(iter(by_task_type))
+        # task_types is the caller's requested filter (comma-separated list): it only
+        # counts as an explicit override when exactly one value was requested — more
+        # than one still leaves the unit ambiguous, same as not filtering at all.
+        explicit_task_type = task_types[0] if task_types and len(task_types) == 1 else None
+        effective_task_type = _effective_task_type(explicit_task_type, by_task_type.keys())
 
         token_unit = None
         total_used_tokens = None
@@ -626,10 +617,9 @@ class PPUUsageService:
                 tier_name = "Unassigned"
 
             # A tenant with a live assignment but no usage yet this period still has a
-            # real allocated/remaining budget — this must not collapse to 0 just because
-            # there's nothing to build a hierarchical item from (previously it did,
-            # which is exactly what showed "Total allocated"/"Total remaining" as 0 for
-            # a freshly-assigned or not-yet-active tenant).
+            # real allocated/remaining budget — budget.limit/remaining must not collapse
+            # to 0 just because there's nothing to build a hierarchical item from
+            # (previously it did, even with a real budget_limit/available_balance on file).
             budget_limit, available_balance, _ = _resolve_budget(tenant_id, budgets)
             budget_limit = round(budget_limit, 2)
             available_balance = round(available_balance, 2)
@@ -649,8 +639,6 @@ class PPUUsageService:
                 ),
                 usage=TenantUsageCount(taskTypeCount=0),
                 tierBreakdown=[],
-                totalAllocatedBudget=budget_limit,
-                totalRemainingBudget=available_balance,
             )
 
         async def _fetch_tenant_data():
