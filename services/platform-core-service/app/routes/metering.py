@@ -274,8 +274,8 @@ def _series_points(res, ndigits: int) -> list[GraphPoint]:
 def _avg_requests_per_tenant_cell(
     ranking: Optional[dict], prev_avg: Optional[float]
 ) -> Optional[Cell]:
-    """KPI card shown above the tenant ranking: avg requests per active
-    tenant, with the vs-previous-window percentage change."""
+    """KPI card shown above the institution ranking: avg requests per active
+    institution, with the vs-previous-window percentage change."""
     if not (ranking and ranking.get("total_tenant_count")):
         return None
     cur_avg = ranking.get("avg_per_active_tenant")
@@ -285,7 +285,7 @@ def _avg_requests_per_tenant_cell(
     )
     return Cell(
         key="avg_requests_per_tenant",
-        label="Avg Requests Per Active Tenant",
+        label="Average Requests Per Active Institution",
         value=ranking["formatted_avg_per_active_tenant"],
         pct_change=pct,
     )
@@ -302,7 +302,7 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     return [
         Cell(
             key="total_requests",
-            label="Total Requests",
+            label="Total LLM Requests",
             value=rt["total_requests"]["formatted"],
             previous=rt["total_requests"]["previous_formatted"],
             pct_change=rt["total_requests"]["vs_previous_pct"],
@@ -325,7 +325,7 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
         ),
         Cell(
             key="avg_rps",
-            label="Avg RPS (req/s)",
+            label="Average RPS",
             value=rt["avg_rps"]["value"],
             previous=rt["avg_rps"]["previous_value"],
             pct_change=rt["avg_rps"]["vs_previous_pct"],
