@@ -1,43 +1,20 @@
-# 1. Verify Your Account & Set Your Password
+# 2. Signing In
 
 | | |
 | --- | --- |
-| Objective | Activate your Tenant Admin account from the onboarding email, set your password, and sign in. |
-| Role | Tenant Admin |
-| Prerequisites | The Adopter Admin has onboarded your institution, and an activation email has been sent to your address. |
+| Objective | Sign in to AI Switch using the credentials your Adopter Admin has shared with you. |
+| Role | Institution Admin |
+| Prerequisites | Your institution account has been activated, and your Adopter Admin has shared your sign-in credentials. |
 
-**Step 1** Once the Adopter Admin onboards you, an email is sent to verify your account and set your password. Open the email and click "Set your password."
+**Step 1** Sign in to AI Switch.
 
-<!-- TODO: add screenshot to assets/verify-account-01-activation-email.png -->
-![The account verification email](../assets/verify-account-01-activation-email.png)
+![Signing in to AI Switch](../assets/signing-in-01-sign-in.png)
 
-{% hint style="info" %}
-**NOTE**
+**Step 2** By default, you land on the Usage Dashboard.
 
-If this email doesn't arrive within a few minutes, check your spam folder, then contact your Adopter Admin — they can activate your account through an alternate method.
-{% endhint %}
-
-**Step 2** Enter your password and confirm it, then click "Set Password." All requirements must be met before the button is enabled.
-
-<!-- TODO: add screenshot to assets/verify-account-02-set-password.png -->
-![Entering and confirming your password, with all requirements met](../assets/verify-account-02-set-password.png)
-
-**Step 3** Once your password is set successfully, click "Go to sign in."
-
-<!-- TODO: add screenshot to assets/verify-account-03-password-set-success.png -->
-![Password set successfully](../assets/verify-account-03-password-set-success.png)
-
-**Step 4** A welcome email with your account details is sent to your address.
-
-<!-- TODO: add screenshot to assets/verify-account-04-welcome-email.png -->
-![The welcome email confirming your account](../assets/verify-account-04-welcome-email.png)
-
-**Step 5** Sign in with your credentials.
-
-<!-- TODO: add screenshot to assets/verify-account-05-sign-in.png -->
-![Signing in for the first time](../assets/verify-account-05-sign-in.png)
+![The Usage Dashboard, your institution's landing page](../assets/signing-in-02-usage-dashboard.png)
 
 | | |
 | --- | --- |
-| Outcome | Your account is active, and you are signed in to the portal, ready to onboard your institution's applications. |
-| Next | Proceed to [Onboard an Application](onboard-application.md). |
+| Outcome | You're signed in and viewing the Usage Dashboard, your institution's landing page. |
+| Next | Proceed to [Create an API Key](create-api-key.md). |

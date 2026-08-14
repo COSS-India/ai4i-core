@@ -1,15 +1,16 @@
-# AI Switch — Tenant Admin Guide
+# AI Switch — Institution Admin Guide
 
-Set up your institution, onboard applications, and provision access.
+Sign in, give your applications access to LLMs, and track usage.
 
-AI Switch is a governed access and consumption layer for AI models hosted on shared infrastructure. Your institution has been granted access to the platform by its owner — the Adopter — within limits they have defined. As Tenant Admin, you manage how your institution uses that access.
+AI Switch provides a single, governed layer for secure, measurable, and scalable consumption of open source and sovereign models. It enables sovereign AI infrastructure to be consumed in a controlled and accountable manner while maintaining centralized governance, operational visibility, and consumption oversight across multiple user institutions and applications.
 
-This guide walks you through setting up your institution's access, in the order the tasks are typically carried out: verifying your account, onboarding the applications that will consume services, and creating the API keys they use. The final part covers tracking your institution's usage and spend.
+This guide walks you through your institution's setup, in the order you'll typically do it: signing in, creating an API key for each application, and onboarding your institution's users. Part III covers tracking your institution's budget and usage, and Part IV covers the day-to-day account and access management you'll return to afterward.
 
-**Intended audience:** the Tenant Admin — the person responsible for managing a single institution's access to AI Switch. It covers the setup you perform within your own institution; it does not cover platform-wide administration, which is carried out by the Adopter Admin.
+**Intended audience:** the Institution Admin — the person responsible for managing your institution's access to AI Switch: signing in, giving your applications access to LLMs through API keys, onboarding your institution's users, and tracking budget and usage.
 
 ## Guide structure
 
-- **[Plan & Prepare](plan-and-prepare/introduction.md)** — Understand your role as Tenant Admin and gather what you need before setting up your institution's access.
-- **[Onboard & Provision](onboard-and-provision/verify-account.md)** — Verify your account, onboard the applications that will consume services, and create the API keys they use.
-- **[Operate & Govern](operate-and-govern/metering-dashboard.md)** — Track your institution's usage and spend against its assigned quota and budget.
+- **[Plan & Prepare](plan-and-prepare/introduction.md)** — Understand your role as Institution Admin and gather what you need before you begin.
+- **[Onboard & Provision](onboard-and-provision/institution-creation.md)** — Sign in, give your applications access to LLMs, and onboard your institution's users.
+- **[Track Budget & Usage](operate-and-govern/metering-dashboard.md)** — Track your institution's budget and usage against its assigned quota.
+- **[Manage & Maintain](manage-and-maintain/manage-api-keys.md)** — Day-to-day account, access, and testing tasks you'll return to after initial setup.

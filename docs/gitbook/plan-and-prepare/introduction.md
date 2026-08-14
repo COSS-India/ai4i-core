@@ -2,19 +2,18 @@
 
 ## About AI Switch
 
-AI Switch is a governed access and consumption layer for AI models hosted on shared infrastructure. Your institution has been granted access to the platform by its owner — the Adopter — within limits they have defined. As Tenant Admin, you manage how your institution uses that access.
+AI Switch provides a single, governed layer for secure, measurable, and scalable consumption of open source and sovereign models. It enables sovereign AI infrastructure to be consumed in a controlled and accountable manner while maintaining centralized governance, operational visibility, and consumption oversight across multiple user institutions and applications.
 
 ## Purpose of this Guide
 
-This guide walks you through setting up your institution's access, in the order the tasks are typically carried out: verifying your account, onboarding the applications that will consume services, and creating the API keys they use. [Part III](../operate-and-govern/metering-dashboard.md) covers tracking your institution's usage and spend.
+This guide walks you through your institution's setup, in the order you'll typically do it:
+
+* Signing in
+* Creating an API key for each application
+* Onboarding your institution's users
+
+[Part III](../operate-and-govern/metering-dashboard.md) covers tracking your institution's budget and usage, and [Part IV](../manage-and-maintain/manage-api-keys.md) covers the day-to-day account and access management you'll return to afterward.
 
 ## Intended Audience
 
-This guide is for the Tenant Admin — the person responsible for managing a single institution's access to AI Switch. It covers the setup you perform within your own institution; it does not cover platform-wide administration, which is carried out by the Adopter Admin.
-
-## AI Switch User Roles
-
-AI Switch recognizes two primary administrative roles:
-
-* **Adopter Admin** — governs the whole platform: models, tiers, services, institutions, and budgets. The Adopter Admin onboards your institution and assigns the tier and budget within which you operate.
-* **Tenant Admin** — that is you, operating within your own institution. This guide is written for this role.
+This guide is for the Institution Admin — the person responsible for managing your institution's access to AI Switch: signing in, giving your applications access to LLMs through API keys, onboarding your institution's users, and tracking budget and usage.
