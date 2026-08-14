@@ -739,9 +739,20 @@ class ServiceUpdateRequest(BaseSchema):
                 infra_description=infra_description,
                 inference_api_key=inference_api_key,
             )
-            self.endpoint = callback_url
-            self.hardwareDescription = infra_description
-            self.api_key = inference_api_key.value if inference_api_key else self.api_key
+            # Bug fix (found via live testing, not just mocks): only backfill
+            # the deprecated flat aliases when there's an actual new value to
+            # propagate. `inferenceEndPoint` being touched at all (e.g. just
+            # `providerName`, with no callbackUrl/infraDescription supplied
+            # via either channel) must NOT clobber `self.endpoint`/
+            # `self.hardwareDescription` to None — `endpoint` is a NOT NULL
+            # column (crashes the update with a 500) and `hardwareDescription`
+            # is nullable (would silently null out an existing value instead).
+            if callback_url is not None:
+                self.endpoint = callback_url
+            if infra_description is not None:
+                self.hardwareDescription = infra_description
+            if inference_api_key is not None:
+                self.api_key = inference_api_key.value
 
         # Cross-check only when BOTH the task and the schema are part of
         # THIS update — if only one side is being changed, this schema

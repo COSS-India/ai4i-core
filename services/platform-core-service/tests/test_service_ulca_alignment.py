@@ -438,6 +438,14 @@ class TestNewFieldsPersistence:
         # isMultilingualEnabled was never supplied — must NOT be forced to
         # False and reset an existing True (AI4IDS-2710 plan §6.2/isMultilingualEnabled).
         assert "is_multilingual_enabled" not in update_data
+        # Regression guard: caught live (not by any mocked test) as a real
+        # 500 — touching inferenceEndPoint for an unrelated sub-field (here,
+        # providerName only, no callbackUrl/infraDescription supplied via
+        # either channel) must NOT clobber `endpoint` (NOT NULL — crashes
+        # the DB write) or `hardware_description` (nullable — would
+        # silently null out an existing value instead) to None.
+        assert "endpoint" not in update_data
+        assert "hardware_description" not in update_data
 
 
 # ── Response serialization ───────────────────────────────────────────────────
