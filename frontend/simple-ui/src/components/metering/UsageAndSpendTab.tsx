@@ -252,6 +252,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
             : `No ${INSTITUTION.toLowerCase()} usage data available.`
         }
         filterTaskType={filterTaskType}
+        showTokenUsage={data.isScoped || Boolean(filterTaskType)}
         sortOrder={sortOrder}
         expanded={expanded}
         onToggleSort={() => setSortOrder((o) => (o === "desc" ? "asc" : "desc"))}
