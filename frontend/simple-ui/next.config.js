@@ -46,8 +46,8 @@ function getAllowedConnectOrigins() {
 function getSecurityHeaders() {
   const connectSrc = getAllowedConnectOrigins();
   return [
-    // Prevent clickjacking; SAMEORIGIN so the in-app Onboarding Guide can iframe same-origin HTML
-    { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+    // Prevent clickjacking: disallow embedding in iframes (use SAMEORIGIN if you need same-origin frames)
+    { key: 'X-Frame-Options', value: 'DENY' },
     // Prevent MIME-type sniffing; force browser to respect declared Content-Type
     { key: 'X-Content-Type-Options', value: 'nosniff' },
     // Legacy XSS filter (still useful for older browsers)
@@ -72,8 +72,7 @@ function getSecurityHeaders() {
         "media-src 'self' blob:",
         "font-src 'self' data: https://fonts.gstatic.com",
         `connect-src ${connectSrc}`,
-        "frame-src 'self'",
-        "frame-ancestors 'self'",
+        "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",
       ].join('; '),
