@@ -89,11 +89,28 @@ export function formatSpendUnit(n: number, unit: string): string {
 export interface SpendTokenTotals {
   unit: string;
   tokensAllocated: number | null;
-  tokensUsed: number;
+  tokensUsed: number | null;
   tokensRemaining: number | null;
 }
 
+/** Mixed-unit scope has no meaningful total; every figure dashes out. */
+const NO_TOKEN_TOTALS: SpendTokenTotals = {
+  unit: "",
+  tokensAllocated: null,
+  tokensUsed: null,
+  tokensRemaining: null,
+};
+
+/**
+ * Totals only when every row shares one unit. Task types are metered in tokens,
+ * audio_minutes, characters, images or requests (inference_types.yaml), so summing
+ * across a mixed set would print an arbitrary row's unit over an incoherent number.
+ * Per-type figures remain on the rows themselves.
+ */
 export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals {
+  const units = new Set(rows.map((r) => (r.unit || "").trim().toLowerCase()).filter(Boolean));
+  if (units.size !== 1) return NO_TOKEN_TOTALS;
+
   const withAllocated = rows.filter((r) => r.allocated != null);
   const remainingPerRow = rows.map((r) => {
     if (r.remaining != null) return r.remaining;
@@ -101,7 +118,7 @@ export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals 
   });
   const withRemaining = remainingPerRow.filter((r): r is number => r != null);
   return {
-    unit: rows[0]?.unit ?? "",
+    unit: rows.find((r) => r.unit)?.unit ?? "",
     tokensUsed: rows.reduce((s, r) => s + (r.consumption ?? 0), 0),
     tokensAllocated: withAllocated.length
       ? withAllocated.reduce((s, r) => s + (r.allocated ?? 0), 0)

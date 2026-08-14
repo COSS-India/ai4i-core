@@ -7,7 +7,10 @@ export interface SpendByTaskType {
    * current tier only. Omitted when no tenant in scope has a quota snapshot for it.
    */
   allocated?: number | null;
-  /** Stored directly by the tenant-detail endpoint; absent on the platform summary endpoint. */
+  /**
+   * Never sent by either endpoint; derived locally in summaryFromDetail, which copies it
+   * off the tenant-detail tier breakdown. Absent on responses from the summary endpoint.
+   */
   remaining?: number | null;
   spend: number;
   percentage: number;
