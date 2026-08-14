@@ -20,6 +20,8 @@ import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { INSTITUTION } from "../../config/constants";
+import { ONBOARDING_GUIDE_HREF } from "../../config/onboardingGuide";
+import { isDefaultAdminUser, isTenantAdminUser } from "../../utils/rbac";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -56,6 +58,11 @@ const Header: React.FC = () => {
 
   const profileDisplayName =
     (user?.full_name ?? "").trim() || "N/A";
+  const showOnboardingGuideMenu =
+    showUserMenu &&
+    (isTenantAdminUser(user?.roles) || isDefaultAdminUser(user?.roles));
+  const showHomeOnboardingGuideLink =
+    !showUserMenu && router.pathname === "/";
 
   // Check session expiry on mount and when user changes
   useEffect(() => {
@@ -219,19 +226,32 @@ const Header: React.FC = () => {
                 {profileDisplayName}
               </Badge>
             ) : (
-              <Button
-                colorScheme="blue"
-                variant="outline"
-                size="sm"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log("Header: Sign In button clicked");
-                  handleAuthClick();
-                }}
-              >
-                Sign In
-              </Button>
+              <HStack spacing={3}>
+                {showHomeOnboardingGuideLink && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    Onboarding Guide
+                  </Button>
+                )}
+                <Button
+                  colorScheme="blue"
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Header: Sign In button clicked");
+                    handleAuthClick();
+                  }}
+                >
+                  Sign In
+                </Button>
+              </HStack>
             )}
 
             {/* Menu */}
@@ -252,6 +272,16 @@ const Header: React.FC = () => {
                   }}>
                     Profile
                   </MenuItem>
+                  {showOnboardingGuideMenu && (
+                    <MenuItem
+                      onClick={() => {
+                        if (!checkSessionExpiry()) return;
+                        window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      Onboarding Guide
+                    </MenuItem>
+                  )}
                   <MenuItem onClick={async () => {
                     // Check session expiry before logout
                     if (!checkSessionExpiry()) return;

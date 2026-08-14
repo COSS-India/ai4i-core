@@ -46,8 +46,8 @@ function getAllowedConnectOrigins() {
 function getSecurityHeaders() {
   const connectSrc = getAllowedConnectOrigins();
   return [
-    // Prevent clickjacking: disallow embedding in iframes (use SAMEORIGIN if you need same-origin frames)
-    { key: 'X-Frame-Options', value: 'DENY' },
+    // Prevent clickjacking; SAMEORIGIN so the in-app Onboarding Guide can iframe same-origin HTML
+    { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
     // Prevent MIME-type sniffing; force browser to respect declared Content-Type
     { key: 'X-Content-Type-Options', value: 'nosniff' },
     // Legacy XSS filter (still useful for older browsers)
@@ -72,7 +72,8 @@ function getSecurityHeaders() {
         "media-src 'self' blob:",
         "font-src 'self' data: https://fonts.gstatic.com",
         `connect-src ${connectSrc}`,
-        "frame-ancestors 'none'",
+        "frame-src 'self'",
+        "frame-ancestors 'self'",
         "base-uri 'self'",
         "form-action 'self'",
       ].join('; '),
@@ -128,6 +129,13 @@ const nextConfig = {
       {
         source: '/:path*',
         headers,
+      },
+      {
+        // Guide HTML must open as a viewable page, not a download.
+        source: '/onboarding-guide/institution-admin-guide.html',
+        headers: [
+          { key: 'Content-Disposition', value: 'inline' },
+        ],
       },
     ];
   },
