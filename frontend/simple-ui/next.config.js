@@ -129,6 +129,13 @@ const nextConfig = {
         source: '/:path*',
         headers,
       },
+      {
+        // Guide HTML must open as a viewable page, not a download.
+        source: '/onboarding-guide/institution-admin-guide.html',
+        headers: [
+          { key: 'Content-Disposition', value: 'inline' },
+        ],
+      },
     ];
   },
 };

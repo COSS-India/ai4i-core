@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Switch — Institution Admin Guide</title>
+  <style>
+    :root {
+      --text: #1a202c;
+      --muted: #4a5568;
+      --border: #e2e8f0;
+      --bg: #ffffff;
+      --panel: #f7fafc;
+      --accent: #dd6b20;
+      --info: #2b6cb0;
+      --warn: #c05621;
+      --danger: #c53030;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 840px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 1.75rem; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.35rem; margin: 2.25rem 0 1rem; padding-top: 0.25rem; }
+    h3 { font-size: 1.05rem; margin: 1.5rem 0 0.6rem; }
+    p, li { color: var(--muted); }
+    a { color: #2b6cb0; }
+    .lede { font-size: 1rem; margin: 0 0 1rem; }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 1.25rem 0 1.75rem;
+    }
+    nav a {
+      display: inline-block;
+      padding: 0.35rem 0.7rem;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1.2rem;
+      margin: 0 0 1rem;
+      background: var(--bg);
+    }
+    .meta { width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.9rem; }
+    .meta th {
+      text-align: left;
+      width: 140px;
+      background: var(--panel);
+      padding: 0.5rem 0.7rem;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .meta td, .concepts td, .concepts th {
+      padding: 0.5rem 0.7rem;
+      border: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .concepts { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .concepts th { background: var(--panel); text-align: left; }
+    .concepts td:first-child { font-weight: 600; color: var(--text); white-space: nowrap; }
+    .hint {
+      border-left: 4px solid var(--info);
+      background: #ebf8ff;
+      padding: 0.75rem 1rem;
+      border-radius: 0 8px 8px 0;
+      margin: 0.85rem 0;
+      font-size: 0.9rem;
+    }
+    .hint.warn { border-left-color: var(--warn); background: #fffaf0; }
+    .hint.danger { border-left-color: var(--danger); background: #fff5f5; }
+    .hint strong { display: block; margin-bottom: 0.2rem; color: var(--text); }
+    figure { margin: 0.85rem 0 1.1rem; }
+    figure img {
+      width: 100%;
+      max-width: 720px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: block;
+    }
+    figcaption { font-size: 0.8rem; color: #718096; margin-top: 0.35rem; }
+    ol { padding-left: 1.2rem; }
+    ol > li { margin: 0.85rem 0; }
+    ul { padding-left: 1.2rem; }
+    .grid { display: grid; gap: 1rem; }
+    @media (min-width: 720px) { .grid.two { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>AI Switch — Institution Admin Guide</h1>
+    <p class="lede">
+      AI Switch is a governed access and consumption layer for AI models hosted on shared
+      infrastructure. Your institution has been granted access by its owner — the Adopter —
+      within limits they have defined. As Institution Admin, you manage how your institution
+      uses that access.
+    </p>
+    <p class="lede">
+      This guide walks you through verifying your account, onboarding the applications that
+      will consume services, creating API keys, and tracking usage and spend.
+    </p>
+    <nav>
+      <a href="#plan-and-prepare">Plan &amp; Prepare</a>
+      <a href="#onboard-and-provision">Onboard &amp; Provision</a>
+      <a href="#operate-and-govern">Operate &amp; Govern</a>
+    </nav>
+
+    <section id="plan-and-prepare">
+      <h2>Plan &amp; Prepare</h2>
+
+      <div class="card">
+        <h3>Your role</h3>
+        <p>
+          This guide is for the Institution Admin — the person responsible for managing a
+          single institution’s access to AI Switch. It does not cover platform-wide
+          administration, which is carried out by the Adopter Admin.
+        </p>
+        <div class="grid two">
+          <div>
+            <h3>Adopter Admin</h3>
+            <p>
+              Governs the whole platform: models, tiers, services, institutions, and budgets.
+              They onboard your institution and assign the tier and budget within which you operate.
+            </p>
+          </div>
+          <div>
+            <h3>Institution Admin</h3>
+            <p>
+              That is you. Onboard applications, create and manage API keys, and monitor usage
+              and spend against the assigned tier and budget.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint warn">
+        <strong>Data responsibility</strong>
+        Your institution is the data fiduciary for the application(s) you connect to AI Switch.
+        AI Switch operates only as a routing and metering layer — it does not process, store,
+        or retain your application’s data.
+      </div>
+
+      <div class="card">
+        <h3>Before you begin</h3>
+        <p>Keep the following ready so setup runs without interruption:</p>
+        <ul>
+          <li>The activation email sent when your institution was onboarded — you will use it to set your password and sign in.</li>
+          <li>The list of applications your institution will onboard, along with a contact for each.</li>
+          <li>For each API key: its intended use, the permissions it needs, and when it should expire.</li>
+        </ul>
+        <div class="hint">
+          <strong>Note</strong>
+          Tiers and budgets are assigned at the platform level and cannot be changed by an
+          Institution Admin. If you do not yet know yours, check with your Adopter Admin before proceeding.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>AI Switch concepts</h3>
+        <table class="concepts">
+          <thead>
+            <tr><th>Term</th><th>Definition</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Adopter</td><td>The organization that owns and governs the AI Switch deployment.</td></tr>
+            <tr><td>Institution</td><td>Your organization, granted access to the platform under the Adopter’s governance (also referred to as a tenant).</td></tr>
+            <tr><td>Application</td><td>A system your institution builds that consumes a service through an API key.</td></tr>
+            <tr><td>API Key</td><td>A credential issued to an application, used to authenticate its requests to a service.</td></tr>
+            <tr><td>Service</td><td>A model made available for consumption, together with its pricing and the tiers permitted to access it.</td></tr>
+            <tr><td>Tier</td><td>The set of usage limits (quotas) and rate limits, mapped to services and assigned to your institution.</td></tr>
+            <tr><td>Budget</td><td>The total spending allocation given to your institution for a defined period.</td></tr>
+            <tr><td>Quota</td><td>The maximum consumption permitted per month, defined per model task type inside your tier.</td></tr>
+            <tr><td>Rate Limit</td><td>The maximum rate at which requests may be submitted per hour.</td></tr>
+            <tr><td>Metering</td><td>The recording of your institution’s usage, tracked against your assigned tier and budget.</td></tr>
+            <tr><td>Monitoring</td><td>The ongoing tracking of your institution’s usage and spend against its assigned quota and budget.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="onboard-and-provision">
+      <h2>Onboard &amp; Provision</h2>
+
+      <div class="card">
+        <h3>1. Verify your account &amp; set your password</h3>
+        <table class="meta">
+          <tr><th>Objective</th><td>Activate your Institution Admin account from the onboarding email, set your password, and sign in.</td></tr>
+          <tr><th>Role</th><td>Institution Admin</td></tr>
+          <tr><th>Prerequisites</th><td>The Adopter Admin has onboarded your institution, and an activation email has been sent to your address.</td></tr>
+        </table>
+        <ol>
+          <li>
+            Open the activation email and click <strong>Set your password</strong>.
+            <figure>
+              <img src="verify-account-01-activation-email.png" alt="The account verification email" />
+              <figcaption>The account verification email</figcaption>
+            </figure>
+            <div class="hint">
+              <strong>Note</strong>
+              If the activation email does not arrive within a few minutes, check spam, then
+              contact your Adopter Admin — they can activate your account through an alternate method.
+            </div>
+          </li>
+          <li>
+            Enter and confirm your password, then click <strong>Set Password</strong>. All
+            requirements must be met before the button is enabled.
+            <figure>
+              <img src="verify-account-02-set-password.png" alt="Entering and confirming your password" />
+              <figcaption>Entering and confirming your password, with all requirements met</figcaption>
+            </figure>
+          </li>
+          <li>
+            Once the password is set, click <strong>Go to sign in</strong>.
+            <figure>
+              <img src="verify-account-03-password-set-success.png" alt="Password set successfully" />
+              <figcaption>Password set successfully</figcaption>
+            </figure>
+          </li>
+          <li>
+            A welcome email with your account details is sent to you.
+            <figure>
+              <img src="verify-account-04-welcome-email.png" alt="The welcome email confirming your account" />
+              <figcaption>The welcome email confirming your account</figcaption>
+            </figure>
+          </li>
+          <li>
+            Sign in with your credentials.
+            <figure>
+              <img src="verify-account-05-sign-in.png" alt="Signing in for the first time" />
+              <figcaption>Signing in for the first time</figcaption>
+            </figure>
+          </li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h3>2. Onboard an application</h3>
+        <table class="meta">
+          <tr><th>Objective</th><td>Register an application that will consume services on behalf of your institution.</td></tr>
+          <tr><th>Role</th><td>Institution Admin</td></tr>
+          <tr><th>Prerequisites</th><td>Your account is active and you are signed in; you have the contact details of the person the application will be registered under.</td></tr>
+        </table>
+        <ol>
+          <li>
+            Open <strong>Institution Management</strong>.
+            <figure>
+              <img src="onboard-application-01-tenant-management.png" alt="The Institution Management area" />
+              <figcaption>The Institution Management area</figcaption>
+            </figure>
+          </li>
+          <li>
+            Click <strong>Add User</strong> to register a new application.
+            <figure>
+              <img src="onboard-application-02-existing-users.png" alt="Existing users in Institution Management" />
+              <figcaption>Existing users in Institution Management</figcaption>
+            </figure>
+            <figure>
+              <img src="onboard-application-03-registration-form.png" alt="Opening the registration form" />
+              <figcaption>Opening the registration form</figcaption>
+            </figure>
+          </li>
+          <li>
+            Enter Email, Full Name, Role, and Phone Number, agree to the policies, and click <strong>Add</strong>.
+            <figure>
+              <img src="onboard-application-04-fill-details.png" alt="Entering the application details" />
+              <figcaption>Entering the application’s details, accepting the policies, and clicking Add</figcaption>
+            </figure>
+          </li>
+          <li>
+            The new entry appears as <strong>Pending activation</strong> until the application’s
+            contact verifies email and sets a password.
+            <figure>
+              <img src="onboard-application-05-pending-activation.png" alt="Pending activation status" />
+              <figcaption>The new entry, shown as pending activation</figcaption>
+            </figure>
+          </li>
+        </ol>
+        <div class="hint">
+          <strong>Note</strong>
+          An invite is sent to the application’s contact. If it does not arrive, ask them to
+          check spam, then contact your Adopter Admin.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>3. Create an API key</h3>
+        <table class="meta">
+          <tr><th>Objective</th><td>Create the API key an application uses to authenticate its requests to a service.</td></tr>
+          <tr><th>Role</th><td>Institution Admin</td></tr>
+          <tr><th>Prerequisites</th><td>Your institution has an active tier and budget assigned; you know the permissions and expiry the key requires.</td></tr>
+        </table>
+        <ol>
+          <li>
+            Open <strong>API Key Management</strong>. The <strong>Create API Key</strong> tab opens by default.
+            <figure>
+              <img src="create-api-key-01-management-area.png" alt="The API Key Management area" />
+              <figcaption>The API Key Management area</figcaption>
+            </figure>
+            <figure>
+              <img src="create-api-key-02-tab-default.png" alt="The Create API Key tab" />
+              <figcaption>The Create API Key tab, ready for a new key</figcaption>
+            </figure>
+          </li>
+          <li>
+            Enter Key Name, Permissions, and Expiry, then click <strong>Create API Key</strong>.
+            <figure>
+              <img src="create-api-key-03-fill-form.png" alt="Filling the Create API Key form" />
+              <figcaption>Entering the key name, permissions, and expiry</figcaption>
+            </figure>
+            <div class="hint">
+              <strong>Note</strong>
+              An API key can be created only if your institution has an active tier assigned.
+              If no tier is assigned, contact your Adopter Admin.
+            </div>
+          </li>
+          <li>
+            Copy the key immediately and store it securely — it is shown only once.
+            <div class="hint danger">
+              <strong>Important</strong>
+              The full API key cannot be retrieved again after creation. If it is lost, create a new key.
+            </div>
+            <figure>
+              <img src="create-api-key-04-key-created.png" alt="API key created and shown once" />
+              <figcaption>The API key created, shown once with the option to copy it</figcaption>
+            </figure>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="operate-and-govern">
+      <h2>Operate &amp; Govern</h2>
+      <div class="card">
+        <h3>Reports &amp; insights — Usage Dashboard</h3>
+        <table class="meta">
+          <tr><th>Objective</th><td>View your institution’s usage and spend against its assigned tier and budget, broken down by service and by model.</td></tr>
+          <tr><th>Role</th><td>Institution Admin</td></tr>
+          <tr><th>Prerequisites</th><td>At least one application in your institution is consuming a service using an API key.</td></tr>
+        </table>
+        <ol>
+          <li>
+            Open <strong>Usage Dashboard</strong> from the left navigation.
+            <figure>
+              <img src="metering-dashboard-01-usage-dashboard.png" alt="Opening the Usage Dashboard" />
+              <figcaption>Opening the Usage Dashboard</figcaption>
+            </figure>
+          </li>
+          <li>
+            Use <strong>Overview</strong> for total requests, success and failure counts, and request volume over time.
+            <figure>
+              <img src="metering-dashboard-02-overview-tab.png" alt="The Overview tab" />
+              <figcaption>The Overview tab</figcaption>
+            </figure>
+          </li>
+          <li>
+            Use <strong>Model Usage</strong> to view usage broken down by model.
+            <figure>
+              <img src="metering-dashboard-03-model-usage-tab.png" alt="The Model Usage tab" />
+              <figcaption>The Model Usage tab</figcaption>
+            </figure>
+          </li>
+          <li>
+            Use <strong>Cost and Budget</strong> to view spend against the assigned tier and budget.
+            <figure>
+              <img src="metering-dashboard-04-cost-and-budget.png" alt="The Cost and Budget view" />
+              <figcaption>The Cost and Budget view for your institution</figcaption>
+            </figure>
+          </li>
+        </ol>
+        <div class="hint">
+          <strong>Note</strong>
+          If you need a different tier or a larger budget, contact your Adopter Admin.
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
