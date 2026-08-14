@@ -54,26 +54,33 @@ export function isDefaultTenant(tenant: { organisation?: string | null }): boole
 export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "MODERATOR", label: "Moderator" },
-  { value: "GUEST", label: "Guest" },
+  { value: "PROGRAM ADMIN", label: "Program Admin" },
 ] as const;
 
 export type DefaultOrgUserRole =
   (typeof DEFAULT_ORG_USER_ROLE_OPTIONS)[number]["value"];
 
-/** Role filter options for Default Organisation users (`roles[]` may include Admin / Program Admin). */
+/**
+ * Role filter options for Default Organisation users. Includes roles that are no
+ * longer assignable but may still exist in `roles[]` (Admin, Guest).
+ */
 export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
   ...DEFAULT_ORG_USER_ROLE_OPTIONS,
+  { value: "GUEST", label: "Guest" },
   { value: "ADMIN", label: "Admin" },
-  { value: "PROGRAM ADMIN", label: "Program Admin" },
 ] as const;
 
 export const DEFAULT_ORG_USER_FORM_ROLE_OPTIONS = DEFAULT_ORG_USER_ROLE_OPTIONS;
 
-/** Roles replaced when syncing to User / Moderator / Guest (ADMIN excluded). */
+/**
+ * Roles replaced when syncing to a default-org role (ADMIN excluded).
+ * Keeps GUEST so legacy guests are cleared on reassignment.
+ */
 export const DEFAULT_ORG_MANAGED_ROLES = [
   "USER",
   "MODERATOR",
   "GUEST",
+  "PROGRAM ADMIN",
   "TENANT ADMIN",
 ] as const;
 
@@ -100,7 +107,7 @@ export function formatPlatformRoleLabel(role: string): string {
 
 /**
  * Pick the primary role to show/edit for a default-org user.
- * Prefers User / Moderator / Guest when present in `roles[]`; otherwise first role.
+ * Prefers a default-org assignable role when present in `roles[]`; otherwise first role.
  */
 export function resolveDefaultOrgFormRole(
   roles: string[] | undefined | null,
