@@ -132,7 +132,7 @@ class AuthSettings(BaseSettings):
     # stays the single source of truth for which env vars this service expects.
     email_provider: str = "smtp"
     email_from: Optional[str] = None
-    email_from_name: str = "AI4I Platform"
+    email_from_name: str = "AI Switch"
     email_reply_to: Optional[str] = None
     email_extra_headers: Optional[str] = None
     smtp_host: Optional[str] = None

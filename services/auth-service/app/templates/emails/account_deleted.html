@@ -1,10 +1,10 @@
 {% extends "_base.html" %}
-{% block title %}Your AI4I Platform account has been deleted{% endblock %}
-{% block preheader %}Your AI4I Platform account has been permanently deleted.{% endblock %}
+{% block title %}Your {{ platform_name }} account has been deleted{% endblock %}
+{% block preheader %}Your {{ platform_name }} account has been permanently deleted.{% endblock %}
 {% block heading %}Account deleted{% endblock %}
 {% block body %}
   <p style="margin:0 0 16px 0;">
-    Hi {{ display_name }}, your AI4I Platform account has been permanently deleted.
+    Hi {{ display_name }}, your {{ platform_name }} account has been permanently deleted.
   </p>
 
   <div style="margin: 0 0 24px 0; border-left:3px solid #ef4444; background:#fef2f2; border-radius:4px; padding: 12px 14px; font-size:13px; line-height:20px; color:#7f1d1d;">
@@ -16,5 +16,5 @@
   </p>
 {% endblock %}
 {% block footer_extra %}
-  This is a confirmation of your AI4I Platform account deletion. If you have questions, contact your administrator.
+  This is a confirmation of your {{ platform_name }} account deletion. If you have questions, contact your administrator.
 {% endblock %}

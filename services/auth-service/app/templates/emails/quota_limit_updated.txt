@@ -1,4 +1,4 @@
-AI4I Platform
+{{ platform_name }}
 ================================
 
 Quota limit update scheduled, {{ display_name }}
@@ -11,4 +11,4 @@ If you did not expect this change or have questions, please contact
 your platform administrator.
 
 --
-This is an automated message from AI4I Platform.
+This is an automated message from {{ platform_name }}.

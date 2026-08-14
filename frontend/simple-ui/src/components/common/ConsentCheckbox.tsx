@@ -4,6 +4,7 @@
 import React from "react";
 import { Checkbox, FormControl, FormErrorMessage, Link } from "@chakra-ui/react";
 import { UI_ERROR_MESSAGES } from "../../config/constants";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 export interface ConsentCheckboxProps {
   isChecked: boolean;
@@ -19,7 +20,7 @@ export function getConsentValidationError(accepted: boolean): string | undefined
 const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, error }) => (
   <FormControl isRequired isInvalid={!!error}>
     <Checkbox isChecked={isChecked} onChange={(e) => onChange(e.target.checked)}>
-      I agree to AI4I Orchestrate&apos;s{" "}
+      I agree to {getPlatformName()}&apos;s{" "}
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/terms-of-service.md"
         isExternal

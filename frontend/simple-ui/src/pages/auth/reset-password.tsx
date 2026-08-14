@@ -29,6 +29,7 @@ import React, { useEffect, useState } from "react";
 import { authService } from "../../services/authService";
 import { PASSWORD_POLICY } from "../../config/constants";
 import PasswordRequirements, { getPasswordValidationError, passwordPasses } from "../../components/auth/password/PasswordRequirements";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 type Phase =
   | { kind: "ready" }
@@ -97,7 +98,7 @@ const ResetPasswordPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Reset Password — AI4I Platform</title>
+        <title>{`Reset Password — ${getPlatformName()}`}</title>
       </Head>
       <Box minH="100vh" bg={pageBg} py={{ base: 8, md: 16 }}>
         <Container maxW="md">
