@@ -494,7 +494,8 @@ class TenantService:
         # tenant-user endpoints), so they reach this method — but listing every
         # tenant in the system is an admin-only operation.
         roles = await self._roles.get_user_roles(current_user.id)
-        if RoleName.ADMIN.value not in roles:
+        allowed = {RoleName.ADMIN.value, RoleName.PROGRAM_ADMIN.value}
+        if not allowed.intersection(roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -507,7 +508,9 @@ class TenantService:
     async def get_tenant(
         self, current_user: User, tenant_id: int, *, unmask: bool = False
     ) -> Tenant:
-        await self.enforce_scope(current_user, tenant_id)
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.PROGRAM_ADMIN.value not in roles:
+            await self.enforce_scope(current_user, tenant_id)
         # Revealing cleartext PII is limited to the roles that can edit the
         # tenant; masked reads stay open to anyone with tenant.read scope.
         if unmask:
