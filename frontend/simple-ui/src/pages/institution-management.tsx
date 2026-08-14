@@ -13,6 +13,7 @@ import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import TenantManagementTab from "../components/profile/TenantManagementTab";
 import { INSTITUTION, INSTITUTIONS } from "../config/constants";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const InstitutionManagementPage: React.FC = () => {
   const router = useRouter();
@@ -56,7 +57,7 @@ const InstitutionManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{INSTITUTION} Management - AI4I Platform</title>
+        <title>{`${INSTITUTION} Management - ${getPlatformName()}`}</title>
         <meta name="description" content={`Manage ${INSTITUTIONS.toLowerCase()} and ${INSTITUTION.toLowerCase()} users`} />
       </Head>
 

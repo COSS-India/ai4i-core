@@ -48,6 +48,7 @@ import { getTenantIdFromToken } from "../../utils/helpers";
 import { getUsageDashboardOverviewPath } from "../../utils/navigation";
 import { canAccessServicesManagement, canAccessUsageDashboard, isProgramAdminUser } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 const safeColorMap = {
   [TABS.asr]: { // Coral → Pastel Coral
@@ -657,7 +658,7 @@ const Sidebar: React.FC = () => {
           >
             <Image
               src="/AI4Inclusion_Logo.svg"
-              alt="AI4Inclusion Logo"
+              alt={`${getPlatformName()} Logo`}
               boxSize={isExpanded ? 16 : 10}
               objectFit="contain"
               transition="all 0.2s ease"

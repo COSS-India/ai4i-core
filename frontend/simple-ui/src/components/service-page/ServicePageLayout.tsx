@@ -10,6 +10,7 @@ import {
   type ServiceId,
 } from "../../config/serviceMetadata";
 import type { ServicePageLayoutProps } from "../../types/servicePage";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 const ServicePageLayout: React.FC<ServicePageLayoutProps> = ({
   serviceId,
@@ -26,7 +27,7 @@ const ServicePageLayout: React.FC<ServicePageLayoutProps> = ({
 }) => {
   const title = pageTitle ?? getServiceTitle(serviceId as ServiceId);
   const description = pageDescription ?? getServiceDescription(serviceId as ServiceId);
-  const metaTitle = headTitle ?? `${title} | AI4Inclusion Console`;
+  const metaTitle = headTitle ?? `${title} | ${getPlatformName()}`;
   const descFontSize = headingSize === "lg" ? "sm" : "lg";
 
   return (

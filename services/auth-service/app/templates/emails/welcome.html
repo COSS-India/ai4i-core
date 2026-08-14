@@ -1,10 +1,10 @@
 {% extends "_base.html" %}
-{% block title %}Welcome to AI4I Platform{% endblock %}
-{% block preheader %}Your AI4I Platform account is now active. Sign in any time with the credentials below.{% endblock %}
+{% block title %}Welcome to {{ platform_name }}{% endblock %}
+{% block preheader %}Your {{ platform_name }} account is now active. Sign in any time with the credentials below.{% endblock %}
 {% block heading %}You&rsquo;re all set, {{ display_name }}{% endblock %}
 {% block body %}
   <p style="margin:0 0 20px 0;">
-    Your AI4I Platform account is now active. You can sign in any time using
+    Your {{ platform_name }} account is now active. You can sign in any time using
     the credentials below.
   </p>
 
@@ -25,10 +25,10 @@
     <strong>Next steps</strong>
   </p>
   <p style="margin:0 0 16px 0; font-size:14px; color:#6b7280;">
-    Sign in to start using AI4I Platform. If you ever forget your password,
+    Sign in to start using {{ platform_name }}. If you ever forget your password,
     use the password-reset flow on the sign-in page.
   </p>
 {% endblock %}
 {% block footer_extra %}
-  Thanks for joining AI4I Platform. If you have questions, contact your administrator.
+  Thanks for joining {{ platform_name }}. If you have questions, contact your administrator.
 {% endblock %}

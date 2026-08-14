@@ -99,7 +99,7 @@ Your data is not shared with third parties for commercial purposes. We may discl
 
 Account registration requires your affirmative consent, given by checking a mandatory checkbox at the time of registration:
 
-> "I agree to AI4I Orchestrate's Terms of Service and Privacy Policy."
+> "I agree to AI Switch's Terms of Service and Privacy Policy."
 
 The checkbox is unchecked by default and your account cannot be created unless you actively check it. You may withdraw your consent at any time by deleting your account (see Section 10).
 

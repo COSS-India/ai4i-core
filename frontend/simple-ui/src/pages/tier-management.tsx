@@ -9,6 +9,7 @@ import { INSTITUTION } from "../config/constants";
 import TierManagement from "../components/tier-management/TierManagement";
 import { useAuth } from "../hooks/useAuth";
 import { useAdminTableSurface } from "../components/common/TableControls";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const TierManagementPage: React.FC = () => {
   const router = useRouter();
@@ -70,7 +71,7 @@ const TierManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Tier Management - AI4I Platform</title>
+        <title>{`Tier Management - ${getPlatformName()}`}</title>
         <meta name="description" content={`Configure tiers for ${INSTITUTION.toLowerCase()} access`} />
       </Head>
 

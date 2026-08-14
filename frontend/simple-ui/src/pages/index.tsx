@@ -37,6 +37,7 @@ import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 import { useGuestServices } from "../hooks/useGuestServices";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const safeColorMap:any = {
   asr: { // Coral → Pastel Coral
@@ -210,7 +211,7 @@ const HomePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>AI4Inclusion Console</title>
+        <title>{getPlatformName()}</title>
         <meta
           name="description"
           content="Test LLM models with a modern web interface"

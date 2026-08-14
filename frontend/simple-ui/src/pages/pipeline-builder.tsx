@@ -34,6 +34,7 @@ import { base64ToAudioObjectUrl } from '../utils/helpers';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
 import { showError } from '../utils/errorHandler';
 import { showToast } from '../utils/toast';
+import { getPlatformName } from "../config/runtimeConfig";
 
 type BuilderPipelineType = 'translation' | 'translation-tts';
 
@@ -186,7 +187,7 @@ const PipelineBuilderPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Customize Pipeline - Custom | AI4Inclusion Console</title>
+        <title>{`Customize Pipeline - Custom | ${getPlatformName()}`}</title>
         <meta name="description" content="Build and test custom AI pipelines" />
       </Head>
 

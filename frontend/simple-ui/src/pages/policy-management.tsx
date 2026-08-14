@@ -6,6 +6,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import PolicyManagement from "../components/policy/PolicyManagement";
 import { useAuth } from "../hooks/useAuth";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const PolicyManagementPage: React.FC = () => {
   const router = useRouter();
@@ -45,7 +46,7 @@ const PolicyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Policy Management - AI4I Platform</title>
+        <title>{`Policy Management - ${getPlatformName()}`}</title>
         <meta
           name="description"
           content="PII policies, type library, and policy-service audit logs"

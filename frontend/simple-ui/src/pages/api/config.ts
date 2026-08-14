@@ -7,8 +7,8 @@ import {
 /**
  * Public runtime config for the browser.
  * Values come from the pod/process env (ConfigMap) at request time — not from
- * the Docker build — so ENABLED_TASK_TYPES / API_URL / TELEMETRY_SERVICE_URL
- * can change without rebuilding the image.
+ * the Docker build — so ENABLED_TASK_TYPES / API_URL / TELEMETRY_SERVICE_URL /
+ * PLATFORM_NAME can change without rebuilding the image.
  */
 export default function handler(
   req: NextApiRequest,
