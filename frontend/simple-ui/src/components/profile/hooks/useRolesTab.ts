@@ -78,7 +78,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  /** Adopter / Default tenant: Admin, Moderator, User only. */
+  /** Adopter / Default tenant: Admin, Moderator, User, Program Admin only. */
   const availableRoles = useMemo(() => [...DEFAULT_TENANT_ASSIGNABLE_ROLES], []);
 
   const openManageRoles = async () => {
@@ -125,7 +125,8 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     if (!isDefaultTenantAssignableRole(draftRole)) {
       showToast({
         type: "warning",
-        message: "Only Admin, Moderator, or User can be assigned from Role Assignment.",
+        message:
+          "Only Admin, Moderator, User, or Program Admin can be assigned from Role Assignment.",
       });
       return;
     }

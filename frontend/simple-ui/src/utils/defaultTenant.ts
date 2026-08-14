@@ -10,7 +10,12 @@ export const DEFAULT_TENANT_ORGANISATION =
  * Roles assignable on Profile → Roles (Adopter / Default tenant scope).
  * API values must match auth-service `RoleName`.
  */
-export const DEFAULT_TENANT_ASSIGNABLE_ROLES = ["ADMIN", "MODERATOR", "USER"] as const;
+export const DEFAULT_TENANT_ASSIGNABLE_ROLES = [
+  "ADMIN",
+  "MODERATOR",
+  "USER",
+  "PROGRAM ADMIN",
+] as const;
 
 export type DefaultTenantAssignableRole = (typeof DEFAULT_TENANT_ASSIGNABLE_ROLES)[number];
 
@@ -18,6 +23,7 @@ const ASSIGNABLE_ROLE_LABELS: Record<DefaultTenantAssignableRole, string> = {
   ADMIN: "Admin",
   MODERATOR: "Moderator",
   USER: "User",
+  "PROGRAM ADMIN": "Program Admin",
 };
 
 export function isDefaultTenantAssignableRole(role: string): boolean {

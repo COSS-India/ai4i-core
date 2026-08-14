@@ -718,103 +718,107 @@ const Sidebar: React.FC = () => {
           })}
         </VStack>
 
-        <Divider />
+        {/* Services Section — hidden for Program Admin (no service cards at all) */}
+        {!isProgramAdmin && (
+          <>
+            <Divider />
 
-        {/* Services Section */}
-        <VStack spacing={2} w="full" align="stretch" flex={1}>
-          {/* Services Header */}
-          <Box onMouseEnter={handleServicesSectionMouseEnter} onMouseLeave={handleServicesSectionMouseLeave}>
-            <Button
-              variant="ghost"
-              size="sm"
-              h="3rem"
-              minH="3rem"
-              w="full"
-              justifyContent={isExpanded ? "flex-start" : "center"}
-              leftIcon={
-                isExpanded ? (
-                  <Icon as={IoAppsOutline} boxSize={5} color="gray.600" />
-                ) : undefined
-              }
-              rightIcon={
-                isExpanded ? (
-                  <Icon
-                    as={IoChevronDownOutline}
-                    boxSize={4}
-                    color="gray.600"
-                    transform={isServicesExpanded ? "rotate(180deg)" : "rotate(0deg)"}
-                    transition="transform 0.2s"
-                  />
-                ) : undefined
-              }
-              bg="transparent"
-              color="gray.700"
-              _hover={{
-                bg: hoverBgColor,
-                transform: "translateY(-1px)",
-              }}
-              transition="all 0.2s"
-              px={isExpanded ? 3 : 0}
-              onClick={toggleServicesExpanded}
-            >
-              {isExpanded ? (
-                <Heading size="sm" color="gray.800" fontWeight="medium">
-                  {MODEL_TASK_TYPE_NAV_LABEL}
-                </Heading>
-              ) : (
-                <Icon as={IoAppsOutline} boxSize={6} color="gray.600" />
-              )}
-            </Button>
-          </Box>
-
-          {/* Services List */}
-          <Collapse in={isExpanded && isServicesExpanded} animateOpacity style={{ paddingTop: "10px" }}>
-            <VStack spacing={1} w="full" align="stretch" pl={isExpanded ? 4 : 0}>
-              {serviceItems.map((item) => {
-                const isActive = router.pathname === item.path;
-                const requiresAuth = item.requiresAuth ?? false;
-
-                return (
-                  <Button
-                    key={item.id}
-                    variant="ghost"
-                    size="sm"
-                    h="2.5rem"
-                    minH="2.5rem"
-                    w="full"
-                    justifyContent="flex-start"
-                    leftIcon={
+            <VStack spacing={2} w="full" align="stretch" flex={1}>
+              {/* Services Header */}
+              <Box onMouseEnter={handleServicesSectionMouseEnter} onMouseLeave={handleServicesSectionMouseLeave}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  h="3rem"
+                  minH="3rem"
+                  w="full"
+                  justifyContent={isExpanded ? "flex-start" : "center"}
+                  leftIcon={
+                    isExpanded ? (
+                      <Icon as={IoAppsOutline} boxSize={5} color="gray.600" />
+                    ) : undefined
+                  }
+                  rightIcon={
+                    isExpanded ? (
                       <Icon
-                        as={item.icon}
+                        as={IoChevronDownOutline}
                         boxSize={4}
-                        color={getColor(item.id, 600)}
+                        color="gray.600"
+                        transform={isServicesExpanded ? "rotate(180deg)" : "rotate(0deg)"}
+                        transition="transform 0.2s"
                       />
-                    }
-                    bg={isActive ? "gray.200" : "transparent"}
-                    color={isActive ? "gray.800" : "gray.700"}
-                    boxShadow={isActive ? "sm" : "none"}
-                    borderLeft={isActive ? "3px solid" : "3px solid transparent"}
-                    borderLeftColor={isActive ? getColor(item.id, 600) : "transparent"}
-                    borderRadius="md"
-                    onClick={(e) => onServiceNavClick(e, item.path, requiresAuth)}
-                    _hover={{
-                      bg: isActive ? "gray.200" : hoverBgColor,
-                      transform: "translateY(-1px)",
-                      borderLeftColor: getColor(item.id, 600),
-                      borderLeft: "3px solid",
-                    }}
-                    transition="all 0.2s"
-                    px={1}
-                  >
-                    <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
-                      {item.label}
-                    </Text>
-                  </Button>
-                );
-              })}
+                    ) : undefined
+                  }
+                  bg="transparent"
+                  color="gray.700"
+                  _hover={{
+                    bg: hoverBgColor,
+                    transform: "translateY(-1px)",
+                  }}
+                  transition="all 0.2s"
+                  px={isExpanded ? 3 : 0}
+                  onClick={toggleServicesExpanded}
+                >
+                  {isExpanded ? (
+                    <Heading size="sm" color="gray.800" fontWeight="medium">
+                      {MODEL_TASK_TYPE_NAV_LABEL}
+                    </Heading>
+                  ) : (
+                    <Icon as={IoAppsOutline} boxSize={6} color="gray.600" />
+                  )}
+                </Button>
+              </Box>
+
+              {/* Services List */}
+              <Collapse in={isExpanded && isServicesExpanded} animateOpacity style={{ paddingTop: "10px" }}>
+                <VStack spacing={1} w="full" align="stretch" pl={isExpanded ? 4 : 0}>
+                  {serviceItems.map((item) => {
+                    const isActive = router.pathname === item.path;
+                    const requiresAuth = item.requiresAuth ?? false;
+
+                    return (
+                      <Button
+                        key={item.id}
+                        variant="ghost"
+                        size="sm"
+                        h="2.5rem"
+                        minH="2.5rem"
+                        w="full"
+                        justifyContent="flex-start"
+                        leftIcon={
+                          <Icon
+                            as={item.icon}
+                            boxSize={4}
+                            color={getColor(item.id, 600)}
+                          />
+                        }
+                        bg={isActive ? "gray.200" : "transparent"}
+                        color={isActive ? "gray.800" : "gray.700"}
+                        boxShadow={isActive ? "sm" : "none"}
+                        borderLeft={isActive ? "3px solid" : "3px solid transparent"}
+                        borderLeftColor={isActive ? getColor(item.id, 600) : "transparent"}
+                        borderRadius="md"
+                        onClick={(e) => onServiceNavClick(e, item.path, requiresAuth)}
+                        _hover={{
+                          bg: isActive ? "gray.200" : hoverBgColor,
+                          transform: "translateY(-1px)",
+                          borderLeftColor: getColor(item.id, 600),
+                          borderLeft: "3px solid",
+                        }}
+                        transition="all 0.2s"
+                        px={1}
+                      >
+                        <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
+                          {item.label}
+                        </Text>
+                      </Button>
+                    );
+                  })}
+                </VStack>
+              </Collapse>
             </VStack>
-          </Collapse>
-        </VStack>
+          </>
+        )}
       </VStack>
     </Box>
   );

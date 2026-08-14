@@ -31,6 +31,12 @@ interface UsageSpendTenantTableProps {
   errorMessage: string | null;
   emptyMessage: string;
   filterTaskType: string;
+  /**
+   * Token usage is only meaningful for a single task type, so the column is
+   * hidden while the task-type filter is on "All" (drill-down stays available
+   * via the row chevron and the institution name).
+   */
+  showTokenUsage: boolean;
   sortOrder: "asc" | "desc";
   expanded: Set<string>;
   onToggleSort: () => void;
@@ -39,6 +45,24 @@ interface UsageSpendTenantTableProps {
 }
 
 const th = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
+
+/** Column widths for each layout, so the table still fills the container either way. */
+const COLUMN_WIDTHS = {
+  withTokenUsage: {
+    institution: "18%",
+    tier: "8%",
+    allocatedBudget: "14%",
+    budget: "20%",
+    allocatedTokens: "14%",
+  },
+  withoutTokenUsage: {
+    institution: "24%",
+    tier: "12%",
+    allocatedBudget: "18%",
+    budget: "26%",
+    allocatedTokens: "20%",
+  },
+} as const;
 
 function TenantUsageColumn({
   row,
@@ -124,12 +148,18 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
   errorMessage,
   emptyMessage,
   filterTaskType,
+  showTokenUsage,
   sortOrder,
   expanded,
   onToggleSort,
   onToggleExpand,
   onTenantClick,
-}) => (
+}) => {
+  const widths = showTokenUsage
+    ? COLUMN_WIDTHS.withTokenUsage
+    : COLUMN_WIDTHS.withoutTokenUsage;
+
+  return (
   <MeteringAsyncState
     isLoading={isLoading}
     isEmpty={!isLoading && tenants.length === 0}
@@ -140,18 +170,18 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <Th {...th} w="18%">INSTITUTION</Th>
-            <Th {...th} w="8%">TIER</Th>
-            <Th {...th} w="14%">ALLOCATED BUDGET (INR)</Th>
-            <Th {...th} w="20%" cursor="pointer" userSelect="none" onClick={onToggleSort}>
+            <Th {...th} w={widths.institution}>INSTITUTION</Th>
+            <Th {...th} w={widths.tier}>TIER</Th>
+            <Th {...th} w={widths.allocatedBudget}>ALLOCATED BUDGET (INR)</Th>
+            <Th {...th} w={widths.budget} cursor="pointer" userSelect="none" onClick={onToggleSort}>
               <Tooltip label="Sorted by amount spent" hasArrow placement="top" openDelay={200}>
                 <Text as="span">
                   BUDGET <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
                 </Text>
               </Tooltip>
             </Th>
-            <Th {...th} w="14%">ALLOCATED TOKENS</Th>
-            <Th {...th} w="26%">TOKEN USAGE</Th>
+            <Th {...th} w={widths.allocatedTokens}>ALLOCATED TOKENS</Th>
+            {showTokenUsage ? <Th {...th} w="26%">TOKEN USAGE</Th> : null}
           </Tr>
         </Thead>
         <Tbody>
@@ -208,20 +238,24 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                         : "—"}
                     </Text>
                   </Td>
-                  <Td>
-                    <TenantUsageColumn
-                      row={row}
-                      taskCount={taskCount}
-                      showBar={showBar}
-                      multiTiers={multiTiers}
-                      tiersCount={tiers.length}
-                      isOpen={isOpen}
-                      onToggleExpand={onToggleExpand}
-                      onTenantClick={onTenantClick}
-                    />
-                  </Td>
+                  {showTokenUsage ? (
+                    <Td>
+                      <TenantUsageColumn
+                        row={row}
+                        taskCount={taskCount}
+                        showBar={showBar}
+                        multiTiers={multiTiers}
+                        tiersCount={tiers.length}
+                        isOpen={isOpen}
+                        onToggleExpand={onToggleExpand}
+                        onTenantClick={onTenantClick}
+                      />
+                    </Td>
+                  ) : null}
                 </Tr>
-                {isOpen && canExpand ? <UsageSpendExpandRows row={row} /> : null}
+                {isOpen && canExpand ? (
+                  <UsageSpendExpandRows row={row} trailingColSpan={showTokenUsage ? 2 : 1} />
+                ) : null}
               </React.Fragment>
             );
           })}
@@ -229,6 +263,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       </Table>
     </Box>
   </MeteringAsyncState>
-);
+  );
+};
 
 export default UsageSpendTenantTable;
