@@ -45,7 +45,9 @@ export type TenantUserFormRole =
   | TenantAssignableRole
   | DefaultOrgUserRole
   | "ADMIN"
-  | "PROGRAM ADMIN";
+  | "PROGRAM ADMIN"
+  /** No longer assignable; retained so existing guests survive a profile-only edit. */
+  | "GUEST";
 
 export interface TenantFormState {
   organisation: string;
