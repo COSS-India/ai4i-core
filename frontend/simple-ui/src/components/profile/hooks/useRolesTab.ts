@@ -4,6 +4,7 @@ import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
 import {
   DEFAULT_TENANT_ASSIGNABLE_ROLES,
+  formatDefaultTenantAssignableRoleLabel,
   isDefaultTenantAssignableRole,
 } from "../../../utils/defaultTenant";
 import type { UserSearchablePick } from "../../common/UserSearchableSelect";
@@ -78,7 +79,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  /** Adopter / Default tenant: Admin, Moderator, User, Program Admin only. */
+  /** Adopter / Default tenant scope — see DEFAULT_TENANT_ASSIGNABLE_ROLES. */
   const availableRoles = useMemo(() => [...DEFAULT_TENANT_ASSIGNABLE_ROLES], []);
 
   const openManageRoles = async () => {
@@ -125,8 +126,9 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     if (!isDefaultTenantAssignableRole(draftRole)) {
       showToast({
         type: "warning",
-        message:
-          "Only Admin, Moderator, User, or Program Admin can be assigned from Role Assignment.",
+        message: `Only ${DEFAULT_TENANT_ASSIGNABLE_ROLES.map(
+          formatDefaultTenantAssignableRoleLabel,
+        ).join(", ")} can be assigned from Role Assignment.`,
       });
       return;
     }

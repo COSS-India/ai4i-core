@@ -46,7 +46,12 @@ import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getUsageDashboardOverviewPath } from "../../utils/navigation";
-import { canAccessServicesManagement, canAccessUsageDashboard, isProgramAdminUser } from "../../utils/rbac";
+import {
+  canAccessServicesManagement,
+  canAccessUsageDashboard,
+  canSeeServiceCards,
+  isUsageDashboardOnlyUser,
+} from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -447,15 +452,13 @@ interface TopNavFilterContext {
   isUser: boolean;
   isAdmin: boolean;
   isTenantAdmin: boolean;
-  isProgramAdmin: boolean;
   showTenantManagement: boolean;
   tenantId: string | null;
   userRoles?: string[];
 }
 
 function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
-  // Program Admin is a restricted role — Usage Dashboard only, no other nav item.
-  if (ctx.isProgramAdmin) {
+  if (isUsageDashboardOnlyUser(ctx.userRoles)) {
     return itemId === TABS.usageDashboard;
   }
 
@@ -509,8 +512,7 @@ const Sidebar: React.FC = () => {
   // Check if user is TENANT ADMIN
   const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
 
-  // Check if user is PROGRAM ADMIN — restricted role, Usage Dashboard only
-  const isProgramAdmin = isProgramAdminUser(user?.roles);
+  const showServiceCards = canSeeServiceCards(user?.roles);
 
   // Show Tenant Management to admins and tenant admins
   const showTenantManagement = isAdmin || isTenantAdmin;
@@ -524,12 +526,11 @@ const Sidebar: React.FC = () => {
       isUser,
       isAdmin,
       isTenantAdmin,
-      isProgramAdmin,
       showTenantManagement,
       tenantId,
       userRoles: user?.roles,
     }),
-    [isGuest, isUser, isAdmin, isTenantAdmin, isProgramAdmin, showTenantManagement, tenantId, user?.roles],
+    [isGuest, isUser, isAdmin, isTenantAdmin, showTenantManagement, tenantId, user?.roles],
   );
 
   const topItems = useMemo(
@@ -539,8 +540,7 @@ const Sidebar: React.FC = () => {
 
   const serviceItems = useMemo(
     () => {
-      // Program Admin is a restricted role — no service cards at all.
-      if (isProgramAdmin) return [];
+      if (!showServiceCards) return [];
 
       return baseNavItems.filter((item) => {
         // Guest allowlist — guests only.
@@ -557,7 +557,7 @@ const Sidebar: React.FC = () => {
       });
     },
     [
-      isProgramAdmin,
+      showServiceCards,
       allowedServiceIds,
       guestServicesLoading,
       isGuest,
@@ -718,8 +718,8 @@ const Sidebar: React.FC = () => {
           })}
         </VStack>
 
-        {/* Services Section — hidden for Program Admin (no service cards at all) */}
-        {!isProgramAdmin && (
+        {/* Services Section — hidden for roles without service-card access */}
+        {showServiceCards && (
           <>
             <Divider />
 

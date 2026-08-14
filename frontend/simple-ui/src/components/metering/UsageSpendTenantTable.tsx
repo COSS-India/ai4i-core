@@ -46,7 +46,10 @@ interface UsageSpendTenantTableProps {
 
 const th = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
 
-/** Column widths for each layout, so the table still fills the container either way. */
+/**
+ * Column widths for each layout, so the table still fills the container either
+ * way. Each layout lists every column it renders and must sum to 100%.
+ */
 const COLUMN_WIDTHS = {
   withTokenUsage: {
     institution: "18%",
@@ -54,6 +57,7 @@ const COLUMN_WIDTHS = {
     allocatedBudget: "14%",
     budget: "20%",
     allocatedTokens: "14%",
+    tokenUsage: "26%",
   },
   withoutTokenUsage: {
     institution: "24%",
@@ -181,7 +185,9 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
               </Tooltip>
             </Th>
             <Th {...th} w={widths.allocatedTokens}>ALLOCATED TOKENS</Th>
-            {showTokenUsage ? <Th {...th} w="26%">TOKEN USAGE</Th> : null}
+            {showTokenUsage ? (
+              <Th {...th} w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}>TOKEN USAGE</Th>
+            ) : null}
           </Tr>
         </Thead>
         <Tbody>

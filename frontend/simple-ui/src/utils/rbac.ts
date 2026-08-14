@@ -32,6 +32,22 @@ export function canAccessServicesManagement(roles?: string[]): boolean {
   return !isRegistryReadOnlyUser(roles);
 }
 
+/**
+ * Sidebar "Model task type" service cards (and the section that holds them).
+ * Hidden for the Usage-Dashboard-only role; every other role gets the section.
+ */
+export function canSeeServiceCards(roles?: string[]): boolean {
+  return !isUsageDashboardOnlyUser(roles);
+}
+
+/**
+ * Restricted roles whose entire nav surface is the Usage Dashboard (plus Profile).
+ * Callers gate every other nav item off this.
+ */
+export function isUsageDashboardOnlyUser(roles?: string[]): boolean {
+  return isProgramAdminUser(roles);
+}
+
 /** Usage Dashboard — platform ADMIN (adopter view), Tenant Admin, or Program Admin. */
 export function canAccessUsageDashboard(roles?: string[]): boolean {
   if (!roles?.length) return false;
