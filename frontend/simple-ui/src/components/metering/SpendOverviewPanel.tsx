@@ -9,6 +9,7 @@ import {
   formatSpendUnit,
   hasPopulatedQuotaUsage,
   isMultiTaskQuotaTenant,
+  summarizeSpendTokens,
   taskTypeColor,
   USAGE_SPEND_ACCENT,
   USAGE_SPEND_DANGER,
@@ -35,6 +36,48 @@ function spendChangeArrow(spendChangePercent: number): string {
 function budgetExceededLabel(count: number | null | undefined): string {
   if (count == null) return "—";
   return `${count} ${count === 1 ? INSTITUTION.toLowerCase() : INSTITUTIONS.toLowerCase()}`;
+}
+
+function moneyOrDash(value: number | null | undefined, currency: string): string {
+  return value == null ? "—" : formatSpendMoney(value, currency);
+}
+
+function tokensOrDash(value: number | null | undefined, unit: string): string {
+  return value == null ? "—" : formatSpendUnit(value, unit);
+}
+
+function SpendTotalCard({
+  label,
+  money,
+  tokens,
+}: Readonly<{ label: string; money: string; tokens: string }>) {
+  return (
+    <Box
+      bg={SPEND_CARD_BG}
+      borderRadius="12px"
+      borderWidth="1px"
+      borderColor="gray.200"
+      p="18px 20px"
+      flex="1"
+      minW={0}
+    >
+      <Text
+        fontSize="11px"
+        fontWeight="semibold"
+        letterSpacing="0.04em"
+        color={USAGE_SPEND_ACCENT}
+        mb={2}
+      >
+        {label}
+      </Text>
+      <Text fontSize="22px" fontWeight="bold" lineHeight="1.1" color="gray.800" noOfLines={1}>
+        {money}
+      </Text>
+      <Text fontSize="12.5px" color="gray.500" mt="6px" noOfLines={1}>
+        {tokens}
+      </Text>
+    </Box>
+  );
 }
 
 interface SpendOverviewPanelProps {
@@ -204,6 +247,28 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     color: taskTypeColor(item.modelTaskType, i),
   }));
 
+  const totalCards = useMemo(() => {
+    const rows = summary?.spendByModelTaskType ?? [];
+    const tokens = summarizeSpendTokens(rows);
+    return [
+      {
+        label: METERING.USAGE_SPEND.TOTAL_ALLOCATED,
+        money: moneyOrDash(summary?.totalAllocatedBudget, currency),
+        tokens: tokensOrDash(tokens.tokensAllocated, tokens.unit),
+      },
+      {
+        label: METERING.USAGE_SPEND.TOTAL_USED,
+        money: moneyOrDash(summary?.totalSpend, currency),
+        tokens: tokensOrDash(tokens.tokensUsed, tokens.unit),
+      },
+      {
+        label: METERING.USAGE_SPEND.TOTAL_REMAINING,
+        money: moneyOrDash(summary?.totalRemainingBudget, currency),
+        tokens: tokensOrDash(tokens.tokensRemaining, tokens.unit),
+      },
+    ];
+  }, [summary, currency]);
+
   const leftPanel = tenantDetail ? (
     <VStack align="stretch" spacing={4} {...cardFlex}>
       <TenantBudgetCard detail={tenantDetail} currency={currency} isLoading={isLoading} />
@@ -220,67 +285,49 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
         )}
       </Box>
     </VStack>
+  ) : isLoading ? (
+    <Center minH="140px" w="full">
+      <Spinner color="blue.500" />
+    </Center>
   ) : (
-    <Box
-      bg={SPEND_CARD_BG}
-      borderRadius="12px"
-      borderWidth="1px"
-      borderColor="gray.200"
-      p="22px 24px"
-      w="full"
-    >
-      {isLoading ? (
-        <Center minH="140px"><Spinner color="blue.500" /></Center>
-      ) : (
-        <>
-          <Text
-            fontSize="11px"
-            fontWeight="semibold"
-            letterSpacing="0.04em"
-            color={USAGE_SPEND_ACCENT}
-            mb={2}
-          >
-            TOTAL SPEND
-          </Text>
-          <Text fontSize="28px" fontWeight="bold" lineHeight="1" color="gray.800">
-            {summary ? formatSpendMoney(summary.totalSpend, currency) : "—"}
-          </Text>
-          <Flex
-            mt="18px"
-            pt="14px"
-            borderTopWidth="1px"
-            borderColor="gray.200"
-            direction={{ base: "column", sm: "row" }}
-            gap={{ base: "9px", sm: 6 }}
-            justify="space-between"
-            fontSize="12.5px"
-            flexWrap="wrap"
-          >
-            <HStack spacing={1.5}>
-              <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
-              <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
-            </HStack>
-            <HStack spacing={1.5}>
-              <Text color="gray.500">Budget exceeded:</Text>
-              <Text
-                fontWeight="semibold"
-                color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
-              >
-                {budgetExceededLabel(summary?.budgetExceededTenants)}
-              </Text>
-            </HStack>
-            <HStack spacing={1.5}>
-              <Text color="gray.500">vs last month:</Text>
-              <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
-                {spendChangePercent == null
-                  ? "—"
-                  : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
-              </Text>
-            </HStack>
-          </Flex>
-        </>
-      )}
-    </Box>
+    <VStack align="stretch" spacing={4} w="full">
+      <Flex gap={4} direction={{ base: "column", sm: "row" }}>
+        {totalCards.map((card) => (
+          <SpendTotalCard key={card.label} label={card.label} money={card.money} tokens={card.tokens} />
+        ))}
+      </Flex>
+      <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="14px 20px">
+        <Flex
+          direction={{ base: "column", sm: "row" }}
+          gap={{ base: "9px", sm: 6 }}
+          justify="space-between"
+          fontSize="12.5px"
+          flexWrap="wrap"
+        >
+          <HStack spacing={1.5}>
+            <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
+            <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
+          </HStack>
+          <HStack spacing={1.5}>
+            <Text color="gray.500">Budget exceeded:</Text>
+            <Text
+              fontWeight="semibold"
+              color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
+            >
+              {budgetExceededLabel(summary?.budgetExceededTenants)}
+            </Text>
+          </HStack>
+          <HStack spacing={1.5}>
+            <Text color="gray.500">vs last month:</Text>
+            <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>
+              {spendChangePercent == null
+                ? "—"
+                : `${spendChangeArrow(spendChangePercent)} ${Math.abs(spendChangePercent).toFixed(1)}%`}
+            </Text>
+          </HStack>
+        </Flex>
+      </Box>
+    </VStack>
   );
 
   let spendBody: React.ReactNode;

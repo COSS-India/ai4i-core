@@ -1,6 +1,7 @@
 import { METERING } from "../config/meteringConstants";
 import { meteringColorAt } from "./meteringColors";
 import type {
+  SpendByTaskType,
   TenantTierBreakdown,
   TenantUsageAggregate,
   TenantUsageDetail,
@@ -85,6 +86,47 @@ export function formatSpendUnit(n: number, unit: string): string {
   return `${Math.round(n).toLocaleString("en-IN")} ${unit || ""}`.trim();
 }
 
+export interface SpendTokenTotals {
+  unit: string;
+  tokensAllocated: number | null;
+  tokensUsed: number | null;
+  tokensRemaining: number | null;
+}
+
+/** Mixed-unit scope has no meaningful total; every figure dashes out. */
+const NO_TOKEN_TOTALS: SpendTokenTotals = {
+  unit: "",
+  tokensAllocated: null,
+  tokensUsed: null,
+  tokensRemaining: null,
+};
+
+/**
+ * Totals only when every row shares one unit. Task types are metered in tokens,
+ * audio_minutes, characters, images or requests (inference_types.yaml), so summing
+ * across a mixed set would print an arbitrary row's unit over an incoherent number.
+ * Per-type figures remain on the rows themselves.
+ */
+export function summarizeSpendTokens(rows: SpendByTaskType[]): SpendTokenTotals {
+  const units = new Set(rows.map((r) => (r.unit || "").trim().toLowerCase()).filter(Boolean));
+  if (units.size !== 1) return NO_TOKEN_TOTALS;
+
+  const withAllocated = rows.filter((r) => r.allocated != null);
+  const remainingPerRow = rows.map((r) => {
+    if (r.remaining != null) return r.remaining;
+    return r.allocated != null ? r.allocated - r.consumption : null;
+  });
+  const withRemaining = remainingPerRow.filter((r): r is number => r != null);
+  return {
+    unit: rows.find((r) => r.unit)?.unit ?? "",
+    tokensUsed: rows.reduce((s, r) => s + (r.consumption ?? 0), 0),
+    tokensAllocated: withAllocated.length
+      ? withAllocated.reduce((s, r) => s + (r.allocated ?? 0), 0)
+      : null,
+    tokensRemaining: withRemaining.length ? withRemaining.reduce((s, r) => s + r, 0) : null,
+  };
+}
+
 export function spendBarColor(pct: number): string {
   if (pct > 100) return USAGE_SPEND_DANGER;
   if (pct >= 90) return USAGE_SPEND_WARNING;
@@ -146,6 +188,8 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
     modelTaskType: i.taskType,
     unit: i.unit,
     consumption: i.consumed,
+    allocated: i.quotaLimit ?? null,
+    remaining: i.remaining ?? null,
     spend: i.spend,
     percentage: 0,
   }));
@@ -162,6 +206,8 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
       ...i,
       percentage: total > 0 ? Number(((i.spend / total) * 100).toFixed(1)) : 0,
     })),
+    totalAllocatedBudget: detail.budget.limit,
+    totalRemainingBudget: detail.budget.remaining,
   };
 }
 
