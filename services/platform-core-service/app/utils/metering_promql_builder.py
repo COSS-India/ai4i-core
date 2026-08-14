@@ -295,6 +295,7 @@ def build_base_selectors(
     service_id: str | None = None,
     extra: list[str] | None = None,
     endpoint_regex: str | None = None,
+    tenant_id: str | None = None,
 ) -> str:
     """Build a PromQL label selector string for telemetry_obsv_requests_total.
 
@@ -302,11 +303,20 @@ def build_base_selectors(
     or an empty string when no filters apply. ``endpoint_regex`` overrides the
     default INFERENCE_ENDPOINT_REGEX (e.g. to scope to LLM-only endpoints);
     ignored when ``inference_only`` is False.
+
+    ``tenant_id`` scopes to a single tenant by its immutable numeric id —
+    prefer it over ``tenant`` (the organisation name) wherever the caller has
+    it, since the name changes on a tenant rename and orphans historical
+    series (see ObservabilityMiddleware). When both are given, ``tenant_id``
+    is the effective filter; ``tenant`` is only applied when ``tenant_id`` is
+    absent, so older call sites that still pass just a name keep working.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
         selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{endpoint_regex or INFERENCE_ENDPOINT_REGEX}"')
-    if tenant:
+    if tenant_id:
+        selectors.append(f'tenant_id="{tenant_id}"')
+    elif tenant:
         selectors.append(f'tenant="{escape_label_value(tenant)}"')
     if service_id:
         selectors.append(f'service_id="{service_id}"')

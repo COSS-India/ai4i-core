@@ -424,6 +424,7 @@ async def _request_volume_chart(
     window: str,
     tenant: Optional[str],
     task_types: Optional[list[str]] = None,
+    tenant_id: Optional[str] = None,
 ) -> Optional[Graph]:
     """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
       - "successful" : 2xx request count per bucket
@@ -438,8 +439,8 @@ async def _request_volume_chart(
     task_sel = build_task_type_selector(task_types)
     success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
     failed_extra = [task_sel, 'status_code=~"[45].."'] if task_sel else ['status_code=~"[45].."']
-    success_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=success_extra)
-    failed_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=failed_extra)
+    success_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=success_extra, tenant_id=tenant_id)
+    failed_sel = build_base_selectors(inference_only=True, tenant=tenant, extra=failed_extra, tenant_id=tenant_id)
     success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
     step = WINDOW_STEP[window]
@@ -528,9 +529,9 @@ async def get_overview(
         svc.active_tenants("30d"),
         svc.request_total(
             inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
-            task_types=task_type_filter,
+            task_types=task_type_filter, tenant_id=scope_tenant,
         ),
-        _request_volume_chart(svc, window, scope_tenant_name, task_type_filter),
+        _request_volume_chart(svc, window, scope_tenant_name, task_type_filter, tenant_id=scope_tenant),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
@@ -609,11 +610,12 @@ async def get_tenant_consumption(
         return cached
 
     results = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
+        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name, tenant_id=scope_tenant),
         svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=task_type_filter, tenant=scope_tenant_name
+            limit=limit, time_range=window, services=task_type_filter,
+            tenant=scope_tenant_name, tenant_id=scope_tenant,
         ),
-        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name, tenant_id=scope_tenant),
         return_exceptions=True,
     )
     (ranking, heatmap, prev_avg), degraded = _partition_results(results)
@@ -679,7 +681,10 @@ async def get_service_consumption(
         return cached
 
     results = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter),
+        svc.service_breakdown(
+            tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter,
+            tenant_id=scope_tenant,
+        ),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
@@ -743,7 +748,7 @@ async def get_model_consumption(
         return cached
 
     results = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant_name, time_range=window),
+        svc.model_breakdown(tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)

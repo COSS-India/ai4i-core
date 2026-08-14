@@ -47,13 +47,16 @@ class MeteringService:
         service_id: Optional[str],
         time_range: Optional[str],
         task_types: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
-        label_str = build_base_selectors(inference_only, tenant, service_id, extra=extra)
+        label_str = build_base_selectors(
+            inference_only, tenant, service_id, extra=extra, tenant_id=tenant_id
+        )
         success_label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=success_extra
+            inference_only, tenant, service_id, extra=success_extra, tenant_id=tenant_id
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
@@ -186,35 +189,33 @@ class MeteringService:
 
     async def active_tenants(self, time_range: Optional[str]) -> dict:
         """
-        ROLLOUT NOTE: the ``tenant`` label switched from the numeric tenant id
-        to the organisation name (see ObservabilityMiddleware). Existing
-        Prometheus series from before the cutover still carry the id, which
-        never matches ``valid_names`` (current organisation names) below, so
-        any query window spanning the cutover undercounts — pre-cutover,
-        id-labelled series are dropped even though real traffic occurred.
-        This self-heals as pre-cutover series age out of the window (1h/24h
-        clear within a day; 7d/30d take up to 7/30 days). There is no
-        after-the-fact fix: Prometheus relabeling only applies at scrape time
-        to a target's own labels, it cannot rewrite already-stored series to
-        translate an id to the org name it corresponded to at write time.
+        Groups by ``tenant_id`` (immutable), not ``tenant`` (the organisation
+        name) — a tenant rename changes the name label on new series but
+        never the id, so grouping by id keeps pre- and post-rename traffic
+        as one continuous tenant instead of splitting/dropping it. See
+        ObservabilityMiddleware for how both labels are set.
         """
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
-        prom_results, valid_names = await asyncio.gather(
+        prom_results, valid_ids = await asyncio.gather(
             self._client.query(promql),
-            self._fetch_valid_tenant_names(),
+            self._fetch_valid_tenant_ids(),
         )
         # Filter Prometheus results to only tenants that are currently ACTIVE
         # in the DB. Without this, deleted tenants (or tenants that are no
         # longer ACTIVE) whose Prometheus series are still within the
         # retention window inflate the count.
+        rows = [
+            r for r in prom_results
+            if valid_ids is None or r["metric"].get("tenant_id") in valid_ids
+        ]
+        names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
         tenants = [
             {
-                "tenant": r["metric"].get("tenant", "unknown"),
+                "tenant": names.get(r["metric"].get("tenant_id", ""), r["metric"].get("tenant", "unknown")),
                 "request_count": int(float(r["value"][1])),
             }
-            for r in prom_results
-            if valid_names is None or r["metric"].get("tenant") in valid_names
+            for r in rows
         ]
         return {
             "active_tenants": tenants,
@@ -233,14 +234,15 @@ class MeteringService:
         if not window:
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
-        promql = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
+        promql = f"count(sum by(tenant_id)(increase({metric}[{window}] offset {window}) > 0))"
         try:
             return int(round(float(await self._client.scalar(promql))))
         except Exception:
             return None
 
     async def avg_per_active_tenant_previous(
-        self, time_range: Optional[str], tenant: Optional[str] = None
+        self, time_range: Optional[str], tenant: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[int]:
         """Avg requests per active tenant in the PREVIOUS window (offset by one
         window) — same offset pattern as request_total's prev counts. Drives the
@@ -248,9 +250,9 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
-        active_q = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
+        active_q = f"count(sum by(tenant_id)(increase({metric}[{window}] offset {window}) > 0))"
         try:
             total, active = await asyncio.gather(
                 self._client.scalar(total_q), self._client.scalar(active_q)
@@ -296,15 +298,16 @@ class MeteringService:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
+        rows = [r for r in results if float(r["value"][1]) > 0]
+        names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
 
         all_tenants = sorted(
             [
                 {
-                    "tenant": r["metric"].get("tenant", "unknown"),
+                    "tenant": names.get(r["metric"].get("tenant_id", ""), r["metric"].get("tenant", "unknown")),
                     "requests": max(1, round(float(r["value"][1]))),
                 }
-                for r in results
-                if float(r["value"][1]) > 0
+                for r in rows
             ],
             key=lambda t: t["requests"],
             reverse=True,
@@ -340,6 +343,7 @@ class MeteringService:
     async def service_breakdown(
         self, tenant: Optional[str], time_range: Optional[str],
         service_filter: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         """Per-service stats: requests, native units, success %, failed, vs prev period.
 
@@ -350,7 +354,13 @@ class MeteringService:
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _base = _ep + ',tenant!="unknown"' + (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
+        # tenant_id (immutable) is preferred over tenant (the organisation
+        # name) so this survives a tenant rename — see build_base_selectors.
+        _tenant_part = (
+            f',tenant_id="{tenant_id}"' if tenant_id
+            else (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
+        )
+        _base = _ep + ',tenant!="unknown"' + _tenant_part
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
 
@@ -360,7 +370,9 @@ class MeteringService:
             self._client.query(self._service_breakdown_by_ep_promql(base_sel, window)),     # 0 total
             self._client.query(self._service_breakdown_by_ep_promql(success_sel, window)),  # 1 success
         ]
-        native_tasks, native_coros = self._native_unit_queries(tenant, time_range, service_filter)
+        native_tasks, native_coros = self._native_unit_queries(
+            tenant, time_range, service_filter, tenant_id=tenant_id
+        )
 
         raw = await asyncio.gather(*fixed_queries, *native_coros, return_exceptions=True)
 
@@ -373,7 +385,10 @@ class MeteringService:
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
-    async def model_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
+    async def model_breakdown(
+        self, tenant: Optional[str], time_range: Optional[str],
+        tenant_id: Optional[str] = None,
+    ) -> dict:
         """Per-service LLM usage: requests, tokens, success %, grouped by
         `service_id` — the tenant-facing service the client called (the
         OpenAI `model` field as sent), NOT the `model` Prometheus label.
@@ -396,12 +411,17 @@ class MeteringService:
         requests, and tokens processed — each grouped by `service_id`.
         """
         base_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            tenant_id=tenant_id,
         )
         success_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'],
+            extra=['status_code=~"2.."'], tenant_id=tenant_id,
         )
+        # telemetry_obsv_llm_tokens_processed_sum has no tenant_id label (only
+        # telemetry_obsv_requests_total does — see metrics.py), so this stays
+        # name-based; a rename can still stale this one series, same as the
+        # other native-unit metrics in _native_unit_queries.
         tokens_parts = ['token_type="total"', 'tenant!="unknown"']
         if tenant:
             tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
@@ -461,20 +481,22 @@ class MeteringService:
         }
 
     async def tenant_ranking(
-        self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
+        self, limit: int, time_range: Optional[str], tenant: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
+        rows = [r for r in results if float(r["value"][1]) > 0]
+        names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
 
         all_tenants = sorted(
             [
                 {
-                    "tenant": r["metric"].get("tenant", "unknown"),
+                    "tenant": names.get(r["metric"].get("tenant_id", ""), r["metric"].get("tenant", "unknown")),
                     "requests": max(1, round(float(r["value"][1]))),
                 }
-                for r in results
-                if float(r["value"][1]) > 0
+                for r in rows
             ],
             key=lambda t: t["requests"],
             reverse=True,
@@ -525,18 +547,20 @@ class MeteringService:
     def _accumulate_tenant_task_counts(
         cls, results: list, active_services: list[str]
     ) -> dict[str, dict[str, int]]:
-        """(tenant, task) -> request count, from a sum-by(tenant,endpoint) query result."""
+        """(tenant_id, task) -> request count, from a sum-by(tenant_id,endpoint) query
+        result. Keyed by tenant_id (immutable), not the tenant name label, so a
+        rename doesn't split one tenant's traffic across two buckets."""
         tenant_task: dict[str, dict[str, int]] = {}
         for r in results:
             ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
-            tenant_label = r["metric"].get("tenant", "unknown")
+            tenant_id_label = r["metric"].get("tenant_id", "")
             task = cls._resolve_task_key(ep)
             if task not in active_services:
                 continue
             v = max(0, round(float(r["value"][1])))
             if v <= 0:
                 continue
-            bucket = tenant_task.setdefault(tenant_label, {})
+            bucket = tenant_task.setdefault(tenant_id_label, {})
             bucket[task] = bucket.get(task, 0) + v
         return tenant_task
 
@@ -585,40 +609,50 @@ class MeteringService:
         time_range: Optional[str],
         services: Optional[list[str]],
         tenant: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
-        Uses a single sum by(tenant, exported_endpoint) query with offset subtraction
-        (same approach as service_breakdown) to avoid increase() extrapolation errors.
-        When ``tenant`` is given, the matrix is scoped to that single tenant.
+        Uses a single sum by(tenant_id, exported_endpoint) query with offset
+        subtraction (same approach as service_breakdown) to avoid increase()
+        extrapolation errors. Grouped/filtered by tenant_id (immutable), not
+        the tenant name label, so a rename doesn't split or drop a tenant's
+        historical rows. When ``tenant_id`` (or ``tenant``) is given, the
+        matrix is scoped to that single tenant.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _tenant_sel = f',tenant="{escape_label_value(tenant)}"' if tenant else ''
-        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
+        _tenant_part = (
+            f',tenant_id="{tenant_id}"' if tenant_id
+            else (f',tenant="{escape_label_value(tenant)}"' if tenant else '')
+        )
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_part + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
         if window:
             promql = (
-                f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ("
+                f"sum by(tenant_id, {PROMETHEUS_API_PATH_LABEL}) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         else:
-            promql = f"sum by(tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
+            promql = f"sum by(tenant_id, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
 
         results = await self._client.query(promql)
         tenant_task = self._accumulate_tenant_task_counts(results, active_services)
         ranked = self._rank_tenants_by_total(tenant_task)
         grand_total = sum(r[1] for r in ranked)
         top = ranked[:limit]
+        names = await self._resolve_tenant_names({tid for tid, _, _ in top})
 
         rows = [
-            self._heatmap_row(idx + 1, tenant_label, total, tasks, active_services, grand_total)
-            for idx, (tenant_label, total, tasks) in enumerate(top)
+            self._heatmap_row(
+                idx + 1, names.get(tid, tid or "unknown"), total, tasks, active_services, grand_total
+            )
+            for idx, (tid, total, tasks) in enumerate(top)
         ]
 
         return {
@@ -665,13 +699,21 @@ class MeteringService:
     def _native_unit_queries(
         self, tenant: Optional[str], time_range: Optional[str],
         service_filter: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> tuple[list[str], list]:
         """Per-service native-unit scalar query coroutines — one per task
         that has a real Prometheus Histogram _sum metric (SERVICE_BREAKDOWN_CONFIG).
 
         service_filter (the frontend's enabled-task-type allowlist), when
         given, skips the native-unit query entirely for excluded tasks —
-        a query-level reduction, not just a display-level one."""
+        a query-level reduction, not just a display-level one.
+
+        These native-unit metrics (tts/nmt/asr/... characters/minutes) don't
+        carry a ``tenant_id`` label — only telemetry_obsv_requests_total does
+        (see metrics.py) — so ``tenant_id`` is accepted for signature
+        symmetry with the caller but intentionally NOT used here; filtering
+        by a label the metric doesn't have would return zero results.
+        """
         native_tasks: list[str] = []
         native_coros = []
         for task, cfg in SERVICE_BREAKDOWN_CONFIG.items():
@@ -783,9 +825,9 @@ class MeteringService:
     def _tenant_delta_promql(metric: str, time_range: Optional[str]) -> str:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
-            return f"sum by(tenant) ({metric}) > 0"
+            return f"sum by(tenant_id) ({metric}) > 0"
         return (
-            f"sum by(tenant) ("
+            f"sum by(tenant_id) ("
             f"({metric} unless {metric} offset {window})"
             f" or (increase({metric}[{window}]) > 0)"
             f") > 0"
@@ -796,24 +838,25 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if window:
             return (
-                f"sum by(tenant) ("
+                f"sum by(tenant_id) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
-        base = f"sum by(tenant) ({metric})"
+        base = f"sum by(tenant_id) ({metric})"
         return f"{base} > 0" if filter_zero else base
 
-    async def _fetch_valid_tenant_names(self) -> Optional[set]:
-        """Return the set of currently-ACTIVE tenant organisation names from the auth DB.
+    async def _fetch_valid_tenant_ids(self) -> Optional[set]:
+        """Return the set of currently-ACTIVE tenant ids (as strings) from the auth DB.
 
-        The Prometheus ``tenant`` label carries the organisation name (see
-        ai4i_core.observability.middleware), so filtering against still-valid
-        tenants must match on that same value. Restricted to status='ACTIVE'
-        so PENDING/SUSPENDED/DEACTIVATED tenants — who can't currently
-        authenticate (see APIKeyService.user_may_use_api_keys) but may still
-        have in-window Prometheus series from before their status changed —
-        don't inflate the Active Tenants count on the Usage Dashboard.
+        Prometheus results are grouped/filtered by ``tenant_id`` (immutable —
+        see ai4i_core.observability.middleware), so validity must be checked
+        against that same value rather than the organisation name, which
+        changes on a rename. Restricted to status='ACTIVE' so PENDING/
+        SUSPENDED/DEACTIVATED tenants — who can't currently authenticate (see
+        APIKeyService.user_may_use_api_keys) but may still have in-window
+        Prometheus series from before their status changed — don't inflate
+        the Active Tenants count on the Usage Dashboard.
         Returns None when the auth DB is unavailable so callers fall back to
         unfiltered Prometheus results rather than returning an empty count.
         """
@@ -821,9 +864,33 @@ class MeteringService:
             return None
         try:
             rows = await self._auth_db.execute(
-                text("SELECT organisation FROM tenants WHERE status = 'ACTIVE'")
+                text("SELECT id FROM tenants WHERE status = 'ACTIVE'")
             )
-            return {r[0] for r in rows.all()}
+            return {str(r[0]) for r in rows.all()}
         except Exception:
-            logger.warning("_fetch_valid_tenant_names: auth DB query failed", exc_info=True)
+            logger.warning("_fetch_valid_tenant_ids: auth DB query failed", exc_info=True)
             return None
+
+    async def _resolve_tenant_names(self, tenant_ids: set) -> dict:
+        """Batch-resolve tenant_id -> current organisation name for display.
+
+        Prometheus results are grouped by tenant_id so counts stay correct
+        across a rename (see _by_tenant_promql/_tenant_delta_promql); this
+        fills in whatever the organisation is named *right now* for the UI,
+        rather than showing the raw id. Empty/falsy ids (series from before
+        the tenant_id label existed, or "unknown") are skipped. Returns {}
+        (never None) on a DB miss so callers can always call .get() safely —
+        the raw id/label is still shown as a fallback, just not the name.
+        """
+        ids = {tid for tid in tenant_ids if tid}
+        if self._auth_db is None or not ids:
+            return {}
+        try:
+            rows = await self._auth_db.execute(
+                text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"),
+                {"ids": [int(tid) for tid in ids]},
+            )
+            return {str(r[0]): r[1] for r in rows.all()}
+        except Exception:
+            logger.warning("_resolve_tenant_names: auth DB query failed", exc_info=True)
+            return {}

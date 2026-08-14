@@ -17,6 +17,11 @@ once pre-cutover series age out of the query window; no relabel rule can fix
 it retroactively since relabeling only sees a scrape target's own labels, not
 a historical series' stored value.
 
+``tenant_id`` (see ``_tenant_id_label``) was added alongside ``tenant`` for
+exactly this reason: it never changes, so MeteringService now filters/groups
+on it instead of the organisation name — a tenant rename no longer orphans
+historical series. ``tenant`` is kept only for backward-compat/debugging.
+
 Unit counts (characters/audio-minutes/images/tokens), language labels, and
 service_id are NOT re-derived here — this middleware never reads or parses
 the request body at all. Every value is computed exactly once by the request
@@ -57,6 +62,18 @@ def _tenant_label(request: Request) -> str:
     label carries the real Unicode organisation name, not the encoded form.
     """
     return unquote((request.headers.get("X-Tenant-Name") or "").strip()) or "unknown"
+
+
+def _tenant_id_label(request: Request) -> str:
+    """Read the ``tenant_id`` metric label from the gateway-injected
+    X-Tenant-Id header (the tenant's immutable numeric id, set by
+    auth-service /validate — see ``_set_tenant_headers``).
+
+    Unlike ``tenant`` (the organisation name), this value never changes for
+    a given tenant, so metering queries that filter/group by it stay correct
+    across a tenant rename — see MeteringService for the read side.
+    """
+    return (request.headers.get("X-Tenant-Id") or "").strip()
 
 
 def set_billed_state(
@@ -165,6 +182,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # service_id is populated during request handling by model-management.
         tenant_label = _tenant_label(request)
+        tenant_id_label = _tenant_id_label(request)
         # service_id is set on request.state by the route handler for LLM
         # (from payload serviceId before proxy_traced is called) and by the
         # orchestrator for Triton services. Falls back to empty string.
@@ -189,6 +207,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             method=method,
             service_type=service_type,
             tenant=tenant_label,
+            tenant_id=tenant_id_label,
             service_id=service_id,
             status_code=response.status_code,
             duration=duration,
@@ -236,12 +255,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         finally:
             duration = time.time() - start_time
             tenant_label = _tenant_label(request)
+            tenant_id_label = _tenant_id_label(request)
             service_id = getattr(request.state, "service_id", "") or ""
             self._schedule_metrics(
                 path=path,
                 method=method,
                 service_type="llm",
                 tenant=tenant_label,
+                tenant_id=tenant_id_label,
                 service_id=service_id,
                 status_code=status_code,
                 duration=duration,
@@ -302,6 +323,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         method: str,
         service_type: str,
         tenant: str,
+        tenant_id: str,
         service_id: str,
         status_code: int,
         duration: float,
@@ -325,6 +347,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 status_code=status_code,
                 duration=duration,
                 tenant=tenant,
+                tenant_id=tenant_id,
                 service_id=service_id,
             )
 

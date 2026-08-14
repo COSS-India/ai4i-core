@@ -615,17 +615,24 @@ class TestActiveTenantsExcludesUnknown:
 
         This covers the post-DB-flush scenario where stale Prometheus series
         for deleted tenants would otherwise inflate 7d/30d active-tenant counts.
+        Filtering keys on ``tenant_id`` (immutable), not the ``tenant`` name
+        label, so a rename doesn't affect this filter.
         """
         prom_rows = [
-            {"metric": {"tenant": "1"}, "value": [0, "5"]},
-            {"metric": {"tenant": "2"}, "value": [0, "3"]},  # deleted tenant
-            {"metric": {"tenant": "3"}, "value": [0, "8"]},
+            {"metric": {"tenant_id": "1", "tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "2", "tenant": "2"}, "value": [0, "3"]},  # deleted tenant
+            {"metric": {"tenant_id": "3", "tenant": "3"}, "value": [0, "8"]},
         ]
-        # DB has only tenants 1 and 3; tenant 2 was deleted
+        # DB has only tenants 1 and 3; tenant 2 was deleted. First execute()
+        # call is the valid-ids query, second is the display-name lookup —
+        # empty here so the raw label is shown, keeping this test focused on
+        # the id-based filter rather than name resolution.
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(1,), (3,)]
+        names_result = MagicMock()
+        names_result.all.return_value = []
         auth_db = AsyncMock()
-        db_result = MagicMock()
-        db_result.all.return_value = [(1,), (3,)]
-        auth_db.execute = AsyncMock(return_value=db_result)
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
 
         svc = _make_service(query_return=prom_rows, auth_db=auth_db)
         result = await svc.active_tenants("7d")
@@ -665,14 +672,18 @@ class TestActiveTenantsExcludesUnknown:
         """A tenant whose status is PENDING (not yet ACTIVE) must not count
         as an active tenant, even if stale Prometheus series exist for it."""
         prom_rows = [
-            {"metric": {"tenant": "acme"}, "value": [0, "5"]},  # ACTIVE
-            {"metric": {"tenant": "pending-org"}, "value": [0, "3"]},  # PENDING
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},  # ACTIVE
+            {"metric": {"tenant_id": "2", "tenant": "pending-org"}, "value": [0, "3"]},  # PENDING
         ]
-        # DB WHERE status='ACTIVE' would only ever return active orgs.
+        # DB WHERE status='ACTIVE' would only ever return active tenant ids.
+        # First execute() call is the valid-ids query, second is the
+        # display-name lookup — resolves id 1 to its current org name.
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(1,)]
+        names_result = MagicMock()
+        names_result.all.return_value = [(1, "acme")]
         auth_db = AsyncMock()
-        db_result = MagicMock()
-        db_result.all.return_value = [("acme",)]
-        auth_db.execute = AsyncMock(return_value=db_result)
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
 
         svc = _make_service(query_return=prom_rows, auth_db=auth_db)
         result = await svc.active_tenants("24h")

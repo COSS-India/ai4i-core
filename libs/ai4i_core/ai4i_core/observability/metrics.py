@@ -28,7 +28,12 @@ class MetricsCollector:
         self.enterprise_requests_total = Counter(
             "telemetry_obsv_requests_total",
             "Total enterprise requests",
-            ["method", "endpoint", "status_code", "tenant", "service_id"],
+            # tenant_id (immutable) rides alongside tenant (the mutable
+            # organisation name) so tenant-scoped/aggregate metering queries
+            # can key on tenant_id and stay correct across a tenant rename —
+            # tenant is kept only for backward-compat/display, never for
+            # filtering or group-by in metering_service.py.
+            ["method", "endpoint", "status_code", "tenant", "tenant_id", "service_id"],
             registry=self.registry,
         )
 
@@ -153,6 +158,7 @@ class MetricsCollector:
         status_code: int,
         duration: float,
         tenant: str = "unknown",
+        tenant_id: str = "",
         service_id: str = "",
     ):
         """Track a request — count + duration histogram."""
@@ -161,6 +167,7 @@ class MetricsCollector:
             endpoint=endpoint,
             status_code=str(status_code),
             tenant=tenant,
+            tenant_id=tenant_id,
             service_id=service_id,
         ).inc()
 
