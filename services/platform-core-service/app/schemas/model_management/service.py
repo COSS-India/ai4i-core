@@ -12,28 +12,17 @@ from app.schemas.base import BaseSchema
 from app.schemas.common import BenchmarkEntry, validate_entity_name
 from app.schemas.enums.model_management import (
     InferenceServerTypeEnum,
-    PolicyAccuracyEnum,
-    PolicyCostEnum,
-    PolicyLatencyEnum,
     resolve_task_type,
 )
 from app.schemas.model_management.model import ModelResponse
 
 
-# ── Health & policy sub-schemas ──
+# ── Health sub-schema ──
 
 
 class ServiceStatus(BaseSchema):
     status: Optional[str] = None
     lastUpdated: Optional[str] = None
-
-
-class ServicePolicy(BaseSchema):
-    """Latency/cost/accuracy SLA tiers — used for smart routing decisions."""
-
-    latency: Optional[PolicyLatencyEnum] = None
-    cost: Optional[PolicyCostEnum] = None
-    accuracy: Optional[PolicyAccuracyEnum] = None
 
 
 # ── Create / Update ──
@@ -184,7 +173,6 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     isTryItDefault: Optional[bool] = None
-    policy: Optional[ServicePolicy] = None
     taskType: Optional[str] = None
     costPerUnit: Optional[float] = Field(None, ge=0)
     unitSize: Optional[int] = None
@@ -311,7 +299,6 @@ class ServiceResponse(BaseSchema):
     api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, Any]] = None
-    policy: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     isTryItDefault: bool = False
     publishedAt: Optional[str] = None

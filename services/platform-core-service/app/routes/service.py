@@ -34,7 +34,7 @@ router = APIRouter(
 # frontend depends on GET /services to resolve a serviceId before calling
 # NMT/ASR/TTS/etc, so this endpoint can't be locked down to Admin/Moderator
 # without breaking inference for all non-admin users. What can and should be
-# fixed: service_to_dict() returns internal fields (api_key, policy, cost/
+# fixed: service_to_dict() returns internal fields (api_key, cost/
 # billing, health, hardware, tier assignments) that no non-admin caller needs
 # or should see. Non-admin callers (and the fully public try-it endpoint) get
 # an allow-listed subset instead; Admin/Moderator keep the full response.
@@ -50,7 +50,7 @@ _ROLE_MODERATOR = 2
 # model.adapterConfig and model.schema to build the actual Triton request.
 # Dropping "model" here breaks inference for every service (AI4IDS-2562
 # investigation) — the model card is Triton tensor-mapping/schema config, not
-# a secret (no api_key/policy/billing inside it), so it's safe to allow.
+# a secret (no api_key/billing inside it), so it's safe to allow.
 _NON_ADMIN_SERVICE_FIELDS = {
     "serviceId",
     "name",
@@ -81,7 +81,7 @@ def _is_platform_admin(request: Request) -> bool:
 
 
 def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip internal/sensitive fields (api_key, policy, billing, health,
+    """Strip internal/sensitive fields (api_key, billing, health,
     hardware, tiers, audit) down to what non-admin/public callers need."""
     return {k: v for k, v in item.items() if k in _NON_ADMIN_SERVICE_FIELDS}
 

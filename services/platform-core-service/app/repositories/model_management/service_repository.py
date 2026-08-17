@@ -15,7 +15,7 @@ from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_tier import PPUTier
 
 
-_JSON_COLUMNS = frozenset({"health_status", "benchmarks", "policy"})
+_JSON_COLUMNS = frozenset({"health_status", "benchmarks"})
 
 
 class ServiceRepository:

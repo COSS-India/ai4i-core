@@ -199,20 +199,3 @@ class VersionStatusEnum(str, Enum):
 
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
-
-
-class PolicyLatencyEnum(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class PolicyCostEnum(str, Enum):
-    TIER_1 = "tier_1"
-    TIER_2 = "tier_2"
-    TIER_3 = "tier_3"
-
-
-class PolicyAccuracyEnum(str, Enum):
-    SENSITIVE = "sensitive"
-    STANDARD = "standard"
