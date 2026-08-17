@@ -56,6 +56,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "name",
     "modelId",
     "modelVersion",
+    "description",  # ULCA name for serviceDescription
     "serviceDescription",
     "endpoint",
     "taskType",
@@ -66,6 +67,14 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "versionStatus",
     "model",
     "tierIds",  # required by inference-service tier enforcement
+    # NOTE: the new nested `inferenceEndPoint` object is deliberately NOT
+    # in this allow-list. It bundles `infraDescription`
+    # (== the existing `hardwareDescription`, already admin-only) together
+    # with the public-safe bits (callbackUrl, supported*Formats, ...) in one
+    # object, and _filter_service_fields below only does a shallow top-level
+    # filter — allow-listing the whole object would leak infraDescription to
+    # non-admins. Exposing a redacted version of it is a separate follow-up
+    # if a non-admin caller ever needs these fields.
 }
 
 

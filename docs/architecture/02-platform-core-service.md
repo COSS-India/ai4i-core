@@ -16,7 +16,12 @@ manager, not a scrape target.
 - Register and **version** models (`mm_models`); status `ACTIVE` / `DEPRECATED`; a
   configurable cap on active versions per model.
 - Publish model versions as **services** (`mm_services`) with backend metadata and an
-  inference-server type (Triton default).
+  inference-server type (Triton default). The Service API contract's `task`/
+  `inferenceEndPoint` fields conform to ULCA's `deployment-service-specs.yml`
+  — deprecated flat aliases (`taskType`, `endpoint`, `hardwareDescription`,
+  `api_key`, `serviceDescription`) are still accepted for backward
+  compatibility. `mm_models`' `task`/inference-endpoint fields were
+  similarly aligned to ULCA's model-schema.yml earlier.
 - **Endpoint validation**: before publishing, the service can run a test call against the
   backend (Triton) — lenient (`<500`) or strict (`<400`) mode.
 - `try-it` service listing for public trials.
