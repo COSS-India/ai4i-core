@@ -81,6 +81,7 @@ import {
   ViewIcon,
 } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
+import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ConsentCheckbox, {
@@ -114,6 +115,11 @@ import {
   formatPlatformRoleLabel,
   isDefaultTenant,
 } from "../../utils/defaultTenant";
+import {
+  addDaysToDateInputValue,
+  dateInputToStartOfDayIso,
+  dateInputToEndOfDayIso,
+} from "../../utils/helpers";
 import type { TenantUserView, TenantView } from "../../types/tenant";
 
 const BUDGET_MAX_INTEGER_DIGITS = 7;
@@ -121,21 +127,6 @@ const BUDGET_MAX_INTEGER_DIGITS = 7;
 /** Shown when assigning/reassigning a tier that has no mapped services. */
 const TIER_NO_SERVICES_MSG =
   `This Tier has no services mapped. Please map at least one service before assigning to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}.`;
-
-/**
- * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp.
- * Uses local calendar day bounds so "Effective To = today" stays active
- * through the end of that day (not midnight UTC, which expires immediately).
- */
-function dateInputToStartOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
-}
-
-function dateInputToEndOfDayIso(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
-}
 
 function clampBudgetInput(raw: string): string {
   const dotIndex = raw.indexOf(".");
@@ -192,6 +183,9 @@ export default function TenantManagementTab({
   const tm = useTenantManagement({ user });
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const { taskTypeNames } = useInferenceTypes();
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const userListTenantStatus = tm.activeUserListTenant?.status ?? null;
 
   const resolveUserDisplayStatus = (u: TenantUserView) =>
@@ -248,11 +242,12 @@ export default function TenantManagementTab({
   });
   const tierOptions = tiersQuery.data?.data ?? [];
 
-  // Shared with Tier Management so service↔tier mappings stay consistent.
-  // Used to block assigning a tier that has no services mapped.
+  // Shared with Tier Management so service↔tier mappings stay consistent
+  // (same taskTypes filter + cache key as useTierManagement).
   const servicesForTiersQuery = useQuery({
-    queryKey: ["services-for-tiers"],
-    queryFn: () => fetchAllServicesMatchingFilters({}),
+    queryKey: ["services-for-tiers", enabledTaskTypesParam ?? "all"],
+    queryFn: () =>
+      fetchAllServicesMatchingFilters({ taskTypes: enabledTaskTypesParam }),
     staleTime: 60_000,
     enabled: isAdmin && (isAssignTierOpen || isViewTierOpen),
   });
@@ -403,7 +398,7 @@ export default function TenantManagementTab({
         duration: 4000,
         isClosable: true,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       handleCloseManagePlan();
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
@@ -479,6 +474,10 @@ export default function TenantManagementTab({
       return;
     }
 
+    if (assignEffectiveFrom < new Date().toISOString().slice(0, 10)) {
+      setAssignTierError("Effective From cannot be in the past.");
+      return;
+    }
     if (assignEffectiveFrom === assignEffectiveTo) {
       setAssignTierError(
         "Effective From and Effective To cannot be the same date.",
@@ -502,7 +501,7 @@ export default function TenantManagementTab({
         effective_from: effectiveFromIso,
         effective_to: effectiveToIso,
       });
-      queryClient.invalidateQueries({ queryKey: ["tenant-tiers"] });
+      await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       toast({
         title: "Tier assigned",
         description: `Tier assigned to "${assignTierTenant.organisation}" successfully.`,
@@ -566,7 +565,7 @@ export default function TenantManagementTab({
         isClosable: true,
       });
 
-      queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["tenant-tiers"],
       });
     } catch (err: any) {
@@ -2112,6 +2111,14 @@ export default function TenantManagementTab({
       !selectedTierHasNoServices &&
       !servicesForTiersQuery.isLoading &&
       !servicesForTiersQuery.isError;
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveFromMinDate = today;
+    const effectiveToMinDate = assignEffectiveFrom
+      ? (() => {
+          const dayAfterFrom = addDaysToDateInputValue(assignEffectiveFrom, 1);
+          return dayAfterFrom > today ? dayAfterFrom : today;
+        })()
+      : today;
     return (
       <Modal
         isOpen={isAssignTierOpen}
@@ -2189,6 +2196,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveFrom}
+                    min={effectiveFromMinDate}
                     onChange={(e) => setAssignEffectiveFrom(e.target.value)}
                     isDisabled={isAssigning}
                   />
@@ -2201,7 +2209,7 @@ export default function TenantManagementTab({
                     type="date"
                     size="sm"
                     value={assignEffectiveTo}
-                    min={assignEffectiveFrom}
+                    min={effectiveToMinDate}
                     onChange={(e) => setAssignEffectiveTo(e.target.value)}
                     isDisabled={isAssigning}
                   />

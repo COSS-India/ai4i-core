@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -22,6 +23,9 @@ from app.schemas.pay_per_use.tenant_assignment import (
 from app.utils.tenant_validator import require_active_tenant
 
 logger = logging.getLogger(__name__)
+
+# ppu_tenant_tier_assignments.budget_limit / available_balance are NUMERIC(15, 8).
+MAX_BUDGET_LIMIT = Decimal("9999999.99999999")
 
 
 async def _notify_auth_best_effort(
@@ -153,11 +157,12 @@ async def revise_budget(
     with 409 (nothing written) — the Admin must pick a smaller amount, or
     top up instead. A result exactly equal to cumulative spend is accepted
     and leaves available_balance at 0, which blocks the tenant's next
-    request immediately. action='top-up' always succeeds once the tenant is
-    found and active — it only ever adds headroom, so it must never be
-    rejected for being "below spend," even for an already over-spent tenant
-    (available_balance already negative from real usage). Tier, Quota
-    Limit, and Rate Limit are untouched.
+    request immediately. action='top-up' never needs a "below spend" check
+    — it only ever adds headroom — but it is rejected with 422 if the
+    resulting budget_limit would exceed MAX_BUDGET_LIMIT, the max value the
+    budget_limit/available_balance NUMERIC(15, 8) columns can store, so an
+    oversized top-up fails validation instead of a DB numeric overflow
+    surfacing as a 500. Tier, Quota Limit, and Rate Limit are untouched.
     """
     await require_active_tenant(body.tenant_id, auth_db)
 
@@ -165,6 +170,17 @@ async def revise_budget(
 
     delta = body.amount if body.action == "top-up" else -body.amount
     new_budget = assignment.budget_limit + delta
+
+    if body.action == "top-up":
+        if new_budget > MAX_BUDGET_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Top-up amount ({body.amount}) would raise the budget to "
+                    f"{new_budget}, which exceeds the maximum allowed budget "
+                    f"({MAX_BUDGET_LIMIT})"
+                ),
+            )
 
     if body.action == "top-down":
         if new_budget < 0:
@@ -252,6 +268,13 @@ async def assign_tier(
         )
 
     now = datetime.now(timezone.utc)
+    today_utc = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if body.effective_from < today_utc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="effective_from cannot be in the past",
+        )
 
     # 4. Reject if the new date range overlaps with any existing assignment.
     existing = await db.execute(

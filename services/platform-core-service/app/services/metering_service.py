@@ -207,9 +207,10 @@ class MeteringService:
             self._client.query(promql),
             self._fetch_valid_tenant_names(),
         )
-        # Filter Prometheus results to only tenants that currently exist in the
-        # DB. Without this, deleted tenants whose Prometheus series are still
-        # within the retention window inflate 7d/30d counts after a DB flush.
+        # Filter Prometheus results to only tenants that are currently ACTIVE
+        # in the DB. Without this, deleted tenants (or tenants that are no
+        # longer ACTIVE) whose Prometheus series are still within the
+        # retention window inflate the count.
         tenants = [
             {
                 "tenant": r["metric"].get("tenant", "unknown"),
@@ -952,18 +953,24 @@ class MeteringService:
         return f"{base} > 0" if filter_zero else base
 
     async def _fetch_valid_tenant_names(self) -> Optional[set]:
-        """Return the set of currently-valid tenant organisation names from the auth DB.
+        """Return the set of currently-ACTIVE tenant organisation names from the auth DB.
 
         The Prometheus ``tenant`` label carries the organisation name (see
         ai4i_core.observability.middleware), so filtering against still-valid
-        tenants must match on that same value. Returns None when the auth DB
-        is unavailable so callers fall back to unfiltered Prometheus results
-        rather than returning an empty count.
+        tenants must match on that same value. Restricted to status='ACTIVE'
+        so PENDING/SUSPENDED/DEACTIVATED tenants — who can't currently
+        authenticate (see APIKeyService.user_may_use_api_keys) but may still
+        have in-window Prometheus series from before their status changed —
+        don't inflate the Active Tenants count on the Usage Dashboard.
+        Returns None when the auth DB is unavailable so callers fall back to
+        unfiltered Prometheus results rather than returning an empty count.
         """
         if self._auth_db is None:
             return None
         try:
-            rows = await self._auth_db.execute(text("SELECT organisation FROM tenants"))
+            rows = await self._auth_db.execute(
+                text("SELECT organisation FROM tenants WHERE status = 'ACTIVE'")
+            )
             return {r[0] for r in rows.all()}
         except Exception:
             logger.warning("_fetch_valid_tenant_names: auth DB query failed", exc_info=True)

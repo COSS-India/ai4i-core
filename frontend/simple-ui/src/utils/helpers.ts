@@ -184,6 +184,42 @@ export const formatTimestamp = (timestamp: number): string => {
 };
 
 /**
+ * Add a number of days to an `<input type="date">` value (YYYY-MM-DD).
+ * @param dateStr - Date in YYYY-MM-DD format
+ * @param days - Number of days to add (may be negative)
+ * @returns Resulting date in YYYY-MM-DD format (local time)
+ */
+export const addDaysToDateInputValue = (dateStr: string, days: number): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  const yy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+};
+
+/**
+ * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp
+ * anchored at UTC midnight, matching the backend's UTC-day "not in the past"
+ * check (local midnight would shift the day boundary in any UTC+ timezone).
+ */
+export const dateInputToStartOfDayIso = (dateStr: string): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0)).toISOString();
+};
+
+/**
+ * Convert an `<input type="date">` value (YYYY-MM-DD) to an ISO timestamp
+ * anchored at UTC end-of-day, matching dateInputToStartOfDayIso's UTC anchor
+ * so effective_from/effective_to compare on the same day boundary.
+ */
+export const dateInputToEndOfDayIso = (dateStr: string): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999)).toISOString();
+};
+
+/**
  * Validate email format
  * @param email - Email string to validate
  * @returns True if valid email format
