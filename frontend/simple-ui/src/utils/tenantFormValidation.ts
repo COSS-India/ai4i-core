@@ -1,6 +1,7 @@
 // Client-side field rules for tenant + tenant user create/edit forms.
 
 import type { TenantView } from "../types/tenant";
+import { INSTITUTION, INSTITUTION_ARTICLE_CAP } from "../config/constants";
 
 const INVISIBLE_CHARS = /[\u00AD\u200B-\u200D\u2060\uFEFF\u2028\u2029\u200E\u200F]+/g;
 const PHONE_FORMAT_CHARS = /[ \-().]/g;
@@ -15,7 +16,7 @@ export const ORG_TOO_LONG_MSG = "Organisation must be at most 100 characters.";
 export const ORG_INVALID_CHARS_MSG =
   "Organisation may only contain letters, digits, spaces, hyphens, dots, and apostrophes.";
 export const ORG_NO_ALNUM_MSG = "Organisation must contain at least one letter or digit.";
-export const ORG_DUPLICATE_MSG = "A tenant with this organisation name already exists.";
+export const ORG_DUPLICATE_MSG = `${INSTITUTION_ARTICLE_CAP} ${INSTITUTION.toLowerCase()} with this organisation name already exists.`;
 
 export const CONTACT_NAME_REQUIRED_MSG = "Contact name is required.";
 export const FULL_NAME_REQUIRED_MSG = "Full name is required.";

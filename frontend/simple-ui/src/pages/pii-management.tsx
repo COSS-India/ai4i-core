@@ -8,9 +8,9 @@ import PiiManagement from "../components/pii/PiiManagement";
 import { useAuth } from "../hooks/useAuth";
 
 /**
- * AI4IDS-2605: PII Guardrail temporarily removed from UI.
+ * PII Guardrail temporarily removed from UI.
  * To restore: set PII_GUARDRAIL_UI_ENABLED = true, and uncomment related
- * Sidebar / AuthGuard / _app / Header entries marked AI4IDS-2605.
+ * Sidebar / AuthGuard / _app / Header entries.
  */
 const PII_GUARDRAIL_UI_ENABLED = false;
 

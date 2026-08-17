@@ -34,7 +34,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
     tenantOrganisationById,
     overview,
     tenantQuery,
-    serviceQuery,
     modelQuery,
     isLoading,
     isRefreshing,
@@ -103,7 +102,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           subTab={subTab}
           overview={overview}
           requestVolumeSection={requestVolumeSection}
-          serviceQuery={serviceQuery}
           modelQuery={modelQuery}
           parseQueryError={parseQueryError}
           tenantId={effectiveTenantId}
@@ -121,7 +119,6 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
           topN={topN}
           onTopNChange={setTopN}
           tenantQuery={tenantQuery}
-          serviceQuery={serviceQuery}
           modelQuery={modelQuery}
           parseQueryError={parseQueryError}
           scopeTenantId={scopeTenantId}

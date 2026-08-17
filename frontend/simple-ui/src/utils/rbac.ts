@@ -17,6 +17,11 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
+/** Program Admin — restricted role, sees Usage Dashboard (and Profile) only. */
+export function isProgramAdminUser(roles?: string[]): boolean {
+  return userHasRole(roles, "PROGRAM ADMIN");
+}
+
 /** Tenant Admin without platform ADMIN — model registry is read-only. */
 export function isRegistryReadOnlyUser(roles?: string[]): boolean {
   return isTenantAdminUser(roles) && !isPlatformAdminUser(roles);
@@ -27,10 +32,26 @@ export function canAccessServicesManagement(roles?: string[]): boolean {
   return !isRegistryReadOnlyUser(roles);
 }
 
-/** Usage Dashboard — platform ADMIN (adopter view) or Tenant Admin only. */
+/**
+ * Sidebar "Model task type" service cards (and the section that holds them).
+ * Hidden for the Usage-Dashboard-only role; every other role gets the section.
+ */
+export function canSeeServiceCards(roles?: string[]): boolean {
+  return !isUsageDashboardOnlyUser(roles);
+}
+
+/**
+ * Restricted roles whose entire nav surface is the Usage Dashboard (plus Profile).
+ * Callers gate every other nav item off this.
+ */
+export function isUsageDashboardOnlyUser(roles?: string[]): boolean {
+  return isProgramAdminUser(roles);
+}
+
+/** Usage Dashboard — platform ADMIN (adopter view), Tenant Admin, or Program Admin. */
 export function canAccessUsageDashboard(roles?: string[]): boolean {
   if (!roles?.length) return false;
-  return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
+  return isDefaultAdminUser(roles) || isTenantAdminUser(roles) || isProgramAdminUser(roles);
 }
 
 /** Platform-wide metering tabs (tenant ranking, adoption) — ADMIN/MODERATOR only. */
@@ -55,7 +76,8 @@ export function isTenantAdminOnlyUser(roles?: string[]): boolean {
 
 /**
  * Profile self-service account deletion — available to tenant-scoped USER and
- * TENANT ADMIN roles. Hidden for platform ADMIN, Adopter Admin (MODERATOR), and GUEST.
+ * TENANT ADMIN roles. Hidden for platform ADMIN, Adopter Admin (MODERATOR),
+ * and GUEST.
  */
 export function canSelfDeleteAccount(roles?: string[]): boolean {
   if (!roles?.length) return false;

@@ -1,10 +1,10 @@
 import { METERING } from "../config/meteringConstants";
+import { replaceTenantCopy } from "../utils/replaceTenantCopy";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
   modelConsumptionResponseSchema,
   overviewResponseSchema,
-  serviceConsumptionResponseSchema,
   tenantConsumptionResponseSchema,
 } from "./dto/schemas/metering";
 import type {
@@ -12,7 +12,6 @@ import type {
   MeteringWindow,
   ModelConsumptionResponse,
   OverviewResponse,
-  ServiceConsumptionResponse,
   TenantConsumptionResponse,
 } from "../types/metering";
 
@@ -35,15 +34,15 @@ export function parseMeteringError(error: unknown): string {
     error instanceof Error ? error.message : METERING.ERRORS.LOAD_FAILED;
 
   if (status === 503) {
-    return METERING.ERRORS.UNAVAILABLE_503;
+    return replaceTenantCopy(METERING.ERRORS.UNAVAILABLE_503);
   }
   if (status === 403) {
-    return message || METERING.ERRORS.FORBIDDEN_403;
+    return replaceTenantCopy(message || METERING.ERRORS.FORBIDDEN_403);
   }
   if (status === 400) {
-    return message || METERING.ERRORS.BAD_REQUEST_400;
+    return replaceTenantCopy(message || METERING.ERRORS.BAD_REQUEST_400);
   }
-  return message;
+  return replaceTenantCopy(message);
 }
 
 function resolveScopedTenantId(
@@ -106,22 +105,6 @@ export async function fetchMeteringTenantConsumption(
   const { data } = await apiService.get<TenantConsumptionResponse>(
     withQuery(apiEndpoints.metering.tenantConsumption, params),
     { responseSchema: tenantConsumptionResponseSchema },
-  );
-  return data;
-}
-
-/** GET /api/v1/metering/service-consumption */
-export async function fetchMeteringServiceConsumption(
-  timeWindow: MeteringWindow,
-  ctx: MeteringContext,
-  tenantId?: string | null,
-  taskTypes?: string[] | null,
-): Promise<ServiceConsumptionResponse> {
-  const params = buildMeteringParams(timeWindow, ctx, tenantId);
-  appendTaskTypesParam(params, taskTypes);
-  const { data } = await apiService.get<ServiceConsumptionResponse>(
-    withQuery(apiEndpoints.metering.serviceConsumption, params),
-    { responseSchema: serviceConsumptionResponseSchema },
   );
   return data;
 }

@@ -31,6 +31,7 @@ export const userSchema = z
     timezone: z.string().optional(),
     is_active: z.boolean(),
     created_at: z.string().optional(),
+    roles: z.array(z.string()).optional().default([]),
   })
   .passthrough();
 
@@ -45,7 +46,7 @@ export const userListItemSchema = z
     phone_number: z.string().nullable().optional(),
     creation_type: z.string().nullable().optional(),
     is_tenant_active: z.boolean().nullable().optional(),
-    roles: z.array(z.string()).optional(),
+    roles: z.array(z.string()).optional().default([]),
   })
   .passthrough();
 
