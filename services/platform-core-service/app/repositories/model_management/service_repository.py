@@ -10,7 +10,7 @@ from sqlalchemy import String, and_, cast, delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.model_management.model import Model
+from app.models.model_management.model import Model, VersionStatus
 from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_tier import PPUTier
 
@@ -154,27 +154,43 @@ class ServiceRepository:
 
     async def get_names_and_models_by_service_ids(
         self, service_ids: List[str]
-    ) -> Dict[str, Tuple[str, Optional[str]]]:
-        """Return {service_id: (name, model_name)} for the given service ids.
+    ) -> Dict[str, Tuple[str, str, str]]:
+        """Return {service_id: (name, model_id, model_name)} for the given
+        service ids — but ONLY for services whose backing model is currently
+        an ACTIVE version in the Registry.
 
-        model_name is resolved via mm_models.name — mm_services.model_id is
-        an opaque hash (sha256(f"{name}:{version}")[:32], see
+        model_id/model_name are resolved via mm_models — mm_services.model_id
+        is an opaque hash (sha256(f"{name}:{version}")[:32], see
         app/utils/hashing.py), not a human-readable model name on its own.
-        Outer join so a service whose model row is missing still returns its
-        own name, with model_name = None.
+        Inner join, filtered to Model.version_status == ACTIVE: a service
+        backed by a DEPRECATED or (hard-)deleted model is excluded from the
+        result exactly like a service that doesn't exist, so callers that
+        treat "missing from this dict" as "not a real, current entry" get
+        both cases handled by the same check. mm_models has no soft-delete
+        column — a deleted model's row is simply gone (see
+        ModelService.delete_model), so "not in mm_models" already means
+        "deleted" with no extra filter needed for that part.
 
         Excludes soft-deleted services. Used by the model-consumption
-        metering endpoint to resolve a display name + underlying model name
-        for each service_id grouped from Prometheus.
+        metering endpoint to resolve, for each service_id grouped from
+        Prometheus, the display name plus the underlying model's stable
+        identity (model_id) and display name — model_id is the aggregation
+        key across services that share a model, since it's immutable (model
+        names can't be renamed — see ModelService.update_model) while a
+        service's own name can be.
         """
         if not service_ids:
             return {}
         result = await self._db.execute(
-            select(Service.service_id, Service.name, Model.name.label("model_name"))
-            .outerjoin(Model, Model.model_id == Service.model_id)
-            .where(Service.service_id.in_(service_ids), Service.deleted_at.is_(None))
+            select(Service.service_id, Service.name, Model.model_id, Model.name.label("model_name"))
+            .join(Model, Model.model_id == Service.model_id)
+            .where(
+                Service.service_id.in_(service_ids),
+                Service.deleted_at.is_(None),
+                Model.version_status == VersionStatus.ACTIVE,
+            )
         )
-        return {row.service_id: (row.name, row.model_name) for row in result.all()}
+        return {row.service_id: (row.name, row.model_id, row.model_name) for row in result.all()}
 
     # ── Writes ──
 

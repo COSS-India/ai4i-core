@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ai4i_core.context import (
     get_llm_usage_input_tokens,
+    get_llm_usage_model_id,
     get_llm_usage_model_name,
     get_llm_usage_output_tokens,
 )
@@ -476,7 +477,11 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
         billed_input=get_llm_usage_input_tokens() or 0,
         billed_output=get_llm_usage_output_tokens() or 0,
     )
-    set_metric_labels(request, model=get_llm_usage_model_name() or "")
+    set_metric_labels(
+        request,
+        model=get_llm_usage_model_name() or "",
+        model_id=get_llm_usage_model_id() or "",
+    )
 
 
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:

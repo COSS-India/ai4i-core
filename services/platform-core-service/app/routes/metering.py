@@ -420,7 +420,7 @@ def _model_consumption_summary(
     `highest_failure_rate` stays service-level."""
     if breakdown is None:
         return None
-    kpis = MeteringService.model_consumption_kpis(breakdown["services"])
+    kpis = MeteringService.model_consumption_kpis(breakdown["services"], breakdown["model_totals"])
     worst = kpis["worst"]
 
     return ModelConsumptionSummary(
@@ -428,7 +428,9 @@ def _model_consumption_summary(
         active_models=kpis["active_models"],
         overall_success_rate_pct=kpis["overall_success_rate_pct"],
         most_used=(
-            MostUsedModel(name=most_used["model_name"], requests=most_used["requests"])
+            MostUsedModel(
+                model_id=most_used["model_id"], name=most_used["model_name"], requests=most_used["requests"]
+            )
             if most_used else None
         ),
         highest_failure_rate=(
@@ -553,11 +555,15 @@ async def get_overview(
     if cached:
         return cached
 
+    # tenant_count()/active_tenants() all touch self._auth_db (a single
+    # AsyncSession — NOT safe for concurrent use), so they're fetched via
+    # overview_tenant_data() rather than being thrown into the same gather()
+    # as everything else below — see its docstring for the concurrency bug
+    # that caused (sqlalchemy.exc.InvalidRequestError: "This session is
+    # provisioning a new connection").
+    tc, active_by_range = await svc.overview_tenant_data(["24h", "7d", "30d"])
+
     results = await asyncio.gather(
-        svc.tenant_count(),
-        svc.active_tenants("24h"),
-        svc.active_tenants("7d"),
-        svc.active_tenants("30d"),
         svc.request_total(
             inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
             task_types=task_type_filter,
@@ -568,7 +574,14 @@ async def get_overview(
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
         return_exceptions=True,
     )
-    (tc, at24, at7, at30, rt, chart, conc), degraded = _partition_results(results)
+    # Merge both result sets through one _partition_results call so a failure
+    # in either half still degrades the response instead of raising —
+    # active_tenants() (unlike tenant_count()) doesn't catch a Prometheus
+    # query failure internally, so its slot here can be a real Exception.
+    combined, degraded = _partition_results([
+        active_by_range["24h"], active_by_range["7d"], active_by_range["30d"], *results,
+    ])
+    at24, at7, at30, rt, chart, conc = combined
 
     org = scope_tenant_name
 
@@ -793,12 +806,13 @@ async def get_model_consumption(
     org = scope_tenant_name
 
     services = breakdown["services"] if breakdown else []
-    # most_used/top_models are model-level aggregations of the (service-level)
-    # breakdown rows above — see MeteringService.model_consumption_ranking.
-    # top_models_total_requests is the resolved-model-only denominator
+    model_totals = breakdown["model_totals"] if breakdown else []
+    # most_used/top_models rank model_breakdown's already-grouped, Registry-
+    # validated model_totals — see MeteringService.model_consumption_ranking.
+    # top_models_total_requests is the model-level denominator
     # consumption_pct is computed against — NOT the full window's total.
     most_used, ranked_models, top_models_total_requests = (
-        svc.model_consumption_ranking(services, limit) if breakdown is not None else (None, [], 0)
+        svc.model_consumption_ranking(model_totals, limit) if breakdown is not None else (None, [], 0)
     )
     summary = _model_consumption_summary(breakdown, total_models, most_used)
     top_models = [TopModelRow(**m) for m in ranked_models]
@@ -814,6 +828,7 @@ async def get_model_consumption(
             ServiceModelRow(
                 service_id=s["service_id"],
                 name=s["name"],
+                model_id=s["model_id"],
                 model_name=s["model_name"],
                 requests=s["requests"],
                 native_units=s["native_units"],
