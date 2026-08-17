@@ -55,7 +55,7 @@ import {
   type PiiTypeOut,
   type PolicyOut,
 } from "../../services/policyService";
-import { isTenantStatus, TENANT } from "../../config/constants";
+import { INSTITUTION, INSTITUTION_ARTICLE, INSTITUTIONS, isTenantStatus, TENANT } from "../../config/constants";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 
@@ -158,7 +158,7 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
     return (
       <Alert status="warning" borderRadius="md">
         <AlertIcon />
-        Policy Management requires adopter admin access (ADMIN role). Tenant users cannot
+        Policy Management requires adopter admin access (ADMIN role). {INSTITUTION} users cannot
         change policies here.
       </Alert>
     );
@@ -483,15 +483,15 @@ function PoliciesPanel() {
     {
       id: "scope",
       header: "Scope",
-      cell: (row) => (row.is_global ? "Global" : "Tenant-scoped"),
+      cell: (row) => (row.is_global ? "Global" : `${INSTITUTION}-scoped`),
     },
     {
       id: "tenants",
-      header: "Tenants",
+      header: INSTITUTIONS,
       tdProps: { maxW: "180px", isTruncated: true },
       cell: (row) => {
         const tenantLabel = row.is_global
-          ? "All tenants"
+          ? `All ${INSTITUTIONS.toLowerCase()}`
           : (row.tenant_ids?.length ?? 0) > 0
             ? row.tenant_ids!.join(", ")
             : "—";
@@ -632,7 +632,7 @@ function PoliciesPanel() {
                   >
                     <option value="">All</option>
                     <option value="true">Global</option>
-                    <option value="false">Tenant-scoped</option>
+                    <option value="false">{INSTITUTION}-scoped</option>
                   </TableSelectField>
                   <Box flex="1" minW={0} />
                 </HStack>
@@ -683,7 +683,7 @@ function PoliciesPanel() {
                         }}
                         _hover={{ opacity: 0.8 }}
                       >
-                        Scope: {filterGlobal === "true" ? "Global" : "Tenant-scoped"} ×
+                        Scope: {filterGlobal === "true" ? "Global" : `${INSTITUTION}-scoped`} ×
                       </Badge>
                     ) : null}
                   </HStack>
@@ -863,16 +863,16 @@ function PolicyDetailModal({
               {policy.is_active ? "Active" : "Inactive"}
             </Badge>
             <Badge colorScheme={policy.is_global ? "blue" : "purple"}>
-              {policy.is_global ? "Global" : "Tenant-scoped"}
+              {policy.is_global ? "Global" : `${INSTITUTION}-scoped`}
             </Badge>
           </HStack>
           <Box>
             <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              Tenants
+              {INSTITUTIONS}
             </Text>
             <Text fontSize="sm">
               {policy.is_global
-                ? "All tenants"
+                ? `All ${INSTITUTIONS.toLowerCase()}`
                 : (policy.tenant_ids?.length ?? 0) > 0
                   ? policy.tenant_ids!.join(", ")
                   : "—"}
@@ -976,7 +976,7 @@ function PolicyFormModal({
         );
       })
       .catch(() => {
-        if (!cancelled) setTenantsError("Could not load tenants. You can enter a tenant ID below.");
+        if (!cancelled) setTenantsError(`Could not load ${INSTITUTIONS.toLowerCase()}. You can enter ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} ID below.`);
       })
       .finally(() => {
         if (!cancelled) setTenantsLoading(false);
@@ -1038,7 +1038,7 @@ function PolicyFormModal({
       return;
     }
     if (!isGlobal && !normalizedTenantIds.length) {
-      onError("Select at least one tenant for non-global policies");
+      onError(`Select at least one ${INSTITUTION.toLowerCase()} for non-global policies`);
       return;
     }
     if (!selectedPii.length) {
@@ -1122,12 +1122,12 @@ function PolicyFormModal({
           </FormControl>
           {!isGlobal && (
             <FormControl isRequired>
-              <FormLabel>Tenants</FormLabel>
+              <FormLabel>{INSTITUTIONS}</FormLabel>
               {tenantsLoading ? (
                 <HStack spacing={2} py={2}>
                   <Spinner size="sm" />
                   <Text fontSize="sm" color="gray.600">
-                    Loading tenants…
+                    Loading {INSTITUTIONS.toLowerCase()}…
                   </Text>
                 </HStack>
               ) : tenantsError || tenants.length === 0 ? (
@@ -1138,18 +1138,18 @@ function PolicyFormModal({
                     </Text>
                   ) : (
                     <Text fontSize="sm" color="gray.600" mb={2}>
-                      No tenants found. Enter tenant IDs manually.
+                      No {INSTITUTIONS.toLowerCase()} found. Enter {INSTITUTION.toLowerCase()} IDs manually.
                     </Text>
                   )}
                   <Textarea
-                    placeholder="Tenant IDs separated by comma or newline"
+                    placeholder={`${INSTITUTION} IDs separated by comma or newline`}
                     value={tenantInput}
                     onChange={(e) => setTenantInput(e.target.value)}
                     fontFamily="mono"
                     fontSize="sm"
                     rows={3}
                   />
-                  <FormHelperText>Enter one or more tenant IDs.</FormHelperText>
+                  <FormHelperText>Enter one or more {INSTITUTION.toLowerCase()} IDs.</FormHelperText>
                 </>
               ) : (
                 <>
@@ -1175,7 +1175,7 @@ function PolicyFormModal({
                     </CheckboxGroup>
                   </Box>
                   <FormHelperText>
-                    Select one or more active tenant assignments for this policy.
+                    Select one or more active {INSTITUTION.toLowerCase()} assignments for this policy.
                   </FormHelperText>
                 </>
               )}
@@ -1913,7 +1913,7 @@ function AuditPanel() {
   const auditColumns = useMemo((): AdminTableColumn<AuditLogOut>[] => [
     {
       id: "tenant",
-      header: "Tenant",
+      header: INSTITUTION,
       cell: (row) => row.tenant_id || "—",
     },
     {
@@ -2009,7 +2009,7 @@ function AuditPanel() {
             <HStack spacing={3} align="flex-end" flexWrap="wrap" rowGap={3} w="full">
               <FormControl w={{ base: "full", sm: "200px" }}>
                 <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                  Tenant ID
+                  {INSTITUTION} ID
                 </FormLabel>
                 <Input
                   size="sm"
@@ -2069,7 +2069,7 @@ function AuditPanel() {
                     onClick={() => setTenantFilter("")}
                     _hover={{ opacity: 0.8 }}
                   >
-                    Tenant: {debouncedFilters.tenant} ×
+                    {INSTITUTION}: {debouncedFilters.tenant} ×
                   </Badge>
                 ) : null}
                 {debouncedFilters.policy !== "" ? (

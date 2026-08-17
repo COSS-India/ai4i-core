@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
+import { INSTITUTION } from "../../config/constants";
 import { billingPeriodLabel, type BillingPeriodKey } from "../../utils/usageSpendHelpers";
 import type { TenantUsageDetail } from "../../types/usageSpend";
 import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
@@ -118,7 +119,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
           />
           {hasMultiTier ? (
             <Text fontSize="11.5px" color="gray.500" lineHeight="1.5" mt="10px">
-              Grouped by tier since this tenant changed tier during the period — spend and usage
+              Grouped by tier since this {INSTITUTION.toLowerCase()} changed tier during the period — spend and usage
               above the group total are cumulative across all tiers.
             </Text>
           ) : null}

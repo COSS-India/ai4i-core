@@ -2,6 +2,7 @@ import { Badge, Box, HStack, Progress, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { meteringColorAt } from "../../utils/meteringColors";
+import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import MeteringTableText from "./MeteringTableText";
 
 export interface RankedShareRow {
@@ -14,18 +15,27 @@ export interface RankedShareRow {
 interface RankedShareListProps {
   rows: RankedShareRow[];
   headerLeft?: string;
+  headerTotal?: string;
   headerRight?: string;
 }
 
 const RankedShareList: React.FC<RankedShareListProps> = ({
   rows,
   headerLeft = METERING.SECTIONS.RANKED_SHARE.HEADER_LEFT,
+  headerTotal = METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS,
   headerRight = METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT,
 }) => (
   <VStack align="stretch" spacing={4} flex="1.5" w="full">
     <HStack justify="space-between" fontSize="xs" color="gray.500" px={1}>
-      <Text fontWeight="medium">{headerLeft}</Text>
-      <Text>{headerRight}</Text>
+      <Text fontWeight="medium">{replaceTenantCopy(headerLeft)}</Text>
+      <HStack spacing={2} flexShrink={0}>
+        <Text fontWeight="medium" minW="88px" textAlign="right">
+          {replaceTenantCopy(headerTotal)}
+        </Text>
+        <Text minW="56px" textAlign="right">
+          {headerRight}
+        </Text>
+      </HStack>
     </HStack>
     {rows.map((row, i) => {
       const color = meteringColorAt(i);
@@ -48,6 +58,9 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
                 fontSize="xs"
                 borderRadius="md"
                 fontWeight="semibold"
+                minW="88px"
+                textAlign="center"
+                justifyContent="center"
               >
                 {row.formattedValue}
               </Badge>

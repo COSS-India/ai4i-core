@@ -130,33 +130,6 @@ export interface TenantConsumptionResponse extends MeteringResponseMeta {
   request_volume?: MeteringGraph | null;
 }
 
-export interface ServiceConsumptionSummary {
-  active_services?: number;
-  most_used?: { service: string; requests: number } | null;
-  highest_failure_rate?: { service: string; failure_rate_pct: number } | null;
-}
-
-export interface ServiceRow {
-  service: string;
-  metering_unit?: string;
-  requests: number;
-  percentage?: number;
-  native_units?: number | null;
-  native_unit_suffix: string;
-  success_pct: number;
-  failure_rate_pct?: number;
-  failed?: number;
-  vs_prev_period_pct?: number | null;
-}
-
-export interface ServiceConsumptionResponse extends MeteringResponseMeta {
-  scope: MeteringScope;
-  summary?: ServiceConsumptionSummary | null;
-  service_breakdown: ServiceRow[];
-  throughput?: ThroughputData;
-  request_volume?: MeteringGraph | null;
-}
-
 /** Per-service LLM row from GET /metering/model-consumption (no roll-up by model_name). */
 export interface ModelConsumptionRow {
   service_id: string;
