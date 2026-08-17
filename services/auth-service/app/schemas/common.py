@@ -34,6 +34,7 @@ _ERROR_DESCRIPTIONS = {
     403: "Not authorized.",
     404: "Not found.",
     422: "Validation error.",
+    503: "Service unavailable.",
 }
 
 
