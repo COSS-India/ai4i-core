@@ -55,6 +55,56 @@ class GuestServicesAssignRequest(BaseSchema):
     services: list[str] = Field(default_factory=list)
 
 
+class RoleMessageData(BaseSchema):
+    message: str
+
+
+class GetUserRolesData(BaseSchema):
+    user_id: str
+    roles: list[str]
+
+
+class GuestServicesData(BaseSchema):
+    services: list[str]
+
+
+class ListRolesResponse(SuccessResponse):
+    """GET /auth/roles/list"""
+
+    data: list[RoleResponse]
+
+
+class AssignRoleResponse(SuccessResponse):
+    """POST /auth/roles/assign"""
+
+    data: RoleMessageData
+
+
+class RemoveRoleResponse(SuccessResponse):
+    """POST /auth/roles/remove"""
+
+    data: RoleMessageData
+
+
+class GetUserRolesResponse(SuccessResponse):
+    """GET /auth/roles/user/{user_id}"""
+
+    data: GetUserRolesData
+
+
+class AssignGuestServicesResponse(SuccessResponse):
+    """POST /auth/roles/assign/guest/services"""
+
+    data: GuestServicesData
+
+
+class ListGuestServicesResponse(SuccessResponse):
+    """GET /auth/roles/list/guest/services"""
+
+    data: GuestServicesData
+
+
+
 class ListPermissionsResponse(SuccessResponse):
     """GET /auth/permissions/"""
 
