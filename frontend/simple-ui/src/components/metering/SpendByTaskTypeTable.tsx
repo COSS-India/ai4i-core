@@ -1,5 +1,6 @@
-import { Box, HStack, Table, Tbody, Td, Text, Th, Thead, Tr } from "@chakra-ui/react";
+import { Box, HStack, Table, Tbody, Td, Text, Thead, Tr } from "@chakra-ui/react";
 import React, { useMemo } from "react";
+import { METERING } from "../../config/meteringConstants";
 import {
   aggregateTasks,
   formatSpendMoney,
@@ -7,6 +8,7 @@ import {
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
+import { MeteringHeaderWithTip } from "./MeteringInfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
@@ -74,18 +76,29 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
       <Table size="sm" variant="simple">
         <Thead bg="gray.50">
           <Tr>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="26%">
-              MODEL TASK TYPE
-            </Th>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="38%">
-              USAGE
-            </Th>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="20%">
-              SPEND
-            </Th>
-            <Th fontSize="10.5px" letterSpacing="0.04em" color="gray.600" w="16%">
-              SHARE
-            </Th>
+            <MeteringHeaderWithTip
+              label="MODEL TASK TYPE"
+              w="26%"
+              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+            />
+            <MeteringHeaderWithTip
+              label="USAGE"
+              tip={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
+              w="38%"
+              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+            />
+            <MeteringHeaderWithTip
+              label="SPEND"
+              tip={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
+              w="20%"
+              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+            />
+            <MeteringHeaderWithTip
+              label="SHARE"
+              tip={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
+              w="16%"
+              sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
+            />
           </Tr>
         </Thead>
         <Tbody>

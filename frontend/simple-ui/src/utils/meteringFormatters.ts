@@ -4,9 +4,10 @@ import type {
   MeteringWindow,
   ModelConsumptionRow,
   ModelConsumptionSummary,
+  TopModelRow,
 } from "../types/metering";
 import { METERING } from "../config/meteringConstants";
-import { meteringServiceColor } from "./meteringColors";
+import { meteringServiceColor, meteringColorAt } from "./meteringColors";
 
 export const getWindowLabel = (window: MeteringWindow): string =>
   METERING.TIME_WINDOW_LABELS[window] ?? window;
@@ -140,6 +141,17 @@ export function formatNativeConsumption(
   return unit ? `${nativeUnits.toLocaleString()} ${unit}` : nativeUnits.toLocaleString();
 }
 
+/**
+ * Token / request scaling for Model Usage (AI4IDS-2790):
+ * ≥1M → `1.2M`, ≥1K → `284.0K`, else plain integer.
+ */
+export function formatScaledCount(n: number): string {
+  if (!Number.isFinite(n)) return METERING.GRAPH.EMPTY_VALUE;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+
 export function formatMeteringRefreshTime(iso?: string, nowMs = Date.now()): string {
   if (!iso) return METERING.REFRESH.JUST_NOW;
   const diff = Math.max(0, nowMs - new Date(iso).getTime());
@@ -250,7 +262,22 @@ export interface ServiceChartSlice {
   pct: number;
 }
 
-/** Donut + legend data for model-consumption breakdown charts. */
+/** Donut + legend data for model-level top_models ranking. */
+export function buildTopModelsChart(topModels: TopModelRow[]): {
+  slices: ServiceChartSlice[];
+  totalRequests: number;
+} {
+  const totalRequests = topModels.reduce((sum, m) => sum + m.requests, 0);
+  const slices = topModels.map((m, i) => ({
+    name: m.model_name,
+    value: m.requests,
+    color: meteringColorAt(i),
+    pct: m.consumption_pct,
+  }));
+  return { slices, totalRequests };
+}
+
+/** Donut + legend data for model-consumption breakdown charts (per-service fallback). */
 export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
   slices: ServiceChartSlice[];
   totalRequests: number;
@@ -270,9 +297,11 @@ export function buildModelBreakdownChart(breakdown: ModelConsumptionRow[]): {
 }
 
 export interface ModelInsights {
+  totalModels: number | null;
+  activeModels: number | null;
   mostUsedName: string;
   mostUsedRequests: number;
-  overallSuccessRate: number;
+  overallSuccessRate: number | null;
   totalRequests: number;
 }
 
@@ -298,16 +327,22 @@ export function deriveModelInsights(
   breakdown: ModelConsumptionRow[],
 ): ModelInsights | null {
   const derived = overallSuccessFromBreakdown(breakdown);
+  const totalModels = summary?.total_models ?? null;
+  const activeModels = summary?.active_models ?? null;
 
-  if (summary?.most_used && summary.overall_success_rate_pct != null) {
+  if (summary?.most_used || summary?.overall_success_rate_pct != null || totalModels != null) {
+    const mostUsedName =
+      summary?.most_used?.name?.trim() ||
+      summary?.most_used?.service_id ||
+      METERING.GRAPH.EMPTY_VALUE;
     return {
-      mostUsedName:
-        summary.most_used.name?.trim() ||
-        summary.most_used.service_id ||
-        METERING.GRAPH.EMPTY_VALUE,
-      mostUsedRequests: summary.most_used.requests,
-      overallSuccessRate: summary.overall_success_rate_pct,
-      totalRequests: derived?.totalRequests ?? summary.most_used.requests,
+      totalModels,
+      activeModels,
+      mostUsedName,
+      mostUsedRequests: summary?.most_used?.requests ?? 0,
+      overallSuccessRate:
+        summary?.overall_success_rate_pct ?? derived?.overallSuccessRate ?? null,
+      totalRequests: derived?.totalRequests ?? summary?.most_used?.requests ?? 0,
     };
   }
 
@@ -319,6 +354,8 @@ export function deriveModelInsights(
   if (!mostUsed) return null;
 
   return {
+    totalModels,
+    activeModels,
     mostUsedName: mostUsed.name,
     mostUsedRequests: mostUsed.requests,
     overallSuccessRate: derived.overallSuccessRate,

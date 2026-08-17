@@ -114,8 +114,11 @@ export async function fetchMeteringModelConsumption(
   timeWindow: MeteringWindow,
   ctx: MeteringContext,
   tenantId?: string | null,
+  limit: number = METERING.MODEL_TOP_N_DEFAULT,
 ): Promise<ModelConsumptionResponse> {
-  const params = buildMeteringParams(timeWindow, ctx, tenantId);
+  const params = buildMeteringParams(timeWindow, ctx, tenantId, {
+    limit: String(limit),
+  });
   const { data } = await apiService.get<ModelConsumptionResponse>(
     withQuery(apiEndpoints.metering.modelConsumption, params),
     { responseSchema: modelConsumptionResponseSchema },

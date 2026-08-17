@@ -1,4 +1,4 @@
-import { Badge, HStack, Progress, Tbody, Td, Th, Thead, Tr, VStack } from "@chakra-ui/react";
+import { Badge, HStack, Progress, Tbody, Td, Thead, Tr, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { MeteringTopN, TenantConsumptionResponse } from "../../types/metering";
@@ -7,6 +7,7 @@ import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
+import { MeteringHeaderWithTip } from "./MeteringInfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -49,6 +50,7 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
               value={data.avg_requests_per_tenant?.value ?? "—"}
               pctChange={data.avg_requests_per_tenant?.pct_change}
               helper={data.avg_requests_per_tenant?.helper ?? undefined}
+              tooltip={section.TOOLTIPS.AVG_REQUESTS}
               valueColor="gray.800"
             />
           )}
@@ -69,21 +71,26 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" w="72px">
-                    {section.TABLE_RANK}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" minW="240px">
-                    {replaceTenantCopy(section.TABLE_INSTITUTION)}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    {section.TABLE_REQUESTS}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" minW="180px">
-                    {section.TABLE_SHARE}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    %
-                  </Th>
+                  <MeteringHeaderWithTip label={section.TABLE_RANK} w="72px" />
+                  <MeteringHeaderWithTip
+                    label={replaceTenantCopy(section.TABLE_INSTITUTION)}
+                    minW="240px"
+                  />
+                  <MeteringHeaderWithTip
+                    label={section.TABLE_REQUESTS}
+                    tip={section.TOOLTIPS.REQUESTS}
+                    isNumeric
+                  />
+                  <MeteringHeaderWithTip
+                    label={section.TABLE_SHARE}
+                    tip={section.TOOLTIPS.SHARE}
+                    minW="180px"
+                  />
+                  <MeteringHeaderWithTip
+                    label="%"
+                    tip={section.TOOLTIPS.SHARE}
+                    isNumeric
+                  />
                 </Tr>
               </Thead>
               <Tbody>

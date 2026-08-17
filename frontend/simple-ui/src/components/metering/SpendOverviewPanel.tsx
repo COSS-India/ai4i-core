@@ -16,6 +16,7 @@ import {
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem, UsageSummaryResponse } from "../../types/usageSpend";
 import MeteringChartPanel from "./MeteringChartPanel";
+import { MeteringInfoTip } from "./MeteringInfoTip";
 import { TaskTypeLabel, UsageCell } from "./UsageSpendCells";
 
 const SPEND_CARD_BG = "#eef3fb";
@@ -50,7 +51,8 @@ function SpendTotalCard({
   label,
   money,
   tokens,
-}: Readonly<{ label: string; money: string; tokens: string }>) {
+  tooltip,
+}: Readonly<{ label: string; money: string; tokens: string; tooltip?: string }>) {
   return (
     <Box
       bg={SPEND_CARD_BG}
@@ -61,15 +63,17 @@ function SpendTotalCard({
       flex="1"
       minW={0}
     >
-      <Text
-        fontSize="11px"
-        fontWeight="semibold"
-        letterSpacing="0.04em"
-        color={USAGE_SPEND_ACCENT}
-        mb={2}
-      >
-        {label}
-      </Text>
+      <HStack spacing={1.5} mb={2} align="center">
+        <Text
+          fontSize="11px"
+          fontWeight="semibold"
+          letterSpacing="0.04em"
+          color={USAGE_SPEND_ACCENT}
+        >
+          {label}
+        </Text>
+        {tooltip ? <MeteringInfoTip label={label} tip={tooltip} boxSize={3} /> : null}
+      </HStack>
       <Text fontSize="22px" fontWeight="bold" lineHeight="1.1" color="gray.800" noOfLines={1}>
         {money}
       </Text>
@@ -250,21 +254,25 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   const totalCards = useMemo(() => {
     const rows = summary?.spendByModelTaskType ?? [];
     const tokens = summarizeSpendTokens(rows);
+    const tips = METERING.USAGE_SPEND.TOOLTIPS;
     return [
       {
         label: METERING.USAGE_SPEND.TOTAL_ALLOCATED,
         money: moneyOrDash(summary?.totalAllocatedBudget, currency),
         tokens: tokensOrDash(tokens.tokensAllocated, tokens.unit),
+        tooltip: tips.TOTAL_ALLOCATED,
       },
       {
         label: METERING.USAGE_SPEND.TOTAL_USED,
         money: moneyOrDash(summary?.totalSpend, currency),
         tokens: tokensOrDash(tokens.tokensUsed, tokens.unit),
+        tooltip: tips.TOTAL_USED,
       },
       {
         label: METERING.USAGE_SPEND.TOTAL_REMAINING,
         money: moneyOrDash(summary?.totalRemainingBudget, currency),
         tokens: tokensOrDash(tokens.tokensRemaining, tokens.unit),
+        tooltip: tips.TOTAL_REMAINING,
       },
     ];
   }, [summary, currency]);
@@ -293,7 +301,13 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
     <VStack align="stretch" spacing={4} w="full">
       <Flex gap={4} direction={{ base: "column", sm: "row" }}>
         {totalCards.map((card) => (
-          <SpendTotalCard key={card.label} label={card.label} money={card.money} tokens={card.tokens} />
+          <SpendTotalCard
+            key={card.label}
+            label={card.label}
+            money={card.money}
+            tokens={card.tokens}
+            tooltip={card.tooltip}
+          />
         ))}
       </Flex>
       <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="14px 20px">

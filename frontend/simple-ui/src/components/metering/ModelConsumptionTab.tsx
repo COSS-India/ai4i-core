@@ -5,46 +5,67 @@ import {
   Tbody,
   Td,
   Text,
-  Th,
   Thead,
   Tr,
   VStack,
 } from "@chakra-ui/react";
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { ModelConsumptionResponse } from "../../types/metering";
+import type { ModelConsumptionResponse, ModelTopN } from "../../types/metering";
 import {
   buildModelBreakdownChart,
+  buildTopModelsChart,
   deriveModelInsights,
-  formatCompactNumber,
-  formatNativeConsumption,
+  formatScaledCount,
   getWindowLabel,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
-import MeteringDonutChart from "./MeteringDonutChart";
+import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
+import { MeteringHeaderWithTip } from "./MeteringInfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
+import RankedShareList from "./RankedShareList";
+import SegmentedTabBar from "./SegmentedTabBar";
 
 interface ModelConsumptionTabProps {
   data?: ModelConsumptionResponse;
   isLoading?: boolean;
   errorMessage?: string | null;
+  /** When false, Most used helper uses institution-scoped copy. */
+  isPlatformWide?: boolean;
 }
 
 const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   data,
   isLoading,
   errorMessage,
+  isPlatformWide = true,
 }) => {
   const section = METERING.SECTIONS.MODEL;
+  const [topN, setTopN] = useState<ModelTopN>(METERING.MODEL_TOP_N_DEFAULT);
   const breakdown = data?.breakdown ?? [];
+  const topModels = data?.top_models ?? [];
 
-  const { slices } = useMemo(() => buildModelBreakdownChart(breakdown), [breakdown]);
+  const visibleTopModels = useMemo(() => topModels.slice(0, topN), [topModels, topN]);
+
+  const { slices } = useMemo(() => {
+    if (visibleTopModels.length) return buildTopModelsChart(visibleTopModels);
+    return buildModelBreakdownChart(breakdown);
+  }, [visibleTopModels, breakdown]);
+
   const insights = useMemo(
     () => deriveModelInsights(data?.summary, breakdown),
     [data?.summary, breakdown],
   );
+
+  const mostUsedHelper = insights
+    ? `${formatScaledCount(insights.mostUsedRequests)} ${
+        isPlatformWide
+          ? section.REQUESTS_ACROSS_INSTITUTIONS
+          : section.REQUESTS_ACROSS_INSTITUTION
+      }`
+    : undefined;
 
   return (
     <MeteringAsyncState
@@ -56,7 +77,30 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
+              <KpiCard
+                label={section.TOTAL_MODELS}
+                value={insights.totalModels ?? METERING.GRAPH.EMPTY_VALUE}
+                tooltip={section.TOOLTIPS.TOTAL_MODELS}
+                valueColor="gray.800"
+              />
+              <KpiCard
+                label={section.ACTIVE_MODELS}
+                value={insights.activeModels ?? METERING.GRAPH.EMPTY_VALUE}
+                tooltip={section.TOOLTIPS.ACTIVE_MODELS}
+                valueColor="gray.800"
+              />
+              <KpiCard
+                label={section.OVERALL_SUCCESS}
+                value={
+                  insights.overallSuccessRate != null
+                    ? insights.overallSuccessRate.toFixed(2)
+                    : METERING.GRAPH.EMPTY_VALUE
+                }
+                helper={section.SUCCESS_RATE_SUFFIX}
+                tooltip={section.TOOLTIPS.OVERALL_SUCCESS}
+                valueColor="green.600"
+              />
               <KpiCard
                 label={section.MOST_USED}
                 value={
@@ -65,27 +109,53 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                     <Text as="span">{insights.mostUsedName}</Text>
                   </HStack>
                 }
-                helper={`${formatCompactNumber(insights.mostUsedRequests, "indian")} ${section.REQUESTS_SUFFIX}`}
+                helper={mostUsedHelper}
+                tooltip={section.TOOLTIPS.MOST_USED}
                 valueColor="gray.800"
-              />
-              <KpiCard
-                label={section.OVERALL_SUCCESS}
-                value={`${insights.overallSuccessRate.toFixed(2)}%`}
-                helper={`${formatCompactNumber(insights.totalRequests, "indian")} ${section.REQUESTS_SUFFIX} · ${section.SUCCESS_RATE_SUFFIX}`}
-                valueColor="green.600"
               />
             </SimpleGrid>
           ) : null}
 
-          <MeteringSectionCard title={section.TITLE} subtitle={section.SUBTITLE} sectionLabel>
-            <MeteringDonutChart
-              data={slices.map(({ name, value, color }) => ({ name, value, color }))}
-              legendItems={slices.map(({ name, color, pct }) => ({ name, color, pct }))}
-              height={300}
-              innerRadius={70}
-              outerRadius={110}
-              centerPrimary={section.DONUT_PRIMARY}
-              centerSecondary={section.DONUT_SECONDARY}
+          <MeteringSectionCard
+            title={section.TITLE}
+            subtitle={section.SUBTITLE}
+            sectionLabel
+            action={
+              <SegmentedTabBar
+                options={[...METERING.MODEL_TOP_N_SEGMENT_OPTIONS]}
+                activeId={String(topN)}
+                onChange={(id) => setTopN(Number(id) as ModelTopN)}
+                justify="flex-end"
+              />
+            }
+          >
+            <DonutRankedLayout
+              chart={
+                <MeteringDonutChart
+                  data={slices.map(({ name, value, color }) => ({ name, value, color }))}
+                  height={260}
+                  innerRadius={65}
+                  outerRadius={100}
+                  showTooltip
+                  centerPrimary={section.DONUT_PRIMARY}
+                  centerSecondary={section.DONUT_SECONDARY}
+                />
+              }
+              list={
+                <RankedShareList
+                  rows={visibleTopModels.map((row) => ({
+                    rank: row.rank,
+                    label: row.model_name,
+                    formattedValue: row.formatted_requests || formatScaledCount(row.requests),
+                    percentage: row.consumption_pct,
+                  }))}
+                  headerLeft="Model"
+                  headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
+                  headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
+                  tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
+                  tipRight={section.TOOLTIPS.CONSUMPTION_PCT}
+                />
+              }
             />
           </MeteringSectionCard>
 
@@ -98,47 +168,55 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">
-                    {section.TABLE_SERVICE}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500">
-                    {section.TABLE_MODEL}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    {section.TABLE_TOTAL_REQUESTS}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    {section.TABLE_NATIVE}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    {section.TABLE_SUCCESS}
-                  </Th>
-                  <Th fontSize="xs" textTransform="uppercase" color="gray.500" isNumeric>
-                    {section.TABLE_FAILURE}
-                  </Th>
+                  <MeteringHeaderWithTip label={section.TABLE_MODEL} />
+                  <MeteringHeaderWithTip label={section.TABLE_SERVICE} />
+                  <MeteringHeaderWithTip
+                    label={section.TABLE_TOTAL_REQUESTS}
+                    tip={section.TOOLTIPS.TOTAL_REQUESTS}
+                    isNumeric
+                  />
+                  <MeteringHeaderWithTip
+                    label={section.TABLE_NATIVE}
+                    tip={section.TOOLTIPS.TOKEN_CONSUMPTION}
+                    isNumeric
+                  />
+                  <MeteringHeaderWithTip
+                    label={section.TABLE_SUCCESS}
+                    tip={section.TOOLTIPS.SUCCESS_RATE}
+                    isNumeric
+                  />
+                  <MeteringHeaderWithTip
+                    label={section.TABLE_FAILURE}
+                    tip={section.TOOLTIPS.FAILURE_RATE}
+                    isNumeric
+                  />
                 </Tr>
               </Thead>
               <Tbody>
                 {breakdown.map((row, i) => (
                   <Tr key={`${row.service_id}-${row.model_name ?? i}`}>
+                    <Td fontSize="sm" color="gray.800" fontWeight="medium">
+                      {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
+                    </Td>
                     <Td>
                       <HStack spacing={2}>
                         <Box w={1} h={5} borderRadius="sm" bg={meteringServiceColor(row.name, i)} />
-                        <Text fontWeight="medium" fontSize="sm">{row.name}</Text>
+                        <Text fontWeight="medium" fontSize="sm">
+                          {row.name}
+                        </Text>
                       </HStack>
                     </Td>
-                    <Td fontSize="sm" color="gray.600">
-                      {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
+                    <Td isNumeric fontSize="sm">
+                      {formatScaledCount(row.requests)}
                     </Td>
-                    <Td isNumeric fontSize="sm">{formatCompactNumber(row.requests, "indian")}</Td>
                     <Td isNumeric fontSize="sm" color="gray.600">
-                      {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
+                      {formatScaledCount(row.native_units)}
                     </Td>
                     <Td isNumeric fontSize="sm" color="green.600" fontWeight="medium">
-                      {row.success_pct.toFixed(2)}%
+                      {row.success_pct.toFixed(2)}
                     </Td>
                     <Td isNumeric fontSize="sm" color="red.500" fontWeight="medium">
-                      {row.failure_rate_pct.toFixed(2)}%
+                      {row.failure_rate_pct.toFixed(2)}
                     </Td>
                   </Tr>
                 ))}
