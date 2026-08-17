@@ -61,8 +61,7 @@ router = APIRouter(
 
 @router.get(
     "/check-email",
-    response_model=CheckEmailResponse,
-    summary="Check whether an email is registered",
+    response_model=CheckEmailResponse
 )
 async def check_email(
     email: EmailStr = Query(...),
@@ -79,8 +78,7 @@ async def check_email(
 @router.post(
     "/register",
     status_code=status.HTTP_201_CREATED,
-    response_model=RegisterResponse,
-    summary="Register a new account",
+    response_model=RegisterResponse
 )
 async def register(
     body: RegisterRequest,
@@ -117,8 +115,7 @@ async def register(
 
 @router.post(
     "/verify-email",
-    response_model=VerifyEmailResponse,
-    summary="Verify email address",
+    response_model=VerifyEmailResponse
 )
 async def verify_email(
     body: VerifyEmailRequest,
@@ -136,8 +133,7 @@ async def verify_email(
 
 @router.post(
     "/resend-verification",
-    response_model=ResendVerificationResponse,
-    summary="Resend verification email",
+    response_model=ResendVerificationResponse
 )
 async def resend_verification(
     body: ResendVerificationRequest,
@@ -160,7 +156,6 @@ async def resend_verification(
 @router.post(
     "/forgot-password",
     response_model=ForgotPasswordResponse,
-    summary="Request password-reset email",
 )
 async def forgot_password(
     body: ForgotPasswordRequest,
@@ -183,8 +178,7 @@ async def forgot_password(
 
 @router.post(
     "/reset-password",
-    response_model=ResetPasswordResponse,
-    summary="Reset password with token",
+    response_model=ResetPasswordResponse
 )
 async def reset_password(
     body: ResetPasswordRequest,
@@ -213,7 +207,6 @@ async def reset_password(
 @router.post(
     "/login",
     response_model=LoginResponse,
-    summary="Sign in",
     responses=error_responses(401),
 )
 async def login(
@@ -227,7 +220,6 @@ async def login(
 @router.post(
     "/guest/login",
     response_model=GuestLoginResponse,
-    summary="Sign in as the configured guest user",
     responses=error_responses(401, 503),
 )
 async def guest_login(
@@ -249,8 +241,7 @@ async def guest_login(
 @router.post(
     "/refresh",
     response_model=RefreshTokenResponse,
-    summary="Refresh access token",
-    responses=error_responses(401),
+    responses=error_responses(401)
 )
 async def refresh_token(
     body: TokenRefreshRequest,
@@ -263,8 +254,7 @@ async def refresh_token(
 @router.post(
     "/logout",
     response_model=LogoutResponse,
-    summary="Sign out",
-    responses=error_responses(401),
+    responses=error_responses(401)
 )
 async def logout(
     user_id: UUID = Depends(get_current_user_id),
@@ -284,7 +274,6 @@ async def logout(
 @router.post(
     "/change-password",
     response_model=ChangePasswordResponse,
-    summary="Change password",
     responses=error_responses(401),
 )
 async def change_password(
@@ -311,8 +300,7 @@ async def change_password(
 
 @router.get(
     "/set-password/status",
-    response_model=GetSetupTokenStatusResponse,
-    summary="Check setup-token status",
+    response_model=GetSetupTokenStatusResponse
 )
 async def get_setup_token_status(
     token: str = Query(...),
@@ -325,8 +313,7 @@ async def get_setup_token_status(
 
 @router.post(
     "/set-password",
-    response_model=SetPasswordResponse,
-    summary="Set password with setup token",
+    response_model=SetPasswordResponse
 )
 async def set_password(
     body: SetPasswordRequest,
@@ -349,8 +336,7 @@ async def set_password(
 
 @router.post(
     "/resend-setup-link",
-    response_model=ResendSetupLinkResponse,
-    summary="Resend account setup link",
+    response_model=ResendSetupLinkResponse
 )
 async def resend_setup_link(
     body: ResendSetupLinkRequest,
