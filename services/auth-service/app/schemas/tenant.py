@@ -13,6 +13,7 @@ from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
+from app.schemas.common import SuccessResponse
 from app.models.tenant import TenantStatus
 from app.models.role_name import RoleName
 
@@ -292,3 +293,96 @@ class TenantUserResponse(BaseSchema):
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
     roles: list[TenantUserRole]
+
+
+class TenantPlanData(BaseSchema):
+    tenant_id: str
+    tenant_name: str
+    plan_id: str
+    plan_name: Optional[str] = None
+    tier: Optional[str] = None
+    plan_cost: Optional[float] = None
+    quota_config: dict[str, Any] = Field(default_factory=dict)
+    rate_limit_config: dict[str, Any] = Field(default_factory=dict)
+    allowed_services: list[Any] = Field(default_factory=list)
+
+
+class TenantMessageData(BaseSchema):
+    message: str
+
+
+class DeleteTenantUserData(BaseSchema):
+    user_id: str
+    deleted: bool
+
+
+class CreateTenantResponse(SuccessResponse):
+    """POST /auth/tenants"""
+
+    data: TenantResponse
+
+
+class ListTenantsResponse(SuccessResponse):
+    """GET /auth/tenants"""
+
+    data: list[TenantResponse]
+
+
+class GetTenantResponse(SuccessResponse):
+    """GET /auth/tenants/{tenant_id}"""
+
+    data: TenantResponse
+
+
+class UpdateTenantResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}"""
+
+    data: TenantResponse
+
+
+class UpdateTenantStatusResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/status"""
+
+    data: TenantResponse
+
+
+class GetTenantPlanResponse(SuccessResponse):
+    """GET /auth/tenants/{tenant_id}/plan"""
+
+    data: TenantPlanData
+
+
+class ListTenantUsersResponse(SuccessResponse):
+    """GET /auth/tenants/{tenant_id}/users"""
+
+    data: list[TenantUserResponse]
+
+
+class CreateTenantUserResponse(SuccessResponse):
+    """POST /auth/tenants/{tenant_id}/users"""
+
+    data: TenantUserCreateResponse
+
+
+class UpdateTenantUserStatusResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/users/{user_id}/status"""
+
+    data: TenantUserResponse
+
+
+class ResendTenantUserSetupLinkResponse(SuccessResponse):
+    """POST /auth/tenants/{tenant_id}/users/{user_id}/resend-setup-link"""
+
+    data: TenantMessageData
+
+
+class UpdateTenantUserResponse(SuccessResponse):
+    """PATCH /auth/tenants/{tenant_id}/users/{user_id}"""
+
+    data: TenantUserResponse
+
+
+class DeleteTenantUserResponse(SuccessResponse):
+    """DELETE /auth/tenants/{tenant_id}/users/{user_id}"""
+
+    data: DeleteTenantUserData
