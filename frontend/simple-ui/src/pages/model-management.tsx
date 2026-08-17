@@ -52,6 +52,8 @@ import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
+import { SAMPLE_MODEL_JSON } from "../utils/sampleModelJson";
+import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useAdminTableSurface } from "../components/common/TableControls";
@@ -274,102 +276,7 @@ const ModelManagementPage: React.FC = () => {
   };
 
   const handleDownloadSample = () => {
-    const sampleModel = {
-      version: "v1",
-      name: "test-llm-2",
-      description:
-        "A sample LLM model for demonstration purposes. Description must be at least 25 characters.",
-      refUrl: "https://github.com/example/example-model",
-      task: {
-        type: "llm",
-      },
-      languages: [
-        {
-          sourceLanguage: "hi",
-          sourceLanguageName: "Hindi",
-          sourceScriptCode: "Deva",
-          targetLanguage: "en",
-          targetLanguageName: "English",
-          targetScriptCode: "Latn",
-        },
-      ],
-      isLangDetectionEnabled: false,
-      isMultilingual: false,
-      license: "mit",
-      licenseUrl: "https://opensource.org/licenses/MIT",
-      domain: ["general"],
-      adapterConfig: {
-        version: "1.0",
-        model_name: "example-model",
-        inputs: [
-          { tensor: "INPUT_TEXT", dtype: "BYTES", shape: [-1, 1], value_path: "input.source" },
-        ],
-        outputs: [
-          { tensor: "OUTPUT_TEXT", dtype: "BYTES", maps_to: "target" },
-        ],
-      },
-      schema: {
-        request: {
-          model: "google/gemma-5-E4B-it",
-          messages: [
-            {
-              role: "user",
-              content: "Hello",
-            },
-          ],
-        },
-        response: {},
-        model_name: "example-model",
-        modelProcessingType: null,
-      },
-      callbackUrl: "https://inference.example.com/v2/models/example-model/infer",
-      inferenceApiKey: {
-        name: "Authorization",
-        value: "<your-api-key>",
-      },
-      isSyncApi: true,
-      asyncApiDetails: null,
-      trainingDataset: {
-        description:
-          "Sample training dataset description for the example LLM model registration.",
-        datasetId: "example-LLM-corpus-v1",
-      },
-      benchmarks: [
-        {
-          benchmarkId: "example-benchmark-001",
-          name: "Example Benchmark",
-          description: "Sample benchmark for evaluation",
-          domain: "general",
-          createdOn: "2025-01-15T10:00:00.000Z",
-          languages: {
-            sourceLanguage: "hi",
-            targetLanguage: "en",
-          },
-          score: [
-            {
-              metricName: "WER",
-              score: "7.5",
-            },
-          ],
-        },
-      ],
-      submitter: {
-        name: "Example Org",
-        aboutMe: "An example organization",
-        team: [
-          {
-            name: "John Doe",
-            aboutMe: "Lead Researcher",
-            oauthId: {
-              oauthId: "1234567890",
-              provider: "google",
-            },
-          },
-        ],
-      },
-    };
-
-    const blob = new Blob([JSON.stringify(sampleModel, null, 2)], { type: "application/json" });
+    const blob = new Blob([SAMPLE_MODEL_JSON], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -623,12 +530,15 @@ const ModelManagementPage: React.FC = () => {
         reader.readAsText(file);
       });
 
-      // Parse JSON
+      // Parse JSON — comments from the annotated sample file are stripped first.
+      // stripJsonComments preserves line breaks, so the position the parser reports
+      // refers to the same line in the file the user edited.
       let parsedData: any;
       try {
-        parsedData = JSON.parse(fileContent);
-      } catch (parseError) {
-        throw new Error('Invalid JSON format. Please check your file.');
+        parsedData = JSON.parse(stripJsonComments(fileContent));
+      } catch (jsonError: any) {
+        const detail = jsonError?.message ? ` ${jsonError.message}` : '';
+        throw new Error(`Invalid JSON format. Please check your file.${detail}`);
       }
 
       // Validate that it's an object
