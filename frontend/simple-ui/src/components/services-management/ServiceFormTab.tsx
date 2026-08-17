@@ -1,5 +1,5 @@
 // Create/Edit Service tab: single form shared between create and edit modes
-// Field order & LLM vs non-LLM Service ID behavior: AI4IDS-2692
+// Field order & LLM vs non-LLM Service ID behavior
 import {
   Box,
   Button,
@@ -33,8 +33,8 @@ import type { Service } from "../../services/servicesManagementService";
 import type { ModelDetails } from "../../types/platform";
 import type { Tier } from "../../types/tierManagement";
 
-/** Billing unit-size presets shown as a dropdown (AI4IDS-2692). */
-export const UNIT_SIZE_OPTIONS = ["1", "100", "1000", "1000000"] as const;
+/** Billing unit-size presets shown as a dropdown. */
+export const UNIT_SIZE_OPTIONS = ["1000", "1000000"] as const;
 
 /** Currency reference list for the create form. */
 export const CURRENCY_OPTIONS = ["INR"] as const;
@@ -369,11 +369,11 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             {/* 5. Price per Unit + Currency (grouped) */}
             <Box>
               <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={3}>
-                Price per Unit &amp; Currency
+                Price per unit size &amp; Currency
               </Text>
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold">Price per Unit</FormLabel>
+                  <FormLabel fontWeight="semibold">Price per unit size</FormLabel>
                   <Input
                     value={pricePerUnit}
                     onChange={(e) => onPricePerUnitChange(e.target.value)}
@@ -423,6 +423,8 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   textAlign="left"
                   fontWeight="normal"
                   variant="outline"
+                  colorScheme="gray"
+                  color="gray.800"
                   bg="white"
                   borderColor="inherit"
                   _hover={{ borderColor: "gray.300" }}

@@ -14,9 +14,9 @@ import { useAuth } from "../hooks/useAuth";
 import AlertingTab from "../components/profile/AlertingTab";
 
 /**
- * AI4IDS-2604: Alerts Management temporarily removed from UI.
+ * Alerts Management temporarily removed from UI.
  * To restore: set ALERTS_MANAGEMENT_UI_ENABLED = true, and uncomment related
- * Sidebar / AuthGuard / _app / Header entries marked AI4IDS-2604.
+ * Sidebar / AuthGuard / _app / Header entries.
  */
 const ALERTS_MANAGEMENT_UI_ENABLED = false;
 

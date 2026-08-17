@@ -1,6 +1,7 @@
 /**
- * Default Organisation user roles (AI4IDS-2735).
- * Tenant-user API only accepts USER | TENANT ADMIN; Moderator/Guest go via role API.
+ * Default Organisation user roles.
+ * Tenant-user API only accepts USER | TENANT ADMIN; Moderator/Program Admin go
+ * via role API.
  */
 
 import roleService from "../services/roleService";
@@ -25,7 +26,7 @@ export async function enrichDefaultOrgTenantUser(
       user: {
         ...user,
         roles: cleaned,
-        role: resolveDefaultOrgFormRole(cleaned, user.role),
+        role: resolveDefaultOrgFormRole(cleaned),
       },
       rolesLoaded: true,
     };
@@ -65,7 +66,9 @@ export async function syncDefaultOrgUserRole(
 ): Promise<void> {
   const target = norm(targetRole);
   if (!isDefaultOrgUserRole(target)) {
-    throw new Error("Default Organisation users may only be User, Moderator, or Guest.");
+    throw new Error(
+      "Default Organisation users may only be User, Moderator, or Program Admin.",
+    );
   }
   const existing =
     currentRoles?.map(norm).filter(Boolean) ??

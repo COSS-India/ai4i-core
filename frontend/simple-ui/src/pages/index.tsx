@@ -146,7 +146,7 @@ const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 40
   return shade === 50 ? "#F7FAFC" : shade === 300 ? "#CBD5E1" : shade === 400 ? "#A0AEC0" : "#1A202C";
 };
 
-/** AI4IDS-2688: anonymous users may try LLM without signing in. */
+/** Anonymous users may try LLM without signing in. */
 const ANONYMOUS_ALLOWED_SERVICE_IDS = new Set<ServiceId>(["llm"]);
 
 const HomePage: React.FC = () => {
@@ -231,7 +231,7 @@ const HomePage: React.FC = () => {
             </Text>
           </Box>
 
-          {/* Anonymous User Info Alert — AI4IDS-2688 */}
+          {/* Anonymous User Info Alert */}
           {!isLoading && !isAuthenticated && (
             <Alert
               status="info"

@@ -249,7 +249,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
             </Box>
             <Box>
               <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                Price per Unit
+                Price per unit size
               </Text>
               <Text fontSize="md">
                 {selectedService.costPerUnit != null

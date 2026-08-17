@@ -26,6 +26,7 @@ import {
   validateOrganisationUnique,
 } from "../../../utils/tenantFormValidation";
 import {
+  INSTITUTION,
   TENANT,
   TENANT_ADMIN_UPDATABLE_STATUSES,
   isTenantStatus,
@@ -49,10 +50,13 @@ import type {
 import {
   normalizeTenantUserRow,
   normalizeTenantUserRoles,
+  resolvePrimaryTenantAssignableRole,
+  resolveTenantUserRoles,
   tenantUserHasRole,
   tenantUserMatchesSearch,
   TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
+import { userHasRole } from "../../../utils/rbac";
 import {
   DEFAULT_ORG_USER_FORM_ROLE_OPTIONS,
   DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST,
@@ -85,10 +89,6 @@ function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
   return organisation.includes(search) || tenantId.includes(search);
 }
 
-function isTenantAdminRoleForSessionEnd(role?: string): boolean {
-  return (role ?? "").trim().toUpperCase() === "TENANT ADMIN";
-}
-
 export interface UseTenantManagementOptions {
   user: {
     user_id?: string;
@@ -99,9 +99,7 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const isTenantAdmin = Boolean(
-    user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)),
-  );
+  const isTenantAdmin = Boolean(userHasRole(user?.roles, "TENANT ADMIN"));
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantScopedUser = isTenantAdmin && !isAdmin;
   const userIdStr = user?.user_id ?? null;
@@ -395,7 +393,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!tenantId) {
       showToast({
         type: "warning",
-        message: "Unable to load users because no tenant ID is available.",
+        message: `Unable to load users because no ${INSTITUTION.toLowerCase()} ID is available.`,
       });
       setTenantUsers([]);
       return;
@@ -769,7 +767,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const collectAddUserErrors = (): Record<string, string> => {
     const errors: Record<string, string> = {};
     const tenantId = lockedUserFormTenantId ?? userForm.tenant_id?.trim() ?? "";
-    if (!tenantId) errors.tenant_id = "Tenant is required.";
+    if (!tenantId) errors.tenant_id = `${INSTITUTION} is required.`;
     const fullNameError = validateFullName(userForm.full_name);
     if (fullNameError) errors.full_name = fullNameError;
     const emailError = validateTenantUserEmail(
@@ -947,7 +945,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (isDefaultOrg && !isDefaultOrgUserRole(userForm.role)) {
       showToast({
         type: "warning",
-        message: "Default Organisation users may only be User, Moderator, or Guest.",
+        message:
+          "Default Organisation users may only be User, Moderator, or Program Admin.",
       });
       return;
     }
@@ -988,7 +987,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({
         type: "success",
         message:
-          "User provisioned under tenant. The username is auto-generated from email.",
+          `User provisioned under ${INSTITUTION.toLowerCase()}. The username is auto-generated from email.`,
       });
       closeUserModal();
       const createdRole = userForm.role;
@@ -1177,10 +1176,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         showToast({
           type: "info",
           message:
-            "A verification link was sent to the new contact email. The tenant contact email will update after it is verified.",
+            `A verification link was sent to the new contact email. The ${INSTITUTION.toLowerCase()} contact email will update after it is verified.`,
         });
       } else {
-        showToast({ type: "success", message: "Tenant updated" });
+        showToast({ type: "success", message: `${INSTITUTION} updated` });
       }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
@@ -1249,7 +1248,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserForm.phone_number,
   ]);
 
-  // UI-only; server enforcement: AI4IDS-2750.
+  // UI-only; server also enforces this.
   const handleOpenTenantStatus = (t: TenantView, newStatus: TenantStatus) => {
     if (
       isDefaultTenant(t) &&
@@ -1276,7 +1275,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!email) {
       showToast({
         type: "warning",
-        message: "This tenant has no contact email to resend verification.",
+        message: `This ${INSTITUTION.toLowerCase()} has no contact email to resend verification.`,
       });
       return;
     }
@@ -1284,7 +1283,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!Number.isFinite(tenantIdNum) || tenantIdNum < 1) {
       showToast({
         type: "warning",
-        message: "This tenant has no valid tenant ID to resend the setup link.",
+        message: `This ${INSTITUTION.toLowerCase()} has no valid ${INSTITUTION.toLowerCase()} ID to resend the setup link.`,
       });
       return;
     }
@@ -1313,7 +1312,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!tenantId || !u.user_id) {
       showToast({
         type: "warning",
-        message: "Missing tenant or user ID to resend the setup link.",
+        message: `Missing ${INSTITUTION.toLowerCase()} or user ID to resend the setup link.`,
       });
       return;
     }
@@ -1358,6 +1357,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
       user_id: u.user_id,
       currentStatus,
+      roles: resolveTenantUserRoles(u),
     });
     setStatusUpdateNewStatus(newStatus);
     setIsStatusDialogOpen(true);
@@ -1383,7 +1383,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         patchTenantLocal(statusUpdateTarget.tenant_id, {
           status: statusUpdateNewStatus as TenantStatus,
         });
-        showToast({ type: "success", message: "Tenant status updated" });
+        showToast({ type: "success", message: `${INSTITUTION} status updated` });
         const expectedStatus = statusUpdateNewStatus as TenantStatus;
         const targetTenantId = statusUpdateTarget.tenant_id;
         await refreshTenantAndUserLists(targetTenantId, (rows) =>
@@ -1409,13 +1409,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           ended &&
           userIdStr != null &&
           statusUpdateTarget.user_id === userIdStr &&
-          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) ||
+          (userHasRole(statusUpdateTarget.roles, "TENANT ADMIN") ||
             isTenantAdmin);
         if (isCurrentTenantAdmin) {
           showToast({
             type: "warning",
             message:
-              "Your tenant admin account is no longer active. Sign in again when it is reactivated.",
+              `Your ${INSTITUTION.toLowerCase()} admin account is no longer active. Sign in again when it is reactivated.`,
           });
           forceFrontendSessionEnd();
           return;
@@ -1445,7 +1445,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!tenantId) {
       showToast({
         type: "error",
-        message: "Tenant is required to edit user.",
+        message: `${INSTITUTION} is required to edit user.`,
       });
       return;
     }
@@ -1474,9 +1474,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         const enriched = await enrichDefaultOrgTenantUser(unmasked);
         editRow = enriched.user;
         rolesLoaded = enriched.rolesLoaded;
-        const resolved = resolveDefaultOrgFormRole(editRow.roles, editRow.role);
+        const resolved = resolveDefaultOrgFormRole(editRow.roles);
         role =
-          isDefaultOrgUserRole(resolved) || resolved === "ADMIN"
+          isDefaultOrgUserRole(resolved) ||
+          resolved === "ADMIN" ||
+          resolved === "PROGRAM ADMIN" ||
+          resolved === "GUEST"
             ? (resolved as TenantUserFormRole)
             : DEFAULT_TENANT_USER_ROLE;
         editRow = { ...editRow, role };
@@ -1488,17 +1491,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           });
         }
       } else {
-        const normalizedRole = (
-          unmasked.role ??
-          unmasked.roles?.[0] ??
-          ""
-        )
-          .trim()
-          .toUpperCase();
-        role =
-          normalizedRole === "TENANT ADMIN"
-            ? "TENANT ADMIN"
-            : DEFAULT_TENANT_USER_ROLE;
+        role = resolvePrimaryTenantAssignableRole(unmasked);
       }
       setEditUserRow(editRow);
       setEditUserRolesLoaded(rolesLoaded);
@@ -1541,11 +1534,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (
       isDefaultOrg &&
       editUserForm.role !== "ADMIN" &&
+      editUserForm.role !== "PROGRAM ADMIN" &&
+      editUserForm.role !== "GUEST" &&
       !isDefaultOrgUserRole(editUserForm.role)
     ) {
       showToast({
         type: "warning",
-        message: "Default Organisation users may only be User, Moderator, or Guest.",
+        message:
+          "Default Organisation users may only be User, Moderator, or Program Admin.",
       });
       return;
     }
@@ -1563,7 +1559,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         });
         // Sync only when the operator changed the role and we trust the loaded roles.
         // Avoids silent demotion on profile-only edits after a failed roles fetch.
-        const initialRole = (editUserRow?.role ?? "").trim().toUpperCase();
+        const initialRole = resolveDefaultOrgFormRole(editUserRow?.roles);
         const nextRole = editUserForm.role.trim().toUpperCase();
         if (isDefaultOrgUserRole(nextRole) && nextRole !== initialRole) {
           if (!editUserRolesLoaded) {
