@@ -84,7 +84,6 @@ class Service(Base):
     # at creation time and re-validated against on every endpoint change —
     # see app/utils/endpoint_validator.py's response-shape check.
     expected_response_schema = Column(JSONB, nullable=True)
-    policy = Column(JSONB, nullable=True)
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
     published_at = Column(DateTime(timezone=True), nullable=True)
     is_try_it_default = Column(Boolean, nullable=False, default=False, server_default="false")

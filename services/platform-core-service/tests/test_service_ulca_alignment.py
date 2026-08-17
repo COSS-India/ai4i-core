@@ -490,7 +490,6 @@ class TestServiceToDictUlcaShape:
         svc.health_status = None
         svc.benchmarks = None
         svc.expected_response_schema = None
-        svc.policy = None
         svc.is_published = True
         svc.is_try_it_default = False
         svc.published_at = None

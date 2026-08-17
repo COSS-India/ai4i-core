@@ -1,8 +1,6 @@
 """Unit tests: update_service completes successfully (AI4IDS-1766).
 
-Regression: PATCH /api/v1/services was raising POLICY_CONSTRAINT_VIOLATION for
-valid policy combinations, preventing all policy-bearing updates from going
-through. These tests verify the happy path reaches apply_updates + commit.
+These tests verify the happy path reaches apply_updates + commit.
 """
 
 import sys
@@ -39,12 +37,7 @@ _stub_svc("app.repositories.model_management.service_repository", ServiceReposit
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-from app.schemas.enums.model_management import (
-    PolicyAccuracyEnum,
-    PolicyCostEnum,
-    PolicyLatencyEnum,
-)
-from app.schemas.model_management.service import ServicePolicy, ServiceUpdateRequest
+from app.schemas.model_management.service import ServiceUpdateRequest
 
 # model-management directory is hyphenated; plain imports cannot resolve it.
 ServiceService = importlib.import_module(
@@ -99,52 +92,9 @@ def _make_svc(service_id: str = "svc-abc") -> ServiceService:
     )
 
 
-class TestUpdateServicePolicy:
+class TestUpdateServiceFields:
     @pytest.mark.asyncio
-    async def test_update_with_sensitive_tier1_policy_succeeds(self) -> None:
-        """sensitive + tier_1 was previously blocked; must now reach the DB."""
-        svc = _make_svc()
-        payload = ServiceUpdateRequest(
-            serviceId="svc-abc",
-            policy=ServicePolicy(
-                accuracy=PolicyAccuracyEnum.SENSITIVE,
-                cost=PolicyCostEnum.TIER_1,
-            ),
-            taskType="asr",
-            costPerUnit=1.0,
-            unitSize=1,
-            tierIds=["tier-1"],
-        )
-
-        await svc.update_service(payload, updated_by="user-1")
-
-        svc._services.apply_updates.assert_awaited_once()
-        svc._services.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_update_with_low_latency_tier1_policy_succeeds(self) -> None:
-        """latency='low' + tier_1 was previously blocked; must now reach the DB."""
-        svc = _make_svc()
-        payload = ServiceUpdateRequest(
-            serviceId="svc-abc",
-            policy=ServicePolicy(
-                latency=PolicyLatencyEnum.LOW,
-                cost=PolicyCostEnum.TIER_1,
-            ),
-            taskType="asr",
-            costPerUnit=1.0,
-            unitSize=1,
-            tierIds=["tier-1"],
-        )
-
-        await svc.update_service(payload, updated_by="user-1")
-
-        svc._services.apply_updates.assert_awaited_once()
-        svc._services.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_update_non_policy_fields_succeeds(self) -> None:
-        """Update without a policy field reaches the DB unaffected."""
+    async def test_update_fields_succeeds(self) -> None:
         svc = _make_svc()
         payload = ServiceUpdateRequest(
             serviceId="svc-abc",

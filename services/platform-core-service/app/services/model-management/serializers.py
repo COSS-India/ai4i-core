@@ -137,7 +137,6 @@ def service_to_dict(
         "healthStatus": service.health_status,
         "benchmarks": service.benchmarks,
         "expectedResponseSchema": service.expected_response_schema,
-        "policy": dict(service.policy) if service.policy else None,
         "isPublished": bool(service.is_published),
         "isTryItDefault": bool(service.is_try_it_default),
         "publishedAt": _iso(service.published_at),

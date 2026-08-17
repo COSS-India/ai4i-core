@@ -28,9 +28,6 @@ from app.schemas.common import (
 from app.schemas.enums.model_management import (
     AudioFormatEnum,
     InferenceServerTypeEnum,
-    PolicyAccuracyEnum,
-    PolicyCostEnum,
-    PolicyLatencyEnum,
     TaskTypeEnum,
     TextFormatEnum,
     resolve_task_type,
@@ -38,20 +35,12 @@ from app.schemas.enums.model_management import (
 from app.schemas.model_management.model import ModelResponse
 
 
-# ── Health & policy sub-schemas ──
+# ── Health sub-schema ──
 
 
 class ServiceStatus(BaseSchema):
     status: Optional[str] = None
     lastUpdated: Optional[str] = None
-
-
-class ServicePolicy(BaseSchema):
-    """Latency/cost/accuracy SLA tiers — used for smart routing decisions."""
-
-    latency: Optional[PolicyLatencyEnum] = None
-    cost: Optional[PolicyCostEnum] = None
-    accuracy: Optional[PolicyAccuracyEnum] = None
 
 
 # ── InferenceAPIEndPoint (ULCA InferenceAPIEndPoint) ──
@@ -650,7 +639,6 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     isTryItDefault: Optional[bool] = None
-    policy: Optional[ServicePolicy] = None
     costPerUnit: Optional[float] = Field(None, ge=0)
     unitSize: Optional[int] = None
     tierIds: Optional[List[str]] = None
@@ -861,7 +849,6 @@ class ServiceResponse(BaseSchema):
     )
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, Any]] = None
-    policy: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     isTryItDefault: bool = False
     publishedAt: Optional[str] = None

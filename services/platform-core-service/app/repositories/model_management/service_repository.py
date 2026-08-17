@@ -23,7 +23,7 @@ from app.models.pay_per_use.ppu_tier import PPUTier
 # future in-place-mutation caller doesn't silently fail to persist — the 5
 # JSONB columns below were added for ULCA schema alignment.
 _JSON_COLUMNS = frozenset({
-    "health_status", "benchmarks", "policy",
+    "health_status", "benchmarks",
     "inference_api_key", "inference_schema", "async_api_details",
     "supported_input_formats", "supported_output_formats",
 })

@@ -20,7 +20,6 @@ Owns the rules:
 - Published services are immutable and cannot be deleted; they must be
   unpublished first.
 - name, modelId, modelVersion are not updatable.
-- Policy fields (latency/cost/accuracy) are stored as-is; combination enforcement is the gateway's responsibility.
 """
 
 import asyncio
@@ -476,17 +475,6 @@ class ServiceService:
                 request_dict["expectedResponseSchema"]
             )
 
-        if "policy" in request_dict:
-            policy_obj = payload.policy
-            if policy_obj is not None:
-                policy_dict: Optional[Dict[str, Any]] = {
-                    k: (v.value if hasattr(v, "value") else v)
-                    for k, v in policy_obj.model_dump(exclude_none=True).items()
-                }
-            else:
-                policy_dict = None
-            update_data["policy"] = policy_dict
-
         if "isPublished" in request_dict:
             now = datetime.now(timezone.utc)
             is_pub = bool(request_dict["isPublished"])
@@ -549,7 +537,7 @@ class ServiceService:
                     "endpoint/hardwareDescription/api_key), "
                     "inferenceServerType, sslVerify, healthStatus, "
                     "benchmarks, expectedResponseSchema, isPublished, "
-                    "isTryItDefault, policy, costPerUnit, unitSize, "
+                    "isTryItDefault, taskType, costPerUnit, unitSize, "
                     "tierIds. Note: name, modelId, modelVersion are not "
                     "updatable."
                 ),
