@@ -9,7 +9,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
-import { MeteringInfoTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 
 interface MeteringSectionCardProps {
   title: string;
@@ -118,7 +118,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
             >
               {label}
             </Text>
-            {tooltip ? <MeteringInfoTip label={label} tip={tooltip} /> : null}
+            {tooltip ? <InfoTip message={tooltip} /> : null}
           </HStack>
           <Text fontSize="3xl" fontWeight="bold" color={valueColor} lineHeight="1.1">
             {value ?? "—"}

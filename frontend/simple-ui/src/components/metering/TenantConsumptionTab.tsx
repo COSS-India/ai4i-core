@@ -7,7 +7,7 @@ import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
-import { MeteringHeaderWithTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -71,24 +71,24 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <MeteringHeaderWithTip label={section.TABLE_RANK} w="72px" />
-                  <MeteringHeaderWithTip
-                    label={replaceTenantCopy(section.TABLE_INSTITUTION)}
+                  <InfoTip header={section.TABLE_RANK} w="72px" />
+                  <InfoTip
+                    header={replaceTenantCopy(section.TABLE_INSTITUTION)}
                     minW="240px"
                   />
-                  <MeteringHeaderWithTip
-                    label={section.TABLE_REQUESTS}
-                    tip={section.TOOLTIPS.REQUESTS}
+                  <InfoTip
+                    header={section.TABLE_REQUESTS}
+                    message={section.TOOLTIPS.REQUESTS}
                     isNumeric
                   />
-                  <MeteringHeaderWithTip
-                    label={section.TABLE_SHARE}
-                    tip={section.TOOLTIPS.SHARE}
+                  <InfoTip
+                    header={section.TABLE_SHARE}
+                    message={section.TOOLTIPS.SHARE}
                     minW="180px"
                   />
-                  <MeteringHeaderWithTip
-                    label="%"
-                    tip={section.TOOLTIPS.SHARE}
+                  <InfoTip
+                    header="%"
+                    message={section.TOOLTIPS.SHARE}
                     isNumeric
                   />
                 </Tr>

@@ -23,7 +23,7 @@ import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
-import { MeteringHeaderWithTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -168,26 +168,26 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <MeteringHeaderWithTip label={section.TABLE_MODEL} />
-                  <MeteringHeaderWithTip label={section.TABLE_SERVICE} />
-                  <MeteringHeaderWithTip
-                    label={section.TABLE_TOTAL_REQUESTS}
-                    tip={section.TOOLTIPS.TOTAL_REQUESTS}
+                  <InfoTip header={section.TABLE_MODEL} />
+                  <InfoTip header={section.TABLE_SERVICE} />
+                  <InfoTip
+                    header={section.TABLE_TOTAL_REQUESTS}
+                    message={section.TOOLTIPS.TOTAL_REQUESTS}
                     isNumeric
                   />
-                  <MeteringHeaderWithTip
-                    label={section.TABLE_NATIVE}
-                    tip={section.TOOLTIPS.TOKEN_CONSUMPTION}
+                  <InfoTip
+                    header={section.TABLE_NATIVE}
+                    message={section.TOOLTIPS.TOKEN_CONSUMPTION}
                     isNumeric
                   />
-                  <MeteringHeaderWithTip
-                    label={section.TABLE_SUCCESS}
-                    tip={section.TOOLTIPS.SUCCESS_RATE}
+                  <InfoTip
+                    header={section.TABLE_SUCCESS}
+                    message={section.TOOLTIPS.SUCCESS_RATE}
                     isNumeric
                   />
-                  <MeteringHeaderWithTip
-                    label={section.TABLE_FAILURE}
-                    tip={section.TOOLTIPS.FAILURE_RATE}
+                  <InfoTip
+                    header={section.TABLE_FAILURE}
+                    message={section.TOOLTIPS.FAILURE_RATE}
                     isNumeric
                   />
                 </Tr>

@@ -3,7 +3,7 @@ import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { meteringColorAt } from "../../utils/meteringColors";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
-import { MeteringInfoTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 import MeteringTableText from "./MeteringTableText";
 
 export interface RankedShareRow {
@@ -38,11 +38,11 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
           <Text fontWeight="medium" textAlign="right">
             {replaceTenantCopy(headerTotal)}
           </Text>
-          {tipTotal ? <MeteringInfoTip label={headerTotal} tip={tipTotal} boxSize={3} /> : null}
+          {tipTotal ? <InfoTip message={tipTotal} /> : null}
         </HStack>
         <HStack spacing={1} minW="56px" justify="flex-end">
           <Text textAlign="right">{headerRight}</Text>
-          {tipRight ? <MeteringInfoTip label={headerRight} tip={tipRight} boxSize={3} /> : null}
+          {tipRight ? <InfoTip message={tipRight} /> : null}
         </HStack>
       </HStack>
     </HStack>

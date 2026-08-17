@@ -16,7 +16,7 @@ import {
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem, UsageSummaryResponse } from "../../types/usageSpend";
 import MeteringChartPanel from "./MeteringChartPanel";
-import { MeteringInfoTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 import { TaskTypeLabel, UsageCell } from "./UsageSpendCells";
 
 const SPEND_CARD_BG = "#eef3fb";
@@ -72,7 +72,7 @@ function SpendTotalCard({
         >
           {label}
         </Text>
-        {tooltip ? <MeteringInfoTip label={label} tip={tooltip} boxSize={3} /> : null}
+        {tooltip ? <InfoTip message={tooltip} /> : null}
       </HStack>
       <Text fontSize="22px" fontWeight="bold" lineHeight="1.1" color="gray.800" noOfLines={1}>
         {money}

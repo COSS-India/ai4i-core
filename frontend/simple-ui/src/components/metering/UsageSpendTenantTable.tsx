@@ -21,7 +21,7 @@ import {
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import MeteringAsyncState from "./MeteringAsyncState";
-import { MeteringHeaderWithTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 import { BudgetCell, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
 import { UsageSpendExpandRows } from "./UsageSpendExpandRows";
 
@@ -175,17 +175,17 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <MeteringHeaderWithTip label="INSTITUTION" w={widths.institution} sx={thSx} />
-            <MeteringHeaderWithTip label="TIER" w={widths.tier} sx={thSx} />
-            <MeteringHeaderWithTip
-              label="ALLOCATED BUDGET (INR)"
-              tip={tips.ALLOCATED_BUDGET}
+            <InfoTip header="INSTITUTION" w={widths.institution} sx={thSx} />
+            <InfoTip header="TIER" w={widths.tier} sx={thSx} />
+            <InfoTip
+              header="ALLOCATED BUDGET (INR)"
+              message={tips.ALLOCATED_BUDGET}
               w={widths.allocatedBudget}
               sx={thSx}
             />
-            <MeteringHeaderWithTip
-              label="BUDGET"
-              tip={tips.BUDGET}
+            <InfoTip
+              header="BUDGET"
+              message={tips.BUDGET}
               w={widths.budget}
               sx={thSx}
               cursor="pointer"
@@ -198,17 +198,17 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                   {sortOrder === "desc" ? "↓" : "↑"}
                 </Text>
               </Text>
-            </MeteringHeaderWithTip>
-            <MeteringHeaderWithTip
-              label="ALLOCATED TOKENS"
-              tip={tips.ALLOCATED_TOKENS}
+            </InfoTip>
+            <InfoTip
+              header="ALLOCATED TOKENS"
+              message={tips.ALLOCATED_TOKENS}
               w={widths.allocatedTokens}
               sx={thSx}
             />
             {showTokenUsage ? (
-              <MeteringHeaderWithTip
-                label="TOKEN USAGE"
-                tip={tips.TOKEN_USAGE}
+              <InfoTip
+                header="TOKEN USAGE"
+                message={tips.TOKEN_USAGE}
                 w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}
                 sx={thSx}
               />

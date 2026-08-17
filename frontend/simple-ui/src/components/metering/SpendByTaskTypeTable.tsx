@@ -8,7 +8,7 @@ import {
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
-import { MeteringHeaderWithTip } from "./MeteringInfoTip";
+import InfoTip from "../common/InfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
@@ -76,26 +76,26 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
       <Table size="sm" variant="simple">
         <Thead bg="gray.50">
           <Tr>
-            <MeteringHeaderWithTip
-              label="MODEL TASK TYPE"
+            <InfoTip
+              header="MODEL TASK TYPE"
               w="26%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             />
-            <MeteringHeaderWithTip
-              label="USAGE"
-              tip={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
+            <InfoTip
+              header="USAGE"
+              message={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
               w="38%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             />
-            <MeteringHeaderWithTip
-              label="SPEND"
-              tip={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
+            <InfoTip
+              header="SPEND"
+              message={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
               w="20%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             />
-            <MeteringHeaderWithTip
-              label="SHARE"
-              tip={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
+            <InfoTip
+              header="SHARE"
+              message={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
               w="16%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             />
