@@ -5,11 +5,16 @@
  * `https://example.com`, or literal text like `/* … *\/`) are preserved. Trailing commas
  * left dangling once a comment is removed are dropped, so a partially edited file still parses.
  *
+ * Line breaks are always preserved, including inside removed comments, so the line and column
+ * that `JSON.parse` reports on failure point at the matching line of the user's own file.
+ *
  * Used for the annotated sample model JSON, which ships with explanatory comments that
  * users keep while editing and which must be stripped before upload.
  */
 export function stripJsonComments(text: string): string {
-  let out = "";
+  // Characters accumulate one per slot so the tail can be trimmed in place. Rescanning a
+  // growing string on every closing bracket would make this quadratic in the input size.
+  const out: string[] = [];
   let inString = false;
   let inLineComment = false;
   let inBlockComment = false;
@@ -21,7 +26,7 @@ export function stripJsonComments(text: string): string {
     if (inLineComment) {
       if (char === "\n") {
         inLineComment = false;
-        out += char;
+        out.push(char);
       }
       continue;
     }
@@ -30,15 +35,20 @@ export function stripJsonComments(text: string): string {
       if (char === "*" && next === "/") {
         inBlockComment = false;
         i++;
+      } else if (char === "\n") {
+        // Keep the line break so positions reported by JSON.parse match the user's file
+        out.push(char);
       }
       continue;
     }
 
     if (inString) {
-      out += char;
+      out.push(char);
       if (char === "\\") {
         // Preserve the escaped character verbatim so quotes inside strings don't end it early
-        out += next ?? "";
+        if (next !== undefined) {
+          out.push(next);
+        }
         i++;
       } else if (char === '"') {
         inString = false;
@@ -48,7 +58,7 @@ export function stripJsonComments(text: string): string {
 
     if (char === '"') {
       inString = true;
-      out += char;
+      out.push(char);
       continue;
     }
 
@@ -64,13 +74,21 @@ export function stripJsonComments(text: string): string {
       continue;
     }
 
-    // A removed comment can leave a dangling comma before a closing brace/bracket
+    // A removed comment can leave a dangling comma before a closing brace/bracket. Walk back
+    // over the trailing whitespace only — each slot is visited at most once per bracket.
     if (char === "}" || char === "]") {
-      out = out.replace(/,\s*$/, "");
+      let end = out.length;
+      while (end > 0 && /\s/.test(out[end - 1])) {
+        end--;
+      }
+      if (end > 0 && out[end - 1] === ",") {
+        // Blank the comma rather than truncating, so the line breaks after it survive
+        out[end - 1] = "";
+      }
     }
 
-    out += char;
+    out.push(char);
   }
 
-  return out;
+  return out.join("");
 }
