@@ -71,7 +71,7 @@ def get_metering_service(
     db: AsyncSession = Depends(get_db),
 ) -> "MeteringService":
     from app.services.metering_service import MeteringService
-    return MeteringService(client, auth_db, ServiceRepository(db))
+    return MeteringService(client, auth_db, ServiceRepository(db), ModelRepository(db))
 
 
 def get_sync_service() -> "SyncService":

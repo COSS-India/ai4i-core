@@ -1,4 +1,5 @@
 import type { MeteringTopN, MeteringWindow } from "../types/metering";
+import { INSTITUTION, INSTITUTIONS } from "./constants";
 
 /** Metering & usage dashboard — copy, defaults, and configuration. */
 export const METERING = {
@@ -26,7 +27,6 @@ export const METERING = {
       TENANT_DIRECTORY: "tenant-directory",
       OVERVIEW: "overview",
       TENANT: "tenant",
-      SERVICE: "service",
       MODEL: "model",
     },
     SCROLL_ROOT_MARGIN: "100px",
@@ -35,7 +35,7 @@ export const METERING = {
     TIME_WINDOW: "24h" satisfies MeteringWindow,
     TOP_N: 10 satisfies MeteringTopN,
     SUB_TAB: "overview" as const,
-    /** AI4IDS-2719: Tenant Admin lands on Overview (same as Adopter Admin). */
+    /** Tenant Admin lands on Overview (same as Adopter Admin). */
     TENANT_SUB_TAB: "overview" as const,
     ASYNC_STATE_HEIGHT: "300px",
     LOADING_MIN_HEIGHT: "400px",
@@ -43,7 +43,6 @@ export const METERING = {
   SUB_TAB: {
     OVERVIEW: "overview",
     TENANT: "tenant",
-    SERVICE: "service",
     MODEL: "model",
     USAGE_SPEND: "usage-spend",
   } as const,
@@ -55,10 +54,11 @@ export const METERING = {
       AVG_RPS: "avg_rps",
     },
     LABELS: {
-      avg_rps: "Avg RPS",
+      total_requests: "Total LLM Requests",
+      avg_rps: "Average RPS",
     },
     HELPERS: {
-      total_requests: "across all services and tenants",
+      total_requests: `Across all ${INSTITUTIONS}`,
       successful: "of all requests",
       failed: "of all requests",
       avg_rps: "requests per second",
@@ -90,24 +90,22 @@ export const METERING = {
   ] as const,
   SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "tenant", label: "Tenant Consumption" },
-    { id: "service", label: "Service Usage" },
-    // AI4IDS-2588: extra tab — per-service LLM via /model-consumption
+    { id: "tenant", label: `${INSTITUTION} Consumption` },
+    // Extra tab — per-service LLM via /model-consumption
     { id: "model", label: "Model Usage" },
-    { id: "usage-spend", label: "Cost and Budget" },
+    { id: "usage-spend", label: "Budget and usage" },
   ] as const,
   TENANT_SUB_TABS: [
     { id: "overview", label: "Overview" },
-    { id: "service", label: "Service Usage" },
     { id: "model", label: "Model Usage" },
-    { id: "usage-spend", label: "Cost and Budget" },
+    { id: "usage-spend", label: "Budget and usage" },
   ] as const,
   ROLE_VIEWS: {
     adopter: "Adopter Admin",
-    tenant: "Tenant Admin",
+    tenant: `${INSTITUTION} Admin`,
   } as const,
   CONTROLS: {
-    ALL_TENANTS: "All Tenants",
+    ALL_TENANTS: `All ${INSTITUTIONS}`,
     TOP_N_PREFIX: "Top",
     LAST_REFRESHED_PREFIX: "Last refreshed:",
     REFRESH: "Refresh",
@@ -116,17 +114,15 @@ export const METERING = {
     TITLE: "My Usage",
   },
   USAGE_SPEND: {
-    TITLE: "Usage and Spend",
-    ADOPTER_SUBTITLE:
-      "Monitor model task type consumption and spend across all tenants",
-    TENANT_SUBTITLE_SUFFIX:
-      "consumption and spend for the selected billing period",
     BILLING_PERIOD: "BILLING PERIOD",
     CURRENT_MONTH: "Current month",
     LAST_MONTH: "Last month",
     BUDGET_SUMMARY: "BUDGET SUMMARY",
     QUOTA_SUMMARY: "QUOTA SUMMARY",
     SPEND_BY_TASK_TYPE: "SPEND BY MODEL TASK TYPE",
+    TOTAL_ALLOCATED: "TOTAL ALLOCATED",
+    TOTAL_USED: "TOTAL USED",
+    TOTAL_REMAINING: "TOTAL REMAINING",
   },
   COLORS: {
     RANK: ["#DD6B20", "#3182CE", "#38A169", "#805AD5", "#00B5D8"] as const,
@@ -141,15 +137,6 @@ export const METERING = {
       "#718096",
       "#B7791F",
       "#4FD1C5",
-    ] as const,
-    HEATMAP: [
-      "#FFFAF5",
-      "#FFF7ED",
-      "#FFEDD5",
-      "#FED7AA",
-      "#FDBA74",
-      "#FB923C",
-      "#EA580C",
     ] as const,
     SERVICE: {
       nmt: "#38A169",
@@ -191,55 +178,10 @@ export const METERING = {
       TOOLTIP_BORDER: "#E2E8F0",
       DONUT_STROKE: "#FFFFFF",
     } as const,
-    HEATMAP_TEXT_HIGH: "#FFFFFF",
-  },
-  HEATMAP: {
-    SERVICES: [
-      { key: "nmt", shortLabel: "NMT", displayName: "NMT" },
-      { key: "asr", shortLabel: "ASR", displayName: "ASR" },
-      { key: "tts", shortLabel: "TTS", displayName: "TTS" },
-      { key: "llm", shortLabel: "LLM", displayName: "LLM" },
-      { key: "ocr", shortLabel: "OCR", displayName: "OCR" },
-      {
-        key: "transliteration",
-        shortLabel: "Translit",
-        displayName: "Transliteration",
-      },
-      { key: "pipeline", shortLabel: "Pipeline", displayName: "Pipeline" },
-      { key: "ner", shortLabel: "NER", displayName: "NER" },
-      {
-        key: "language_detection",
-        shortLabel: "Text LD",
-        displayName: "Language Detection",
-      },
-      {
-        key: "audio_language_detection",
-        shortLabel: "Audio LD",
-        displayName: "Audio Language Detection",
-      },
-      {
-        key: "speaker_diarization",
-        shortLabel: "Spk. Diar.",
-        displayName: "Speaker Diarization",
-      },
-    ] as const,
-    LEGEND_INDICES: [0, 2, 3, 4, 5, 6] as const,
-    INTENSITY_TEXT_THRESHOLD: 0.55,
-    TITLE: "Usage by tenant & service",
-    SUBTITLE_PREFIX: "Heatmap of request volume per tenant per service ·",
-    EMPTY: "No tenant × service data for the selected window.",
-    TABLE_TENANT: "Tenant",
-    TABLE_TOTAL: "Total",
-    FOOTER_PRIMARY:
-      "Showing Top {topN} tenants by total request volume. Adjust using the selector above.",
-    FOOTER_SECONDARY: "Colour intensity = request volume",
-    LEGEND_LOW: "Low",
-    LEGEND_HIGH: "High",
   },
   EMPTY: {
     DEFAULT: "No data available.",
-    TENANT_CONSUMPTION: "No tenant consumption data available.",
-    SERVICE_CONSUMPTION: "No service consumption data available.",
+    TENANT_CONSUMPTION: `No ${INSTITUTION.toLowerCase()} consumption data available.`,
     MODEL_CONSUMPTION: "No model consumption data available.",
     CHART: "No data available for the selected time window.",
   },
@@ -250,36 +192,51 @@ export const METERING = {
   },
   SECTIONS: {
     CONSUMPTION_OVERVIEW: {
-      TITLE: "Consumption overview",
-      SUBTITLE_SUFFIX: "reflects selected time window ·",
-      CONCENTRATION_TITLE: "Usage concentration",
-      CONCENTRATION_SUBTITLE:
-        "Top 5 by request volume · reflects selected time window",
+      TITLE: "Usage concentration",
+      SUBTITLE:
+        "Top 5 Institutions by request volume · reflects selected time window",
       DONUT_PRIMARY: "Top 5",
-      DONUT_SECONDARY: "tenants",
+      DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
     },
     PLATFORM_ADOPTION: {
       TITLE: "Platform adoption",
-      SUBTITLE: "Tenant overview",
+      SUBTITLE: `${INSTITUTION} overview`,
       CARDS: [
         {
           key: "total_tenants",
-          label: "Total tenants",
+          label: `Total ${INSTITUTIONS.toLowerCase()}`,
           helper: "registered on platform",
         },
-        { key: "active_24h", label: "Active tenants", helper: "last 24 hours" },
-        { key: "active_7d", label: "Active tenants", helper: "last 7 days" },
-        { key: "active_30d", label: "Active tenants", helper: "last 30 days" },
+        {
+          key: "active_24h",
+          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          helper: "last 24 hours",
+        },
+        {
+          key: "active_7d",
+          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          helper: "last 7 days",
+        },
+        {
+          key: "active_30d",
+          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          helper: "last 30 days",
+        },
         {
           key: "new_tenants_7d",
-          label: "New — Last 7 days",
+          label: `New ${INSTITUTIONS.toLowerCase()}`,
           helper: "onboarded in last 7 days",
         },
       ] as const,
     },
     TENANT_RANKING: {
-      TITLE: "Tenant ranking",
+      TITLE: `${INSTITUTION} ranking`,
       SUBTITLE_PREFIX: "By request volume ·",
+      TABLE_RANK: "Rank",
+      TABLE_INSTITUTION: INSTITUTION,
+      TABLE_REQUESTS: "Requests",
+      TABLE_SHARE: "Share",
+      AVG_REQUESTS_LABEL: `Average Requests Per Active ${INSTITUTION}`,
     },
     REQUEST_VOLUME: {
       TITLE: "Request volume & health",
@@ -289,7 +246,7 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
-    // AI4IDS-2588: Model Consumption tab — per-service LLM usage from /model-consumption
+    // Model Consumption tab — per-service LLM usage from /model-consumption
     MODEL: {
       TITLE: "Model consumption",
       SUBTITLE:
@@ -309,25 +266,9 @@ export const METERING = {
       TABLE_SUCCESS: "Success rate %",
       TABLE_FAILURE: "Failure rate %",
     },
-    SERVICE: {
-      TITLE: "Service consumption",
-      SUBTITLE:
-        "Platform-wide request distribution · reflects selected time window",
-      BREAKDOWN_TITLE: "Service breakdown",
-      BREAKDOWN_SUBTITLE_PREFIX: "Consumption across model task types ·",
-      DONUT_PRIMARY: "All",
-      DONUT_SECONDARY: "Services",
-      MOST_USED: "Most used service",
-      HIGHEST_FAILURE: "Highest failure rate",
-      REQUESTS_SUFFIX: "requests",
-      TABLE_SERVICE: "Service",
-      TABLE_TOTAL_REQUESTS: "Total requests",
-      TABLE_NATIVE: "Native consumption",
-      TABLE_SUCCESS: "Success rate %",
-      TABLE_FAILURE: "Failure rate %",
-    },
     RANKED_SHARE: {
-      HEADER_LEFT: "Request volume & share",
+      HEADER_LEFT: INSTITUTION,
+      HEADER_TOTAL_REQUESTS: "Total requests",
       HEADER_RIGHT: "% of total",
     },
   },
@@ -346,8 +287,5 @@ export const METERING = {
     "Language Diarization": "language-diarization",
   } as const,
 } as const;
-
-export type MeteringHeatmapServiceKey =
-  (typeof METERING.HEATMAP.SERVICES)[number]["key"];
 
 export type MeteringSubTab = (typeof METERING.SUB_TABS)[number]["id"];

@@ -38,10 +38,10 @@ export interface TenantUserView {
    * suspended user (is_active=false, activated) from one pending activation. */
   is_activated?: boolean;
   creation_type?: CreationType | null;
-  /** Primary role from list-users API (upcoming: singular `role`). */
-  role?: string | null;
-  /** Role list when API returns `roles[]` (legacy or profile/detail). */
+  /** Auth RBAC roles. Source of truth for display/filter; may contain multiple. */
   roles?: string[];
+  /** @deprecated Prefer `roles`. Kept for older payloads that only sent singular `role`. */
+  role?: string | null;
 }
 
 export interface ListUsersResponse {

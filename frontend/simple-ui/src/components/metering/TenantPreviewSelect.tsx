@@ -13,6 +13,7 @@ import {
 import { ChevronDownIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { TenantPreviewOption } from "../../hooks/useMeteringDashboard";
+import { INSTITUTION, INSTITUTION_ARTICLE } from "../../config/constants";
 
 export type { TenantPreviewOption } from "../../hooks/useMeteringDashboard";
 
@@ -39,7 +40,7 @@ const TenantPreviewSelect: React.FC<TenantPreviewSelectProps> = ({
       mb={4}
     >
       <Text fontSize="sm" color="gray.600" mb={2}>
-        Select a tenant to preview Tenant Admin view
+        Select {INSTITUTION_ARTICLE} {INSTITUTION.toLowerCase()} to preview {INSTITUTION} Admin view
       </Text>
       <Menu matchWidth>
         <MenuButton

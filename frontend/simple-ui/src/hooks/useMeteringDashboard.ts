@@ -13,7 +13,6 @@ import type {
 import {
   fetchMeteringModelConsumption,
   fetchMeteringOverview,
-  fetchMeteringServiceConsumption,
   fetchMeteringTenantConsumption,
   parseMeteringError,
   type MeteringContext,
@@ -172,27 +171,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     ...meteringQueryDefaults,
   });
 
-  const serviceQueryEnabled =
-    enabledServicesReady &&
-    subTab === METERING.SUB_TAB.SERVICE &&
-    (isAdopterView || tenantOverviewEnabled);
-
-  const serviceQuery = useQuery({
-    queryKey: meteringQueryKey(
-      METERING.QUERY.SCOPES.SERVICE,
-      timeWindow,
-      queryTenantId,
-      roleViewConfig.defaultView,
-      isAdopterView,
-      enabledServicesKey,
-      refreshNonce,
-    ),
-    queryFn: () =>
-      fetchMeteringServiceConsumption(timeWindow, ctx, queryTenantId, enabledServices),
-    enabled: serviceQueryEnabled,
-    ...meteringQueryDefaults,
-  });
-
   const modelQueryEnabled =
     subTab === METERING.SUB_TAB.MODEL &&
     (isAdopterView || tenantOverviewEnabled);
@@ -215,14 +193,11 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     if (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.data) {
       return tenantQuery.data;
     }
-    if (subTab === METERING.SUB_TAB.SERVICE && serviceQuery.data) {
-      return serviceQuery.data;
-    }
     if (subTab === METERING.SUB_TAB.MODEL && modelQuery.data) {
       return modelQuery.data;
     }
     return overview ?? null;
-  }, [isAdopterView, subTab, tenantQuery.data, serviceQuery.data, modelQuery.data, overview]);
+  }, [isAdopterView, subTab, tenantQuery.data, modelQuery.data, overview]);
 
   const dataStateBanner = useMemo(() => {
     if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
@@ -235,9 +210,9 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const primaryError = useMemo(() => {
     if (subTab === METERING.SUB_TAB.USAGE_SPEND) return null;
     const err =
-      overviewQuery.error || serviceQuery.error || modelQuery.error || tenantQuery.error;
+      overviewQuery.error || modelQuery.error || tenantQuery.error;
     return err ? parseMeteringError(err) : null;
-  }, [subTab, overviewQuery.error, serviceQuery.error, modelQuery.error, tenantQuery.error]);
+  }, [subTab, overviewQuery.error, modelQuery.error, tenantQuery.error]);
 
   const isLoading =
     (isAdopterView && overviewQuery.isLoading) ||
@@ -252,11 +227,17 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
   const isRefreshing =
     overviewQuery.isFetching ||
     (isAdopterView && subTab === METERING.SUB_TAB.TENANT && tenantQuery.isFetching) ||
-    (serviceQueryEnabled && serviceQuery.isFetching) ||
     (modelQueryEnabled && modelQuery.isFetching);
 
   const handleRefresh = () => {
     setRefreshNonce((n) => n + 1);
+    overviewQuery.refetch();
+    if (isAdopterView && subTab === METERING.SUB_TAB.TENANT) {
+      tenantQuery.refetch();
+    }
+    if (modelQueryEnabled) {
+      modelQuery.refetch();
+    }
   };
 
   const organisationLabel = overview?.scope.organisation ?? null;
@@ -268,7 +249,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
         isAdopterView && subTab === METERING.SUB_TAB.TENANT
           ? tenantQuery.data?.generated_at
           : null,
-        serviceQueryEnabled ? serviceQuery.data?.generated_at : null,
         modelQueryEnabled ? modelQuery.data?.generated_at : null,
       ]),
     [
@@ -277,8 +257,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
       overview?.generated_at,
       subTab,
       tenantQuery.data?.generated_at,
-      serviceQueryEnabled,
-      serviceQuery.data?.generated_at,
       modelQueryEnabled,
       modelQuery.data?.generated_at,
     ],
@@ -303,7 +281,6 @@ export function useMeteringDashboard({ userRoles, tenantId }: UseMeteringDashboa
     tenantOrganisationById,
     overview,
     tenantQuery,
-    serviceQuery,
     modelQuery,
     isLoading,
     isRefreshing,

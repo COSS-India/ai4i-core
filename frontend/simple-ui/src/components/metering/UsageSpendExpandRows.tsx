@@ -11,14 +11,21 @@ const childTd = { borderColor: "gray.100" } as const;
  * its total spend. Task-type detail lives in the tenant drawer, so it is
  * intentionally omitted here to avoid duplicating that breakdown.
  */
-export function UsageSpendExpandRows({ row }: { row: TenantUsageItem }) {
+export function UsageSpendExpandRows({
+  row,
+  trailingColSpan = 2,
+}: Readonly<{
+  row: TenantUsageItem;
+  /** Number of trailing parent columns to blank out (2 with token usage, 1 without). */
+  trailingColSpan?: number;
+}>) {
   const tiers = row.tierBreakdown ?? [];
 
   return (
     <>
       {tiers.map((tier) => (
         <Tr key={`${row.tenantId}-${tier.tierId}`} bg="gray.50">
-          <Td pl={12} colSpan={4} {...childTd}>
+          <Td pl={12} colSpan={3} {...childTd}>
             <TierBadge label={tier.tierName} />
           </Td>
           <Td {...childTd}>
@@ -26,6 +33,7 @@ export function UsageSpendExpandRows({ row }: { row: TenantUsageItem }) {
               {formatSpendMoney(tier.spend, row.currency)}
             </Text>
           </Td>
+          <Td colSpan={trailingColSpan} {...childTd} />
         </Tr>
       ))}
     </>

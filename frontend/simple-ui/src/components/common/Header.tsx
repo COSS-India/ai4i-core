@@ -19,6 +19,9 @@ import React, { useEffect, useState } from "react";
 import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
+import { INSTITUTION } from "../../config/constants";
+import { ONBOARDING_GUIDE_HREF } from "../../config/onboardingGuide";
+import { isDefaultAdminUser, isTenantAdminUser } from "../../utils/rbac";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -55,6 +58,11 @@ const Header: React.FC = () => {
 
   const profileDisplayName =
     (user?.full_name ?? "").trim() || "N/A";
+  const showOnboardingGuideMenu =
+    showUserMenu &&
+    (isTenantAdminUser(user?.roles) || isDefaultAdminUser(user?.roles));
+  const showHomeOnboardingGuideLink =
+    !showUserMenu && router.pathname === "/";
 
   // Check session expiry on mount and when user changes
   useEffect(() => {
@@ -97,17 +105,17 @@ const Header: React.FC = () => {
       case "/services-management":
         setTitle("Services Management");
         break;
-      case "/tenant-management":
-        setTitle("Tenant Management");
+      case "/institution-management":
+        setTitle(`${INSTITUTION} Management`);
         break;
       case "/api-key-management":
         setTitle("API Key Management");
         break;
-      // AI4IDS-2605: PII Guardrail removed from UI — uncomment to restore
+      // PII Guardrail removed from UI — uncomment to restore
       // case "/pii-management":
       //   setTitle("PII Guardrail");
       //   break;
-      // AI4IDS-2604: Alerts Management removed from UI — uncomment to restore
+      // Alerts Management removed from UI — uncomment to restore
       // case "/alerts-management":
       //   setTitle("Alerts Management");
       //   break;
@@ -144,7 +152,7 @@ const Header: React.FC = () => {
       router.push("/profile");
       return;
     }
-    if (router.pathname === "/tenant-management") {
+    if (router.pathname === "/institution-management") {
       router.push("/");
       return;
     }
@@ -218,19 +226,32 @@ const Header: React.FC = () => {
                 {profileDisplayName}
               </Badge>
             ) : (
-              <Button
-                colorScheme="blue"
-                variant="outline"
-                size="sm"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log("Header: Sign In button clicked");
-                  handleAuthClick();
-                }}
-              >
-                Sign In
-              </Button>
+              <HStack spacing={3}>
+                {showHomeOnboardingGuideLink && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    Onboarding Guide
+                  </Button>
+                )}
+                <Button
+                  colorScheme="blue"
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Header: Sign In button clicked");
+                    handleAuthClick();
+                  }}
+                >
+                  Sign In
+                </Button>
+              </HStack>
             )}
 
             {/* Menu */}
@@ -251,6 +272,16 @@ const Header: React.FC = () => {
                   }}>
                     Profile
                   </MenuItem>
+                  {showOnboardingGuideMenu && (
+                    <MenuItem
+                      onClick={() => {
+                        if (!checkSessionExpiry()) return;
+                        window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      Onboarding Guide
+                    </MenuItem>
+                  )}
                   <MenuItem onClick={async () => {
                     // Check session expiry before logout
                     if (!checkSessionExpiry()) return;

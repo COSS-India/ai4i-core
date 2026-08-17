@@ -15,7 +15,18 @@ from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_tier import PPUTier
 
 
-_JSON_COLUMNS = frozenset({"health_status", "benchmarks"})
+# flag_modified is only load-bearing for callers that mutate an
+# already-loaded JSON dict in place (instance.col["x"] = y) rather than
+# reassigning the column outright — apply_updates() below always does the
+# latter (plain setattr), which SQLAlchemy's own change-tracking already
+# picks up regardless of this set. Still kept in sync defensively so a
+# future in-place-mutation caller doesn't silently fail to persist — the 5
+# JSONB columns below were added for ULCA schema alignment.
+_JSON_COLUMNS = frozenset({
+    "health_status", "benchmarks", "policy",
+    "inference_api_key", "inference_schema", "async_api_details",
+    "supported_input_formats", "supported_output_formats",
+})
 
 
 class ServiceRepository:

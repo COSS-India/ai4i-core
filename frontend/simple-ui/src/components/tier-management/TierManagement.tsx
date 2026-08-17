@@ -48,7 +48,7 @@ import StandardModal from "../common/StandardModal";
 import { useTierManagement } from "../../hooks/useTierManagement";
 import type { Tier } from "../../services/tierManagementService";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import { INSTITUTIONS, formatModelTaskTypeLabel } from "../../config/constants";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { generateUUID } from "../../utils/uuid";
 
@@ -553,21 +553,21 @@ function AssignedTenantsSection({
         textTransform="uppercase"
         mb={1}
       >
-        Tenants Assigned · {isLoading ? "…" : tenants.length}
+        {INSTITUTIONS} Assigned · {isLoading ? "…" : tenants.length}
       </Text>
       {(() => {
         if (isLoading) {
           return (
             <HStack spacing={2} color="gray.400">
               <Spinner size="xs" />
-              <Text fontSize="sm">Loading tenants…</Text>
+              <Text fontSize="sm">Loading {INSTITUTIONS.toLowerCase()}…</Text>
             </HStack>
           );
         }
         if (!tenants.length) {
           return (
             <Text fontSize="sm" color="gray.400">
-              No tenants assigned
+              No {INSTITUTIONS.toLowerCase()} assigned
             </Text>
           );
         }

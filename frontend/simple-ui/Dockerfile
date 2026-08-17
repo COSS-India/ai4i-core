@@ -61,7 +61,7 @@ ENV HOSTNAME=0.0.0.0
 # Runtime ConfigMap keys (override per env). Prefer these names; legacy
 # NEXT_PUBLIC_* equivalents are still accepted by runtimeConfig.ts.
 # Default llm so Service Management / Usage Dashboard stay LLM-only when the
-# ConfigMap omits the key (AI4IDS-2596 / AI4IDS-2673 / AI4IDS-2689).
+# ConfigMap omits the key.
 ENV ENABLED_TASK_TYPES=llm
 # ENV API_URL=
 # ENV TELEMETRY_SERVICE_URL=

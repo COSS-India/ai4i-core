@@ -528,6 +528,7 @@ export function useServicesManagement() {
         setFormData((prev) => {
           const task_type = resolvedModelTaskType || prev.task_type || "";
           const taskIsLlm = task_type.trim().toLowerCase() === "llm";
+          // LLM Service ID pre-filled with "{modelName}/"
           // Sanitize to BE service-name charset (no underscore) since name=serviceId.
           const sanitizeLlmId = (s: string) =>
             s.replaceAll(/[^a-zA-Z0-9/-]/g, "");

@@ -113,9 +113,6 @@ async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession
         logger.exception("TenantPlan DB insert failed for tenant %s: %s", tenant_id, e)
 
 
-_TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
-
-
 def _assert_tenant_active_for_user_deactivation(
     tenant: Tenant, payload: dict
 ) -> None:
@@ -247,28 +244,10 @@ class TenantService:
                 },
             )
 
-    @staticmethod
-    def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
-        if RoleName.TENANT_ADMIN.value in roles:
-            return TenantUserRole.TENANT_ADMIN
-        return TenantUserRole.USER
-
     async def _set_tenant_user_role(
         self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
     ) -> None:
-        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN).
-
-        ``commit=False`` leaves role changes in the open transaction so the caller
-        can commit once with other updates (e.g. ``update_tenant_user`` →
-        ``save_and_refresh`` on the user row).
-        """
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
-        await self._roles.ensure_role_exists(target)
-        current = await self._roles.get_user_roles(user_id)
-        for assignable in _TENANT_ASSIGNABLE_ROLES:
-            key = role_name_to_str(assignable)
-            if key in current and key != target:
-                await self._roles.remove_role(user_id, assignable, commit=commit)
         await self._roles.assign_role(user_id, target, commit=commit)
 
     async def build_tenant_user_response(
@@ -298,13 +277,13 @@ class TenantService:
         activated_ids = await self._credentials.user_ids_with_credentials(user_ids)
         responses: list[dict] = []
         for user in users:
-            role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
+            # role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
             base = to_response(user, UserListResponse)
             responses.append(
                 mask_pii_in_dict(
                     TenantUserResponse(
                         **base,
-                        role=role,
+                        roles=roles_by_user.get(user.id, []),
                         is_tenant_active=user.is_tenant_active,
                         is_activated=user.id in activated_ids,
                     ).model_dump(mode="json", by_alias=True),
@@ -515,7 +494,8 @@ class TenantService:
         # tenant-user endpoints), so they reach this method — but listing every
         # tenant in the system is an admin-only operation.
         roles = await self._roles.get_user_roles(current_user.id)
-        if RoleName.ADMIN.value not in roles:
+        allowed = {RoleName.ADMIN.value, RoleName.PROGRAM_ADMIN.value}
+        if not allowed.intersection(roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -528,7 +508,9 @@ class TenantService:
     async def get_tenant(
         self, current_user: User, tenant_id: int, *, unmask: bool = False
     ) -> Tenant:
-        await self.enforce_scope(current_user, tenant_id)
+        roles = await self._roles.get_user_roles(current_user.id)
+        if RoleName.PROGRAM_ADMIN.value not in roles:
+            await self.enforce_scope(current_user, tenant_id)
         # Revealing cleartext PII is limited to the roles that can edit the
         # tenant; masked reads stay open to anyone with tenant.read scope.
         if unmask:

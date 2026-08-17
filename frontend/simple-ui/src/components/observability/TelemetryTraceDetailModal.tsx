@@ -22,6 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import StandardModal from "../common/StandardModal";
 import { useAdminTableSurface } from "../common/TableControls";
 import { getTelemetryTraceById } from "../../services/observabilityService";
+import { INSTITUTION } from "../../config/constants";
 import type { TelemetrySpan } from "../../types/observability";
 
 export type TelemetryTraceDetailModalProps = {
@@ -102,7 +103,7 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
 
           <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
             <MetaField label="Service" value={data.service || "—"} />
-            <MetaField label="Tenant" value={data.tenant_id || "—"} />
+            <MetaField label={INSTITUTION} value={data.tenant_id || "—"} />
             <MetaField label="Environment" value={data.environment || "—"} />
             <MetaField label="Version" value={data.service_version || "—"} />
             <MetaField label="Hostname" value={data.hostname || "—"} />
