@@ -199,3 +199,22 @@ class VersionStatusEnum(str, Enum):
 
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
+
+
+class AudioFormatEnum(str, Enum):
+    """Audio format of an audio file (ULCA ``AudioFormat`` schema)."""
+
+    WAV = "wav"
+    PCM = "pcm"
+    MP3 = "mp3"
+    FLAC = "flac"
+    SPH = "sph"
+
+
+class TextFormatEnum(str, Enum):
+    """Supported textual formats (ULCA ``TextFormat`` schema)."""
+
+    SRT = "srt"
+    TRANSCRIPT = "transcript"
+    WEBVTT = "webvtt"
+    ALTERNATIVES = "alternatives"

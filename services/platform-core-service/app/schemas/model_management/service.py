@@ -43,6 +43,220 @@ class ServiceStatus(BaseSchema):
     lastUpdated: Optional[str] = None
 
 
+# ── InferenceAPIEndPoint (ULCA InferenceAPIEndPoint) ──
+
+
+class SupportedFormats(BaseSchema):
+    """Formats a service's endpoint accepts/produces (ULCA's `AudioFormats`
+    anyOf `TextFormats`, combined into one lenient object here — a value
+    satisfying either shape satisfies a ULCA `anyOf`, and allowing both keys
+    on one object at once is a harmless superset, not a violation).
+
+    Neither field defaults to a non-None value at runtime — omitting this
+    object entirely (or a sub-field within it) means "format support wasn't
+    declared", not "assume ULCA's documented default". The ULCA-documented
+    defaults are still surfaced in the OpenAPI schema (via `json_schema_extra`)
+    purely for documentation, so Swagger shows the same default ULCA does.
+    """
+
+    audio: Optional[List[AudioFormatEnum]] = Field(
+        default=None,
+        json_schema_extra={"default": [AudioFormatEnum.WAV.value]},
+        description="Optional. ULCA-documented default when omitted: ['wav'].",
+    )
+    # ULCA's own documented default for `text` is `["raw-text"]` — but
+    # "raw-text" isn't actually a member of ULCA's own TextFormat enum
+    # (srt/transcript/webvtt/alternatives), a bug in the ULCA spec itself.
+    # Not replicated here since it isn't a valid TextFormatEnum value.
+    text: Optional[List[TextFormatEnum]] = Field(
+        default=None,
+        description=(
+            "Optional. ULCA documents a default of ['raw-text'] here, but "
+            "that isn't a valid TextFormat enum member per ULCA's own spec "
+            "— not replicated; omit to leave undeclared."
+        ),
+    )
+
+
+# `schema` entries describe ULCA-shaped request/response contracts, so they
+# may legitimately use either our TaskTypeEnum values or ULCA's own
+# discriminator vocabulary where the two differ (nmt vs translation,
+# language-detection vs txt-lang-detection). Derived from TaskTypeEnum
+# (rather than duplicated as a literal set) so a task type added there
+# later doesn't also need remembering here — only the two ULCA-only
+# spellings are literals.
+_INFERENCE_SCHEMA_TASK_TYPES = {m.value for m in TaskTypeEnum} | {"translation", "txt-lang-detection"}
+
+# Same nmt/translation and language-detection/txt-lang-detection equivalence
+# as _INFERENCE_SCHEMA_TASK_TYPES above, but keyed so both spellings of a
+# pair resolve to the same equivalence set — used to check a `schema` entry
+# actually describes the service's own task, not just *some* recognized
+# task (without this, a TTS service could ship an `asr` schema entry and
+# nothing would catch it).
+_TASK_TYPE_SCHEMA_EQUIVALENTS: Dict[str, set] = {
+    "nmt": {"nmt", "translation"},
+    "translation": {"nmt", "translation"},
+    "language-detection": {"language-detection", "txt-lang-detection"},
+    "txt-lang-detection": {"language-detection", "txt-lang-detection"},
+}
+
+
+def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Shape check for ULCA's `schema` (InferenceSchemaArray): non-empty,
+    each entry names a recognized taskType and carries `request`/`response`
+    keys. Deliberately shallow: full discriminated-union validation of each
+    task's exact contract (TranslationInference vs ASRInference vs
+    OCRInference, ...) is a separate, larger follow-up not implemented here.
+
+    Public (not `_`-prefixed): also called from service_service.py against
+    a schema derived from the linked Model's own `schema`, since a derived
+    value deserves the exact same shape check a manually-supplied one gets.
+    """
+    if not v:
+        raise ValueError(
+            "schema must be a non-empty array of per-task inference "
+            "request/response contracts, e.g. "
+            '[{"taskType": "asr", "request": {...}, "response": {...}}]'
+        )
+    for i, entry in enumerate(v):
+        if not isinstance(entry, dict):
+            raise ValueError(f"schema[{i}] must be an object")
+        task_type = entry.get("taskType")
+        if not task_type:
+            raise ValueError(f"schema[{i}] must include 'taskType'")
+        if task_type not in _INFERENCE_SCHEMA_TASK_TYPES:
+            raise ValueError(
+                f"schema[{i}].taskType '{task_type}' is not a recognized task type"
+            )
+        missing = [k for k in ("request", "response") if k not in entry]
+        if missing:
+            raise ValueError(f"schema[{i}] is missing {missing}")
+    return v
+
+
+def schema_matches_task_type(
+    task_type: Optional[str], schema_entries: Optional[List[Dict[str, Any]]]
+) -> bool:
+    """True if at least one `schema` entry's taskType is ULCA-equivalent to
+    `task_type`. With nothing to compare (`task_type`/`schema_entries` not
+    yet known) this returns True — callers decide separately whether either
+    side is required at all; this only catches an outright mismatch when
+    both are present."""
+    if not task_type or not schema_entries:
+        return True
+    equivalents = _TASK_TYPE_SCHEMA_EQUIVALENTS.get(task_type, {task_type})
+    return any(entry.get("taskType") in equivalents for entry in schema_entries)
+
+
+class InferenceAPIEndPoint(BaseSchema):
+    """Deployment-specific endpoint config for a Service (ULCA
+    ``InferenceAPIEndPoint``). All fields are optional at this class level
+    so it can be composed from a mix of this object and the deprecated flat
+    aliases on ServiceCreateRequest/ServiceUpdateRequest — the "required"
+    ULCA fields (callbackUrl, schema) are enforced once, after that merge,
+    by the requests that need them (create only; update is a partial patch).
+
+    Not included here despite being properties on ULCA's
+    ``InferenceAPIEndPoint``:
+    - ``serviceId`` — Service already has its own top-level ``serviceId``;
+      not duplicated here to avoid two fields that could drift.
+    """
+
+    callbackUrl: Optional[str] = Field(
+        None, description="The live URL inference requests are POSTed to."
+    )
+    inferenceApiKey: Optional[InferenceApiKey] = Field(
+        None, description="Optional. Auth header expected by callbackUrl."
+    )
+    isMultilingualEnabled: Optional[bool] = Field(
+        default=None,
+        # ULCA documents this as defaulting to `false`; the Swagger schema
+        # shows that (matching ULCA), but the actual Python/runtime default
+        # stays None — see the description below for why.
+        json_schema_extra={"default": False},
+        description=(
+            "Optional, ULCA-documented default false. True if this "
+            "callbackUrl handles multiple languages itself. Left unset "
+            "(rather than defaulting to False on the class) so a partial "
+            "update that doesn't touch this field can't accidentally reset "
+            "an existing True back to False — see ServiceService.update_service."
+        ),
+    )
+    supportedInputFormats: Optional[SupportedFormats] = Field(
+        None, description="Optional. Input formats this endpoint accepts."
+    )
+    supportedOutputFormats: Optional[SupportedFormats] = Field(
+        None, description="Optional. Output formats this endpoint produces."
+    )
+    endpoint_schema: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        alias="schema",
+        description=(
+            "Required (ULCA) on service create — but may be omitted: when "
+            "not supplied, it's derived from the linked model's own "
+            "`schema` (see ServiceService.create_service); only rejected as "
+            "missing if the model has none on file either. Array of "
+            "per-task-type inference request/response contracts, e.g. "
+            '[{"taskType": "asr", "request": {...}, "response": {...}}]. '
+            "Whichever entries end up present (supplied or derived) must "
+            "include at least one whose taskType matches this service's "
+            "own task. This is a declared contract, distinct from "
+            "`expectedResponseSchema` (a live smoke-test fixture)."
+        ),
+    )
+    isSyncApi: Optional[bool] = Field(
+        None,
+        description="Optional. True if inference is synchronous; False means async — asyncApiDetails should also be provided.",
+    )
+    asyncApiDetails: Optional[AsyncApiDetails] = Field(
+        None, description="Optional. Required when isSyncApi is False."
+    )
+    providerName: Optional[str] = Field(
+        None, min_length=5, max_length=100, description="Optional. Name of the service provider."
+    )
+    infraDescription: Optional[str] = Field(
+        None,
+        min_length=5,
+        max_length=100,
+        description="Required on create. Details about the model's hosted infrastructure.",
+    )
+    inferenceModelId: Optional[str] = Field(
+        None,
+        min_length=5,
+        max_length=100,
+        description="Optional. Model identifier used to test the inference API key.",
+    )
+
+    @field_validator("endpoint_schema")
+    @classmethod
+    def _validate_schema(cls, v: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        if v is None:
+            return v
+        return validate_inference_schema_entries(v)
+
+
+def _rebuild_inference_endpoint(
+    ep: "InferenceAPIEndPoint",
+    *,
+    callback_url: Optional[str],
+    infra_description: Optional[str],
+    inference_api_key: Optional[InferenceApiKey],
+) -> "InferenceAPIEndPoint":
+    """Merge the reconciled callbackUrl/infraDescription/inferenceApiKey
+    back into `ep` through the constructor rather than `model_copy` — the
+    latter skips validation, which would let a short/invalid value that
+    arrived via a deprecated flat alias (`hardwareDescription`, `api_key`)
+    bypass the same length/shape checks a direct `inferenceEndPoint`
+    payload would get."""
+    merged = ep.model_dump()
+    merged.update({
+        "callbackUrl": callback_url,
+        "infraDescription": infra_description,
+        "inferenceApiKey": inference_api_key,
+    })
+    return InferenceAPIEndPoint(**merged)
+
+
 # ── Create / Update ──
 
 
