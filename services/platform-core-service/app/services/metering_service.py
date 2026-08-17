@@ -394,6 +394,14 @@ class MeteringService:
 
         Fires 3 queries in one asyncio.gather: total requests, successful
         requests, and tokens processed — each grouped by `service_id`.
+
+        Rows are cross-checked against the Service Registry (mm_services)
+        via that same lookup: a `service_id` with no current, non-deleted
+        row is dropped rather than shown as a ghost entry, since Prometheus
+        retains series for the full `time_range` after a service is deleted
+        or renamed. The check is skipped (all ids kept, name falls back to
+        the raw id) only when the registry lookup itself is unavailable or
+        errors — we can't tell "deleted" from "DB unreachable" in that case.
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
@@ -431,16 +439,29 @@ class MeteringService:
         service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
 
         names_and_models: dict = {}
+        registry_checked = False
         if self._service_repo is not None and service_ids:
             try:
                 names_and_models = await self._service_repo.get_names_and_models_by_service_ids(
                     list(service_ids)
                 )
+                registry_checked = True
             except Exception:
                 logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
 
         services = []
         for service_id in service_ids:
+            # Prometheus retains series for `time_range` even after the
+            # service is deleted/renamed in the registry, so a service_id
+            # with no current mm_services row is a ghost entry (deleted
+            # service, or a stale id from before a rename) — drop it rather
+            # than surfacing the raw internal id as a fake "name". Only do
+            # this when the registry lookup actually ran: if it's
+            # unavailable/failed we can't tell "deleted" from "DB down", so
+            # fall back to showing the unfiltered id instead of hiding
+            # everything.
+            if registry_checked and service_id not in names_and_models:
+                continue
             total_v = totals.get(service_id, 0)
             success_v = successes.get(service_id, 0)
             name, model_name = names_and_models.get(service_id, (service_id, None))

@@ -453,15 +453,28 @@ class TestModelBreakdown:
         assert row["name"] == "orphan-service"
         assert row["model_name"] is None
 
-    async def test_name_falls_back_when_service_id_missing_from_db(self):
+    async def test_service_dropped_when_missing_from_registry(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("deleted-service", 10))
-        repo = self._repo({})  # service_id not found (e.g. soft-deleted)
+        repo = self._repo({})  # service_id not found (e.g. soft-deleted/renamed away)
         svc = MeteringService(client=client, service_repo=repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
-        row = next(s for s in result["services"] if s["service_id"] == "deleted-service")
-        assert row["name"] == "deleted-service"
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "deleted-service" not in service_ids
+
+    async def test_name_falls_back_to_service_id_when_registry_lookup_fails(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("orphan-service", 10))
+        repo = self._repo({})
+        repo.get_names_and_models_by_service_ids = AsyncMock(side_effect=RuntimeError("db down"))
+        svc = MeteringService(client=client, service_repo=repo)
+
+        # Registry lookup errored out — can't tell deleted from unreachable,
+        # so don't hide the row, just show the raw id as before.
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "orphan-service")
+        assert row["name"] == "orphan-service"
         assert row["model_name"] is None
 
     async def test_empty_service_id_dropped(self):
