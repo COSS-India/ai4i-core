@@ -58,7 +58,7 @@ export function applyDefaultOrgManagedRoleToUser(
   };
 }
 
-/** Set managed role to target; leaves ADMIN and other unmanaged roles untouched. */
+/** Set managed role to target; leaves other unmanaged roles untouched. */
 export async function syncDefaultOrgUserRole(
   userId: string,
   targetRole: string,
@@ -67,7 +67,7 @@ export async function syncDefaultOrgUserRole(
   const target = norm(targetRole);
   if (!isDefaultOrgUserRole(target)) {
     throw new Error(
-      "Default Organisation users may only be User, Moderator, or Program Admin.",
+      "Default Organisation users may only be User, Moderator, Program Admin, or Admin.",
     );
   }
   const existing =

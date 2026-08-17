@@ -946,7 +946,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({
         type: "warning",
         message:
-          "Default Organisation users may only be User, Moderator, or Program Admin.",
+          "Default Organisation users may only be User, Moderator, Program Admin, or Admin.",
       });
       return;
     }
@@ -1476,10 +1476,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         rolesLoaded = enriched.rolesLoaded;
         const resolved = resolveDefaultOrgFormRole(editRow.roles);
         role =
-          isDefaultOrgUserRole(resolved) ||
-          resolved === "ADMIN" ||
-          resolved === "PROGRAM ADMIN" ||
-          resolved === "GUEST"
+          isDefaultOrgUserRole(resolved) || resolved === "GUEST"
             ? (resolved as TenantUserFormRole)
             : DEFAULT_TENANT_USER_ROLE;
         editRow = { ...editRow, role };
@@ -1533,15 +1530,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const isDefaultOrg = tenant != null && isDefaultTenant(tenant);
     if (
       isDefaultOrg &&
-      editUserForm.role !== "ADMIN" &&
-      editUserForm.role !== "PROGRAM ADMIN" &&
       editUserForm.role !== "GUEST" &&
       !isDefaultOrgUserRole(editUserForm.role)
     ) {
       showToast({
         type: "warning",
         message:
-          "Default Organisation users may only be User, Moderator, or Program Admin.",
+          "Default Organisation users may only be User, Moderator, Program Admin, or Admin.",
       });
       return;
     }
