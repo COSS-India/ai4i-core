@@ -398,13 +398,27 @@ class MeteringService:
         Fires 3 queries in one asyncio.gather: total requests, successful
         requests, and tokens processed — each grouped by `service_id`.
 
-        Rows are cross-checked against the Service Registry (mm_services)
-        via that same lookup: a `service_id` with no current, non-deleted
-        row is dropped rather than shown as a ghost entry, since Prometheus
-        retains series for the full `time_range` after a service is deleted
-        or renamed. The check is skipped (all ids kept, name falls back to
-        the raw id) only when the registry lookup itself is unavailable or
-        errors — we can't tell "deleted" from "DB unreachable" in that case.
+        ROLLOUT NOTE: rows are cross-checked against the Service Registry
+        (mm_services) via that same lookup, and a `service_id` with no
+        current, non-deleted row is dropped. Two different populations land
+        here: `service_id` is the client-supplied `model` string, set before
+        MMS resolution, so a request for a service that was deleted/renamed
+        OR one that never existed (a typo, a stale integration still
+        pointing at an old id — the `llm`/`llm/default` cases) both emit
+        Prometheus series but neither has a current registry row. We can't
+        tell those apart here, so both are dropped — which means, unlike the
+        never-existed case, a rename/delete makes this endpoint
+        under-report real historical traffic for up to `time_range` (30d)
+        against Overview's `request_total`, which is NOT registry-filtered
+        (see routes/metering.py `request_total(service_id=None, ...)`) and
+        keeps counting it. This self-heals as the pre-rename/delete series
+        age out of the window, the same tradeoff `active_tenants` makes for
+        the tenant-id -> org-name cutover (see its ROLLOUT NOTE above). The
+        check is skipped (all ids kept, name falls back to the raw id) only
+        when the registry lookup itself is unavailable or errors — we can't
+        tell "deleted" from "DB unreachable" in that case. Suppressed ids
+        are logged (see below) so a rename-induced drop is traceable rather
+        than a silent discrepancy against Overview.
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
@@ -452,18 +466,22 @@ class MeteringService:
             except Exception:
                 logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
 
+        # service_id with no current, non-deleted mm_services row: either a
+        # genuinely deleted/renamed service (real historical traffic — see
+        # the ROLLOUT NOTE above) or one that never existed (a typo / stale
+        # integration, e.g. "llm", "llm/default"). Only computed when the
+        # registry lookup actually ran — if it's unavailable/failed we can't
+        # tell "deleted" from "DB down", so nothing is dropped.
+        ghosts = (service_ids - names_and_models.keys()) if registry_checked else set()
+        if ghosts:
+            logger.info(
+                "model_breakdown: dropped %d unregistered service_id(s): %s",
+                len(ghosts), sorted(ghosts),
+            )
+
         services = []
         for service_id in service_ids:
-            # Prometheus retains series for `time_range` even after the
-            # service is deleted/renamed in the registry, so a service_id
-            # with no current mm_services row is a ghost entry (deleted
-            # service, or a stale id from before a rename) — drop it rather
-            # than surfacing the raw internal id as a fake "name". Only do
-            # this when the registry lookup actually ran: if it's
-            # unavailable/failed we can't tell "deleted" from "DB down", so
-            # fall back to showing the unfiltered id instead of hiding
-            # everything.
-            if registry_checked and service_id not in names_and_models:
+            if service_id in ghosts:
                 continue
             total_v = totals.get(service_id, 0)
             success_v = successes.get(service_id, 0)
