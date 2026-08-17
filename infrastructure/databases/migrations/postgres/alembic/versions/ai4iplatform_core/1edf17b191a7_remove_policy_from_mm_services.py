@@ -6,7 +6,7 @@ by any routing/business logic and was absent from the create payload, so the
 field and its backing column are being removed as unused surface.
 
 Revision ID: 1edf17b191a7
-Revises: f2a4c6e8b0d2
+Revises: a7c9e1f3b5d7
 Create Date: 2026-08-17 00:00:00.000000
 
 """
@@ -17,7 +17,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = '1edf17b191a7'
-down_revision: Union[str, Sequence[str], None] = 'f2a4c6e8b0d2'
+down_revision: Union[str, Sequence[str], None] = 'a7c9e1f3b5d7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -35,8 +35,24 @@ def _column_exists(table: str, column: str) -> bool:
 
 
 def upgrade() -> None:
-    if _column_exists('mm_services', 'policy'):
-        op.drop_column('mm_services', 'policy')
+    if not _column_exists('mm_services', 'policy'):
+        return
+
+    bind = op.get_bind()
+    non_null_count = bind.execute(
+        sa.text("SELECT count(*) FROM mm_services WHERE policy IS NOT NULL")
+    ).scalar()
+    if non_null_count:
+        raise RuntimeError(
+            f"Refusing to drop mm_services.policy: {non_null_count} row(s) still "
+            "have a non-null value and this drop is irreversible for that data "
+            "(downgrade() only restores the column, not its contents). Dump "
+            "affected rows first, e.g.:\n"
+            "  SELECT service_id, policy FROM mm_services WHERE policy IS NOT NULL;\n"
+            "then re-run this migration once you've confirmed it's safe to discard."
+        )
+
+    op.drop_column('mm_services', 'policy')
 
 
 def downgrade() -> None:
