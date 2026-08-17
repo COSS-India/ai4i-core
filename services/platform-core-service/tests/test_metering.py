@@ -453,15 +453,57 @@ class TestModelBreakdown:
         assert row["name"] == "orphan-service"
         assert row["model_name"] is None
 
-    async def test_name_falls_back_when_service_id_missing_from_db(self):
+    async def test_service_dropped_when_missing_from_registry(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("deleted-service", 10))
-        repo = self._repo({})  # service_id not found (e.g. soft-deleted)
+        repo = self._repo({})  # service_id not found (e.g. soft-deleted/renamed away)
         svc = MeteringService(client=client, service_repo=repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
-        row = next(s for s in result["services"] if s["service_id"] == "deleted-service")
-        assert row["name"] == "deleted-service"
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "deleted-service" not in service_ids
+
+    async def test_ghost_dropped_alongside_live_service_unaffected(self):
+        # Mixed Prometheus result: one still-registered service plus one
+        # ghost id in the same window — pins that the filter only removes
+        # the ghost and leaves the live service's own numbers untouched.
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._rows({"live-service": 90, "deleted-service": 40})
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._rows({"live-service": 12345, "deleted-service": 999})
+            return self._rows({"live-service": 100, "deleted-service": 50})
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({"live-service": ("Live Service", "gemma-3-27b-it")})
+        svc = MeteringService(client=client, service_repo=repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "deleted-service" not in service_ids
+        assert service_ids == ["live-service"]
+
+        row = result["services"][0]
+        assert row["requests"] == 100
+        assert row["success_pct"] == 90.0
+        assert row["native_units"] == 12345.0
+        assert row["name"] == "Live Service"
+        assert row["model_name"] == "gemma-3-27b-it"
+
+    async def test_name_falls_back_to_service_id_when_registry_lookup_fails(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("orphan-service", 10))
+        repo = self._repo({})
+        repo.get_names_and_models_by_service_ids = AsyncMock(side_effect=RuntimeError("db down"))
+        svc = MeteringService(client=client, service_repo=repo)
+
+        # Registry lookup errored out — can't tell deleted from unreachable,
+        # so don't hide the row, just show the raw id as before.
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "orphan-service")
+        assert row["name"] == "orphan-service"
         assert row["model_name"] is None
 
     async def test_empty_service_id_dropped(self):
