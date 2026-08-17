@@ -107,12 +107,12 @@ class TestAPIKeyReadRoutes:
 
         response = await list_api_keys(user_id=key.user_id, _admin=MagicMock(), svc=mock_svc)
 
-        assert response["success"] is True
-        assert response["data"]["api_keys"][0]["permissions"] == [
+        assert response.success is True
+        assert response.data.api_keys[0].permissions == [
             "nmt.inference",
             "asr.inference",
         ]
-        assert all(not isinstance(p, int) for p in response["data"]["api_keys"][0]["permissions"])
+        assert all(not isinstance(p, int) for p in response.data.api_keys[0].permissions)
 
     @pytest.mark.asyncio
     async def test_list_api_keys_omits_unresolved_permission_ids(self, caplog) -> None:
@@ -126,7 +126,7 @@ class TestAPIKeyReadRoutes:
         with caplog.at_level("WARNING"):
             response = await list_api_keys(user_id=key.user_id, _admin=MagicMock(), svc=mock_svc)
 
-        assert response["data"]["api_keys"][0]["permissions"] == ["nmt.inference"]
+        assert response.data.api_keys[0].permissions == ["nmt.inference"]
         assert "api_key id=1 references unknown permission id=99" in caplog.text
 
 
