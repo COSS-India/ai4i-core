@@ -200,9 +200,20 @@ class TestDescriptionRequired:
         req = ServiceCreateRequest(serviceId="svc-1", **base)
         assert req.description == _LONG_DESCRIPTION
 
-    def test_update_description_too_short_when_supplied_is_rejected(self) -> None:
-        with pytest.raises(PydanticValidationError, match="25-1000 characters"):
-            ServiceUpdateRequest(serviceId="svc-1", description="too short")
+    def test_update_description_too_short_when_supplied_is_accepted(self) -> None:
+        """PR review: the 25-1000 char rule fires on create only (same
+        scoping as SERVICE_ID_MIN_LEN_ON_CREATE) — the admin edit form
+        resends the stored description on every update, so a pre-existing
+        service with a short one must not 422 on an unrelated edit."""
+        req = ServiceUpdateRequest(
+            serviceId="svc-1",
+            description="too short",
+            taskType="asr",
+            costPerUnit=1.0,
+            unitSize=1,
+            tierIds=["tier-1"],
+        )
+        assert req.description == "too short"
 
     def test_update_without_description_does_not_require_it(self) -> None:
         req = ServiceUpdateRequest(

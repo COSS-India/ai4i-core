@@ -32,6 +32,7 @@ from app.schemas.enums.model_management import (
     PolicyAccuracyEnum,
     PolicyCostEnum,
     PolicyLatencyEnum,
+    TaskTypeEnum,
     TextFormatEnum,
     resolve_task_type,
 )
@@ -92,12 +93,11 @@ class SupportedFormats(BaseSchema):
 # `schema` entries describe ULCA-shaped request/response contracts, so they
 # may legitimately use either our TaskTypeEnum values or ULCA's own
 # discriminator vocabulary where the two differ (nmt vs translation,
-# language-detection vs txt-lang-detection).
-_INFERENCE_SCHEMA_TASK_TYPES = {
-    "nmt", "tts", "asr", "llm", "transliteration", "language-detection",
-    "speaker-diarization", "audio-lang-detection", "language-diarization",
-    "ocr", "ner", "translation", "txt-lang-detection",
-}
+# language-detection vs txt-lang-detection). Derived from TaskTypeEnum
+# (rather than duplicated as a literal set) so a task type added there
+# later doesn't also need remembering here — only the two ULCA-only
+# spellings are literals.
+_INFERENCE_SCHEMA_TASK_TYPES = {m.value for m in TaskTypeEnum} | {"translation", "txt-lang-detection"}
 
 # Same nmt/translation and language-detection/txt-lang-detection equivalence
 # as _INFERENCE_SCHEMA_TASK_TYPES above, but keyed so both spellings of a
@@ -620,7 +620,13 @@ class ServiceUpdateRequest(BaseSchema):
 
     serviceId: str
     description: Optional[str] = Field(
-        None, description="Use in place of the deprecated `serviceDescription`."
+        None,
+        description=(
+            "Use in place of the deprecated `serviceDescription`. Unlike "
+            "on create, the 25-1000 char length rule is NOT enforced here "
+            "— a pre-existing service with a shorter stored description "
+            "must be able to resend it on an unrelated edit without 422ing."
+        ),
     )
     serviceDescription: Optional[str] = Field(
         None, description="Deprecated — use `description`."
@@ -711,15 +717,18 @@ class ServiceUpdateRequest(BaseSchema):
     def _reconcile_ulca_fields(self) -> "ServiceUpdateRequest":
         """Same merge as ServiceCreateRequest, but nothing is required here
         — this is a partial update, so any/all of these may be legitimately
-        absent."""
+        absent.
+
+        The 25-1000 char length rule is deliberately NOT re-enforced here
+        (PR review) — same scoping as SERVICE_ID_MIN_LEN_ON_CREATE, create
+        only. The admin edit form resends the stored description on every
+        update (frontend/simple-ui/src/hooks/useServicesManagement.ts),
+        so a service created before this rule existed, with a description
+        under 25 chars, would otherwise 422 on its first unrelated edit
+        (e.g. just changing the endpoint) after this ships.
+        """
         if self.description is None and self.serviceDescription is not None:
             self.description = self.serviceDescription
-        if self.description is not None and not (
-            _DESCRIPTION_MIN_LEN <= len(self.description) <= _DESCRIPTION_MAX_LEN
-        ):
-            raise ValueError(
-                f"description must be {_DESCRIPTION_MIN_LEN}-{_DESCRIPTION_MAX_LEN} characters."
-            )
 
         if self.task is not None:
             self.taskType = self.task.type
