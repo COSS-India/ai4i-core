@@ -79,8 +79,8 @@ def _service_inference_api_key(service: Service) -> Optional[Dict[str, Any]]:
 
 def _service_inference_endpoint(service: Service) -> Dict[str, Any]:
     """Assemble ULCA's `inferenceEndPoint` (InferenceAPIEndPoint) object
-    for a Service response (AI4IDS-2710) from the individual mm_services
-    columns it's stored across."""
+    for a Service response from the individual mm_services columns it's
+    stored across."""
     return {
         "callbackUrl": service.endpoint,
         "inferenceApiKey": _service_inference_api_key(service),
@@ -124,14 +124,15 @@ def service_to_dict(
         "endpoint": service.endpoint,
         "inferenceServerType": service.inference_server_type or "triton",
         "sslVerify": bool(service.ssl_verify),
-        # Deprecated (AI4IDS-2710) — use `inferenceEndPoint.inferenceApiKey`
-        # (masked, see _service_inference_api_key). This flat field is
-        # deliberately left UNMASKED, unlike Model's equivalent field:
-        # inference-service reads this exact key off this exact response
+        # Deprecated — use `inferenceEndPoint.inferenceApiKey` (masked, see
+        # _service_inference_api_key). This flat field is deliberately left
+        # UNMASKED, unlike Model's equivalent field: inference-service reads
+        # this exact key off this exact response
         # (services/inference-service/services/base/task_service.py) to
         # build the outbound `Authorization: Bearer` header for the real
         # Triton call — masking it here breaks every auth-protected Triton
-        # backend platform-wide. See AI4IDS-1871's test_triton_url_redaction.py.
+        # backend platform-wide (see test_triton_url_redaction.py for the
+        # regression test guarding this).
         "api_key": service.api_key,
         "healthStatus": service.health_status,
         "benchmarks": service.benchmarks,

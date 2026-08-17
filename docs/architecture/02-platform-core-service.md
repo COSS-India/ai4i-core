@@ -18,10 +18,10 @@ manager, not a scrape target.
 - Publish model versions as **services** (`mm_services`) with backend metadata and an
   inference-server type (Triton default). The Service API contract's `task`/
   `inferenceEndPoint` fields conform to ULCA's `deployment-service-specs.yml`
-  (AI4IDS-2710) — deprecated flat aliases (`taskType`, `endpoint`,
-  `hardwareDescription`, `api_key`, `serviceDescription`) are still accepted
-  for backward compatibility. `mm_models`' `task`/inference-endpoint fields
-  were similarly aligned to ULCA's model-schema.yml earlier (AI4IDS-2478).
+  — deprecated flat aliases (`taskType`, `endpoint`, `hardwareDescription`,
+  `api_key`, `serviceDescription`) are still accepted for backward
+  compatibility. `mm_models`' `task`/inference-endpoint fields were
+  similarly aligned to ULCA's model-schema.yml earlier.
 - **Endpoint validation**: before publishing, the service can run a test call against the
   backend (Triton) — lenient (`<500`) or strict (`<400`) mode.
 - `try-it` service listing for public trials.

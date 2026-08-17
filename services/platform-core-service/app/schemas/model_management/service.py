@@ -1,15 +1,14 @@
 """
 Pydantic request/response schemas for the Service domain.
 
-AI4IDS-2710 — ULCA alignment: `task` and `inferenceEndPoint` are ULCA's
-literal field names on the `Service` schema (deployment-service-specs.yml);
-their values conform to ULCA's `ModelTask` (reusing the `TaskSpec` class
-Model already uses) and `InferenceAPIEndPoint` schemas respectively. The
-previous flat fields (`taskType`, `endpoint`, `hardwareDescription`,
-`api_key`, `serviceDescription`) are kept as deprecated aliases — accepted
-on input and still returned on output — so existing callers keep working
-while new integrations use the ULCA-conformant shape. See
-skills/ai4ids-2710-service-ulca-alignment/PLAN.md for the full rationale.
+ULCA alignment: `task` and `inferenceEndPoint` are ULCA's literal field
+names on the `Service` schema (deployment-service-specs.yml); their values
+conform to ULCA's `ModelTask` (reusing the `TaskSpec` class Model already
+uses) and `InferenceAPIEndPoint` schemas respectively. The previous flat
+fields (`taskType`, `endpoint`, `hardwareDescription`, `api_key`,
+`serviceDescription`) are kept as deprecated aliases — accepted on input
+and still returned on output — so existing callers keep working while new
+integrations use the ULCA-conformant shape.
 """
 
 import re
@@ -55,7 +54,7 @@ class ServicePolicy(BaseSchema):
     accuracy: Optional[PolicyAccuracyEnum] = None
 
 
-# ── InferenceAPIEndPoint (AI4IDS-2710 — ULCA InferenceAPIEndPoint) ──
+# ── InferenceAPIEndPoint (ULCA InferenceAPIEndPoint) ──
 
 
 class SupportedFormats(BaseSchema):
@@ -103,8 +102,8 @@ _INFERENCE_SCHEMA_TASK_TYPES = {m.value for m in TaskTypeEnum} | {"translation",
 # as _INFERENCE_SCHEMA_TASK_TYPES above, but keyed so both spellings of a
 # pair resolve to the same equivalence set — used to check a `schema` entry
 # actually describes the service's own task, not just *some* recognized
-# task (AI4IDS-2710 follow-up: a TTS service could otherwise ship an `asr`
-# schema entry and nothing would catch it).
+# task (without this, a TTS service could ship an `asr` schema entry and
+# nothing would catch it).
 _TASK_TYPE_SCHEMA_EQUIVALENTS: Dict[str, set] = {
     "nmt": {"nmt", "translation"},
     "translation": {"nmt", "translation"},
@@ -116,9 +115,9 @@ _TASK_TYPE_SCHEMA_EQUIVALENTS: Dict[str, set] = {
 def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Shape check for ULCA's `schema` (InferenceSchemaArray): non-empty,
     each entry names a recognized taskType and carries `request`/`response`
-    keys. Deliberately shallow — see AI4IDS-2710 plan §5: full discriminated-
-    union validation of each task's exact contract (TranslationInference vs
-    ASRInference vs OCRInference, ...) is a separate, larger follow-up.
+    keys. Deliberately shallow: full discriminated-union validation of each
+    task's exact contract (TranslationInference vs ASRInference vs
+    OCRInference, ...) is a separate, larger follow-up not implemented here.
 
     Public (not `_`-prefixed): also called from service_service.py against
     a schema derived from the linked Model's own `schema`, since a derived
@@ -150,10 +149,10 @@ def schema_matches_task_type(
     task_type: Optional[str], schema_entries: Optional[List[Dict[str, Any]]]
 ) -> bool:
     """True if at least one `schema` entry's taskType is ULCA-equivalent to
-    `task_type` (AI4IDS-2710 follow-up). With nothing to compare
-    (`task_type`/`schema_entries` not yet known) this returns True — callers
-    decide separately whether either side is required at all; this only
-    catches an outright mismatch when both are present."""
+    `task_type`. With nothing to compare (`task_type`/`schema_entries` not
+    yet known) this returns True — callers decide separately whether either
+    side is required at all; this only catches an outright mismatch when
+    both are present."""
     if not task_type or not schema_entries:
         return True
     equivalents = _TASK_TYPE_SCHEMA_EQUIVALENTS.get(task_type, {task_type})
@@ -212,9 +211,8 @@ class InferenceAPIEndPoint(BaseSchema):
             '[{"taskType": "asr", "request": {...}, "response": {...}}]. '
             "Whichever entries end up present (supplied or derived) must "
             "include at least one whose taskType matches this service's "
-            "own task. See AI4IDS-2710 plan §5 for validation scope — this "
-            "is a declared contract, distinct from `expectedResponseSchema` "
-            "(a live smoke-test fixture)."
+            "own task. This is a declared contract, distinct from "
+            "`expectedResponseSchema` (a live smoke-test fixture)."
         ),
     )
     isSyncApi: Optional[bool] = Field(
@@ -275,10 +273,10 @@ def _rebuild_inference_endpoint(
 
 SERVICE_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
 SERVICE_ID_MAX_LEN = 255
-# ULCA's serviceId minLength — enforced on new creates only (AI4IDS-2710,
-# plan decision 4). NOT added to validate_service_id() below, which is also
-# used to validate existing serviceIds on GET/DELETE lookups; tightening it
-# there would break fetching/deleting any already-existing short-ID service.
+# ULCA's serviceId minLength — enforced on new creates only. NOT added to
+# validate_service_id() below, which is also used to validate existing
+# serviceIds on GET/DELETE lookups; tightening it there would break
+# fetching/deleting any already-existing short-ID service.
 SERVICE_ID_MIN_LEN_ON_CREATE = 5
 
 
@@ -336,9 +334,8 @@ def _resolve_and_check_description(
     resolved = description if description is not None else legacy_service_description
     if resolved is None:
         raise ValueError(
-            "description is required (25-1000 characters, ULCA alignment "
-            "AI4IDS-2710). `serviceDescription` is accepted as a "
-            "deprecated alias."
+            "description is required (25-1000 characters, ULCA alignment). "
+            "`serviceDescription` is accepted as a deprecated alias."
         )
     if not (_DESCRIPTION_MIN_LEN <= len(resolved) <= _DESCRIPTION_MAX_LEN):
         raise ValueError(
@@ -467,8 +464,8 @@ class ServiceCreateRequest(BaseSchema):
         if len(v) < SERVICE_ID_MIN_LEN_ON_CREATE:
             raise ValueError(
                 f"serviceId must be at least {SERVICE_ID_MIN_LEN_ON_CREATE} "
-                "characters (ULCA alignment, AI4IDS-2710). Only applies to "
-                "new services — existing shorter IDs are unaffected."
+                "characters (ULCA alignment). Only applies to new services "
+                "— existing shorter IDs are unaffected."
             )
         return v
 
@@ -584,7 +581,7 @@ class ServiceCreateRequest(BaseSchema):
 
 # Partial update — only the keys sent are merged, omit any field to leave it
 # unchanged. taskType/costPerUnit/unitSize/tierIds are shown together since
-# any substantive edit requires resending all four (AI4IDS-2524/2527).
+# any substantive edit requires resending all four.
 _SERVICE_UPDATE_EXAMPLE = {
     "serviceId": "ai4bharat/conformer-hi-asr-gpu",
     "description": (
@@ -612,9 +609,9 @@ class ServiceUpdateRequest(BaseSchema):
     model_config = ConfigDict(populate_by_name=True, json_schema_extra={"example": _SERVICE_UPDATE_EXAMPLE})
 
     # A request touching only these is the publish/unpublish toggle and is
-    # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER (see AI4IDS-2524/2525/2526/
-    # 2527 — requiring them unconditionally, including on this toggle, would
-    # break that flow; see _require_billing_fields_on_substantive_edit below).
+    # exempt from _BILLING_FIELDS_REQUIRED_TOGETHER — requiring them
+    # unconditionally, including on this toggle, would break that flow; see
+    # _require_billing_fields_on_substantive_edit below.
     _PUBLISH_ONLY_FIELDS = {"serviceId", "isPublished", "isTryItDefault"}
     _BILLING_FIELDS_REQUIRED_TOGETHER = ("taskType", "costPerUnit", "unitSize", "tierIds")
 
@@ -719,9 +716,9 @@ class ServiceUpdateRequest(BaseSchema):
         — this is a partial update, so any/all of these may be legitimately
         absent.
 
-        The 25-1000 char length rule is deliberately NOT re-enforced here
-        (PR review) — same scoping as SERVICE_ID_MIN_LEN_ON_CREATE, create
-        only. The admin edit form resends the stored description on every
+        The 25-1000 char length rule is deliberately NOT re-enforced here —
+        same scoping as SERVICE_ID_MIN_LEN_ON_CREATE, create only. The
+        admin edit form resends the stored description on every
         update (frontend/simple-ui/src/hooks/useServicesManagement.ts),
         so a service created before this rule existed, with a description
         under 25 chars, would otherwise 422 on its first unrelated edit
@@ -767,7 +764,7 @@ class ServiceUpdateRequest(BaseSchema):
         # THIS update — if only one side is being changed, this schema
         # (Pydantic layer, no DB access) can't see what the other side's
         # current stored value is; ServiceService.update_service does that
-        # comparison against the existing row (AI4IDS-2710 follow-up).
+        # comparison against the existing row.
         if (
             self.taskType is not None
             and self.inferenceEndPoint is not None
@@ -784,10 +781,10 @@ class ServiceUpdateRequest(BaseSchema):
     @model_validator(mode="after")
     def _require_billing_fields_on_substantive_edit(self) -> "ServiceUpdateRequest":
         """taskType/costPerUnit/unitSize/tierIds must be supplied together on
-        any edit beyond the publish/unpublish toggle (AI4IDS-2524/2525/2526/
-        2527). `_reconcile_ulca_fields` above already backfilled `taskType`
-        from `task` when only the latter was supplied, so checking the
-        `taskType` attribute here still covers both input channels.
+        any edit beyond the publish/unpublish toggle. `_reconcile_ulca_fields`
+        above already backfilled `taskType` from `task` when only the latter
+        was supplied, so checking the `taskType` attribute here still covers
+        both input channels.
 
         A request touching only serviceId/isPublished (the publish/unpublish
         action) is exempt — requiring these fields there too would 422 that
@@ -821,10 +818,9 @@ class ServiceBulkEndpointUpdateRequest(BaseSchema):
     Distinguished from ServiceUpdateRequest by the top-level "services" key,
     so both shapes can be accepted on the same route without ambiguity.
 
-    Bypasses ServiceUpdateRequest's billing-fields-required-together rule
-    (added for AI4IDS-2524/2527) by design: unlike that request, this shape
-    can only ever touch `endpoint`, so there is no substantive-edit case to
-    guard against here.
+    Bypasses ServiceUpdateRequest's billing-fields-required-together rule by
+    design: unlike that request, this shape can only ever touch `endpoint`,
+    so there is no substantive-edit case to guard against here.
     """
 
     services: List[ServiceEndpointUpdateItem] = Field(

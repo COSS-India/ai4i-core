@@ -290,7 +290,7 @@ class ServiceService:
             if payload.costPerUnit is not None and payload.unitSize is not None
             else None
         )
-        # AI4IDS-2710: `_reconcile_ulca_fields` on ServiceCreateRequest has
+        # `_reconcile_ulca_fields` on ServiceCreateRequest has
         # already merged the deprecated flat aliases and the new nested
         # `inferenceEndPoint`/`task` fields into one another, and guarantees
         # `inferenceEndPoint` is populated here — so the net-new ULCA fields
@@ -374,11 +374,11 @@ class ServiceService:
         if instance is None:
             raise EntityNotFoundError(f"Service '{payload.serviceId}'")
 
-        # AI4IDS-2710 follow-up: catch a taskType/schema mismatch even when
-        # only one side of the pair is being changed in this update (the
-        # Pydantic-layer check on ServiceUpdateRequest only catches it when
-        # both are touched together in the same payload, since it has no
-        # access to what's currently stored).
+        # Catch a taskType/schema mismatch even when only one side of the
+        # pair is being changed in this update (the Pydantic-layer check on
+        # ServiceUpdateRequest only catches it when both are touched
+        # together in the same payload, since it has no access to what's
+        # currently stored).
         self._validate_schema_task_type_consistency_on_update(
             new_task_type=payload.taskType,
             new_schema=(
@@ -423,7 +423,7 @@ class ServiceService:
         request_dict = payload.model_dump(exclude_unset=True)
         update_data: Dict[str, Any] = {}
 
-        # AI4IDS-2710: `_reconcile_ulca_fields` on ServiceUpdateRequest has
+        # `_reconcile_ulca_fields` on ServiceUpdateRequest has
         # already backfilled `description`/`endpoint`/`hardwareDescription`/
         # `api_key`/`taskType` from the new `task`/`inferenceEndPoint`
         # fields (and vice versa) whenever either channel was touched, so
@@ -717,7 +717,7 @@ class ServiceService:
         task_type: Optional[str],
     ) -> List[Dict[str, Any]]:
         """Resolve the `inferenceEndPoint.schema` to persist for a new
-        service (AI4IDS-2710 follow-up).
+        service.
 
         The caller's explicit value wins. Otherwise, derive one from the
         linked model's own `schema` — the request/response contract is a
@@ -774,10 +774,10 @@ class ServiceService:
         existing_schema: Optional[List[Dict[str, Any]]],
     ) -> None:
         """Catches the "only one side of the pair changed" case that
-        ServiceUpdateRequest's own validator can't see (AI4IDS-2710
-        follow-up) — e.g. taskType is changed but schema isn't touched, so
-        the OLD schema (for the OLD task type) would otherwise silently
-        stick around on a service that now claims a different task.
+        ServiceUpdateRequest's own validator can't see — e.g. taskType is
+        changed but schema isn't touched, so the OLD schema (for the OLD
+        task type) would otherwise silently stick around on a service that
+        now claims a different task.
 
         When BOTH are being changed together, ServiceUpdateRequest already
         validated the pair against each other — skip re-checking here to

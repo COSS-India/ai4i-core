@@ -1,6 +1,6 @@
 """add_ulca_inference_endpoint_fields_to_mm_services
 
-AI4IDS-2710: aligns mm_services with ULCA's InferenceAPIEndPoint schema
+Aligns mm_services with ULCA's InferenceAPIEndPoint schema
 (deployment-service-specs.yml). Adds the fields that had no home on Service
 before:
 

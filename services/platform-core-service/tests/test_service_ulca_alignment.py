@@ -1,4 +1,4 @@
-"""Unit tests: Service schema ULCA alignment (AI4IDS-2710).
+"""Unit tests: Service schema ULCA alignment.
 
 Covers:
 - `task`/`inferenceEndPoint` as real nested ULCA-shaped objects, accepted
@@ -201,10 +201,10 @@ class TestDescriptionRequired:
         assert req.description == _LONG_DESCRIPTION
 
     def test_update_description_too_short_when_supplied_is_accepted(self) -> None:
-        """PR review: the 25-1000 char rule fires on create only (same
-        scoping as SERVICE_ID_MIN_LEN_ON_CREATE) — the admin edit form
-        resends the stored description on every update, so a pre-existing
-        service with a short one must not 422 on an unrelated edit."""
+        """The 25-1000 char rule fires on create only (same scoping as
+        SERVICE_ID_MIN_LEN_ON_CREATE) — the admin edit form resends the
+        stored description on every update, so a pre-existing service with
+        a short one must not 422 on an unrelated edit."""
         req = ServiceUpdateRequest(
             serviceId="svc-1",
             description="too short",
@@ -227,8 +227,8 @@ class TestDescriptionRequired:
 
 class TestInferenceEndPointRequired:
     def test_missing_schema_allowed_at_pydantic_level(self) -> None:
-        """`schema` requiredness moved to the service layer (AI4IDS-2710
-        follow-up), so it can be derived from the linked model there — see
+        """`schema` requiredness moved to the service layer, so it can be
+        derived from the linked model there — see
         TestSchemaDerivationAndTaskTypeConsistency for the actual
         required/derived enforcement. At the Pydantic level, omitting it
         is allowed."""
@@ -312,8 +312,8 @@ class TestInferenceEndPointRequired:
 
 
 class TestSchemaTaskTypeCrossCheck:
-    """AI4IDS-2710 follow-up: nothing previously stopped a TTS service from
-    shipping an `asr`-shaped schema entry — fixed by cross-checking
+    """Nothing previously stopped a TTS service from shipping an
+    `asr`-shaped schema entry — fixed by cross-checking
     inferenceEndPoint.schema against the service's own task.type."""
 
     def test_mismatched_schema_task_type_rejected_on_create(self) -> None:
@@ -414,9 +414,9 @@ class TestNewFieldsPersistence:
         instance_mock = MagicMock(
             model_id="model-1", model_version="1.0", api_key=None,
             endpoint="http://existing", task_type="asr",
-            # AI4IDS-2710 follow-up: explicit None, not an unconfigured
-            # MagicMock attribute — see test_service_update.py's
-            # _make_service_orm for why that distinction matters here.
+            # Explicit None, not an unconfigured MagicMock attribute — see
+            # test_service_update.py's _make_service_orm for why that
+            # distinction matters here.
             inference_schema=None,
         )
         service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
@@ -447,7 +447,7 @@ class TestNewFieldsPersistence:
         _, update_data = service_repo.apply_updates.call_args.args
         assert update_data["provider_name"] == "New-Provider"
         # isMultilingualEnabled was never supplied — must NOT be forced to
-        # False and reset an existing True (AI4IDS-2710 plan §6.2/isMultilingualEnabled).
+        # False and reset an existing True.
         assert "is_multilingual_enabled" not in update_data
         # Regression guard: caught live (not by any mocked test) as a real
         # 500 — touching inferenceEndPoint for an unrelated sub-field (here,
@@ -519,10 +519,10 @@ class TestServiceToDictUlcaShape:
         """Unlike Model's inferenceApiKey, the flat `api_key` field must NOT
         be masked: inference-service reads this exact key off this exact
         response to authenticate the real outbound Triton call
-        (services/inference-service/services/base/task_service.py,
-        AI4IDS-1871's test_triton_url_redaction.py) — there is no other
-        source for it. Masking it 404-level breaks every auth-protected
-        Triton backend platform-wide."""
+        (services/inference-service/services/base/task_service.py, guarded
+        by its own test_triton_url_redaction.py) — there is no other
+        source for it. Masking it here breaks every auth-protected Triton
+        backend platform-wide."""
         serializers = importlib.import_module("app.services.model-management.serializers")
         out = serializers.service_to_dict(self._make_service_orm())
 
@@ -575,7 +575,6 @@ class TestRbacHidesInferenceEndPoint:
 
 
 # ── schema derivation from the linked model + update-side consistency ──────
-# (AI4IDS-2710 follow-up)
 
 
 class TestSchemaDerivationAndTaskTypeConsistency:
@@ -636,9 +635,8 @@ class TestSchemaDerivationAndTaskTypeConsistency:
     async def test_update_rejects_new_task_type_that_mismatches_existing_schema(self) -> None:
         """The one taskType/schema-mismatch scenario reachable through the
         real API: taskType is being changed (required whenever any
-        substantive edit happens, per AI4IDS-2524) while inferenceEndPoint
-        isn't touched at all — so the OLD, now-mismatched schema is still
-        the one on file."""
+        substantive edit happens) while inferenceEndPoint isn't touched at
+        all — so the OLD, now-mismatched schema is still the one on file."""
         service_repo = MagicMock()
         instance_mock = MagicMock(
             model_id="model-1", model_version="1.0", api_key=None,
@@ -693,9 +691,10 @@ class TestSchemaDerivationAndTaskTypeConsistency:
 
     def test_consistency_helper_catches_schema_only_change_against_existing_task_type(self) -> None:
         """Not reachable via the public API today (any inferenceEndPoint
-        edit must resend taskType too, per AI4IDS-2524), but the helper is
-        written to handle it correctly regardless — e.g. if that billing
-        rule is ever relaxed, or for any internal caller that bypasses it."""
+        edit must resend taskType too, per the billing-fields-required-
+        together rule), but the helper is written to handle it correctly
+        regardless — e.g. if that rule is ever relaxed, or for any internal
+        caller that bypasses it."""
         service_repo, model_repo, cache = MagicMock(), MagicMock(), MagicMock()
         svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
 

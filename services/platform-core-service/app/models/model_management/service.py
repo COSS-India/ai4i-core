@@ -59,9 +59,9 @@ class Service(Base):
     inference_server_type = Column(String(32), nullable=False, server_default="triton")
     ssl_verify = Column(Boolean, nullable=False, server_default="true")
     api_key = Column(String(255), nullable=True)
-    # AI4IDS-2710 — ULCA InferenceAPIEndPoint alignment. `inference_api_key`
-    # is the new canonical {name, value} shape; `api_key` above is kept only
-    # as a deprecated legacy value (no dual-write, no backfill).
+    # ULCA InferenceAPIEndPoint alignment. `inference_api_key` is the new
+    # canonical {name, value} shape; `api_key` above is kept only as a
+    # deprecated legacy value (no dual-write, no backfill).
     inference_api_key = Column(JSONB, nullable=True)
     # ULCA's `schema` (InferenceSchemaArray) — required at the API layer on
     # new creates, nullable here since existing rows have none and are never

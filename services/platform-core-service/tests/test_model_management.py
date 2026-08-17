@@ -513,7 +513,7 @@ class TestServiceServiceCreate:
         payload = ServiceCreateRequest(
             serviceId="svc-1",
             name="my-service",
-            # AI4IDS-2710: description/infraDescription now enforce ULCA's
+            # description/infraDescription now enforce ULCA's
             # minimum lengths, and `inferenceEndPoint.schema` is required.
             serviceDescription="A test service used for automated unit tests.",
             hardwareDescription="test-hw-cluster",
