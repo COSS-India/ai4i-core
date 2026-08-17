@@ -10,6 +10,7 @@ from pydantic import AliasChoices, Field
 
 from app.models.role_name import RoleName
 from app.schemas.base import BaseSchema
+from app.schemas.common import SuccessResponse
 
 
 class RoleResponse(BaseSchema):
@@ -52,3 +53,15 @@ class RoleAssignRequest(BaseSchema):
 class GuestServicesAssignRequest(BaseSchema):
     """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
     services: list[str] = Field(default_factory=list)
+
+
+class ListPermissionsResponse(SuccessResponse):
+    """GET /auth/permissions/"""
+
+    data: list[PermissionResponse]
+
+
+class ListInferencePermissionsResponse(SuccessResponse):
+    """GET /auth/inference/permissions"""
+
+    data: list[InferencePermissionResponse]

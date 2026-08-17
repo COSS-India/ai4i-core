@@ -146,8 +146,8 @@ class TestInferencePermissionCatalog:
 
         response = await list_inference_permissions(_admin=MagicMock(), svc=mock_svc)
 
-        assert response["success"] is True
-        items = response["data"]
+        assert response.success is True
+        items = [item.model_dump() for item in response.data]
         assert len(items) == 1
         assert items[0] == {"name": "nmt.inference", "label": "NMT.INFERENCE"}
         assert "id" not in items[0]
