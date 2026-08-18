@@ -81,7 +81,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   // any other route, including '/', which is otherwise unguarded.
   useEffect(() => {
     if (!isLoading && isAuthenticated && isBlockedForProgramAdmin) {
-      console.log('AuthGuard: Program Admin route not allowed, redirecting to usage dashboard');
+      console.log('AuthGuard: Usage Viewer route not allowed, redirecting to usage dashboard');
       router.push('/usage-dashboard');
     }
   }, [isLoading, isAuthenticated, isBlockedForProgramAdmin, router]);
@@ -111,7 +111,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     return null;
   }
 
-  // Program Admin on a non-allowed route — don't render children (will redirect)
+  // Usage Viewer on a non-allowed route — don't render children (will redirect)
   if (isAuthenticated && isBlockedForProgramAdmin) {
     return null;
   }

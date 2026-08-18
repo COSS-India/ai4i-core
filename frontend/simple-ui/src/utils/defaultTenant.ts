@@ -23,7 +23,7 @@ const ASSIGNABLE_ROLE_LABELS: Record<DefaultTenantAssignableRole, string> = {
   ADMIN: "Admin",
   MODERATOR: "Moderator",
   USER: "User",
-  "PROGRAM ADMIN": "Program Admin",
+  "PROGRAM ADMIN": "Usage Viewer",
 };
 
 export function isDefaultTenantAssignableRole(role: string): boolean {
@@ -60,7 +60,7 @@ export function isDefaultTenant(tenant: { organisation?: string | null }): boole
 export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "MODERATOR", label: "Moderator" },
-  { value: "PROGRAM ADMIN", label: "Program Admin" },
+  { value: "PROGRAM ADMIN", label: "Usage Viewer" },
 ] as const;
 
 export type DefaultOrgUserRole =
@@ -96,7 +96,7 @@ const PLATFORM_ROLE_LABELS: Record<string, string> = {
   MODERATOR: "Moderator",
   GUEST: "Guest",
   "TENANT ADMIN": `${INSTITUTION} Admin`,
-  "PROGRAM ADMIN": "Program Admin",
+  "PROGRAM ADMIN": "Usage Viewer",
 };
 
 export function isDefaultOrgUserRole(role: string): role is DefaultOrgUserRole {
