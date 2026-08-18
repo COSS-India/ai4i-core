@@ -136,6 +136,12 @@ const nextConfig = {
           { key: 'Content-Disposition', value: 'inline' },
         ],
       },
+      {
+        source: '/onboarding-guide/adopter-admin-guide.html',
+        headers: [
+          { key: 'Content-Disposition', value: 'inline' },
+        ],
+      },
     ];
   },
 };
