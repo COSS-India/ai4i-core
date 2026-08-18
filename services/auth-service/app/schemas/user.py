@@ -25,7 +25,7 @@ class UserListResponse(BaseSchema):
     # ORM exposes ``id``; API responses use ``user_id`` (field name).
     user_id: UUID = Field(validation_alias=AliasChoices("id", "user_id"))
     username: str
-    email: EmailStr
+    email: str
     phone_number: Optional[str] = None
     full_name: Optional[str] = None
     is_active: bool
