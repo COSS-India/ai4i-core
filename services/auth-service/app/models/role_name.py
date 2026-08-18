@@ -11,6 +11,7 @@ class RoleName(str, enum.Enum):
     GUEST = "GUEST"
     MODERATOR = "MODERATOR"
     TENANT_ADMIN = "TENANT ADMIN"
+    PROGRAM_ADMIN = "PROGRAM ADMIN"
 
 
 def role_name_to_str(name: RoleName | str) -> str:

@@ -1,5 +1,5 @@
 // LLM service testing page — reusable service page architecture
-// AI4IDS-2688: role-based LLM service visibility (Logged-in / Guest / Anonymous)
+// Role-based LLM service visibility (Logged-in / Guest / Anonymous)
 
 import {
   Alert,
@@ -71,7 +71,7 @@ const LLMPage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  // AI4IDS-2688 / AI4IDS-2704: Anonymous list is already limited to one
+  // Anonymous list is already limited to one
   // (isTryItDefault, else lowest service_id) in listLLMServices.
   const visibleServices = services;
 

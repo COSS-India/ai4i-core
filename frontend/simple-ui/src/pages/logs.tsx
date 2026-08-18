@@ -39,7 +39,7 @@ import {
   TelemetryTraceRecord,
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
-import { isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import { INSTITUTION, INSTITUTIONS, INSTITUTION_ARTICLE, isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { listTenants } from "../services/tenantService";
 import {
@@ -51,6 +51,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
+import { getPlatformName } from "../config/runtimeConfig";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
@@ -181,7 +182,7 @@ const LogsPage: React.FC = () => {
       if (isTenantAdmin && !authTenantId) {
         showToast({
           type: "error",
-          message: "Your account is not linked to a tenant. Contact an administrator.",
+          message: `Your account is not linked to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}. Contact an administrator.`,
         });
         router.push("/");
         return;
@@ -189,7 +190,7 @@ const LogsPage: React.FC = () => {
       if (!authTenantId && !isAdmin) {
         showToast({
           type: "error",
-          message: "You need to be assigned to a tenant to view logs.",
+          message: `You need to be assigned to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} to view logs.`,
         });
         router.push("/");
       }
@@ -466,7 +467,7 @@ const LogsPage: React.FC = () => {
       },
       {
         id: "tenant_id",
-        header: "Tenant",
+        header: INSTITUTION,
         thProps: { fontWeight: "semibold", color: "gray.700" },
         cell: (row) => (
           <Text fontSize="sm" color="gray.600">
@@ -511,7 +512,7 @@ const LogsPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Logs Dashboard - AI4Inclusion Console</title>
+        <title>{`Logs Dashboard - ${getPlatformName()}`}</title>
         <meta name="description" content="View telemetry traces and request outcomes" />
       </Head>
 
@@ -664,20 +665,20 @@ const LogsPage: React.FC = () => {
                           />
                           {canPickTenant && (
                             <TableSelectField
-                              label="Tenant"
+                              label={INSTITUTION}
                               value={selectedTenantId}
                               onChange={setSelectedTenantId}
                               formControlProps={{ w: { base: "full", sm: "200px" } }}
                               selectProps={{ isDisabled: tenantsLoading }}
                             >
-                              <option value="">All Tenants</option>
+                              <option value="">All {INSTITUTIONS}</option>
                               {tenantsLoading ? (
                                 <option value="" disabled>
-                                  Loading tenants…
+                                  Loading {INSTITUTIONS.toLowerCase()}…
                                 </option>
                               ) : tenantsError ? (
                                 <option value="" disabled>
-                                  Error loading tenants
+                                  Error loading {INSTITUTIONS.toLowerCase()}
                                 </option>
                               ) : activeTenants.length > 0 ? (
                                 activeTenants.map(
@@ -689,7 +690,7 @@ const LogsPage: React.FC = () => {
                                 )
                               ) : (
                                 <option value="" disabled>
-                                  No active tenants
+                                  No active {INSTITUTIONS.toLowerCase()}
                                 </option>
                               )}
                             </TableSelectField>

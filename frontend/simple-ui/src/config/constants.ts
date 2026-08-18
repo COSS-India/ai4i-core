@@ -12,6 +12,12 @@ import {
 
 export { UI_ERROR_MESSAGES, PARSE_ERROR_MESSAGES } from './errorShared';
 
+/** UI labels for tenant terminology. Change these to rename the concept everywhere. */
+export const INSTITUTION = "Institution";
+export const INSTITUTIONS = "Institutions";
+export const INSTITUTION_ARTICLE = /^[aeiou]/i.test(INSTITUTION) ? "an" : "a";
+export const INSTITUTION_ARTICLE_CAP = INSTITUTION_ARTICLE === "an" ? "An" : "A";
+
 // Supported languages with script codes
 export const SUPPORTED_LANGUAGES = [
   { code: "en", label: "English", scriptCode: "Latn" },
@@ -820,8 +826,8 @@ export const COMMON_ERRORS = {
     action: 'Contact admin',
   },
   INVALID_TENANT: {
-    title: 'Invalid tenant',
-    description: 'Invalid tenant configuration. Please contact support.',
+    title: `Invalid ${INSTITUTION.toLowerCase()}`,
+    description: `Invalid ${INSTITUTION.toLowerCase()} configuration. Please contact support.`,
     action: 'Contact support',
   },
   NOT_FOUND: {
@@ -939,7 +945,7 @@ export const TABS = {
   home: "home",
   modelManagement: "model-management",
   servicesManagement: "services-management",
-  tenantManagement: "tenant-management",
+  tenantManagement: "institution-management",
   apiKeyManagement: "api-key-management",
   logs: "logs",
   usageDashboard: "usage-dashboard",
@@ -1290,10 +1296,10 @@ export function getApiKeyInactiveReason(context: ApiKeyAccessContext): string {
     return "Your account is inactive.";
   }
   if (context.userTenantActive === false) {
-    return "Tenant access is suspended for your account.";
+    return `${INSTITUTION} access is suspended for your account.`;
   }
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.SUSPENDED)) {
-    return "Tenant is suspended — API keys are temporarily inactive and will resume automatically when the tenant is reactivated.";
+    return `${INSTITUTION} is suspended — API keys are temporarily inactive and will resume automatically when the ${INSTITUTION.toLowerCase()} is reactivated.`;
   }
   return "API key access is currently blocked.";
 }
@@ -1301,7 +1307,7 @@ export function getApiKeyInactiveReason(context: ApiKeyAccessContext): string {
 /** Human-readable reason when status is Revoked due to tenant deactivation. */
 export function getApiKeyRevokedReason(context: ApiKeyAccessContext): string | null {
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
-    return "Tenant was deactivated — this API key is revoked. Create a new key after the tenant is reactivated.";
+    return `${INSTITUTION} was deactivated — this API key is revoked. Create a new key after the ${INSTITUTION.toLowerCase()} is reactivated.`;
   }
   return null;
 }
@@ -1416,7 +1422,7 @@ export function formatModelTaskTypeLabel(taskType: string): string {
 /** Sentinel returned by GET for inferenceApiKey.value — never echo back on PATCH. */
 export const MODEL_API_KEY_REDACTED = "[REDACTED]";
 
-/** ULCA field length limits (AI4IDS-2478) — used for client-side create validation. */
+/** ULCA field length limits — used for client-side create validation. */
 export const MODEL_FIELD_LIMITS = {
   NAME_MIN: 5,
   NAME_MAX: 100,
@@ -1469,9 +1475,6 @@ export function formatServicePublishFilterLabel(filter: string): string {
   }
   return filter;
 }
-
-export { METERING } from "./meteringConstants";
-export type { MeteringHeatmapServiceKey } from "./meteringConstants";
 
 /** Password policy — keep in sync with auth-service PASSWORD_MIN/MAX_LENGTH. */
 export const PASSWORD_POLICY = {

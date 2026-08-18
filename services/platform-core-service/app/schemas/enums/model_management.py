@@ -201,18 +201,20 @@ class VersionStatusEnum(str, Enum):
     DEPRECATED = "DEPRECATED"
 
 
-class PolicyLatencyEnum(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
+class AudioFormatEnum(str, Enum):
+    """Audio format of an audio file (ULCA ``AudioFormat`` schema)."""
+
+    WAV = "wav"
+    PCM = "pcm"
+    MP3 = "mp3"
+    FLAC = "flac"
+    SPH = "sph"
 
 
-class PolicyCostEnum(str, Enum):
-    TIER_1 = "tier_1"
-    TIER_2 = "tier_2"
-    TIER_3 = "tier_3"
+class TextFormatEnum(str, Enum):
+    """Supported textual formats (ULCA ``TextFormat`` schema)."""
 
-
-class PolicyAccuracyEnum(str, Enum):
-    SENSITIVE = "sensitive"
-    STANDARD = "standard"
+    SRT = "srt"
+    TRANSCRIPT = "transcript"
+    WEBVTT = "webvtt"
+    ALTERNATIVES = "alternatives"

@@ -16,10 +16,14 @@ export function getConsentValidationError(accepted: boolean): string | undefined
   return accepted ? undefined : UI_ERROR_MESSAGES.CONSENT_REQUIRED;
 }
 
+/** Fixed product name in the recorded consent sentence. Must match docs/legal
+ *  (not PLATFORM_NAME) so the wording stays auditable across rebrands. */
+const CONSENT_PRODUCT_NAME = "AI Switch";
+
 const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, error }) => (
   <FormControl isRequired isInvalid={!!error}>
     <Checkbox isChecked={isChecked} onChange={(e) => onChange(e.target.checked)}>
-      I agree to AI4I Orchestrate&apos;s{" "}
+      I agree to {CONSENT_PRODUCT_NAME}&apos;s{" "}
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/terms-of-service.md"
         isExternal

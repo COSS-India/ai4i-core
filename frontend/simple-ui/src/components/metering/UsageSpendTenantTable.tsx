@@ -7,19 +7,21 @@ import {
   Tbody,
   Td,
   Text,
-  Th,
   Thead,
   Tr,
 } from "@chakra-ui/react";
 import React from "react";
+import { METERING } from "../../config/meteringConstants";
 import {
   USAGE_SPEND_ACCENT,
   aggregateTasks,
   formatSpendMoney,
+  formatSpendUnit,
   hasPopulatedQuotaUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import MeteringAsyncState from "./MeteringAsyncState";
+import { ThWithTip } from "../common/InfoTip";
 import { BudgetCell, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
 import { UsageSpendExpandRows } from "./UsageSpendExpandRows";
 
@@ -29,6 +31,12 @@ interface UsageSpendTenantTableProps {
   errorMessage: string | null;
   emptyMessage: string;
   filterTaskType: string;
+  /**
+   * Token usage is only meaningful for a single task type, so the column is
+   * hidden while the task-type filter is on "All" (drill-down stays available
+   * via the row chevron and the institution name).
+   */
+  showTokenUsage: boolean;
   sortOrder: "asc" | "desc";
   expanded: Set<string>;
   onToggleSort: () => void;
@@ -36,7 +44,29 @@ interface UsageSpendTenantTableProps {
   onTenantClick: (row: TenantUsageItem) => void;
 }
 
-const th = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
+const thSx = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
+
+/**
+ * Column widths for each layout, so the table still fills the container either
+ * way. Each layout lists every column it renders and must sum to 100%.
+ */
+const COLUMN_WIDTHS = {
+  withTokenUsage: {
+    institution: "18%",
+    tier: "8%",
+    allocatedBudget: "14%",
+    budget: "20%",
+    allocatedTokens: "14%",
+    tokenUsage: "26%",
+  },
+  withoutTokenUsage: {
+    institution: "24%",
+    tier: "12%",
+    allocatedBudget: "18%",
+    budget: "26%",
+    allocatedTokens: "20%",
+  },
+} as const;
 
 function TenantUsageColumn({
   row,
@@ -70,6 +100,7 @@ function TenantUsageColumn({
         remaining={row.usage.remaining}
         percentage={row.usage.percentage}
         unit={row.usage.unit ?? ""}
+        layout="topRight"
       />
     );
   }
@@ -121,12 +152,19 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
   errorMessage,
   emptyMessage,
   filterTaskType,
+  showTokenUsage,
   sortOrder,
   expanded,
   onToggleSort,
   onToggleExpand,
   onTenantClick,
-}) => (
+}) => {
+  const widths = showTokenUsage
+    ? COLUMN_WIDTHS.withTokenUsage
+    : COLUMN_WIDTHS.withoutTokenUsage;
+  const tips = METERING.USAGE_SPEND.TOOLTIPS;
+
+  return (
   <MeteringAsyncState
     isLoading={isLoading}
     isEmpty={!isLoading && tenants.length === 0}
@@ -137,13 +175,50 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <Th {...th} w="22%">TENANT</Th>
-            <Th {...th} w="10%">TIER</Th>
-            <Th {...th} w="14%" cursor="pointer" userSelect="none" onClick={onToggleSort}>
-              SPEND <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
-            </Th>
-            <Th {...th} w="22%">BUDGET</Th>
-            <Th {...th} w="32%">USAGE</Th>
+            <ThWithTip w={widths.institution} sx={thSx}>
+              INSTITUTION
+            </ThWithTip>
+            <ThWithTip w={widths.tier} sx={thSx}>
+              TIER
+            </ThWithTip>
+            <ThWithTip
+              message={tips.ALLOCATED_BUDGET}
+              w={widths.allocatedBudget}
+              sx={thSx}
+            >
+              ALLOCATED BUDGET (INR)
+            </ThWithTip>
+            <ThWithTip
+              message={tips.BUDGET}
+              w={widths.budget}
+              sx={thSx}
+              cursor="pointer"
+              userSelect="none"
+              onClick={onToggleSort}
+            >
+              <Text as="span">
+                BUDGET{" "}
+                <Text as="span" fontSize="10px">
+                  {sortOrder === "desc" ? "↓" : "↑"}
+                </Text>
+              </Text>
+            </ThWithTip>
+            <ThWithTip
+              message={tips.ALLOCATED_TOKENS}
+              w={widths.allocatedTokens}
+              sx={thSx}
+            >
+              ALLOCATED TOKENS
+            </ThWithTip>
+            {showTokenUsage ? (
+              <ThWithTip
+                message={tips.TOKEN_USAGE}
+                w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}
+                sx={thSx}
+              >
+                TOKEN USAGE
+              </ThWithTip>
+            ) : null}
           </Tr>
         </Thead>
         <Tbody>
@@ -186,27 +261,38 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                   </Td>
                   <Td><TierBadge label={row.tier} /></Td>
                   <Td>
-                    <Text fontWeight="bold" fontSize="14px">
-                      {formatSpendMoney(row.spend, row.currency)}
+                    <Text fontWeight="semibold" fontSize="13px">
+                      {formatSpendMoney(row.budget.limit, row.currency)}
                     </Text>
                   </Td>
                   <Td>
-                    <BudgetCell {...row.budget} currency={row.currency} />
+                    <BudgetCell {...row.budget} currency={row.currency} layout="topRight" />
                   </Td>
                   <Td>
-                    <TenantUsageColumn
-                      row={row}
-                      taskCount={taskCount}
-                      showBar={showBar}
-                      multiTiers={multiTiers}
-                      tiersCount={tiers.length}
-                      isOpen={isOpen}
-                      onToggleExpand={onToggleExpand}
-                      onTenantClick={onTenantClick}
-                    />
+                    <Text fontWeight="semibold" fontSize="13px">
+                      {hasPopulatedQuotaUsage(row.usage) && row.usage.quotaLimit != null
+                        ? formatSpendUnit(row.usage.quotaLimit, row.usage.unit ?? "tokens")
+                        : "—"}
+                    </Text>
                   </Td>
+                  {showTokenUsage ? (
+                    <Td>
+                      <TenantUsageColumn
+                        row={row}
+                        taskCount={taskCount}
+                        showBar={showBar}
+                        multiTiers={multiTiers}
+                        tiersCount={tiers.length}
+                        isOpen={isOpen}
+                        onToggleExpand={onToggleExpand}
+                        onTenantClick={onTenantClick}
+                      />
+                    </Td>
+                  ) : null}
                 </Tr>
-                {isOpen && canExpand ? <UsageSpendExpandRows row={row} /> : null}
+                {isOpen && canExpand ? (
+                  <UsageSpendExpandRows row={row} trailingColSpan={showTokenUsage ? 2 : 1} />
+                ) : null}
               </React.Fragment>
             );
           })}
@@ -214,6 +300,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       </Table>
     </Box>
   </MeteringAsyncState>
-);
+  );
+};
 
 export default UsageSpendTenantTable;

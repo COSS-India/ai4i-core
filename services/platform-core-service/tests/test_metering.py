@@ -453,15 +453,57 @@ class TestModelBreakdown:
         assert row["name"] == "orphan-service"
         assert row["model_name"] is None
 
-    async def test_name_falls_back_when_service_id_missing_from_db(self):
+    async def test_service_dropped_when_missing_from_registry(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("deleted-service", 10))
-        repo = self._repo({})  # service_id not found (e.g. soft-deleted)
+        repo = self._repo({})  # service_id not found (e.g. soft-deleted/renamed away)
         svc = MeteringService(client=client, service_repo=repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
-        row = next(s for s in result["services"] if s["service_id"] == "deleted-service")
-        assert row["name"] == "deleted-service"
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "deleted-service" not in service_ids
+
+    async def test_ghost_dropped_alongside_live_service_unaffected(self):
+        # Mixed Prometheus result: one still-registered service plus one
+        # ghost id in the same window — pins that the filter only removes
+        # the ghost and leaves the live service's own numbers untouched.
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._rows({"live-service": 90, "deleted-service": 40})
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._rows({"live-service": 12345, "deleted-service": 999})
+            return self._rows({"live-service": 100, "deleted-service": 50})
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({"live-service": ("Live Service", "gemma-3-27b-it")})
+        svc = MeteringService(client=client, service_repo=repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "deleted-service" not in service_ids
+        assert service_ids == ["live-service"]
+
+        row = result["services"][0]
+        assert row["requests"] == 100
+        assert row["success_pct"] == 90.0
+        assert row["native_units"] == 12345.0
+        assert row["name"] == "Live Service"
+        assert row["model_name"] == "gemma-3-27b-it"
+
+    async def test_name_falls_back_to_service_id_when_registry_lookup_fails(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("orphan-service", 10))
+        repo = self._repo({})
+        repo.get_names_and_models_by_service_ids = AsyncMock(side_effect=RuntimeError("db down"))
+        svc = MeteringService(client=client, service_repo=repo)
+
+        # Registry lookup errored out — can't tell deleted from unreachable,
+        # so don't hide the row, just show the raw id as before.
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "orphan-service")
+        assert row["name"] == "orphan-service"
         assert row["model_name"] is None
 
     async def test_empty_service_id_dropped(self):
@@ -562,6 +604,238 @@ class TestModelBreakdown:
         await svc.model_breakdown(tenant=None, time_range="24h")
 
         repo.get_names_and_models_by_service_ids.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestRegistryModelCount:
+    async def test_no_model_repo_returns_none(self):
+        svc = MeteringService(client=MagicMock())
+        assert await svc.registry_model_count() is None
+
+    async def test_delegates_to_model_repo_count_distinct_models(self):
+        repo = MagicMock()
+        repo.count_distinct_models = AsyncMock(return_value=42)
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+
+        assert await svc.registry_model_count() == 42
+        repo.count_distinct_models.assert_awaited_once_with()
+
+    async def test_db_failure_returns_none_not_raises(self):
+        repo = MagicMock()
+        repo.count_distinct_models = AsyncMock(side_effect=RuntimeError("db down"))
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+
+        assert await svc.registry_model_count() is None
+
+
+class TestModelConsumptionRanking:
+    """AI4IDS-2790 — model-level aggregation of model_breakdown's service rows."""
+
+    def _svc_row(self, service_id, name, model_name, requests, success_pct=100.0):
+        return {
+            "service_id": service_id,
+            "name": name,
+            "model_name": model_name,
+            "requests": requests,
+            "native_units": 0.0,
+            "success_pct": success_pct,
+        }
+
+    def test_no_traffic_returns_empty(self):
+        services = [self._svc_row("s1", "Svc 1", "gemma", 0)]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+        assert most_used is None
+        assert ranked == []
+        assert grand_total == 0
+
+    def test_single_service_per_model(self):
+        services = [
+            self._svc_row("s1", "Svc 1", "gemma", 300),
+            self._svc_row("s2", "Svc 2", "llama", 100),
+        ]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert most_used == {"model_name": "gemma", "requests": 300, "consumption_pct": 75.0}
+        assert grand_total == 400
+        assert [m["model_name"] for m in ranked] == ["gemma", "llama"]
+        assert ranked[0]["rank"] == 1
+        assert ranked[0]["consumption_pct"] == 75.0
+        assert ranked[1]["consumption_pct"] == 25.0
+        assert ranked[0]["formatted_requests"] == "300"
+
+    def test_multi_service_model_sums_requests_and_shares(self):
+        # gemma: two services, 300 + 100 = 400 requests; llama: 300 requests. grand_total=700.
+        services = [
+            self._svc_row("s1", "Svc 1", "gemma", 300),
+            self._svc_row("s2", "Svc 2", "gemma", 100),
+            self._svc_row("s3", "Svc 3", "llama", 300),
+        ]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert grand_total == 700
+        gemma = next(m for m in ranked if m["model_name"] == "gemma")
+        assert gemma["requests"] == 400
+        # SHARE of grand_total, not an average of the two services' individual shares
+        # (which would be (42.857...+14.285...)/2 = 28.57 — must NOT be that).
+        assert gemma["consumption_pct"] == round(400 / 700 * 100, 2)
+        # most_used ranks by total requests -> gemma (400) beats llama (300)
+        assert most_used["model_name"] == "gemma"
+        assert most_used["requests"] == 400
+
+    def test_most_used_always_agrees_with_top_ranked_model(self):
+        """Regression for the case where ranking by an averaged per-service %
+        could crown a different model than the one with the most requests —
+        A/a1=300, A/a2=100 (400 total), B/b1=250. A must win both `most_used`
+        and rank #1, since both are now derived from the same total-requests
+        ordering."""
+        services = [
+            self._svc_row("a1", "Svc A1", "A", 300),
+            self._svc_row("a2", "Svc A2", "A", 100),
+            self._svc_row("b1", "Svc B1", "B", 250),
+        ]
+        most_used, ranked, _ = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert most_used["model_name"] == "A"
+        assert ranked[0]["model_name"] == "A"
+        # consumption_pct values sum to ~100% across the full ranked list
+        # (exact here; in general only within a couple hundredths of 100 due
+        # to per-row 2dp rounding).
+        assert round(sum(m["consumption_pct"] for m in ranked), 2) == 100.0
+
+    def test_case_insensitive_identity_merges_into_one_model(self):
+        """"Gemma" and "gemma" (e.g. two versions saved with different name
+        casing) must merge into a single ranked row, matching
+        generate_model_id's own case-insensitive identity rule — not split
+        the same model's traffic across two rows."""
+        services = [
+            self._svc_row("s1", "Svc 1", "Gemma", 300),
+            self._svc_row("s2", "Svc 2", "gemma", 100),
+        ]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert grand_total == 400
+        assert len(ranked) == 1
+        assert ranked[0]["requests"] == 400
+        assert ranked[0]["consumption_pct"] == 100.0
+        # First-seen casing is kept as the display name.
+        assert ranked[0]["model_name"] == "Gemma"
+        assert most_used["model_name"] == "Gemma"
+
+    def test_unresolved_model_name_excluded_entirely(self):
+        """A service whose model lookup failed isn't a model here — unlike
+        the old fallback-to-service-name behaviour, it contributes to neither
+        `most_used` nor `top_models` (it still appears in the raw per-service
+        `breakdown` list elsewhere, just not in this model-level view), and
+        its requests are excluded from `grand_total` too."""
+        services = [
+            self._svc_row("s1", "Svc 1", "gemma", 50),
+            self._svc_row("s2", "Orphan Service", None, 500),
+        ]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert most_used["model_name"] == "gemma"
+        assert [m["model_name"] for m in ranked] == ["gemma"]
+        # grand_total only counts resolved-model services, so gemma is 100% of it —
+        # NOT 50/550. Callers must render this grand_total alongside
+        # consumption_pct, not the full window's total requests.
+        assert grand_total == 50
+        assert ranked[0]["consumption_pct"] == 100.0
+
+    def test_all_unresolved_returns_empty(self):
+        services = [self._svc_row("s1", "Orphan Service", None, 50)]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+
+        assert most_used is None
+        assert ranked == []
+        assert grand_total == 0
+
+    def test_limit_caps_ranked_list(self):
+        services = [
+            self._svc_row(f"s{i}", f"Svc {i}", f"model-{i}", 10 * (i + 1))
+            for i in range(5)
+        ]
+        _, ranked, _ = MeteringService.model_consumption_ranking(services, limit=2)
+        assert len(ranked) == 2
+        assert [m["rank"] for m in ranked] == [1, 2]
+
+    def test_zero_request_services_excluded_from_consumption_pct(self):
+        services = [
+            self._svc_row("s1", "Svc 1", "gemma", 100),
+            self._svc_row("s2", "Svc 2", "unused-model", 0),
+        ]
+        _, ranked, _ = MeteringService.model_consumption_ranking(services, limit=10)
+        assert [m["model_name"] for m in ranked] == ["gemma"]
+        assert ranked[0]["consumption_pct"] == 100.0
+
+
+class TestModelConsumptionKpis:
+    """AI4IDS-2790 — overall_success_rate_pct is REQUEST-WEIGHTED (matches the
+    FE's existing fallback formula), not a plain average across services."""
+
+    def _row(self, service_id, name, model_name, requests, success_pct):
+        return {
+            "service_id": service_id,
+            "name": name,
+            "model_name": model_name,
+            "requests": requests,
+            "native_units": 0.0,
+            "success_pct": success_pct,
+        }
+
+    def test_request_weighted_not_plain_average(self):
+        # Plain average would give (100+50)/2 = 75.0 — must NOT be that.
+        services = [
+            self._row("s1", "Svc 1", "gemma", 900, 100.0),
+            self._row("s2", "Svc 2", "llama", 100, 50.0),
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["overall_success_rate_pct"] == 95.0
+
+    def test_zero_request_services_excluded_from_average(self):
+        services = [
+            self._row("s1", "Svc 1", "gemma", 100, 80.0),
+            self._row("s2", "Svc 2", "unused-model", 0, 0.0),
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["overall_success_rate_pct"] == 80.0
+
+    def test_no_traffic_gives_none_rate_but_zero_active_models(self):
+        """0 is a real answer for active_models ("no models were active");
+        only overall_success_rate_pct is genuinely undefined with no data."""
+        services = [self._row("s1", "Svc 1", "gemma", 0, 0.0)]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["overall_success_rate_pct"] is None
+        assert kpis["active_models"] == 0
+        assert kpis["worst"] is None
+
+    def test_active_models_counts_distinct_resolved_model_names(self):
+        services = [
+            self._row("s1", "Svc 1", "gemma", 10, 100.0),
+            self._row("s2", "Svc 2", "gemma", 5, 100.0),   # same model, 2nd service
+            self._row("s3", "Svc 3", "llama", 20, 100.0),
+            self._row("s4", "Svc 4", None, 15, 100.0),      # unresolved -> excluded
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["active_models"] == 2
+
+    def test_active_models_is_case_insensitive(self):
+        """"Gemma" and "gemma" must count as one model, matching
+        generate_model_id's case-insensitive identity rule — not two."""
+        services = [
+            self._row("s1", "Svc 1", "Gemma", 10, 100.0),
+            self._row("s2", "Svc 2", "gemma", 5, 100.0),
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["active_models"] == 1
+
+    def test_worst_picks_highest_failure_rate_among_active(self):
+        services = [
+            self._row("s1", "Svc 1", "gemma", 100, 90.0),   # 10% failure
+            self._row("s2", "Svc 2", "llama", 50, 60.0),    # 40% failure — worst
+            self._row("s3", "Svc 3", "idle-model", 0, 0.0),  # no traffic -> excluded
+        ]
+        kpis = MeteringService.model_consumption_kpis(services)
+        assert kpis["worst"]["service_id"] == "s2"
 
 
 @pytest.mark.asyncio

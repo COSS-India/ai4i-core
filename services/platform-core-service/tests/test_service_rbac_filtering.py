@@ -5,7 +5,7 @@ service.read is deliberately granted to every role (Admin, Moderator, Tenant
 Admin, User, Guest) because every inference-submission flow depends on this
 endpoint to resolve a serviceId — a 403 for non-admin roles would break
 inference platform-wide. The actual defect was that the unfiltered response
-exposes api_key, policy, and billing/health/hardware internals to every
+exposes api_key and billing/health/hardware internals to every
 caller, including the fully public try-it endpoint.
 """
 
@@ -59,7 +59,6 @@ _FULL_SERVICE = {
         },
     },
     "api_key": "super-secret-key",
-    "policy": {"accuracy": "sensitive", "cost": "tier_1"},
     "healthStatus": "healthy",
     "benchmarks": {"p99": 120},
     "hardwareDescription": "8x A100",
@@ -79,7 +78,7 @@ _FULL_SERVICE = {
 }
 
 _SENSITIVE_FIELDS = {
-    "api_key", "policy", "healthStatus", "benchmarks", "hardwareDescription",
+    "api_key", "healthStatus", "benchmarks", "hardwareDescription",
     "costPerUnit", "unitSize", "unitRate", "tierIds", "tierNames",
     "inferenceServerType", "sslVerify", "publishedAt", "unpublishedAt",
     "deletedAt", "createdAt", "createdBy", "updatedBy",
@@ -176,7 +175,6 @@ class TestListServicesRoute:
 
         item = result["data"]["services"][0]
         assert "api_key" not in item
-        assert "policy" not in item
         assert item["serviceId"] == "svc-1"
 
 
@@ -234,5 +232,4 @@ class TestTryItServiceListRoute:
 
         item = result["data"]["services"][0]
         assert "api_key" not in item
-        assert "policy" not in item
         assert item["serviceId"] == "svc-1"

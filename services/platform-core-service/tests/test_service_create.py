@@ -76,14 +76,22 @@ for _name in _newly_stubbed:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# `description`/`inferenceEndPoint.infraDescription` now
+# enforce ULCA's minimum lengths (25 and 5 chars respectively) and
+# `inferenceEndPoint.schema` is required with no legacy alias — so the base
+# fixture needs a long-enough description/hardwareDescription plus an
+# explicit schema even though it still exercises the deprecated flat
+# `serviceDescription`/`hardwareDescription`/`endpoint`/`taskType` aliases
+# everywhere else.
 _VALID_BASE = dict(
     name="my-service",
-    serviceDescription="desc",
-    hardwareDescription="hw",
+    serviceDescription="A test service used for automated unit tests.",
+    hardwareDescription="test-hw-cluster",
     modelId="model-1",
     modelVersion="1.0",
     endpoint="http://localhost:8080",
     taskType="asr",
+    inferenceEndPoint={"schema": [{"taskType": "asr", "request": {}, "response": {}}]},
     costPerUnit=0.01,
     unitSize=1,
     tierIds=["tier-1"],
@@ -315,6 +323,10 @@ class TestTierIdsExistenceCheck:
         svc._services.get_tier_names_by_ids = AsyncMock(return_value={})
         svc._services.get_by_service_id = AsyncMock(return_value=MagicMock(
             model_id="model-1", model_version="1.0", api_key=None,
+            # Explicit None, not an unconfigured MagicMock attribute — see
+            # test_service_update.py's _make_service_orm for why that
+            # distinction matters here.
+            inference_schema=None,
         ))
 
         payload = ServiceUpdateRequest(

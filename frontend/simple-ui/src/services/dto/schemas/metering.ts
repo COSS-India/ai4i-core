@@ -129,46 +129,6 @@ export const tenantConsumptionResponseSchema = z.object({
   ...meteringResponseMetaSchema,
 });
 
-export const serviceConsumptionSummarySchema = z.object({
-  active_services: z.number().optional(),
-  most_used: z
-    .object({
-      service: z.string(),
-      requests: z.number(),
-    })
-    .nullable()
-    .optional(),
-  highest_failure_rate: z
-    .object({
-      service: z.string(),
-      failure_rate_pct: z.number(),
-    })
-    .nullable()
-    .optional(),
-});
-
-export const serviceRowSchema = z.object({
-  service: z.string(),
-  metering_unit: z.string().optional(),
-  requests: z.number(),
-  percentage: z.number().optional(),
-  native_units: z.number().nullable().optional(),
-  native_unit_suffix: z.string(),
-  success_pct: z.number(),
-  failure_rate_pct: z.number().optional(),
-  failed: z.number().optional(),
-  vs_prev_period_pct: z.number().nullable().optional(),
-});
-
-export const serviceConsumptionResponseSchema = z.object({
-  scope: meteringScopeSchema,
-  summary: serviceConsumptionSummarySchema.nullable().optional(),
-  service_breakdown: z.array(serviceRowSchema),
-  throughput: throughputDataSchema.optional(),
-  request_volume: meteringGraphSchema.nullable().optional(),
-  ...meteringResponseMetaSchema,
-});
-
 export const modelConsumptionRowSchema = z.object({
   service_id: z.string(),
   name: z.string(),
@@ -180,7 +140,17 @@ export const modelConsumptionRowSchema = z.object({
   failure_rate_pct: z.number(),
 });
 
+export const topModelRowSchema = z.object({
+  rank: z.number(),
+  model_name: z.string(),
+  consumption_pct: z.number(),
+  requests: z.number(),
+  formatted_requests: z.string(),
+});
+
 export const modelConsumptionSummarySchema = z.object({
+  total_models: z.number().nullable().optional(),
+  active_models: z.number().nullable().optional(),
   most_used: z
     .object({
       service_id: z.string().nullable().optional(),
@@ -195,6 +165,8 @@ export const modelConsumptionSummarySchema = z.object({
 export const modelConsumptionResponseSchema = z.object({
   scope: meteringScopeSchema,
   summary: modelConsumptionSummarySchema.nullable().optional(),
+  top_models: z.array(topModelRowSchema).optional().default([]),
+  top_models_total_requests: z.number().optional().default(0),
   breakdown: z.array(modelConsumptionRowSchema),
   ...meteringResponseMetaSchema,
 });

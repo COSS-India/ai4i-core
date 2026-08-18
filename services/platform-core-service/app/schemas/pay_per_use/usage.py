@@ -8,6 +8,12 @@ class SpendItem(BaseModel):
     modelTaskType: str
     unit: str
     consumption: float
+    # Quota allocated for this task type this billing_month, summed across tenants'
+    # CURRENT tier only (see PPUUsageService.get_summary) — None when no tenant in
+    # scope has a quota snapshot for it. consumption is the used-side counterpart,
+    # already in the same unit; a per-type field generalizes to any number of task
+    # types in scope (unlike a single flat total, which can only ever hold one unit).
+    allocated: Optional[float] = None
     spend: float
     percentage: float
 
@@ -20,6 +26,11 @@ class UsageSummaryResponse(BaseModel):
     budgetExceededTenants: int
     spendChangePercent: Optional[float] = None
     spendByModelTaskType: list[SpendItem]
+    # Money totals: always computable (single currency, one INR figure per tenant),
+    # summed across every tenant with a budget assignment covering this billing_month
+    # (see PPUUsageService.get_summary / _resolve_budget's has_budget).
+    totalAllocatedBudget: float = 0
+    totalRemainingBudget: float = 0
 
 
 class TaskTypeUsage(BaseModel):

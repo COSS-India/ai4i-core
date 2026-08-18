@@ -5,32 +5,36 @@ import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { Spinner, Center } from '@chakra-ui/react';
 import { useAuth } from '../../hooks/useAuth';
-import { canAccessUsageDashboard } from '../../utils/rbac';
+import { canAccessUsageDashboard, isProgramAdminUser } from '../../utils/rbac';
 
 interface AuthGuardProps {
   children: React.ReactNode;
 }
 
 // Routes that require authentication
-// Note: /llm is excluded to allow anonymous "try-it" access (AI4IDS-2688)
+// Note: /llm is excluded to allow anonymous "try-it" access
 const protectedRoutes = new Set([
   '/asr', '/tts', '/pipeline', '/pipeline-builder', '/model-management',
-  '/services-management', '/tenant-management', '/api-key-management', '/profile',
+  '/services-management', '/institution-management', '/api-key-management', '/profile',
   '/logs', '/usage-dashboard', '/traces',
-  // AI4IDS-2604 / AI4IDS-2605: restore '/alerts-management', '/pii-management' when re-enabling UI
+  // Restore '/alerts-management', '/pii-management' when re-enabling UI
   '/policy-management',
 ]);
 
 // Routes that require ADMIN role
-// AI4IDS-2604: Alerts Management removed from UI — restore '/alerts-management' when re-enabling
+// Alerts Management removed from UI — restore '/alerts-management' when re-enabling
 const adminOnlyRoutes = new Set<string>([/* '/alerts-management' */]);
 
 // Routes limited to Usage Dashboard eligible roles (Adopter Admin, Tenant Admin, platform ADMIN)
 const usageDashboardRoutes = new Set(['/usage-dashboard']);
 
 // Routes that allow anonymous access with limited functionality
-// AI4IDS-2688: LLM try-it for anonymous users (replaces NMT as primary try-it surface)
+// LLM try-it for anonymous users (replaces NMT as primary try-it surface)
 const tryItRoutes = new Set(['/llm', '/nmt']);
+
+// PROGRAM ADMIN is a restricted role — only these routes are reachable, everything
+// else (including '/') redirects to the Usage Dashboard.
+const programAdminAllowedRoutes = new Set(['/usage-dashboard', '/profile']);
 
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const router = useRouter();
@@ -45,6 +49,8 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   const canAccessUsage = canAccessUsageDashboard(user?.roles);
+  const isProgramAdmin = isProgramAdminUser(user?.roles);
+  const isBlockedForProgramAdmin = isProgramAdmin && !programAdminAllowedRoutes.has(router.pathname);
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -71,6 +77,15 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     }
   }, [isLoading, isUsageDashboardRoute, isAuthenticated, canAccessUsage, router]);
 
+  // PROGRAM ADMIN is restricted to Usage Dashboard (and Profile) — redirect away from
+  // any other route, including '/', which is otherwise unguarded.
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && isBlockedForProgramAdmin) {
+      console.log('AuthGuard: Usage Viewer route not allowed, redirecting to usage dashboard');
+      router.push('/usage-dashboard');
+    }
+  }, [isLoading, isAuthenticated, isBlockedForProgramAdmin, router]);
+
   // Show loading spinner while checking auth
   if (isLoading) {
     return (
@@ -93,6 +108,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 
   // If usage dashboard route and user lacks access, don't render children (will redirect)
   if (isUsageDashboardRoute && isAuthenticated && !canAccessUsage) {
+    return null;
+  }
+
+  // Usage Viewer on a non-allowed route — don't render children (will redirect)
+  if (isAuthenticated && isBlockedForProgramAdmin) {
     return null;
   }
 

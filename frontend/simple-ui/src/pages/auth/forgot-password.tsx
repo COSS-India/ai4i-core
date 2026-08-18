@@ -24,6 +24,7 @@ import Head from "next/head";
 import Link from "next/link";
 import React, { useState } from "react";
 import { authService } from "../../services/authService";
+import { getPlatformName } from "../../config/runtimeConfig";
 
 type Phase =
   | { kind: "idle" }
@@ -75,7 +76,7 @@ const ForgotPasswordPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Forgot Password — AI4I Platform</title>
+        <title>{`Forgot Password — ${getPlatformName()}`}</title>
       </Head>
       <Box minH="100vh" bg={pageBg} py={{ base: 8, md: 16 }}>
         <Container maxW="md">

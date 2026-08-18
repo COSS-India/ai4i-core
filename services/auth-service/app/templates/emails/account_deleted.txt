@@ -1,10 +1,10 @@
-AI4I Platform
+{{ platform_name }}
 ================================
 
 Account deleted
 ---------------
 
-Hi {{ display_name }}, your AI4I Platform account has been permanently
+Hi {{ display_name }}, your {{ platform_name }} account has been permanently
 deleted.
 
 WASN'T YOU? Contact your administrator immediately if you did not
@@ -14,4 +14,4 @@ Your personal information has been removed from your account and your account ha
 If you believe this was done in error, please reach out to your administrator.
 
 --
-This is an automated message from AI4I Platform.
+This is an automated message from {{ platform_name }}.

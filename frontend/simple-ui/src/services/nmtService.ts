@@ -204,7 +204,7 @@ function mapModelManagementServiceToNMTDetails(service: any): NMTServiceDetailsR
 async function listAnonymousNMTServices(): Promise<NMTServiceDetailsResponse[]> {
   try {
     const raw = await listTryItNMTServices();
-    // AI4IDS-2704: prefer isTryItDefault; else legacy IndicTrans name, else lowest id
+    // Prefer isTryItDefault; else legacy IndicTrans name, else lowest id
     const selected = selectTryItDefaultService(raw, (list) =>
       list.find((s) => s.name === LEGACY_TRY_IT_NMT_SERVICE_NAME) ??
       pickLowestServiceId(list),
