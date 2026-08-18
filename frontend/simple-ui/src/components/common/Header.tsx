@@ -20,8 +20,11 @@ import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { INSTITUTION } from "../../config/constants";
-import { ONBOARDING_GUIDE_HREF } from "../../config/onboardingGuide";
-import { isDefaultAdminUser, isTenantAdminUser } from "../../utils/rbac";
+import {
+  ONBOARDING_GUIDE_HREF,
+  canSeeOnboardingGuide,
+  getOnboardingGuideHref,
+} from "../../config/onboardingGuide";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -59,8 +62,8 @@ const Header: React.FC = () => {
   const profileDisplayName =
     (user?.full_name ?? "").trim() || "N/A";
   const showOnboardingGuideMenu =
-    showUserMenu &&
-    (isTenantAdminUser(user?.roles) || isDefaultAdminUser(user?.roles));
+    showUserMenu && canSeeOnboardingGuide(user?.roles);
+  const onboardingGuideHref = getOnboardingGuideHref(user?.roles);
   const showHomeOnboardingGuideLink =
     !showUserMenu && router.pathname === "/";
 
@@ -276,7 +279,7 @@ const Header: React.FC = () => {
                     <MenuItem
                       onClick={() => {
                         if (!checkSessionExpiry()) return;
-                        window.open(ONBOARDING_GUIDE_HREF, "_blank", "noopener,noreferrer");
+                        window.open(onboardingGuideHref, "_blank", "noopener,noreferrer");
                       }}
                     >
                       Onboarding Guide
