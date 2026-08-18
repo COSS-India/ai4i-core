@@ -27,6 +27,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import { SET_PASSWORD_TOKEN, isSetPasswordTokenStatus } from "../../config/constants";
+import { getPlatformName } from "../../config/runtimeConfig";
 import { authService } from "../../services/authService";
 import { SetPasswordStatusResponse } from "../../types/auth";
 import { PASSWORD_POLICY } from "../../config/constants";
@@ -184,7 +185,7 @@ const SetPasswordPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Set Your Password — AI4I</title>
+        <title>{`Set Your Password — ${getPlatformName()}`}</title>
       </Head>
       <Box minH="100vh" bg={pageBg} py={{ base: 8, md: 16 }}>
         <Container maxW="md">

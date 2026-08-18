@@ -74,6 +74,7 @@ import {
   isModelVersionStatusActive,
 } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
+import { getPlatformName } from "../config/runtimeConfig";
 
 /** Registry UI model row — requires fields used in forms/tables. */
 type Model = ModelDetails & {
@@ -873,7 +874,7 @@ const ModelManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Model Management - AI4I Platform</title>
+        <title>{`Model Management - ${getPlatformName()}`}</title>
         <meta name="description" content="Manage and configure AI models" />
       </Head>
 

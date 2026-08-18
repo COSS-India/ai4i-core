@@ -1,10 +1,10 @@
 {% extends "_base.html" %}
-{% block title %}Verify your email — AI4I Platform{% endblock %}
-{% block preheader %}Confirm your email to activate your AI4I Platform account. Link expires in {{ expires_hours }} hours.{% endblock %}
+{% block title %}Verify your email — {{ platform_name }}{% endblock %}
+{% block preheader %}Confirm your email to activate your {{ platform_name }} account. Link expires in {{ expires_hours }} hours.{% endblock %}
 {% block heading %}Verify your email{% endblock %}
 {% block body %}
   <p style="margin:0 0 20px 0;">
-    Hi {{ display_name }}, thanks for signing up for AI4I Platform. Confirm
+    Hi {{ display_name }}, thanks for signing up for {{ platform_name }}. Confirm
     this is your email address to activate your account &mdash; you can sign
     in with the password you chose at signup as soon as it&rsquo;s verified.
   </p>

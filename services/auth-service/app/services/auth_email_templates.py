@@ -27,6 +27,11 @@ def _display_name(user: User) -> str:
     return user.full_name or "there"
 
 
+def _platform_name() -> str:
+    """Adopter-configurable product name (PLATFORM_NAME / default AI Switch)."""
+    return settings.get_platform_name()
+
+
 def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
     """HTTPS-only URL builder for email-embedded tokens.
 
@@ -60,7 +65,10 @@ def build_reset_url(token: str) -> str:
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
     """Render an HTML+text template pair into an EmailMessage."""
-    html, text = _renderer.render(template, ctx)
+    html, text = _renderer.render(
+        template,
+        {**ctx, "platform_name": _platform_name()},
+    )
     return EmailMessage(to=to, subject=subject, html_body=html, text_body=text)
 
 
@@ -72,10 +80,11 @@ def render_welcome(user: User) -> EmailMessage:
     Per security spec: no username in any email body. Only display_name
     (which falls back to a generic greeting, never the username) and the
     email address itself (which the recipient already knows)."""
+    name = _platform_name()
     return _render(
         "welcome",
         to=user.email,
-        subject="Welcome to AI4I Platform",
+        subject=f"Welcome to {name}",
         ctx={
             "display_name": _display_name(user),
             "email": user.email,
@@ -84,10 +93,11 @@ def render_welcome(user: User) -> EmailMessage:
 
 
 def render_verify_email(user: User, verify_token: str) -> EmailMessage:
+    name = _platform_name()
     return _render(
         "verify_email",
         to=user.email,
-        subject="Verify your email — AI4I Platform",
+        subject=f"Verify your email — {name}",
         ctx={
             "display_name": _display_name(user),
             "verify_url": build_verify_url(verify_token),
@@ -102,10 +112,11 @@ def render_setup_link(user: User, setup_token: str) -> EmailMessage:
     Per product spec (reference UI: 'Welcome to AI4I!'): no greeting, no
     username; the recipient sees an account-was-created message and a
     Set Your Password CTA. Single-use, 48-hour expiry."""
+    name = _platform_name()
     return _render(
         "setup_link",
         to=user.email,
-        subject="Welcome to AI4I — Set Your Password",
+        subject=f"Welcome to {name} — Set Your Password",
         ctx={
             "setup_url": build_setup_url(setup_token),
             "expires_hours": settings.setup_token_expire_hours,
@@ -117,10 +128,11 @@ def render_password_reset(user: User, reset_token: str) -> EmailMessage:
     """Password-reset email triggered by /auth/forgot-password. Short 30-min
     expiry per security spec — much tighter than setup/verify. Content
     aligned to product spec: no greeting, no username, terse copy."""
+    name = _platform_name()
     return _render(
         "password_reset",
         to=user.email,
-        subject="Reset Your Password — AI4I",
+        subject=f"Reset Your Password — {name}",
         ctx={
             "reset_url": build_reset_url(reset_token),
             "expires_minutes": settings.reset_token_expire_minutes,
@@ -130,10 +142,11 @@ def render_password_reset(user: User, reset_token: str) -> EmailMessage:
 
 def render_password_changed(user: User, when: Optional[datetime] = None) -> EmailMessage:
     when = when or datetime.now(timezone.utc)
+    name = _platform_name()
     return _render(
         "password_changed",
         to=user.email,
-        subject="Your AI4I Platform password was changed",
+        subject=f"Your {name} password was changed",
         ctx={
             "display_name": _display_name(user),
             "when": when.strftime("%Y-%m-%d %H:%M:%S"),
@@ -142,10 +155,11 @@ def render_password_changed(user: User, when: Optional[datetime] = None) -> Emai
 
 
 def render_quota_limit_updated(user: User, tier_name: str) -> EmailMessage:
+    name = _platform_name()
     return _render(
         "quota_limit_updated",
         to=user.email,
-        subject="Tier quota limit updated — AI4I Platform",
+        subject=f"Tier quota limit updated — {name}",
         ctx={
             "display_name": _display_name(user),
             "tier_name": tier_name,
@@ -160,10 +174,11 @@ def render_account_deleted(email: str, full_name: Optional[str] = None) -> Email
     anonymised and passed explicitly so this function is safe to call after
     the DB commit that overwrites those fields.
     """
+    name = _platform_name()
     return _render(
         "account_deleted",
         to=email,
-        subject="Your AI4I Platform account has been deleted",
+        subject=f"Your {name} account has been deleted",
         ctx={
             "display_name": full_name or "there",
         },

@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title %}Tier Quota Limit Updated — AI4I Platform{% endblock %}
+{% block title %}Tier Quota Limit Updated — {{ platform_name }}{% endblock %}
 {% block preheader %}The monthly quota limit for your tier has been updated and will take effect on the next billing cycle.{% endblock %}
 {% block heading %}Quota limit update scheduled, {{ display_name }}{% endblock %}
 {% block body %}
@@ -13,5 +13,5 @@
   </p>
 {% endblock %}
 {% block footer_extra %}
-  This notification was sent because you are a tenant administrator on the AI4I Platform.
+  This notification was sent because you are a tenant administrator of {{ platform_name }}.
 {% endblock %}

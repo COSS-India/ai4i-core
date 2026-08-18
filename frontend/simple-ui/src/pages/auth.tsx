@@ -22,6 +22,7 @@ import LoginForm from "../components/auth/LoginForm";
 import RegisterForm from "../components/auth/RegisterForm";
 import { ACCOUNT_DELETED_LOGIN_MESSAGE } from "../components/profile/hooks/useDeleteAccount";
 import { getDefaultLandingPath } from "../utils/navigation";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const AuthPage: React.FC = () => {
   const router = useRouter();
@@ -120,8 +121,8 @@ const AuthPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Sign In - AI4I Platform</title>
-        <meta name="description" content="Sign in or sign up to access AI4I Platform" />
+        <title>{`Sign In - ${getPlatformName()}`}</title>
+        <meta name="description" content={`Sign in or sign up to access ${getPlatformName()}`} />
       </Head>
 
       <Box
@@ -136,7 +137,7 @@ const AuthPage: React.FC = () => {
         <Container maxW="md">
           <VStack spacing={8}>
             <Heading size="xl" color="gray.800" textAlign="center" userSelect="none" cursor="default" tabIndex={-1}>
-              AI4I Platform
+              {getPlatformName()}
             </Heading>
 
             <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" w="full" boxShadow="lg">
