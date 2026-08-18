@@ -783,8 +783,12 @@ async def get_model_consumption(
     is_admin = _is_platform_admin(request)
     scope_tenant, scope_tenant_name = await _resolve_tenant_scope(request, svc, tenant_id, is_admin)
 
+    # v3: TopModelRow/ServiceModelRow gained a required `model_id` field.
+    # Bumped from v2 so a payload cached just before this deploy (with no
+    # model_id) can't be served back and fail ModelConsumptionResponse
+    # validation with a 500 for up to the 60s TTL — it starts from a cold key.
     cache_key = (
-        f"metering:model-consumption:v2:{window}:{limit}:{scope_tenant_name or 'all'}:"
+        f"metering:model-consumption:v3:{window}:{limit}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}"
     )
     cached = await _cache_get(redis, cache_key)
