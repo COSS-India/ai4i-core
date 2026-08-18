@@ -1249,26 +1249,27 @@ class TestTenantRenameContinuity:
     one continuous number across a rename, shown under its current name —
     not split into a pre-rename and a post-rename row."""
 
-    async def test_active_tenants_groups_by_tenant_id_not_name(self):
-        """Prometheus does the merging via the promql group-by key. If this
-        ever regressed to `sum by(tenant)`, a rename would split one tenant's
-        traffic into two rows instead of keeping it continuous."""
+    async def test_active_tenants_groups_by_tenant_id_and_tenant(self):
+        """The promql groups by BOTH tenant_id and tenant (not tenant_id
+        alone) — tenant rides along so a pre-cutover row (empty tenant_id)
+        still carries a usable name instead of being dropped; the service
+        layer (_merge_tenant_rows) is what re-merges same-tenant_id rows so
+        a same-window rename still counts as one continuous tenant."""
         svc = _make_service(query_return=[])
         await svc.active_tenants("30d")
 
         promql = svc._client.query.call_args[0][0]
-        assert "sum by(tenant_id)" in promql
-        assert "sum by(tenant)" not in promql.replace("sum by(tenant_id)", "")
+        assert "sum by(tenant_id, tenant)" in promql
 
-    async def test_rename_merges_into_one_row_under_current_name(self):
-        """Simulates the post-rename state: Prometheus already summed the
-        pre-rename and post-rename samples under the shared tenant_id (that's
-        what `sum by(tenant_id)` guarantees), so this asserts the service
-        layer doesn't split that back apart and resolves it to the tenant's
-        *current* name rather than a stale or "unknown" one."""
+    async def test_rename_within_window_merges_into_one_row(self):
+        """A tenant renamed WITHIN the tracked window now produces two raw
+        Prometheus rows sharing one tenant_id but different tenant labels
+        (5 requests as "OldOrg", 8 as "NewOrg") — the service layer must
+        merge them back into one row under the tenant's *current* name,
+        not show two separate "tenants" or lose either count."""
         prom_rows = [
-            # 5 requests as "OldOrg" + 8 as "NewOrg" already merged by Prometheus
-            {"metric": {"tenant_id": "7"}, "value": [0, "13"]},
+            {"metric": {"tenant_id": "7", "tenant": "OldOrg"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "7", "tenant": "NewOrg"}, "value": [0, "8"]},
         ]
         valid_ids_result = MagicMock()
         valid_ids_result.all.return_value = [(7,)]
@@ -1283,6 +1284,23 @@ class TestTenantRenameContinuity:
         assert result["count"] == 1
         assert result["active_tenants"] == [
             {"tenant": "NewOrg", "request_count": 13}
+        ]
+
+    async def test_pre_cutover_row_shown_under_its_own_name_not_dropped(self):
+        """A pre-cutover row (empty tenant_id, written before the label
+        existed) can't be validated against the active-tenant-id DB check,
+        but it still carries a real tenant name — it must be kept and shown
+        under that name, not dropped and not merged into one "unknown"
+        bucket with unrelated pre-cutover tenants."""
+        prom_rows = [
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg"}, "value": [0, "42"]},
+        ]
+        svc = _make_service(query_return=prom_rows)  # no auth_db -> no id validation
+        result = await svc.active_tenants("30d")
+
+        assert result["count"] == 1
+        assert result["active_tenants"] == [
+            {"tenant": "LegacyOrg", "request_count": 42}
         ]
 
 
@@ -1362,11 +1380,14 @@ class TestResolveTenantNames:
 
 
 @pytest.mark.asyncio
-class TestEmptyTenantIdExcludedFromRanking:
-    """A pre-tenant_id series (empty tenant_id label) can't be attributed to
-    a real tenant. All three tenant-ranked endpoints must drop such rows
-    instead of bucketing them into a shared "unknown" entry that could
-    out-rank (or dilute the total for) a real tenant."""
+class TestEmptyTenantIdFallsBackToName:
+    """A pre-tenant_id row (empty tenant_id label, written before the label
+    existed) can't be resolved via the auth DB. All three tenant-ranked
+    endpoints must keep such a row and show it under its own tenant name —
+    not drop it, and not merge it into a shared "unknown" entry with other
+    unrelated pre-cutover rows that could out-rank (or dilute the total for)
+    a real tenant. A tenant renamed WITHIN the window must still merge back
+    into one row (tested via the shared _merge_tenant_rows helper)."""
 
     def _name_lookup_db(self, rows):
         """auth_db mock resolving tenant_id -> name for _resolve_tenant_names
@@ -1377,41 +1398,56 @@ class TestEmptyTenantIdExcludedFromRanking:
         auth_db.execute = AsyncMock(return_value=db_result)
         return auth_db
 
-    async def test_usage_concentration_drops_empty_tenant_id(self):
+    async def test_usage_concentration_keeps_pre_cutover_row_under_its_name(self):
         prom_rows = [
-            {"metric": {"tenant_id": "1"}, "value": [0, "5"]},
-            {"metric": {}, "value": [0, "100"]},  # pre-cutover series, no tenant_id
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg"}, "value": [0, "100"]},
         ]
         svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
         result = await svc.usage_concentration(limit=10, time_range="30d")
 
         tenants = {t["tenant"] for t in result["top_tenants"]}
-        assert tenants == {"acme"}
-        assert result["grand_total"] == 5
+        assert tenants == {"acme", "LegacyOrg"}
+        assert result["grand_total"] == 105
 
-    async def test_tenant_ranking_drops_empty_tenant_id(self):
+    async def test_tenant_ranking_keeps_pre_cutover_row_under_its_name(self):
         prom_rows = [
-            {"metric": {"tenant_id": "1"}, "value": [0, "5"]},
-            {"metric": {}, "value": [0, "100"]},
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg"}, "value": [0, "100"]},
         ]
         svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
         result = await svc.tenant_ranking(limit=10, time_range="30d")
 
         tenants = {t["tenant"] for t in result["tenants"]}
-        assert tenants == {"acme"}
-        assert result["grand_total"] == 5
+        assert tenants == {"acme", "LegacyOrg"}
+        assert result["grand_total"] == 105
 
-    async def test_heatmap_drops_empty_tenant_id(self):
+    async def test_heatmap_keeps_pre_cutover_row_under_its_name(self):
         prom_rows = [
-            {"metric": {"tenant_id": "1", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "5"]},
-            {"metric": {PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "100"]},
+            {"metric": {"tenant_id": "1", "tenant": "acme", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "100"]},
         ]
         svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
         result = await svc.usage_by_tenant_service(limit=10, time_range="30d", services=None)
 
         tenants = {t["tenant"] for t in result["tenants"]}
-        assert tenants == {"acme"}
-        assert result["grand_total"] == 5
+        assert tenants == {"acme", "LegacyOrg"}
+        assert result["grand_total"] == 105
+
+    async def test_two_unrelated_pre_cutover_rows_stay_separate_not_unknown(self):
+        """Two DIFFERENT pre-cutover tenants (both empty tenant_id) must not
+        collapse into one shared bucket just because they share an empty id
+        — they're kept apart by their distinct tenant names."""
+        prom_rows = [
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrgA"}, "value": [0, "30"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrgB"}, "value": [0, "70"]},
+        ]
+        svc = _make_service(query_return=prom_rows)
+        result = await svc.tenant_ranking(limit=10, time_range="30d")
+
+        tenants = {t["tenant"]: t["requests"] for t in result["tenants"]}
+        assert tenants == {"LegacyOrgA": 30, "LegacyOrgB": 70}
+        assert result["grand_total"] == 100
 
 
 class TestFormatCount:

@@ -72,6 +72,14 @@ def _tenant_id_label(request: Request) -> str:
     Unlike ``tenant`` (the organisation name), this value never changes for
     a given tenant, so metering queries that filter/group by it stay correct
     across a tenant rename — see MeteringService for the read side.
+
+    Deliberately returns "" (NOT "unknown", unlike ``_tenant_label`` above)
+    when the header is missing — this is a pre-cutover series, written
+    before this label existed. MeteringService's read side (active_tenants /
+    usage_concentration / tenant_ranking / usage_by_tenant_service) checks
+    this value's truthiness to detect that case and fall back to the
+    ``tenant`` name label instead; "unknown" would be truthy and silently
+    break that fallback.
     """
     return (request.headers.get("X-Tenant-Id") or "").strip()
 

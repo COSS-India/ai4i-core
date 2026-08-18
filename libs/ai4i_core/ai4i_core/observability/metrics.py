@@ -40,7 +40,7 @@ class MetricsCollector:
         self.enterprise_requests_total = Counter(
             "telemetry_obsv_requests_total",
             "Total enterprise requests",
-            ["method", "endpoint", "status_code", "tenant", "service_id"],
+            ["method", "endpoint", "status_code", "tenant", "tenant_id", "service_id", "model_id"],
             registry=self.registry,
         )
 

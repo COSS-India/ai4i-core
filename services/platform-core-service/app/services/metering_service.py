@@ -210,11 +210,15 @@ class MeteringService:
         self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
     ) -> dict:
         """
-        Groups by ``tenant_id`` (immutable), not ``tenant`` (the organisation
-        name) — a tenant rename changes the name label on new series but
-        never the id, so grouping by id keeps pre- and post-rename traffic
-        as one continuous tenant instead of splitting/dropping it. See
-        ObservabilityMiddleware for how both labels are set.
+        Groups by ``tenant_id`` (immutable) primarily, not ``tenant`` (the
+        organisation name) — a tenant rename changes the name label on new
+        series but never the id. The PromQL groups by BOTH labels (see
+        _by_tenant_promql) so a pre-cutover row (empty tenant_id) still
+        carries a usable name instead of being dropped; _merge_tenant_rows
+        then re-merges rows sharing a real tenant_id back into one entry, so
+        a same-window rename still shows as one continuous tenant rather
+        than splitting. See ObservabilityMiddleware for how both labels are
+        set.
 
         `valid_names`: pass a pre-fetched set of currently-ACTIVE tenant ids
         (or None, meaning "auth DB was unavailable, don't filter") when
@@ -251,21 +255,30 @@ class MeteringService:
         # Filter Prometheus results to only tenants that are currently ACTIVE
         # in the DB. Without this, deleted tenants (or tenants that are no
         # longer ACTIVE) whose Prometheus series are still within the
-        # retention window inflate the count.
+        # retention window inflate the count. Only a non-empty tenant_id can
+        # be checked this way — a pre-cutover row (empty tenant_id) can't be
+        # validated against the DB, so it's kept rather than dropped: losing
+        # 30d of every tenant's history right after deploy is worse than
+        # occasionally keeping a stale/deleted tenant's last pre-cutover
+        # traffic for that same window (it ages out of the window on its
+        # own, same tradeoff documented on `model_breakdown`).
         rows = [
             r for r in prom_results
-            if valid_names is None or r["metric"].get("tenant_id") in valid_names
+            if valid_names is None
+            or not r["metric"].get("tenant_id")
+            or r["metric"].get("tenant_id") in valid_names
         ]
+        merged = self._merge_tenant_rows(rows)
         names = (
-            await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
+            await self._resolve_tenant_names({m["tenant_id"] for m in merged if m["tenant_id"]})
             if resolve_names else {}
         )
         tenants = [
             {
-                "tenant": names.get(r["metric"].get("tenant_id", ""), r["metric"].get("tenant", "unknown")),
-                "request_count": int(float(r["value"][1])),
+                "tenant": names.get(m["tenant_id"], "") or m["tenant"] or "unknown",
+                "request_count": int(m["value"]),
             }
-            for r in rows
+            for m in merged
         ]
         return {
             "active_tenants": tenants,
@@ -387,23 +400,24 @@ class MeteringService:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
-        # Rows with no tenant_id (series written before the label existed)
-        # can't be attributed to a real tenant, so they're dropped here
-        # rather than ranked — otherwise they'd all bucket into one
-        # "unknown" pseudo-tenant that could out-rank a real one.
-        rows = [
-            r for r in results
-            if float(r["value"][1]) > 0 and r["metric"].get("tenant_id")
-        ]
-        names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
+        rows = [r for r in results if float(r["value"][1]) > 0]
+        # A tenant renamed WITHIN this window produces two rows sharing one
+        # tenant_id but different tenant labels (see _by_tenant_promql's
+        # `by(tenant_id, tenant)`) — merge them back into one row so the
+        # rename doesn't split the tenant's traffic. Pre-cutover rows (empty
+        # tenant_id) have nothing else to merge by, so they're kept as their
+        # own entry under whatever name they carried, instead of being
+        # dropped or collapsing into one "unknown" bucket.
+        merged = self._merge_tenant_rows(rows)
+        names = await self._resolve_tenant_names({m["tenant_id"] for m in merged if m["tenant_id"]})
 
         all_tenants = sorted(
             [
                 {
-                    "tenant": names.get(r["metric"].get("tenant_id", ""), r["metric"].get("tenant", "unknown")),
-                    "requests": max(1, round(float(r["value"][1]))),
+                    "tenant": names.get(m["tenant_id"], "") or m["tenant"] or "unknown",
+                    "requests": max(1, round(m["value"])),
                 }
-                for r in rows
+                for m in merged
             ],
             key=lambda t: t["requests"],
             reverse=True,
@@ -847,23 +861,19 @@ class MeteringService:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
-        # Rows with no tenant_id (series written before the label existed)
-        # can't be attributed to a real tenant, so they're dropped here
-        # rather than ranked — otherwise they'd all bucket into one
-        # "unknown" pseudo-tenant that could out-rank a real one.
-        rows = [
-            r for r in results
-            if float(r["value"][1]) > 0 and r["metric"].get("tenant_id")
-        ]
-        names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
+        rows = [r for r in results if float(r["value"][1]) > 0]
+        # See usage_concentration's comment above — same merge-back-by-id,
+        # fall-back-to-name-when-empty reasoning applies here.
+        merged = self._merge_tenant_rows(rows)
+        names = await self._resolve_tenant_names({m["tenant_id"] for m in merged if m["tenant_id"]})
 
         all_tenants = sorted(
             [
                 {
-                    "tenant": names.get(r["metric"].get("tenant_id", ""), r["metric"].get("tenant", "unknown")),
-                    "requests": max(1, round(float(r["value"][1]))),
+                    "tenant": names.get(m["tenant_id"], "") or m["tenant"] or "unknown",
+                    "requests": max(1, round(m["value"])),
                 }
-                for r in rows
+                for m in merged
             ],
             key=lambda t: t["requests"],
             reverse=True,
@@ -913,35 +923,44 @@ class MeteringService:
     @classmethod
     def _accumulate_tenant_task_counts(
         cls, results: list, active_services: list[str]
-    ) -> dict[str, dict[str, int]]:
-        """(tenant_id, task) -> request count, from a sum-by(tenant_id,endpoint) query
-        result. Keyed by tenant_id (immutable), not the tenant name label, so a
-        rename doesn't split one tenant's traffic across two buckets. Rows with
-        no tenant_id (series written before the label existed) are dropped
-        rather than bucketed under a shared empty key — otherwise they'd all
-        collapse into one "unknown" pseudo-tenant that could out-rank a real
-        one in the top-N heatmap."""
-        tenant_task: dict[str, dict[str, int]] = {}
+    ) -> dict[str, dict]:
+        """merge_key -> {"tenant_id", "tenant", "tasks": {task: count}}, from a
+        sum-by(tenant_id, tenant, endpoint) query result.
+
+        merge_key is tenant_id when present, so a same-window rename (which
+        produces rows sharing one tenant_id but different tenant labels)
+        buckets into ONE entry instead of splitting across two. It falls
+        back to the tenant name when tenant_id is empty (pre-cutover series,
+        written before the label existed) — those rows are kept and shown
+        under their own name instead of being dropped or collapsing into one
+        "unknown" pseudo-tenant that could out-rank a real one."""
+        tenant_task: dict[str, dict] = {}
         for r in results:
             ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
             tenant_id_label = r["metric"].get("tenant_id", "")
+            tenant_label = r["metric"].get("tenant", "")
             task = cls._resolve_task_key(ep)
-            if task not in active_services or not tenant_id_label:
+            if task not in active_services:
                 continue
             v = max(0, round(float(r["value"][1])))
             if v <= 0:
                 continue
-            bucket = tenant_task.setdefault(tenant_id_label, {})
-            bucket[task] = bucket.get(task, 0) + v
+            key = tenant_id_label or f"name:{tenant_label}"
+            bucket = tenant_task.setdefault(
+                key, {"tenant_id": tenant_id_label, "tenant": tenant_label, "tasks": {}}
+            )
+            if tenant_label:
+                bucket["tenant"] = tenant_label
+            bucket["tasks"][task] = bucket["tasks"].get(task, 0) + v
         return tenant_task
 
     @staticmethod
     def _rank_tenants_by_total(
-        tenant_task: dict[str, dict[str, int]]
-    ) -> list[tuple[str, int, dict[str, int]]]:
-        """(tenant, total, tasks) sorted by total descending."""
+        tenant_task: dict[str, dict]
+    ) -> list[tuple[dict, int]]:
+        """(bucket, total) sorted by total descending."""
         return sorted(
-            [(t, sum(tasks.values()), tasks) for t, tasks in tenant_task.items()],
+            [(bucket, sum(bucket["tasks"].values())) for bucket in tenant_task.values()],
             key=lambda x: x[1],
             reverse=True,
         )
@@ -984,12 +1003,15 @@ class MeteringService:
     ) -> dict:
         """Heatmap matrix: top-N tenants × per-service request counts.
 
-        Uses a single sum by(tenant_id, exported_endpoint) query with offset
-        subtraction (same approach as service_breakdown) to avoid increase()
-        extrapolation errors. Grouped/filtered by tenant_id (immutable), not
-        the tenant name label, so a rename doesn't split or drop a tenant's
-        historical rows. When ``tenant_id`` (or ``tenant``) is given, the
-        matrix is scoped to that single tenant.
+        Uses a single sum by(tenant_id, tenant, exported_endpoint) query with
+        offset subtraction (same approach as service_breakdown) to avoid
+        increase() extrapolation errors. ``tenant`` rides alongside
+        ``tenant_id`` in the group-by so a pre-cutover row (empty tenant_id)
+        still carries a usable name; _accumulate_tenant_task_counts then
+        re-buckets by tenant_id (falling back to name only when empty) so a
+        same-window rename doesn't split a tenant's traffic across two
+        buckets. When ``tenant_id`` (or ``tenant``) is given, the matrix is
+        scoped to that single tenant.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
@@ -1004,26 +1026,30 @@ class MeteringService:
 
         if window:
             promql = (
-                f"sum by(tenant_id, {PROMETHEUS_API_PATH_LABEL}) ("
+                f"sum by(tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
         else:
-            promql = f"sum by(tenant_id, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
+            promql = f"sum by(tenant_id, tenant, {PROMETHEUS_API_PATH_LABEL}) ({metric}) > 0"
 
         results = await self._client.query(promql)
         tenant_task = self._accumulate_tenant_task_counts(results, active_services)
         ranked = self._rank_tenants_by_total(tenant_task)
-        grand_total = sum(r[1] for r in ranked)
+        grand_total = sum(total for _, total in ranked)
         top = ranked[:limit]
-        names = await self._resolve_tenant_names({tid for tid, _, _ in top})
+        names = await self._resolve_tenant_names(
+            {bucket["tenant_id"] for bucket, _ in top if bucket["tenant_id"]}
+        )
 
         rows = [
             self._heatmap_row(
-                idx + 1, names.get(tid, tid), total, tasks, active_services, grand_total
+                idx + 1,
+                names.get(bucket["tenant_id"], "") or bucket["tenant"] or bucket["tenant_id"] or "unknown",
+                total, bucket["tasks"], active_services, grand_total,
             )
-            for idx, (tid, total, tasks) in enumerate(top)
+            for idx, (bucket, total) in enumerate(top)
         ]
 
         return {
@@ -1199,11 +1225,16 @@ class MeteringService:
 
     @staticmethod
     def _tenant_delta_promql(metric: str, time_range: Optional[str]) -> str:
+        # Groups by tenant (the name) alongside tenant_id so a pre-cutover
+        # row (empty tenant_id) still carries a usable name instead of being
+        # merged into one anonymous bucket — see _merge_tenant_rows, which
+        # re-merges same-tenant_id rows so a same-window rename (which now
+        # produces two rows sharing one tenant_id) doesn't split back apart.
         window = TIME_RANGES.get(time_range or "all")
         if not window:
-            return f"sum by(tenant_id) ({metric}) > 0"
+            return f"sum by(tenant_id, tenant) ({metric}) > 0"
         return (
-            f"sum by(tenant_id) ("
+            f"sum by(tenant_id, tenant) ("
             f"({metric} unless {metric} offset {window})"
             f" or (increase({metric}[{window}]) > 0)"
             f") > 0"
@@ -1211,16 +1242,50 @@ class MeteringService:
 
     @staticmethod
     def _by_tenant_promql(metric: str, time_range: Optional[str], filter_zero: bool) -> str:
+        # See _tenant_delta_promql above for why `tenant` rides alongside
+        # `tenant_id` in the group-by.
         window = TIME_RANGES.get(time_range or "all")
         if window:
             return (
-                f"sum by(tenant_id) ("
+                f"sum by(tenant_id, tenant) ("
                 f"({metric} unless {metric} offset {window})"
                 f" or (increase({metric}[{window}]) > 0)"
                 f") > 0"
             )
-        base = f"sum by(tenant_id) ({metric})"
+        base = f"sum by(tenant_id, tenant) ({metric})"
         return f"{base} > 0" if filter_zero else base
+
+    @staticmethod
+    def _merge_tenant_rows(rows: list) -> list[dict]:
+        """Re-merge Prometheus rows already grouped by (tenant_id, tenant)
+        back into one entry per real tenant.
+
+        _by_tenant_promql/_tenant_delta_promql group by BOTH labels so a
+        pre-cutover row (empty tenant_id) still carries a usable tenant name
+        instead of being dropped. But that means a tenant renamed WITHIN
+        this window now produces two rows sharing one tenant_id with
+        different tenant names — merging by tenant_id (when present) sums
+        those back into one row so the rename doesn't split the tenant's
+        traffic. A row with no tenant_id has nothing else to key on, so
+        it's merged by its tenant name instead — pre-cutover series under
+        different historical names still end up as separate entries (there's
+        no rename history to unify them by), but at least survive instead
+        of being dropped or collapsed into one shared "unknown" bucket.
+        """
+        merged: dict[str, dict] = {}
+        for r in rows:
+            tid = r["metric"].get("tenant_id", "")
+            name = r["metric"].get("tenant", "")
+            key = tid or f"name:{name}"
+            value = float(r["value"][1])
+            entry = merged.get(key)
+            if entry is None:
+                merged[key] = {"tenant_id": tid, "tenant": name, "value": value}
+            else:
+                entry["value"] += value
+                if name:
+                    entry["tenant"] = name
+        return list(merged.values())
 
     async def _fetch_valid_tenant_ids(self) -> Optional[set]:
         """Return the set of currently-ACTIVE tenant ids (as strings) from the auth DB.
