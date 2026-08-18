@@ -301,7 +301,14 @@ class MeteringService:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
-        rows = [r for r in results if float(r["value"][1]) > 0]
+        # Rows with no tenant_id (series written before the label existed)
+        # can't be attributed to a real tenant, so they're dropped here
+        # rather than ranked — otherwise they'd all bucket into one
+        # "unknown" pseudo-tenant that could out-rank a real one.
+        rows = [
+            r for r in results
+            if float(r["value"][1]) > 0 and r["metric"].get("tenant_id")
+        ]
         names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
 
         all_tenants = sorted(
@@ -674,7 +681,14 @@ class MeteringService:
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
-        rows = [r for r in results if float(r["value"][1]) > 0]
+        # Rows with no tenant_id (series written before the label existed)
+        # can't be attributed to a real tenant, so they're dropped here
+        # rather than ranked — otherwise they'd all bucket into one
+        # "unknown" pseudo-tenant that could out-rank a real one.
+        rows = [
+            r for r in results
+            if float(r["value"][1]) > 0 and r["metric"].get("tenant_id")
+        ]
         names = await self._resolve_tenant_names({r["metric"].get("tenant_id", "") for r in rows})
 
         all_tenants = sorted(
@@ -736,13 +750,17 @@ class MeteringService:
     ) -> dict[str, dict[str, int]]:
         """(tenant_id, task) -> request count, from a sum-by(tenant_id,endpoint) query
         result. Keyed by tenant_id (immutable), not the tenant name label, so a
-        rename doesn't split one tenant's traffic across two buckets."""
+        rename doesn't split one tenant's traffic across two buckets. Rows with
+        no tenant_id (series written before the label existed) are dropped
+        rather than bucketed under a shared empty key — otherwise they'd all
+        collapse into one "unknown" pseudo-tenant that could out-rank a real
+        one in the top-N heatmap."""
         tenant_task: dict[str, dict[str, int]] = {}
         for r in results:
             ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
             tenant_id_label = r["metric"].get("tenant_id", "")
             task = cls._resolve_task_key(ep)
-            if task not in active_services:
+            if task not in active_services or not tenant_id_label:
                 continue
             v = max(0, round(float(r["value"][1])))
             if v <= 0:
@@ -837,7 +855,7 @@ class MeteringService:
 
         rows = [
             self._heatmap_row(
-                idx + 1, names.get(tid, tid or "unknown"), total, tasks, active_services, grand_total
+                idx + 1, names.get(tid, tid), total, tasks, active_services, grand_total
             )
             for idx, (tid, total, tasks) in enumerate(top)
         ]

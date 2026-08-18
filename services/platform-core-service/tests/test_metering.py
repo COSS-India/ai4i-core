@@ -1119,6 +1119,59 @@ class TestResolveTenantNames:
         assert query_params["ids"] == [1]
 
 
+@pytest.mark.asyncio
+class TestEmptyTenantIdExcludedFromRanking:
+    """A pre-tenant_id series (empty tenant_id label) can't be attributed to
+    a real tenant. All three tenant-ranked endpoints must drop such rows
+    instead of bucketing them into a shared "unknown" entry that could
+    out-rank (or dilute the total for) a real tenant."""
+
+    def _name_lookup_db(self, rows):
+        """auth_db mock resolving tenant_id -> name for _resolve_tenant_names
+        (a single `execute()` call, unlike active_tenants' two-call filter)."""
+        db_result = MagicMock()
+        db_result.all.return_value = rows
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+        return auth_db
+
+    async def test_usage_concentration_drops_empty_tenant_id(self):
+        prom_rows = [
+            {"metric": {"tenant_id": "1"}, "value": [0, "5"]},
+            {"metric": {}, "value": [0, "100"]},  # pre-cutover series, no tenant_id
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
+        result = await svc.usage_concentration(limit=10, time_range="30d")
+
+        tenants = {t["tenant"] for t in result["top_tenants"]}
+        assert tenants == {"acme"}
+        assert result["grand_total"] == 5
+
+    async def test_tenant_ranking_drops_empty_tenant_id(self):
+        prom_rows = [
+            {"metric": {"tenant_id": "1"}, "value": [0, "5"]},
+            {"metric": {}, "value": [0, "100"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
+        result = await svc.tenant_ranking(limit=10, time_range="30d")
+
+        tenants = {t["tenant"] for t in result["tenants"]}
+        assert tenants == {"acme"}
+        assert result["grand_total"] == 5
+
+    async def test_heatmap_drops_empty_tenant_id(self):
+        prom_rows = [
+            {"metric": {"tenant_id": "1", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "5"]},
+            {"metric": {PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "100"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
+        result = await svc.usage_by_tenant_service(limit=10, time_range="30d", services=None)
+
+        tenants = {t["tenant"] for t in result["tenants"]}
+        assert tenants == {"acme"}
+        assert result["grand_total"] == 5
+
+
 class TestFormatCount:
     def test_millions(self):
         assert MeteringService._format_count(1_250_000) == "1.25M"
