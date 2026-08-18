@@ -968,6 +968,107 @@ class TestActiveTenantsExcludesUnknown:
         assert "pending-org" not in returned
 
 
+@pytest.mark.asyncio
+class TestTenantRenameContinuity:
+    """Covers the actual ticket behaviour: a tenant's request count must stay
+    one continuous number across a rename, shown under its current name —
+    not split into a pre-rename and a post-rename row."""
+
+    async def test_active_tenants_groups_by_tenant_id_not_name(self):
+        """Prometheus does the merging via the promql group-by key. If this
+        ever regressed to `sum by(tenant)`, a rename would split one tenant's
+        traffic into two rows instead of keeping it continuous."""
+        svc = _make_service(query_return=[])
+        await svc.active_tenants("30d")
+
+        promql = svc._client.query.call_args[0][0]
+        assert "sum by(tenant_id)" in promql
+        assert "sum by(tenant)" not in promql.replace("sum by(tenant_id)", "")
+
+    async def test_rename_merges_into_one_row_under_current_name(self):
+        """Simulates the post-rename state: Prometheus already summed the
+        pre-rename and post-rename samples under the shared tenant_id (that's
+        what `sum by(tenant_id)` guarantees), so this asserts the service
+        layer doesn't split that back apart and resolves it to the tenant's
+        *current* name rather than a stale or "unknown" one."""
+        prom_rows = [
+            # 5 requests as "OldOrg" + 8 as "NewOrg" already merged by Prometheus
+            {"metric": {"tenant_id": "7"}, "value": [0, "13"]},
+        ]
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(7,)]
+        names_result = MagicMock()
+        names_result.all.return_value = [(7, "NewOrg")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("30d")
+
+        assert result["count"] == 1
+        assert result["active_tenants"] == [
+            {"tenant": "NewOrg", "request_count": 13}
+        ]
+
+
+@pytest.mark.asyncio
+class TestResolveTenantNames:
+    """Direct coverage of _resolve_tenant_names — previously untested."""
+
+    async def test_hit_resolves_all_ids(self):
+        db_result = MagicMock()
+        db_result.all.return_value = [(1, "acme"), (2, "globex")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1", "2"})
+
+        assert names == {"1": "acme", "2": "globex"}
+
+    async def test_miss_omits_unresolved_ids(self):
+        """An id with no matching DB row (e.g. deleted tenant) is simply
+        absent from the result — callers fall back via .get(id, default)."""
+        db_result = MagicMock()
+        db_result.all.return_value = [(1, "acme")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1", "99"})
+
+        assert names == {"1": "acme"}
+        assert "99" not in names
+
+    async def test_no_auth_db_returns_empty_without_querying(self):
+        svc = _make_service(auth_db=None)
+        names = await svc._resolve_tenant_names({"1"})
+        assert names == {}
+
+    async def test_empty_id_set_returns_empty_without_querying(self):
+        """Falsy/empty ids (pre-tenant_id series) are filtered out before the
+        query; an all-falsy input must short-circuit rather than query with
+        an empty id list."""
+        auth_db = AsyncMock()
+        svc = _make_service(auth_db=auth_db)
+
+        names = await svc._resolve_tenant_names({"", None})
+
+        assert names == {}
+        auth_db.execute.assert_not_called()
+
+    async def test_db_error_returns_empty(self):
+        """A DB failure must not propagate — callers always get a dict back
+        and fall back to the raw id/label."""
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("db down"))
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1"})
+
+        assert names == {}
+
+
 class TestFormatCount:
     def test_millions(self):
         assert MeteringService._format_count(1_250_000) == "1.25M"

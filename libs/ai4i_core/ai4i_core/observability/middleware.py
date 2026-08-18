@@ -365,6 +365,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         completion_tokens=billed_output or 0,
                         total_tokens=billed_input + (billed_output or 0),
                         tenant=tenant,
+                        tenant_id=tenant_id,
                         service_id=service_id,
                         endpoint=path,
                     )
@@ -377,6 +378,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     source_lang=source_lang,
                     target_lang=target_lang,
                     tenant=tenant,
+                    tenant_id=tenant_id,
                     service_id=service_id,
                 )
 
@@ -392,6 +394,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         target_lang: str,
         tenant: str,
         service_id: str,
+        tenant_id: str = "",
     ) -> None:
         """Dispatch billed_input (the single count already used for billing
         and the OpenSearch trace — see trace/span_attributes.py) to the
@@ -406,17 +409,18 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if service_type == "tts":
                 self.metrics_collector.track_tts_characters(
                     language=source_lang, characters=billed_input,
-                    tenant=tenant, service_id=service_id,
+                    tenant=tenant, tenant_id=tenant_id, service_id=service_id,
                 )
             elif service_type == "translation":
                 self.metrics_collector.track_nmt_characters(
                     source_lang=source_lang, target_lang=target_lang,
-                    characters=billed_input, tenant=tenant, service_id=service_id,
+                    characters=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "asr":
                 self.metrics_collector.track_asr_audio_length(
                     language=source_lang, audio_minutes=billed_input,
-                    tenant=tenant, service_id=service_id,
+                    tenant=tenant, tenant_id=tenant_id, service_id=service_id,
                 )
             elif service_type == "ocr":
                 # billed_input is an image COUNT (inference_types.yaml unit:
@@ -424,28 +428,34 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # repurposed to carry the real billed unit instead of the
                 # byte-size heuristic it used to compute independently.
                 self.metrics_collector.track_ocr_characters(
-                    characters=billed_input, tenant=tenant, service_id=service_id,
+                    characters=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "transliteration":
                 self.metrics_collector.track_transliteration_characters(
                     source_lang=source_lang, target_lang=target_lang,
-                    characters=billed_input, tenant=tenant, service_id=service_id,
+                    characters=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "language_detection":
                 self.metrics_collector.track_language_detection_characters(
-                    characters=billed_input, tenant=tenant, service_id=service_id,
+                    characters=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "audio_lang_detection":
                 self.metrics_collector.track_audio_lang_detection_length(
-                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
+                    audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "speaker_diarization":
                 self.metrics_collector.track_speaker_diarization_length(
-                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
+                    audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "language_diarization":
                 self.metrics_collector.track_language_diarization_length(
-                    audio_minutes=billed_input, tenant=tenant, service_id=service_id,
+                    audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
             elif service_type == "ner":
                 # billed_input is a CHARACTER count (inference_types.yaml
@@ -453,7 +463,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # previously computed len(source.split()) independently;
                 # it now carries the same character count billing uses.
                 self.metrics_collector.track_ner_tokens(
-                    tokens=billed_input, tenant=tenant, service_id=service_id,
+                    tokens=billed_input, tenant=tenant, tenant_id=tenant_id,
+                    service_id=service_id,
                 )
         except Exception:
             if self.config.debug:
