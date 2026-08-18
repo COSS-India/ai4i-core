@@ -3,8 +3,8 @@
 from app.core.config import AuthSettings
 
 
-def _settings(**env: str) -> AuthSettings:
-    return AuthSettings(_env_file=None, **env)
+def _settings(**kwargs: str) -> AuthSettings:
+    return AuthSettings(_env_file=None, **kwargs)
 
 
 class TestPlatformNameSettings:
@@ -25,19 +25,23 @@ class TestPlatformNameSettings:
         settings = _settings(platform_name="   ")
         assert settings.get_platform_name() == "AI Switch"
 
-    def test_email_from_name_inherits_platform_name_when_blank(self, monkeypatch):
-        monkeypatch.setenv("PLATFORM_NAME", "Custom Brand")
-        monkeypatch.setenv("EMAIL_FROM_NAME", "")
-        settings = AuthSettings(_env_file=None)
-        assert settings.email_from_name == "Custom Brand"
-
-    def test_email_from_name_stays_independent(self, monkeypatch):
+    def test_get_platform_name_ignores_email_from_name(self, monkeypatch):
         monkeypatch.setenv("PLATFORM_NAME", "AI Switch")
         monkeypatch.setenv("EMAIL_FROM_NAME", "COSS Support")
         settings = AuthSettings(_env_file=None)
         assert settings.get_platform_name() == "AI Switch"
-        assert settings.email_from_name == "COSS Support"
 
-    def test_get_platform_name_ignores_email_from_name(self):
-        settings = _settings(platform_name="AI Switch", email_from_name="COSS Support")
-        assert settings.get_platform_name() == "AI Switch"
+
+class TestResolveSmtpFromName:
+    def test_inherits_platform_name_when_blank(self):
+        settings = _settings(platform_name="MahaVistaar")
+        assert settings.resolve_smtp_from_name("") == "MahaVistaar"
+        assert settings.resolve_smtp_from_name("   ") == "MahaVistaar"
+
+    def test_keeps_explicit_from_name(self):
+        settings = _settings(platform_name="AI Switch")
+        assert settings.resolve_smtp_from_name("COSS Support") == "COSS Support"
+
+    def test_falls_back_to_ai_switch_when_both_blank(self):
+        settings = _settings(platform_name="")
+        assert settings.resolve_smtp_from_name("") == "AI Switch"

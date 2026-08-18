@@ -1,6 +1,6 @@
 # Terms of Service
 
-*Version 1.0 · Last updated: 18 August 2026*
+*Version 1.1 · Last updated: 18 August 2026*
 *Centre for Open Societal Systems (COSS) · IIIT-Bangalore · Bengaluru, India*
 
 These Terms of Service ("Terms") govern your access to and use of the AI Switch platform ("Platform"), operated by the Centre for Open Societal Systems ("COSS"), formed at IIIT-Bangalore (IIIT-B) in partnership with EkStep Foundation, registered at 26/C, IIIT Bangalore, Electronics City Phase 1, Bengaluru – 560100, Karnataka, India.

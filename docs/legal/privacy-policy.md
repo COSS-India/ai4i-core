@@ -1,6 +1,6 @@
 # Privacy Policy
 
-*Version 1.0 · Last updated: 18 August 2026*
+*Version 1.1 · Last updated: 18 August 2026*
 *Centre for Open Societal Systems (COSS) · IIIT-Bangalore · Bengaluru, India*
 
 ## 1. Introduction
