@@ -66,13 +66,16 @@ class MeteringService:
         service_id: Optional[str],
         time_range: Optional[str],
         task_types: Optional[list[str]] = None,
+        auth_type: Optional[str] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
-        label_str = build_base_selectors(inference_only, tenant, service_id, extra=extra)
+        label_str = build_base_selectors(
+            inference_only, tenant, service_id, extra=extra, auth_type=auth_type
+        )
         success_label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=success_extra
+            inference_only, tenant, service_id, extra=success_extra, auth_type=auth_type
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
@@ -232,7 +235,7 @@ class MeteringService:
         that need more than one window in the same request must go through
         `overview_tenant_data` instead of calling this directly per window.
         """
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type='api_key')}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
         if valid_names is _UNSET:
             prom_results, valid_names = await asyncio.gather(
@@ -269,7 +272,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type='api_key')}"
         promql = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
         try:
             return int(round(float(await self._client.scalar(promql))))
@@ -285,7 +288,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, auth_type='api_key')}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
         active_q = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
         try:
@@ -369,7 +372,7 @@ class MeteringService:
         self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None, auth_type='api_key')}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
 
@@ -426,7 +429,10 @@ class MeteringService:
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
-        _base = _ep + ',tenant!="unknown"' + (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
+        _base = (
+            _ep + ',tenant!="unknown"' + (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
+            + ',auth_type="api_key"'
+        )
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
 
@@ -519,13 +525,14 @@ class MeteringService:
         after-the-fact fix, same reasoning as the tenant-id cutover.
         """
         base_sel = build_base_selectors(
-            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
+            inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
+            auth_type="api_key",
         )
         success_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'],
+            extra=['status_code=~"2.."'], auth_type="api_key",
         )
-        tokens_parts = ['token_type="total"', 'tenant!="unknown"']
+        tokens_parts = ['token_type="total"', 'tenant!="unknown"', 'auth_type="api_key"']
         if tenant:
             tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
         tokens_sel = "{" + ",".join(tokens_parts) + "}"
@@ -804,7 +811,7 @@ class MeteringService:
     async def tenant_ranking(
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
     ) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, auth_type='api_key')}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
 
@@ -937,7 +944,7 @@ class MeteringService:
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant_sel = f',tenant="{escape_label_value(tenant)}"' if tenant else ''
-        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + '}'
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + ',auth_type="api_key"' + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
@@ -1023,6 +1030,7 @@ class MeteringService:
                 continue
             extra = cfg.get("native_extra_labels") or []
             parts = [f'tenant="{escape_label_value(tenant)}"'] if tenant else []
+            parts.append('auth_type="api_key"')
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
             # Use increase()-based counting (via sum_over_window), NOT a raw

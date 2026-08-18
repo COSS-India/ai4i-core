@@ -295,13 +295,19 @@ def build_base_selectors(
     service_id: str | None = None,
     extra: list[str] | None = None,
     endpoint_regex: str | None = None,
+    auth_type: str | None = None,
 ) -> str:
     """Build a PromQL label selector string for telemetry_obsv_requests_total.
 
     Returns a brace-enclosed string like '{exported_endpoint=~"...",tenant="foo"}'
     or an empty string when no filters apply. ``endpoint_regex`` overrides the
     default INFERENCE_ENDPOINT_REGEX (e.g. to scope to LLM-only endpoints);
-    ignored when ``inference_only`` is False.
+    ignored when ``inference_only`` is False. ``auth_type`` restricts to a
+    single auth_type label value (e.g. "api_key") — the request counter
+    started carrying this label once ObservabilityMiddleware began forwarding
+    X-Auth-Type, so callers can filter UI/JWT traffic out of request counts
+    the same way payperuse_consumer/handler.py already restricts billing to
+    API-key calls.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
@@ -310,6 +316,8 @@ def build_base_selectors(
         selectors.append(f'tenant="{escape_label_value(tenant)}"')
     if service_id:
         selectors.append(f'service_id="{service_id}"')
+    if auth_type:
+        selectors.append(f'auth_type="{escape_label_value(auth_type)}"')
     if extra:
         selectors.extend(extra)
     return "{" + ",".join(selectors) + "}"
