@@ -9,6 +9,7 @@ import {
   Checkbox,
   FormControl,
   FormErrorMessage,
+  FormHelperText,
   FormLabel,
   Heading,
   HStack,
@@ -32,6 +33,15 @@ import { formatModelTaskTypeLabel } from "../../config/constants";
 import type { Service } from "../../services/servicesManagementService";
 import type { ModelDetails } from "../../types/platform";
 import type { Tier } from "../../types/tierManagement";
+import {
+  INFRA_DESCRIPTION_MAX_LEN,
+  INFRA_DESCRIPTION_MIN_LEN,
+  SERVICE_DESCRIPTION_MAX_LEN,
+  SERVICE_DESCRIPTION_MIN_LEN,
+  SERVICE_ID_MIN_LEN,
+  SERVICE_NAME_MAX_LEN,
+  SERVICE_NAME_MIN_LEN,
+} from "./serviceFormValidation";
 
 /** Billing unit-size presets shown as a dropdown. */
 export const UNIT_SIZE_OPTIONS = ["1000", "1000000"] as const;
@@ -256,9 +266,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   isReadOnly={!!editingService}
                 />
                 {!editingService && (
-                  <Text fontSize="xs" color="gray.500" mt={1}>
-                    Enter service name e.g. asr-conformer-gpu.
-                  </Text>
+                  <FormHelperText fontSize="xs" color="gray.500">
+                    {SERVICE_NAME_MIN_LEN}-{SERVICE_NAME_MAX_LEN} characters,
+                    e.g. asr-conformer-gpu.
+                  </FormHelperText>
                 )}
               </FormControl>
             )}
@@ -289,13 +300,19 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   the Service ID; it is also used as the Service Name.
                 </Text>
               )}
+              {!editingService && !serviceIdError && (
+                <FormHelperText fontSize="xs" color="gray.500">
+                  At least {SERVICE_ID_MIN_LEN} characters. Applies to new
+                  services only.
+                </FormHelperText>
+              )}
               {serviceIdError && (
                 <FormErrorMessage>{serviceIdError}</FormErrorMessage>
               )}
             </FormControl>
 
             {/* Service Description */}
-            <FormControl>
+            <FormControl isRequired={!editingService}>
               <FormLabel fontWeight="semibold">Service Description</FormLabel>
               <Textarea
                 value={formData.serviceDescription || ""}
@@ -306,6 +323,14 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 bg="white"
                 rows={4}
               />
+              {!editingService && (
+                <FormHelperText fontSize="xs" color="gray.500">
+                  Required. {SERVICE_DESCRIPTION_MIN_LEN}-
+                  {SERVICE_DESCRIPTION_MAX_LEN} characters —{" "}
+                  {(formData.serviceDescription || "").trim().length}/
+                  {SERVICE_DESCRIPTION_MAX_LEN} entered.
+                </FormHelperText>
+              )}
             </FormControl>
 
             {/* Endpoint */}
@@ -326,6 +351,26 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   ? "Enter the model host URL (host:port only)."
                   : "Enter the full HTTP endpoint where this service is hosted."}
               </Text>
+            </FormControl>
+
+            {/* Hardware Description → inferenceEndPoint.infraDescription */}
+            <FormControl isRequired={!editingService}>
+              <FormLabel fontWeight="semibold">Hardware Description</FormLabel>
+              <Input
+                value={formData.hardwareDescription || ""}
+                onChange={(e) =>
+                  onInputChange("hardwareDescription", e.target.value)
+                }
+                placeholder="e.g. Auto-scalable deployment, using T4 GPUs"
+                bg={editingService ? "gray.50" : "white"}
+                isReadOnly={!!editingService}
+              />
+              {!editingService && (
+                <FormHelperText fontSize="xs" color="gray.500">
+                  {INFRA_DESCRIPTION_MIN_LEN}-{INFRA_DESCRIPTION_MAX_LEN}{" "}
+                  characters. Describes the infrastructure this service runs on.
+                </FormHelperText>
+              )}
             </FormControl>
 
             {/* 4. Unit Type (derived) + Unit Size */}

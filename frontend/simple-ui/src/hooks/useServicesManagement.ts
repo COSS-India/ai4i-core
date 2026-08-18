@@ -16,6 +16,13 @@ import {
 import { getAllModels, getModelById } from "../services/modelManagementService";
 import { fetchTiers } from "../services/tierManagementService";
 import type { Tier } from "../types/tierManagement";
+import {
+  SERVICE_NAME_MAX_LEN,
+  validateHardwareDescription,
+  validateServiceDescription,
+  validateServiceIdLength,
+  validateServiceName,
+} from "../components/services-management/serviceFormValidation";
 import type { ModelDetails } from "../types/platform";
 import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
@@ -44,6 +51,7 @@ const emptyServiceForm = (): Partial<Service> => ({
   name: "",
   serviceId: "",
   serviceDescription: "",
+  hardwareDescription: "",
   publishedOn: Math.floor(Date.now() / 1000),
   modelId: "",
   modelName: "",
@@ -673,7 +681,10 @@ export function useServicesManagement() {
           name: serviceName,
           serviceId: serviceId,
           publishedOn: Math.floor(Date.now() / 1000),
-          hardwareDescription: "Default hardware",
+          // Trimmed so the length the user was validated against is the
+          // length the backend measures.
+          serviceDescription: formData.serviceDescription?.trim() || "",
+          hardwareDescription: formData.hardwareDescription?.trim() || "",
           api_key: "",
           status: "active",
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
@@ -793,7 +804,41 @@ export function useServicesManagement() {
     !editingService &&
     !!formData.serviceId?.trim() &&
     existingServiceIds.includes(formData.serviceId.trim());
+
+  /**
+   * ULCA length rules — create only. PATCH does not carry them, so an edit
+   * of a pre-existing service that predates these limits stays submittable.
+   */
+  const isCreateMode = !editingService;
+  const serviceIdLengthError = isCreateMode
+    ? validateServiceIdLength(formData.serviceId)
+    : null;
+  /**
+   * LLM services copy the Service ID into `name`, so the ID must also clear
+   * the tighter 5-100 name rule there.
+   */
+  const llmServiceIdNameError =
+    isCreateMode &&
+    isLlmTaskType &&
+    (formData.serviceId || "").trim().length > SERVICE_NAME_MAX_LEN
+      ? `Service ID must not exceed ${SERVICE_NAME_MAX_LEN} characters, because it is also used as the Service Name.`
+      : null;
+  /**
+   * Only the duplicate-ID clash is surfaced as a field error — it is the one
+   * failure an admin cannot infer from the disabled Create button. The length
+   * rules below gate the button and are explained by each field's hint text.
+   */
   const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
+  const serviceDescriptionError = isCreateMode
+    ? validateServiceDescription(formData.serviceDescription)
+    : null;
+  // LLM services derive their name from the Service ID, so the name rule is
+  // only user-facing for non-LLM tasks.
+  const serviceNameError =
+    isCreateMode && !isLlmTaskType ? validateServiceName(formData.name) : null;
+  const hardwareDescriptionError = isCreateMode
+    ? validateHardwareDescription(formData.hardwareDescription)
+    : null;
 
   // LLM: Service Name is derived from Service ID (not shown). Non-LLM: both required.
   const hasRequiredServiceIdentity = isLlmTaskType
@@ -803,6 +848,11 @@ export function useServicesManagement() {
   const canCreateService =
     hasRequiredServiceIdentity &&
     !serviceIdExists &&
+    !serviceIdLengthError &&
+    !llmServiceIdNameError &&
+    !serviceDescriptionError &&
+    !serviceNameError &&
+    !hardwareDescriptionError &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
@@ -866,6 +916,8 @@ export function useServicesManagement() {
         serviceId: service.serviceId || service.service_id || "",
         serviceDescription:
           service.serviceDescription || service.description || "",
+        // Read-only in edit; PATCH never resends it.
+        hardwareDescription: service.hardwareDescription || "",
         publishedOn: service.publishedOn,
         modelId,
         modelName: service.model?.name || modelId,
