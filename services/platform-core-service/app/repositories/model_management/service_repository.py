@@ -10,7 +10,7 @@ from sqlalchemy import String, and_, cast, delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.model_management.model import Model, VersionStatus
+from app.models.model_management.model import Model
 from app.models.model_management.service import Service
 from app.models.pay_per_use.ppu_tier import PPUTier
 
@@ -156,20 +156,23 @@ class ServiceRepository:
         self, service_ids: List[str]
     ) -> Dict[str, Tuple[str, str, str]]:
         """Return {service_id: (name, model_id, model_name)} for the given
-        service ids — but ONLY for services whose backing model is currently
-        an ACTIVE version in the Registry.
+        service ids — for services whose backing model row still exists in
+        the Registry (ACTIVE or DEPRECATED — see below).
 
         model_id/model_name are resolved via mm_models — mm_services.model_id
         is an opaque hash (sha256(f"{name}:{version}")[:32], see
         app/utils/hashing.py), not a human-readable model name on its own.
-        Inner join, filtered to Model.version_status == ACTIVE: a service
-        backed by a DEPRECATED or (hard-)deleted model is excluded from the
-        result exactly like a service that doesn't exist, so callers that
-        treat "missing from this dict" as "not a real, current entry" get
-        both cases handled by the same check. mm_models has no soft-delete
-        column — a deleted model's row is simply gone (see
-        ModelService.delete_model), so "not in mm_models" already means
-        "deleted" with no extra filter needed for that part.
+        Inner join, UNFILTERED on version_status: a DEPRECATED version is
+        still live and serving traffic — deprecating is the normal step
+        before activating a replacement version, and ServiceService.
+        get_service_detail resolves a service's model via get_by_id_version,
+        which has no status filter either — so excluding DEPRECATED here
+        would make the first deprecation of a model in active use silently
+        drop its still-real traffic from the Model Usage table, with no way
+        to tell that apart from an actual delete. Only a service_id whose
+        model row is entirely absent (mm_models has no soft-delete column —
+        a deleted model's row is simply gone, see ModelService.delete_model)
+        is excluded, exactly like a service that doesn't exist.
 
         Excludes soft-deleted services. Used by the model-consumption
         metering endpoint to resolve, for each service_id grouped from
@@ -187,7 +190,6 @@ class ServiceRepository:
             .where(
                 Service.service_id.in_(service_ids),
                 Service.deleted_at.is_(None),
-                Model.version_status == VersionStatus.ACTIVE,
             )
         )
         return {row.service_id: (row.name, row.model_id, row.model_name) for row in result.all()}

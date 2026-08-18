@@ -36,7 +36,7 @@ size-based metric.
 import asyncio
 import logging
 import time
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, Union
 from urllib.parse import unquote
 
 from fastapi import Request
@@ -89,16 +89,29 @@ def set_billed_state(
     st.billed_output = billed_output
 
 
-_UNSET = object()
+class _Unset:
+    """Sentinel type distinguishing "caller omitted this argument" from any
+    real value a caller might pass (including an explicit ""). Its own type
+    — rather than a bare ``object()`` typed as ``str`` — lets the parameter
+    annotations below say what's actually accepted: a ``str``, or this
+    sentinel."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
 
 
 def set_metric_labels(
     request: Request,
     *,
-    source_lang: str = _UNSET,
-    target_lang: str = _UNSET,
-    model: str = _UNSET,
-    model_id: str = _UNSET,
+    source_lang: Union[str, _Unset] = _UNSET,
+    target_lang: Union[str, _Unset] = _UNSET,
+    model: Union[str, _Unset] = _UNSET,
+    model_id: Union[str, _Unset] = _UNSET,
 ) -> None:
     """Record Prometheus metric LABELS on ``request.state`` (not billing data).
 

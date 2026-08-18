@@ -1,7 +1,7 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Optional, Union
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +27,21 @@ logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
 
-# Sentinel distinguishing "caller didn't pass valid_names" from an explicit
-# `None` (a legitimate "auth DB was unavailable" value returned by
-# _fetch_valid_tenant_names) — see MeteringService.active_tenants.
-_UNSET = object()
+class _Unset:
+    """Sentinel type distinguishing "caller didn't pass valid_names" from an
+    explicit `None` (a legitimate "auth DB was unavailable" value returned
+    by _fetch_valid_tenant_names) — see MeteringService.active_tenants. Its
+    own type — rather than a bare ``object()`` typed as ``Any`` — lets the
+    parameter annotation say what's actually accepted: a set, None, or this
+    sentinel."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
 
 
 class MeteringService:
@@ -193,7 +204,7 @@ class MeteringService:
         }
 
     async def active_tenants(
-        self, time_range: Optional[str], valid_names: Any = _UNSET
+        self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
     ) -> dict:
         """
         ROLLOUT NOTE: the ``tenant`` label switched from the numeric tenant id
@@ -336,12 +347,21 @@ class MeteringService:
         permitted` — multiple tasks each trying to run their own
         `self._auth_db.execute()` at the same time.
 
-        Returns (tenant_count_result, {time_range: active_tenants_result}).
+        The per-window gather uses `return_exceptions=True`: unlike
+        tenant_count()/the valid-names fetch, active_tenants() does NOT
+        catch a Prometheus query failure internally (it can genuinely
+        raise), so without this a single bad window would propagate out of
+        this method entirely — the caller (routes/metering.py) never gets a
+        chance to run it through `_partition_results` and degrade
+        gracefully; /overview would 500 instead.
+
+        Returns (tenant_count_result, {time_range: active_tenants_result_or_exception}).
         """
         tc = await self.tenant_count()
         valid_names = await self._fetch_valid_tenant_names()
         active_results = await asyncio.gather(
-            *(self.active_tenants(tr, valid_names=valid_names) for tr in time_ranges)
+            *(self.active_tenants(tr, valid_names=valid_names) for tr in time_ranges),
+            return_exceptions=True,
         )
         return tc, dict(zip(time_ranges, active_results))
 
@@ -456,30 +476,33 @@ class MeteringService:
         ROLLOUT NOTE (service-level ghosts): per-service rows are
         cross-checked against the Service Registry (mm_services) via
         ServiceRepository.get_names_and_models_by_service_ids, and a
-        `service_id` with no current, ACTIVE-model-backed row is dropped
-        from `services`. Three different populations land here:
-        `service_id` is the client-supplied `model` string, set before MMS
-        resolution, so a request for a service that was deleted, a service
-        whose model was deprecated/deleted, OR one that never existed (a
-        typo, a stale integration still pointing at an old id — the
-        `llm`/`llm/default` cases) all emit Prometheus series but none has a
-        current, ACTIVE-model registry row. We can't tell those apart here,
-        so all are dropped from the per-service breakdown. The check is
-        skipped (all ids kept, name falls back to the raw id) only when the
-        registry lookup itself is unavailable or errors — we can't tell
-        "deleted" from "DB unreachable" in that case. Suppressed ids are
-        logged so a delete/deprecate-induced drop is traceable.
+        `service_id` whose model row is entirely absent from mm_models is
+        dropped from `services` — a DEPRECATED model is NOT a ghost (it's
+        still live and can still be serving traffic; see that method's
+        docstring), only a hard-deleted one is. Two different populations
+        land here: `service_id` is the client-supplied `model` string, set
+        before MMS resolution, so a request for a service that was deleted,
+        OR one that never existed (a typo, a stale integration still
+        pointing at an old id — the `llm`/`llm/default` cases) both emit
+        Prometheus series but neither has a current registry row. We can't
+        tell those apart here, so both are dropped from the per-service
+        breakdown. The check is skipped (all ids kept, name falls back to
+        the raw id) only when the registry lookup itself is unavailable or
+        errors — we can't tell "deleted" from "DB unreachable" in that
+        case. Suppressed ids are logged so a delete-induced drop is
+        traceable.
 
         ROLLOUT NOTE (model-level totals are NOT a re-aggregation of
         `services`): a model's own requests/success/tokens are collapsed
         directly from the raw `(service_id, model_id)` rows and validated
         against the Registry by `model_id` alone (ModelRepository.
-        get_active_model_names) — deliberately NOT derived by summing the
+        get_model_names — same "absent row = ghost, DEPRECATED is not"
+        rule) — deliberately NOT derived by summing the
         (service-existence-filtered) `services` list above. If a
-        contributing service is later deleted while its model stays ACTIVE,
-        the model's total must not silently shrink just because one of
-        several services feeding it disappeared — that's real traffic the
-        model actually served. The consequence: `services` (the flat
+        contributing service is later deleted while its model row still
+        exists, the model's total must not silently shrink just because one
+        of several services feeding it disappeared — that's real traffic
+        the model actually served. The consequence: `services` (the flat
         per-service breakdown) can sum to LESS than its parent model's own
         total for as long as that deleted service's old series remain in
         the query window — the same "won't add up exactly, self-heals as
@@ -560,14 +583,15 @@ class MeteringService:
             except Exception:
                 logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
 
-        # service_id with no current row backed by an ACTIVE Registry model —
-        # see the service-level ROLLOUT NOTE above. Only computed when the
-        # registry lookup actually ran — if it's unavailable/failed we can't
-        # tell "deleted" from "DB down", so nothing is dropped.
+        # service_id with no current row at all in mm_models (a DEPRECATED
+        # model still has a row, so it's not a ghost — see the service-level
+        # ROLLOUT NOTE above). Only computed when the registry lookup
+        # actually ran — if it's unavailable/failed we can't tell "deleted"
+        # from "DB down", so nothing is dropped.
         ghosts = (service_ids - svc_info.keys()) if registry_checked else set()
         if ghosts:
             logger.info(
-                "model_breakdown: dropped %d unregistered/inactive-model service_id(s): %s",
+                "model_breakdown: dropped %d unregistered service_id(s): %s",
                 len(ghosts), sorted(ghosts),
             )
 
@@ -603,24 +627,26 @@ class MeteringService:
             if m != ""
         }
 
-        active_model_names: dict = {}
+        model_names: dict = {}
         model_registry_checked = False
         if self._model_repo is not None and model_ids:
             try:
-                active_model_names = await self._model_repo.get_active_model_names(list(model_ids))
+                model_names = await self._model_repo.get_model_names(list(model_ids))
                 model_registry_checked = True
             except Exception:
                 logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
 
-        # model_id with no current ACTIVE Registry row: deleted, deprecated,
-        # or a stale/never-existent id (an empty-model_id row, e.g. a
-        # pre-upgrade series with no label at all, was already excluded by
-        # the `!= ""` filter above and never reaches here). Skipped (nothing
-        # dropped) only when the registry lookup itself is unavailable.
-        model_ghosts = (model_ids - active_model_names.keys()) if model_registry_checked else set()
+        # model_id with no current Registry row at all — a DEPRECATED model
+        # still has a row (see get_model_names) so it's not a ghost, only a
+        # hard-deleted or stale/never-existent id is. An empty-model_id row
+        # (e.g. a pre-upgrade series with no label at all) was already
+        # excluded by the `!= ""` filter above and never reaches here.
+        # Skipped (nothing dropped) only when the registry lookup itself is
+        # unavailable.
+        model_ghosts = (model_ids - model_names.keys()) if model_registry_checked else set()
         if model_ghosts:
             logger.info(
-                "model_breakdown: dropped %d unregistered/inactive model_id(s): %s",
+                "model_breakdown: dropped %d unregistered model_id(s): %s",
                 len(model_ghosts), sorted(model_ghosts),
             )
 
@@ -632,7 +658,7 @@ class MeteringService:
             success_v = model_successes_raw.get(model_id, 0)
             model_totals.append({
                 "model_id": model_id,
-                "model_name": active_model_names.get(model_id, model_id),
+                "model_name": model_names.get(model_id, model_id),
                 "requests": total_v,
                 "native_units": float(model_tokens_raw.get(model_id, 0)),
                 "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
@@ -645,11 +671,11 @@ class MeteringService:
         }
 
     async def registry_model_count(self) -> Optional[int]:
-        """Distinct model_ids (Registry versions) currently registered —
-        see ModelRepository.count_distinct_models for why this is model_id
-        -keyed (spanning both ACTIVE and DEPRECATED), matching
-        `active_models`'s identity so it stays a guaranteed superset rather
-        than a name-based count a multi-active-version model could exceed.
+        """Distinct model NAMES currently registered — see ModelRepository.
+        count_distinct_models for why this is name-keyed (spanning both
+        ACTIVE and DEPRECATED), not model_id-keyed, and why
+        `model_consumption_kpis`'s `active_models` dedupes down to the same
+        name-level granularity so it stays a guaranteed subset of this count.
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -730,14 +756,20 @@ class MeteringService:
     def model_consumption_kpis(services: list[dict], model_totals: list[dict]) -> dict:
         """Scalar KPIs for the Model Consumption summary (AI4IDS-2790):
 
-        - `active_models`: count of `model_totals` entries with traffic
-          (`requests > 0`) — `model_totals` is already one row per
-          Registry-validated `model_id` (see `model_breakdown`), so this is
-          just a count, not a dedup — the same population
-          `model_consumption_ranking` ranks. Always an int; 0 (not None)
-          when there's no traffic at all — 0 is itself a real, meaningful
-          answer ("no models were active"), unlike `overall_success_rate_pct`,
-          which is genuinely undefined with no data to average.
+        - `active_models`: count of DISTINCT model NAMES (case-insensitive)
+          among `model_totals` entries with traffic (`requests > 0`) —
+          matches `registry_model_count`/`ModelRepository.
+          count_distinct_models`'s identity (also name-based), so
+          `active_models` stays a guaranteed subset of `total_models`.
+          `model_totals`/`top_models` themselves stay `model_id`-keyed (a
+          model with two concurrently-ACTIVE versions both receiving
+          traffic is two separate rows there — see `model_breakdown`); this
+          KPI NUMBER is the one place identity drops to name-level, so two
+          such versions count once here, not twice. Always an int; 0 (not
+          None) when there's no traffic at all — 0 is itself a real,
+          meaningful answer ("no models were active"), unlike
+          `overall_success_rate_pct`, which is genuinely undefined with no
+          data to average.
         - `overall_success_rate_pct`: REQUEST-WEIGHTED success rate — sum(
           requests * success_pct) / sum(requests) over `services` (not
           `model_totals`) — matching the FE's existing (previously dormant)
@@ -752,7 +784,9 @@ class MeteringService:
           (which stays service-level, not aggregated to model-level). None
           when there's no traffic.
         """
-        active_models = len([m for m in model_totals if m["requests"] > 0])
+        active_models = len({
+            m["model_name"].casefold() for m in model_totals if m["requests"] > 0
+        })
 
         active_services = [s for s in services if s["requests"] > 0]
         total_requests = sum(s["requests"] for s in active_services)

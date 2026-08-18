@@ -104,54 +104,53 @@ class ModelRepository:
         return int(result.scalar() or 0)
 
     async def count_distinct_models(self) -> int:
-        """Count of distinct `model_id`s (Registry versions) — ACTIVE and
-        DEPRECATED both count (a deprecated version is still "in the
-        Registry", just not the currently-recommended one to use).
+        """Count of distinct model NAMES registered in the Registry — ACTIVE
+        and DEPRECATED versions both count (a deprecated model is still "in
+        the Registry", just not the currently-recommended version to use).
 
-        Identity is `model_id` (one row per (name, version) pair — see
-        app/utils/hashing.py), NOT model name: a model with 3 versions counts
-        as 3 here. This intentionally matches the metering model-consumption
-        summary's `active_models` KPI, which is also model_id-keyed (see
-        MeteringService.model_consumption_kpis / model_breakdown's
-        `model_totals`) — so `active_models` (traffic-side, ACTIVE-only) is
-        guaranteed a true subset of this count (traffic-side, ACTIVE+
-        DEPRECATED). Counting distinct NAMES instead would let a model with
-        several concurrently-ACTIVE versions (allowed up to
-        settings.max_active_versions_per_model, e.g. a canary rollout) show
-        more `active_models` than `total_models` if more than one of its
-        versions had traffic in the window — a name-based count doesn't
-        distinguish those versions, but the traffic-side numbers do.
+        Identity is model NAME (case-insensitive), NOT model_id: model_id is
+        `generate_model_id(name, version)` — a hash of the LOWERCASED
+        (name, version) pair (see app/utils/hashing.py) — unique per
+        VERSION, not per logical model, so counting distinct model_ids would
+        report version count instead of model count (4 models with 3
+        versions each would read as 12, not 4). Lower-casing the name before
+        DISTINCT also collapses "Gemma" and "gemma" into the same model,
+        matching generate_model_id's own case-insensitive identity rule.
 
-        `model_id` is already unique per row (`uq_mm_models_model_id`), so
-        DISTINCT here is defensive/self-documenting rather than
-        load-bearing — every row already contributes exactly one model_id.
+        The metering model-consumption summary's `active_models` KPI
+        (MeteringService.model_consumption_kpis) also dedupes by name for
+        this exact reason — it's traffic-side and model_id-keyed at the row
+        level (model_totals can have two rows for two concurrently-ACTIVE
+        versions of the same model — see model_breakdown), but the KPI
+        NUMBER dedupes those back down to one name, matching this count's
+        granularity so active_models stays a true subset of total_models.
 
         Used by the metering model-consumption summary's `total_models` KPI.
         """
-        stmt = select(func.count(func.distinct(Model.model_id)))
+        stmt = select(func.count(func.distinct(func.lower(Model.name))))
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
-    async def get_active_model_names(self, model_ids: List[str]) -> Dict[str, str]:
-        """Return {model_id: name} for the given ids, filtered to model_id
-        rows that are currently ACTIVE — mm_models has no soft-delete column,
-        so a hard-deleted model_id is simply absent from this dict, same as
-        a DEPRECATED one, with no extra filter needed for that case (see
-        ModelService.delete_model).
+    async def get_model_names(self, model_ids: List[str]) -> Dict[str, str]:
+        """Return {model_id: name} for the given ids — UNFILTERED on
+        version_status: a DEPRECATED version is still live and can still be
+        serving traffic (deprecating is the normal step before activating a
+        replacement version — see get_names_and_models_by_service_ids for
+        the identical reasoning), so it must not be treated as a ghost.
+        mm_models has no soft-delete column, so a hard-deleted model_id is
+        simply absent from this dict — that's the only case excluded here
+        (see ModelService.delete_model).
 
         Used by the model-consumption metering endpoint to validate the
         Prometheus-native `model_id` label (see MetricsCollector, ai4i-core
         1.0.18+) against the current Registry state — a model_id with no
-        entry here is a ghost (deleted/deprecated, or a stale/never-existent
+        entry here is a genuine ghost (deleted, or a stale/never-existent
         id) and its traffic is excluded from the model-level rollup.
         """
         if not model_ids:
             return {}
         result = await self._db.execute(
-            select(Model.model_id, Model.name).where(
-                Model.model_id.in_(model_ids),
-                Model.version_status == VersionStatus.ACTIVE,
-            )
+            select(Model.model_id, Model.name).where(Model.model_id.in_(model_ids))
         )
         return {row.model_id: row.name for row in result.all()}
 

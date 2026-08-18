@@ -429,7 +429,7 @@ class TestModelBreakdown:
 
     def _model_repo(self, mapping: dict):
         repo = MagicMock()
-        repo.get_active_model_names = AsyncMock(return_value=mapping)
+        repo.get_model_names = AsyncMock(return_value=mapping)
         return repo
 
     async def test_groups_by_service_id_and_computes_success_pct(self):
@@ -619,7 +619,7 @@ class TestModelBreakdown:
         await svc.model_breakdown(tenant=None, time_range="24h")
 
         repo.get_names_and_models_by_service_ids.assert_not_called()
-        model_repo.get_active_model_names.assert_not_called()
+        model_repo.get_model_names.assert_not_called()
 
     # ── model_totals: grouped/validated by model_id, from the Prometheus
     # label directly — see the ROLLOUT NOTEs on model_breakdown() ──────────
@@ -672,14 +672,34 @@ class TestModelBreakdown:
         assert len(result["model_totals"]) == 1
         assert result["model_totals"][0]["requests"] == 400
 
-    async def test_model_totals_excludes_inactive_or_deleted_model(self):
+    async def test_model_totals_excludes_model_with_no_registry_row(self):
+        """A model_id with no mm_models row at all (hard-deleted, or a
+        stale/never-existent id) is excluded. Contrast with
+        test_model_totals_keeps_deprecated_model below: a DEPRECATED-but-
+        present model must NOT be excluded the same way."""
         client = MagicMock()
         client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-old-model"))
-        model_repo = self._model_repo({})  # model_id not ACTIVE/present
+        model_repo = self._model_repo({})  # no row at all for this model_id
         svc = MeteringService(client=client, model_repo=model_repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         assert result["model_totals"] == []
+
+    async def test_model_totals_keeps_deprecated_model(self):
+        """A DEPRECATED model version still has a row in mm_models and can
+        still be serving live traffic — deprecating is the normal step
+        before activating a replacement version (see ModelRepository.
+        get_model_names) — so it must not be treated as a ghost the way a
+        hard-deleted model_id is."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-deprecated-v1"))
+        model_repo = self._model_repo({"hash-deprecated-v1": "Old Gemma"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["model_id"] == "hash-deprecated-v1"
+        assert result["model_totals"][0]["model_name"] == "Old Gemma"
 
     async def test_model_totals_skipped_when_registry_lookup_unavailable(self):
         """No model_repo at all (e.g. DB unavailable) — can't validate, so
@@ -703,15 +723,16 @@ class TestModelBreakdown:
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         assert result["model_totals"] == []
-        model_repo.get_active_model_names.assert_not_called()
+        model_repo.get_model_names.assert_not_called()
 
     async def test_deleted_service_traffic_still_counts_toward_active_model_total(self):
         """THE key behavioral change: a service can be dropped from the
         per-service `services` breakdown (ghost — deleted from mm_services)
         while its traffic still counts toward its model's total, as long as
-        the model itself is still ACTIVE — model-level totals are collapsed
-        directly from Prometheus by model_id, independent of per-service
-        existence filtering. See model_breakdown()'s second ROLLOUT NOTE."""
+        the model itself still has a Registry row — model-level totals are
+        collapsed directly from Prometheus by model_id, independent of
+        per-service existence filtering. See model_breakdown()'s second
+        ROLLOUT NOTE."""
         client = MagicMock()
 
         async def fake_query(promql):
@@ -908,13 +929,26 @@ class TestModelConsumptionKpis:
         assert kpis["worst"] is None
 
     def test_active_models_counts_model_totals_with_traffic(self):
-        """model_totals is already one row per Registry-validated model_id —
-        this is a plain count, not a dedup (model_breakdown did the
-        dedup/validation already)."""
+        """model_totals is already one row per Registry-validated model_id,
+        each with a distinct name here — counting distinct names gives the
+        same answer as counting rows in this case."""
         model_totals = [
             self._model_row("id-gemma", "gemma", 15),
             self._model_row("id-llama", "llama", 20),
             self._model_row("id-idle", "idle-model", 0),  # no traffic -> excluded
+        ]
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
+        assert kpis["active_models"] == 2
+
+    def test_active_models_dedupes_multiple_active_versions_of_same_name(self):
+        """Two concurrently-ACTIVE versions of the same model (distinct
+        model_ids, e.g. a canary rollout) both receiving traffic must count
+        as ONE active model, matching registry_model_count's name-based
+        identity — otherwise active_models could exceed total_models."""
+        model_totals = [
+            self._model_row("id-gemma-v1", "Gemma", 15),
+            self._model_row("id-gemma-v2", "gemma", 5),  # same name, different casing
+            self._model_row("id-llama", "llama", 20),
         ]
         kpis = MeteringService.model_consumption_kpis([], model_totals)
         assert kpis["active_models"] == 2
@@ -1138,6 +1172,27 @@ class TestOverviewTenantData:
 
         tc, _ = await svc.overview_tenant_data(["24h"])
         assert tc["total_tenants"] == 7
+        assert tc["auth_db_available"] is True
+
+    async def test_prometheus_failure_in_one_window_does_not_raise(self):
+        """A failing Prometheus query in one window must come back as an
+        Exception in the returned dict, not propagate out of this method —
+        otherwise the caller (routes/metering.py) never reaches
+        _partition_results and /overview 500s instead of degrading."""
+        auth_db = AsyncMock()
+        count_result = MagicMock(scalar=lambda: 1)
+        names_result = MagicMock()
+        names_result.all.return_value = []
+        auth_db.execute = AsyncMock(side_effect=[count_result, count_result, names_result])
+
+        client = MagicMock()
+        client.query = AsyncMock(side_effect=RuntimeError("prometheus unreachable"))
+        svc = MeteringService(client=client, auth_db=auth_db)
+
+        tc, active_by_range = await svc.overview_tenant_data(["24h", "7d"])
+
+        assert isinstance(active_by_range["24h"], RuntimeError)
+        assert isinstance(active_by_range["7d"], RuntimeError)
         assert tc["auth_db_available"] is True
 
 

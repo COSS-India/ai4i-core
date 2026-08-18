@@ -532,6 +532,15 @@ async def _run_llm_chat_stream(
             req_attrs.update(get_context_attributes())
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+        # Unlike the success path below, this branch never reaches the
+        # generator's post-stream bridge call — without this, a failed
+        # streaming request carries no model_id (model_breakdown drops the
+        # empty-model_id bucket entirely, so the failure silently vanishes
+        # from the model's totals instead of counting against its
+        # success_pct). model_id may itself be "" here too (e.g. resolution
+        # failed before MMS ever returned one) — the bridge handles that via
+        # its own `or ""` fallback, same as the success path.
+        _bridge_llm_usage_to_request(request)
         return JSONResponse(status_code=status_code, content=result)
 
     async def gen():
