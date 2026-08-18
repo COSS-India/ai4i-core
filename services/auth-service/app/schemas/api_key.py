@@ -8,6 +8,7 @@ from typing import Optional
 from pydantic import ConfigDict, Field
 
 from app.schemas.base import BaseSchema
+from app.schemas.common import MessageData, SuccessResponse
 
 
 # ── Requests ──
@@ -47,14 +48,77 @@ class UpdateAPIKeyRequest(BaseSchema):
     expires_days: Optional[int] = Field(None, ge=1)
 
 
-# ── Responses ──
+# ── Response payloads (the ``data`` field) ──
 
-class CreateAPIKeyResponse(BaseSchema):
+class CreateAPIKeyData(BaseSchema):
     id: int
     api_key: str = Field(..., description="32-char hex key. Store securely — shown only once.")
     key_name: str
     permissions: list[str]
     expires_at: Optional[datetime] = None
+
+
+class APIKeyItem(BaseSchema):
+    """Masked API key as returned on list and update."""
+
+    id: int
+    key_name: str
+    api_key: str = Field(
+        ...,
+        description="Masked key (first 4 and last 4 characters). The raw key is never returned after create.",
+    )
+    user_id: str
+    permissions: list[str]
+    expires_at: Optional[datetime] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class APIKeyListData(BaseSchema):
+    api_keys: list[APIKeyItem]
+
+
+class APIKeyAdminItem(APIKeyItem):
+    """List-all item: masked key plus masked owner identity."""
+
+    user_email: Optional[str] = Field(
+        None,
+        description="Masked owner email. Plaintext PII is never returned.",
+    )
+    username: Optional[str] = None
+
+
+# ── Route responses: inherit SuccessResponse and override ``data`` ──
+
+class CreateAPIKeyResponse(SuccessResponse):
+    """POST /auth/api-keys"""
+
+    data: CreateAPIKeyData
+
+
+class ListAPIKeysResponse(SuccessResponse):
+    """GET /auth/api-keys"""
+
+    data: APIKeyListData
+
+
+class UpdateAPIKeyResponse(SuccessResponse):
+    """PATCH /auth/api-keys/{key_id}"""
+
+    data: APIKeyItem
+
+
+class RevokeAPIKeyResponse(SuccessResponse):
+    """DELETE /auth/api-keys/{key_id}"""
+
+    data: MessageData
+
+
+class ListAllAPIKeysResponse(SuccessResponse):
+    """GET /auth/api-keys/all"""
+
+    data: list[APIKeyAdminItem]
 
 
 class ValidateAPIKeyResponse(BaseSchema):

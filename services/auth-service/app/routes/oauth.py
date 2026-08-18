@@ -36,14 +36,25 @@ from app.core.messages import (
     LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL,
 )
 from app.core.redis import get_redis
-from app.core.responses import success_response
 from app.dependencies.services import get_oauth_service
-from app.schemas.oauth import OAuth2ExchangeRequest, OAuth2ProviderInfo
+from app.schemas.common import error_responses
+from app.schemas.oauth import (
+    AuthorizeData,
+    AuthorizeResponse,
+    CallbackResponse,
+    ExchangeCodeResponse,
+    ListProvidersResponse,
+    OAuth2ExchangeRequest,
+    OAuth2ProviderInfo,
+)
 from app.services.oauth_service import OAuthService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
+router = APIRouter(
+    prefix="/auth/oauth2",
+    tags=["OAuth2"],
+)
 
 
 def _get_allowed_redirect(uri: str) -> str | None:
@@ -97,24 +108,37 @@ def _get_allowed_redirect(uri: str) -> str | None:
     return None
 
 
-@router.get("/providers")
+@router.get(
+    "/providers",
+    response_model=ListProvidersResponse,
+    summary="List configured OAuth2 providers",
+)
 async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
-    """Return providers that are CONFIGURED (have a client_id). Providers
-    without credentials are silently omitted so the SPA's UI doesn't render
-    a broken button."""
+    """Return providers that are configured (have a client_id).
+
+    Providers without credentials are omitted so the SPA does not render a
+    broken button.
+    """
     providers = [
         OAuth2ProviderInfo(
             provider=c["provider"],
             client_id=c["client_id"],
             authorization_url=c["authorization_url"],
             scope=c["scope"],
-        ).model_dump()
+        )
         for c in svc.list_configured_providers()
     ]
-    return success_response(data=providers)
+    return ListProvidersResponse(data=providers)
 
 
-@router.get("/{provider}/authorize")
+@router.get(
+    "/{provider}/authorize",
+    response_model=AuthorizeResponse,
+    responses={
+        **error_responses(401, 404),
+        307: {"description": "Browser navigation: redirect to the provider consent page."},
+    },
+)
 async def authorize(
     request: Request,
     provider: str,
@@ -128,7 +152,8 @@ async def authorize(
 ):
     """Kick off OAuth: generate state, persist client redirect_uri under it,
     and either redirect the browser to the provider OR return the URL as
-    JSON for API/SPA-driven flows."""
+    JSON for API/SPA-driven flows.
+    """
     # Reject provider values that are not simple lowercase identifiers before
     # they are interpolated into the callback URL, so the path param can never
     # carry taint into the outbound redirect target.
@@ -193,10 +218,19 @@ async def authorize(
     if "text/html" in accept_header and "application/json" not in accept_header:
         return RedirectResponse(url=auth_url, status_code=307)
 
-    return success_response(data={"authorization_url": auth_url, "state": state})
+    return AuthorizeResponse(
+        data=AuthorizeData(authorization_url=auth_url, state=state)
+    )
 
 
-@router.get("/{provider}/callback")
+@router.get(
+    "/{provider}/callback",
+    response_model=CallbackResponse,
+    responses={
+        **error_responses(401, 404),
+        307: {"description": "SPA flow: redirect to the client with a one-time exchange code."},
+    },
+)
 async def callback(
     provider: str,
     background_tasks: BackgroundTasks,
@@ -208,7 +242,8 @@ async def callback(
     """OAuth provider's redirect target. Verifies state (CSRF), completes
     login, and EITHER redirects the browser back to the SPA with a one-time
     exchange code, OR returns tokens directly (for API clients without a
-    redirect_uri). Tokens never appear in URLs."""
+    redirect_uri). Tokens never appear in URLs.
+    """
     state_key = f"auth:oauth_state:{state}"
     state_data_raw = await redis_client.get(state_key)
     if not state_data_raw:
@@ -242,7 +277,7 @@ async def callback(
             # reject the redirect and fall back to JSON. The user keeps
             # their tokens; only the redirect is dropped.
             logger.warning(LOG_WARN_OAUTH_REDIRECT_BLOCKED, client_redirect)
-            return success_response(data=result)
+            return CallbackResponse(data=result)
 
         # Stash tokens under a single-use code; SPA exchanges it via
         # POST /exchange. Tokens never appear in URLs, browser history,
@@ -257,16 +292,21 @@ async def callback(
         return RedirectResponse(url=f"{safe_redirect}?{params}")
 
     # No redirect_uri → API client wants tokens inline.
-    return success_response(data=result)
+    return CallbackResponse(data=result)
 
 
-@router.post("/exchange")
+@router.post(
+    "/exchange",
+    response_model=ExchangeCodeResponse,
+    responses=error_responses(401),
+)
 async def exchange_code(
     body: OAuth2ExchangeRequest,
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
     """Exchange the one-time code from the redirect URL for the actual JWT
-    pair. The code is single-use — first POST wins, subsequent POSTs 401."""
+    pair. The code is single-use — first POST wins, subsequent POSTs 401.
+    """
     key = f"auth:oauth_exchange:{body.code}"
     data = await redis_client.get(key)
     if not data:
@@ -274,4 +314,4 @@ async def exchange_code(
 
     # Delete immediately — single-use semantics.
     await redis_client.delete(key)
-    return success_response(data=json.loads(data))
+    return ExchangeCodeResponse(data=json.loads(data))

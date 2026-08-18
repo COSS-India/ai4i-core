@@ -28,7 +28,11 @@ from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
-from app.schemas.token import TokenValidationResponse
+from app.schemas.token import (
+    TokenValidationResponse,
+    ValidateTokenErrorResponse,
+    ValidateTokenQuotaErrorResponse,
+)
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
 from app.services.tenant_name_cache import tenant_name_cache
@@ -175,7 +179,13 @@ async def _validate_api_key(
 
     permission_ids = result.get("permissions") or result.get("permission_ids") or []
     if not _check_endpoint_permission(request, permission_ids):
-        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="INSUFFICIENT_PERMISSIONS",
+                message="You do not have permission to access this endpoint.",
+            ).model_dump(),
+        )
 
     user_id = result.get("user_id")
     tenant_id = result.get("tenant_id")
@@ -194,11 +204,10 @@ async def _validate_api_key(
     if result.get("budget-exhausted") == "1":
         return JSONResponse(
             status_code=429,
-            content={
-                "valid": False,
-                "error": "BUDGET_EXHAUSTED",
-                "message": "Tenant budget is exhausted for the current billing period.",
-            },
+            content=ValidateTokenQuotaErrorResponse(
+                error="BUDGET_EXHAUSTED",
+                message="Tenant budget is exhausted for the current billing period.",
+            ).model_dump(exclude_none=True),
             headers=quota_header,
         )
 
@@ -206,12 +215,11 @@ async def _validate_api_key(
     if service and service["name"] in exhausted_services:
         return JSONResponse(
             status_code=429,
-            content={
-                "valid": False,
-                "error": "QUOTA_EXCEEDED",
-                "message": f"Quota exhausted for service '{service['name']}' in the current billing period.",
-                "service": service["name"],
-            },
+            content=ValidateTokenQuotaErrorResponse(
+                error="QUOTA_EXCEEDED",
+                message=f"Quota exhausted for service '{service['name']}' in the current billing period.",
+                service=service["name"],
+            ).model_dump(),
             headers=quota_header,
         )
 
@@ -240,9 +248,21 @@ async def _validate_jwt(
     try:
         claims = await get_jwt_verifier().verify(token)
     except JWTExpiredError:
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED", "message": "Token has expired."})
+        return JSONResponse(
+            status_code=401,
+            content=ValidateTokenErrorResponse(
+                error="TOKEN_EXPIRED",
+                message="Token has expired.",
+            ).model_dump(),
+        )
     except JWTVerificationError:
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID", "message": "Token is invalid."})
+        return JSONResponse(
+            status_code=401,
+            content=ValidateTokenErrorResponse(
+                error="TOKEN_INVALID",
+                message="Token is invalid.",
+            ).model_dump(),
+        )
 
     # Not gated on claims.token_id: access tokens carry `jti`, not `token_id`
     # (only api_key tokens set token_id) — the global-logout check below keys
@@ -254,10 +274,22 @@ async def _validate_jwt(
         user_id=str(claims.user_id) if claims.user_id else None,
         issued_at=claims.raw.get("iat"),
     ):
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED", "message": "Token has been revoked."})
+        return JSONResponse(
+            status_code=401,
+            content=ValidateTokenErrorResponse(
+                error="TOKEN_REVOKED",
+                message="Token has been revoked.",
+            ).model_dump(),
+        )
 
     if not _check_endpoint_permission(request, claims.permission_ids):
-        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
+        return JSONResponse(
+            status_code=403,
+            content=ValidateTokenErrorResponse(
+                error="INSUFFICIENT_PERMISSIONS",
+                message="You do not have permission to access this endpoint.",
+            ).model_dump(),
+        )
 
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
@@ -283,14 +315,39 @@ async def _validate_jwt(
 # APISIX forward-auth issues GET; the original client method travels in
 # X-Original-Method. Don't add POST defensively — no caller uses it, and
 # silent 405s on config drift are easier to spot.
-@router.get("/validate")
+@router.get(
+    "/validate",
+    response_model=TokenValidationResponse | ValidateAPIKeyResponse,
+    responses={
+        401: {
+            "model": ValidateTokenErrorResponse,
+            "description": (
+                "Expired, invalid, or revoked JWT — body is "
+                "{valid, error, message} with a machine-readable `error` code. "
+                "Two other 401 cases exist on this endpoint but have a different "
+                "body: a missing token raises AuthenticationRequiredError, "
+                "rendered as the platform's {detail: {code, message, timestamp}} "
+                "envelope; an unknown/revoked API key returns the same "
+                "{valid, error, message} shape but with `error` set to a "
+                "human-readable sentence rather than a code."
+            ),
+        },
+        403: {
+            "model": ValidateTokenErrorResponse,
+            "description": "Caller is authenticated but lacks permission for X-Original-Method/URI.",
+        },
+        429: {
+            "model": ValidateTokenQuotaErrorResponse,
+            "description": "PPU tenant budget or service quota is exhausted.",
+        },
+    },
+)
 async def validate_token(
     request: Request,
     response: Response,
     redis=Depends(get_redis),
 ):
-    """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
-
+    """
     No DB dependency is declared on this route at all — it's the gateway
     forward-auth hot path, hit on every request. On a Redis miss, the API-key
     branch opens its own short-lived DB session internally (see

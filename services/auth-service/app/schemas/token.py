@@ -16,3 +16,17 @@ class TokenValidationResponse(BaseSchema):
     permission_ids: list[int] = []
     roles: list[str] = []
     token_type: Optional[str] = None
+
+
+class ValidateTokenErrorResponse(BaseSchema):
+    """GET /auth/validate — 401/403 JSON body (not the platform ``detail`` envelope)."""
+
+    valid: bool = False
+    error: str
+    message: str
+
+
+class ValidateTokenQuotaErrorResponse(ValidateTokenErrorResponse):
+    """GET /auth/validate — 429 when PPU budget or a service quota is exhausted."""
+
+    service: Optional[str] = None
