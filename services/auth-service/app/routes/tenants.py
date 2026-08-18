@@ -327,9 +327,6 @@ async def delete_tenant_user(
     svc: TenantService = Depends(get_tenant_service),
 ):
     """Delete a tenant user.
-
-    Cannot remove the last Tenant Admin (422). Moderators may delete USER
-    accounts but not higher-privileged roles.
     """
     await svc.delete_tenant_user(current_user, tenant_id, user_id, background_tasks)
     return DeleteTenantUserResponse(
