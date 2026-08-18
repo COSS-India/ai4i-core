@@ -16,6 +16,9 @@ from app.schemas.common import (
     Benchmark,
     InferenceApiKey,
     LanguagePair,
+    MessageMeta,
+    SuccessResponse,
+    SuccessResponseWithMeta,
     Submitter,
     TaskSpec,
     TaskSpecLenient,
@@ -439,6 +442,45 @@ class ModelViewRequest(BaseSchema):
     version: Optional[str] = None
 
 
+class InferenceEndpointSchema(BaseSchema):
+    """Task-specific inference request/response contract (the ``schema`` field).
+
+    ``model_name`` (the Triton model identifier used to construct the
+    inference URL, e.g. 'indictrans2-en-hi') is the only key the write-side
+    validator requires — everything else genuinely varies per task type, so
+    it's left optional here too (defensively — this is a response model, it
+    must not fail to read back a row written before that validator existed)
+    and any other key is preserved as-is.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    model_name: Optional[str] = None
+    taskType: Optional[str] = Field(None, description="e.g. 'translation'.")
+
+
+class AdapterConfigSchema(BaseSchema):
+    """Platform-specific Triton I/O tensor mapping (the ``adapterConfig`` field).
+
+    ``inputs``/``outputs`` are the two keys the create-time validator
+    requires present (their internal tensor-descriptor shape isn't enforced
+    beyond that, so they stay loosely typed). ``model_name`` is the
+    authoritative real model identifier used for LLM (OpenAI-compatible)
+    deployments (see ``utils/probe_payloads.py``, ``utils/endpoint_validator.py``).
+    All fields are optional here — defensively, since this is a response
+    model reading back whatever was actually persisted. Any other key is
+    preserved as-is.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    inputs: Optional[Any] = Field(None, description="Triton input tensor mapping.")
+    outputs: Optional[Any] = Field(None, description="Triton output tensor mapping.")
+    model_name: Optional[str] = Field(
+        None, description="Authoritative real model identifier — used for LLM task-type deployments."
+    )
+
+
 class ModelResponse(BaseSchema):
     """Single-model response shape (preserves model-management camelCase)."""
 
@@ -458,16 +500,17 @@ class ModelResponse(BaseSchema):
     submitter: Optional[Submitter] = None
     license: Optional[str] = None
     licenseUrl: Optional[str] = None
-    adapterConfig: Optional[Dict[str, Any]] = None
-    endpoint_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
+    adapterConfig: Optional[AdapterConfigSchema] = None
+    endpoint_schema: Optional[InferenceEndpointSchema] = Field(None, alias="schema")
     callbackUrl: Optional[str] = None
-    inferenceApiKey: Optional[Dict[str, Any]] = None
+    inferenceApiKey: Optional[InferenceApiKey] = None
     isSyncApi: Optional[bool] = None
     asyncApiDetails: Optional[AsyncApiDetails] = None
     source: Optional[str] = None  # alias for refUrl
     task: TaskSpecLenient
     trainingDataset: Optional[TrainingDataset] = None
     classInstance: Optional[str] = None
+    createdAt: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -481,3 +524,72 @@ class ModelListResponse(BaseSchema):
 
     items: List[ModelListItem]
     total: int
+
+
+# ── Route-specific ``data`` / ``meta`` shapes ──
+
+
+class CreateModelData(BaseSchema):
+    """``data`` shape for ``POST /models``."""
+
+    modelId: str
+    name: str
+    version: str
+
+
+class UpdateModelData(BaseSchema):
+    """``data`` shape for ``PATCH /models``."""
+
+    modelId: str
+    version: str
+
+
+class DeleteModelData(BaseSchema):
+    """``data`` shape for ``DELETE /models/{model_id}``."""
+
+    modelId: str
+
+
+class ModelListMeta(BaseSchema):
+    """``meta`` shape for ``GET /models`` — pagination info alongside the page of items."""
+
+    total: int
+    offset: int
+    limit: int
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class ListModelsResponse(SuccessResponseWithMeta):
+    """GET /models"""
+
+    data: List[ModelResponse]
+    meta: ModelListMeta
+
+
+class GetModelResponse(SuccessResponse):
+    """GET /models/{model_id}"""
+
+    data: ModelResponse
+
+
+class CreateModelResponse(SuccessResponseWithMeta):
+    """POST /models"""
+
+    data: CreateModelData
+    meta: MessageMeta
+
+
+class UpdateModelResponse(SuccessResponseWithMeta):
+    """PATCH /models"""
+
+    data: UpdateModelData
+    meta: MessageMeta
+
+
+class DeleteModelResponse(SuccessResponseWithMeta):
+    """DELETE /models/{model_id}"""
+
+    data: DeleteModelData
+    meta: MessageMeta
