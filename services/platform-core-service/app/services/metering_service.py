@@ -895,11 +895,11 @@ class MeteringService:
         given, skips the native-unit query entirely for excluded tasks —
         a query-level reduction, not just a display-level one.
 
-        These native-unit metrics (tts/nmt/asr/... characters/minutes) don't
-        carry a ``tenant_id`` label — only telemetry_obsv_requests_total does
-        (see metrics.py) — so ``tenant_id`` is accepted for signature
-        symmetry with the caller but intentionally NOT used here; filtering
-        by a label the metric doesn't have would return zero results.
+        These native-unit metrics (tts/nmt/asr/... characters/minutes) now
+        carry a ``tenant_id`` label alongside ``tenant`` (see metrics.py) —
+        ``tenant_id`` is preferred over ``tenant`` when given, same
+        precedence as build_base_selectors, so this stays correct across a
+        tenant rename instead of silently returning platform-wide numbers.
         """
         native_tasks: list[str] = []
         native_coros = []
@@ -910,7 +910,12 @@ class MeteringService:
             if not native_metric:
                 continue
             extra = cfg.get("native_extra_labels") or []
-            parts = [f'tenant="{escape_label_value(tenant)}"'] if tenant else []
+            if tenant_id:
+                parts = [f'tenant_id="{escape_label_value(tenant_id)}"']
+            elif tenant:
+                parts = [f'tenant="{escape_label_value(tenant)}"']
+            else:
+                parts = []
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
             # Use increase()-based counting (via sum_over_window), NOT a raw

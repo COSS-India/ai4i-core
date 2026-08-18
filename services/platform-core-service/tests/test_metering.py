@@ -395,6 +395,26 @@ class TestServiceBreakdown:
         assert ocr_row["native_units"] == 512
         assert ocr_row["native_unit_suffix"] == "images"
 
+    async def test_native_unit_query_prefers_tenant_id_over_tenant(self):
+        """Native-unit metrics (tts/nmt/asr/...) now carry tenant_id too, so
+        _native_unit_queries must scope by it (and prefer it over the mutable
+        tenant name) instead of silently ignoring it and returning
+        platform-wide numbers for a tenant-scoped request."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client)
+
+        await svc.service_breakdown(tenant="acme", tenant_id="5", time_range="24h")
+
+        tts_calls = [
+            call[0][0] for call in client.scalar.call_args_list
+            if "telemetry_obsv_tts_characters_synthesized_sum" in call[0][0]
+        ]
+        assert len(tts_calls) == 1
+        assert 'tenant_id="5"' in tts_calls[0]
+        assert 'tenant="acme"' not in tts_calls[0]
+
     async def test_native_units_zero_not_null_when_no_usage(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
