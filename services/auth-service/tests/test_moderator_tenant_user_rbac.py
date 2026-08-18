@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.models.role_name import RoleName
+from app.core.config import RoleName
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
 from app.services.tenant_service import TenantService

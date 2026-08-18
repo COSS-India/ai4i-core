@@ -16,7 +16,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.core.database import get_db
 from app.dependencies.services import get_user_service
-from app.models.role_name import RoleName
+from app.core.config import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.schemas.user import UserListResponse, UserUpdate

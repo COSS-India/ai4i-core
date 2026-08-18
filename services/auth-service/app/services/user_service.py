@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.exceptions import AuthorizationError
-from app.models.role_name import RoleName
+from app.core.config import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository

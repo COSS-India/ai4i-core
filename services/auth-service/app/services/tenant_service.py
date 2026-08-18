@@ -28,7 +28,8 @@ from app.core.exceptions import (
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.role_name import RoleName, role_name_to_str
+from app.core.config import RoleName
+from app.utils.auth_helper import role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType

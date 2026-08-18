@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks
 
 from app.core.config import settings
 from app.core.constants import TokenType
-from app.models.role_name import RoleName
+from app.core.config import RoleName
 from app.core.exceptions import (
     AuthorizationError,
     DuplicateEntityError,

@@ -4,6 +4,7 @@ Auth service configuration — self-contained pydantic-settings class.
 Reads its own environment variables; no dependency on a shared env library.
 """
 
+import enum
 from pathlib import Path
 from typing import Optional
 
@@ -251,3 +252,13 @@ class RoleId:
     GUEST = 3
     USER = 4
     TENANT_ADMIN = 5
+
+
+# ── Role Names (must match the seeded values in roles table) ──────────
+class RoleName(str, enum.Enum):
+    ADMIN = "ADMIN"
+    USER = "USER"
+    GUEST = "GUEST"
+    MODERATOR = "MODERATOR"
+    TENANT_ADMIN = "TENANT ADMIN"
+    PROGRAM_ADMIN = "PROGRAM ADMIN"

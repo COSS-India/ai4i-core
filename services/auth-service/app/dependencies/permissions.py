@@ -14,7 +14,8 @@ from app.core.permission_checker import PermissionChecker
 from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.dependencies.auth import get_current_user
-from app.models.role_name import RoleName, role_name_to_str
+from app.core.config import RoleName
+from app.utils.auth_helper import role_name_to_str
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 

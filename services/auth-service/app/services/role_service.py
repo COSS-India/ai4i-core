@@ -9,7 +9,8 @@ from uuid import UUID
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
-from app.models.role_name import RoleName, role_name_to_str
+from app.core.config import RoleName
+from app.utils.auth_helper import role_name_to_str
 from app.repositories.role_repository import RoleRepository
 from app.services.role_permission_cache import role_permission_cache
 

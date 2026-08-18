@@ -14,7 +14,7 @@ from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.models.tenant import TenantStatus
-from app.models.role_name import RoleName
+from app.core.config import RoleName
 
 # Invisible Unicode characters that str.strip() does not remove:
 # soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import AliasChoices, Field
 
-from app.models.role_name import RoleName
+from app.core.config import RoleName
 from app.schemas.base import BaseSchema
 
 
