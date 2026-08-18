@@ -25,8 +25,6 @@ from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
 
-from swagger_docs import _CHAT_OPENAPI_RESPONSES, _CHAT_EXAMPLE
-
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
 
@@ -233,11 +231,10 @@ async def run_nmt_try_it(
         "({ service_name, serviceId?, payload: ... }) when APISIX forwards the "
         "wrapped body."
     ),
-    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def run_llm_try_it(
     request: Request,
-    body: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+    body: Dict[str, Any] = Body(...),
 ) -> Response:
     # Unwrap TryItRequest envelope if present; otherwise treat body as the
     # OpenAI-compatible chat payload (what the portal try-it UI sends).
@@ -597,11 +594,10 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     "/chat/completions",
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
-    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat_completions(
     request: Request,
-    payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+    payload: Dict[str, Any] = Body(...),
 ) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
@@ -610,11 +606,10 @@ async def chat_completions(
     "/chat",
     summary="LLM Chat",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
-    responses=_CHAT_OPENAPI_RESPONSES,
 )
 async def chat(
     request: Request,
-    payload: Dict[str, Any] = Body(..., examples=[_CHAT_EXAMPLE]),
+    payload: Dict[str, Any] = Body(...),
 ) -> Response:
     return await _run_llm_chat(request, payload, path="/v1/chat/completions")
 
