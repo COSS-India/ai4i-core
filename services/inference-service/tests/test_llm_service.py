@@ -16,6 +16,7 @@ _STUB_SERVICE_INFO = {
     "tier_ids": ["tier-1"],
     "adapter_config": {"model_name": "google/gemma-4-E4B-it"},
     "endpoint": "http://vllm:8000",
+    "model_id": "hash-gemma-v1",
 }
 
 
@@ -320,9 +321,11 @@ async def test_proxy_traced_stream_records_usage_from_final_chunk(llm_service):
     is how ObservabilityMiddleware bills a stream without buffering it."""
     from ai4i_core.context import (
         get_llm_usage_input_tokens,
+        get_llm_usage_model_id,
         get_llm_usage_model_name,
         get_llm_usage_output_tokens,
         set_llm_usage_input_tokens,
+        set_llm_usage_model_id,
         set_llm_usage_model_name,
         set_llm_usage_output_tokens,
     )
@@ -330,6 +333,7 @@ async def test_proxy_traced_stream_records_usage_from_final_chunk(llm_service):
     set_llm_usage_input_tokens(None)
     set_llm_usage_output_tokens(None)
     set_llm_usage_model_name(None)
+    set_llm_usage_model_id(None)
 
     lines = [
         'data: {"choices":[{"delta":{"content":"hi"}}]}',
@@ -349,6 +353,38 @@ async def test_proxy_traced_stream_records_usage_from_final_chunk(llm_service):
     assert get_llm_usage_output_tokens() == 82
     # The model span carries the real upstream model, not the service ID.
     assert get_llm_usage_model_name() == "google/gemma-4-E4B-it"
+    # Registry identity — set from MMS's service_info, not the response body.
+    assert get_llm_usage_model_id() == "hash-gemma-v1"
+
+
+@pytest.mark.asyncio
+async def test_prepare_request_sets_model_id_from_service_info(llm_service):
+    """model_id is known as soon as MMS resolves the service — unlike
+    model_name, it doesn't depend on the upstream response, so both the
+    buffered and streaming paths get it via the shared _prepare_request."""
+    from ai4i_core.context import get_llm_usage_model_id, set_llm_usage_model_id
+
+    set_llm_usage_model_id(None)
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))):
+        await llm_service._prepare_request("/v1/chat/completions", {"model": "svc-1"})
+
+    assert get_llm_usage_model_id() == "hash-gemma-v1"
+
+
+@pytest.mark.asyncio
+async def test_prepare_request_defaults_model_id_to_empty_string(llm_service):
+    from ai4i_core.context import get_llm_usage_model_id, set_llm_usage_model_id
+
+    set_llm_usage_model_id(None)
+    service_info_without_model_id = {k: v for k, v in _STUB_SERVICE_INFO.items() if k != "model_id"}
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", service_info_without_model_id))):
+        await llm_service._prepare_request("/v1/chat/completions", {"model": "svc-1"})
+
+    assert get_llm_usage_model_id() == ""
 
 
 def test_record_stream_usage_records_genuine_zero_usage(llm_service):

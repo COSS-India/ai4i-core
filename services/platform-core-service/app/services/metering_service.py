@@ -1,7 +1,7 @@
 """Metering business logic — PromQL construction, Prometheus calls, result shaping."""
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,22 @@ from app.utils.metering_promql_builder import (
 logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
+
+class _Unset:
+    """Sentinel type distinguishing "caller didn't pass valid_names" from an
+    explicit `None` (a legitimate "auth DB was unavailable" value returned
+    by _fetch_valid_tenant_names) — see MeteringService.active_tenants. Its
+    own type — rather than a bare ``object()`` typed as ``Any`` — lets the
+    parameter annotation say what's actually accepted: a set, None, or this
+    sentinel."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
 
 
 class MeteringService:
@@ -187,7 +203,9 @@ class MeteringService:
             },
         }
 
-    async def active_tenants(self, time_range: Optional[str]) -> dict:
+    async def active_tenants(
+        self, time_range: Optional[str], valid_names: Union[set, None, _Unset] = _UNSET
+    ) -> dict:
         """
         ROLLOUT NOTE: the ``tenant`` label switched from the numeric tenant id
         to the organisation name (see ObservabilityMiddleware). Existing
@@ -200,13 +218,29 @@ class MeteringService:
         after-the-fact fix: Prometheus relabeling only applies at scrape time
         to a target's own labels, it cannot rewrite already-stored series to
         translate an id to the org name it corresponded to at write time.
+
+        `valid_names`: pass a pre-fetched set (or None, meaning "auth DB was
+        unavailable, don't filter") when calling this for multiple windows in
+        the same request — see `overview_tenant_data`. self._auth_db is a
+        single AsyncSession and is NOT safe for concurrent use (same
+        constraint as tenant_count()), so gathering several `active_tenants()`
+        calls together while each independently fetches its own valid_names
+        via `_fetch_valid_tenant_names()` intermittently raises
+        `sqlalchemy.exc.InvalidRequestError: This session is provisioning a
+        new connection`. Left unset (the default), this fetches it internally
+        — safe for a single, standalone call to this method, but callers
+        that need more than one window in the same request must go through
+        `overview_tenant_data` instead of calling this directly per window.
         """
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
-        prom_results, valid_names = await asyncio.gather(
-            self._client.query(promql),
-            self._fetch_valid_tenant_names(),
-        )
+        if valid_names is _UNSET:
+            prom_results, valid_names = await asyncio.gather(
+                self._client.query(promql),
+                self._fetch_valid_tenant_names(),
+            )
+        else:
+            prom_results = await self._client.query(promql)
         # Filter Prometheus results to only tenants that are currently ACTIVE
         # in the DB. Without this, deleted tenants (or tenants that are no
         # longer ACTIVE) whose Prometheus series are still within the
@@ -291,6 +325,45 @@ class MeteringService:
                 "new_tenants": None,
                 "auth_db_available": False,
             }
+
+    async def overview_tenant_data(
+        self, time_ranges: list[str]
+    ) -> tuple[dict, dict[str, dict]]:
+        """Fetch `tenant_count()` plus `active_tenants()` for several windows
+        (the Overview tab needs 24h/7d/30d) in one call, respecting the
+        constraint that `self._auth_db` — a single AsyncSession — is NOT
+        safe for concurrent use (see `tenant_count()`'s comment).
+
+        `tenant_count()`'s 2 queries and the ONE valid-tenant-names fetch
+        shared across every window all run sequentially first (each already
+        catches its own DB errors internally and never raises, so this can't
+        regress a caller's degraded-response handling); only then are the
+        per-window Prometheus queries fired concurrently via
+        `active_tenants(tr, valid_names=...)`. Calling `active_tenants()`
+        directly, once per window, inside the SAME outer `asyncio.gather` as
+        `tenant_count()` (as the /overview route used to) intermittently
+        raises `sqlalchemy.exc.InvalidRequestError: This session is
+        provisioning a new connection; concurrent operations are not
+        permitted` — multiple tasks each trying to run their own
+        `self._auth_db.execute()` at the same time.
+
+        The per-window gather uses `return_exceptions=True`: unlike
+        tenant_count()/the valid-names fetch, active_tenants() does NOT
+        catch a Prometheus query failure internally (it can genuinely
+        raise), so without this a single bad window would propagate out of
+        this method entirely — the caller (routes/metering.py) never gets a
+        chance to run it through `_partition_results` and degrade
+        gracefully; /overview would 500 instead.
+
+        Returns (tenant_count_result, {time_range: active_tenants_result_or_exception}).
+        """
+        tc = await self.tenant_count()
+        valid_names = await self._fetch_valid_tenant_names()
+        active_results = await asyncio.gather(
+            *(self.active_tenants(tr, valid_names=valid_names) for tr in time_ranges),
+            return_exceptions=True,
+        )
+        return tc, dict(zip(time_ranges, active_results))
 
     async def usage_concentration(
         self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
@@ -377,48 +450,73 @@ class MeteringService:
         }
 
     async def model_breakdown(self, tenant: Optional[str], time_range: Optional[str]) -> dict:
-        """Per-service LLM usage: requests, tokens, success %, grouped by
-        `service_id` — the tenant-facing service the client called (the
-        OpenAI `model` field as sent), NOT the `model` Prometheus label.
+        """LLM usage grouped by BOTH `service_id` (the tenant-facing service
+        the client called — the OpenAI `model` field as sent) AND `model_id`
+        (the Registry's stable identity for the model actually behind that
+        service, stamped server-side by inference-service at MMS-resolution
+        time — see ai4i-core 1.0.18's `MetricsCollector` — NOT derived from
+        anything the client sends). One PromQL pass, `by (service_id,
+        model_id)`, so both dimensions come from the same series: `services`
+        below is the per-service breakdown (one row per service_id, for the
+        "service" column), and the model-level rollup consumed by
+        `model_consumption_ranking`/`model_consumption_kpis` is computed
+        independently from the same raw rows, collapsed by `model_id` alone
+        — see the second ROLLOUT NOTE below for why that's deliberately NOT
+        just "re-aggregate the (ghost-filtered) `services` list".
 
-        The `model` label (the real upstream model echoed back by the
-        inference engine) is intentionally not grouped or filtered on here:
-        one service maps to exactly one model, but many services can share
-        the same underlying model, so grouping by model would merge
-        distinct services' traffic and destroy tenant attribution. See
-        model-consumption-api-highlevel-design.md §1/§5. Each row's
-        `model_name` (informational only) is resolved via a batched
-        mm_services -> mm_models DB lookup (mm_services.model_id is an
-        opaque hash, not a display name — see
-        ServiceRepository.get_names_and_models_by_service_ids), not from
-        Prometheus — the `model` label is absent on failed requests and can
-        differ between the buffered and streaming response paths for the
-        same service.
+        The `model` label (the upstream inference engine's own echoed model
+        name — absent on failures, can differ between the buffered/streaming
+        paths) is intentionally never grouped or filtered on; `model_name`
+        below is always the Registry's name for `model_id`, not this label.
 
         Fires 3 queries in one asyncio.gather: total requests, successful
-        requests, and tokens processed — each grouped by `service_id`.
+        requests, and tokens processed — each grouped by `(service_id,
+        model_id)`.
 
-        ROLLOUT NOTE: rows are cross-checked against the Service Registry
-        (mm_services) via that same lookup, and a `service_id` with no
-        current, non-deleted row is dropped. Two different populations land
-        here: `service_id` is the client-supplied `model` string, set before
-        MMS resolution, so a request for a service that was deleted/renamed
+        ROLLOUT NOTE (service-level ghosts): per-service rows are
+        cross-checked against the Service Registry (mm_services) via
+        ServiceRepository.get_names_and_models_by_service_ids, and a
+        `service_id` whose model row is entirely absent from mm_models is
+        dropped from `services` — a DEPRECATED model is NOT a ghost (it's
+        still live and can still be serving traffic; see that method's
+        docstring), only a hard-deleted one is. Two different populations
+        land here: `service_id` is the client-supplied `model` string, set
+        before MMS resolution, so a request for a service that was deleted,
         OR one that never existed (a typo, a stale integration still
         pointing at an old id — the `llm`/`llm/default` cases) both emit
         Prometheus series but neither has a current registry row. We can't
-        tell those apart here, so both are dropped — which means, unlike the
-        never-existed case, a rename/delete makes this endpoint
-        under-report real historical traffic for up to `time_range` (30d)
-        against Overview's `request_total`, which is NOT registry-filtered
-        (see routes/metering.py `request_total(service_id=None, ...)`) and
-        keeps counting it. This self-heals as the pre-rename/delete series
-        age out of the window, the same tradeoff `active_tenants` makes for
-        the tenant-id -> org-name cutover (see its ROLLOUT NOTE above). The
-        check is skipped (all ids kept, name falls back to the raw id) only
-        when the registry lookup itself is unavailable or errors — we can't
-        tell "deleted" from "DB unreachable" in that case. Suppressed ids
-        are logged (see below) so a rename-induced drop is traceable rather
-        than a silent discrepancy against Overview.
+        tell those apart here, so both are dropped from the per-service
+        breakdown. The check is skipped (all ids kept, name falls back to
+        the raw id) only when the registry lookup itself is unavailable or
+        errors — we can't tell "deleted" from "DB unreachable" in that
+        case. Suppressed ids are logged so a delete-induced drop is
+        traceable.
+
+        ROLLOUT NOTE (model-level totals are NOT a re-aggregation of
+        `services`): a model's own requests/success/tokens are collapsed
+        directly from the raw `(service_id, model_id)` rows and validated
+        against the Registry by `model_id` alone (ModelRepository.
+        get_model_names — same "absent row = ghost, DEPRECATED is not"
+        rule) — deliberately NOT derived by summing the
+        (service-existence-filtered) `services` list above. If a
+        contributing service is later deleted while its model row still
+        exists, the model's total must not silently shrink just because one
+        of several services feeding it disappeared — that's real traffic
+        the model actually served. The consequence: `services` (the flat
+        per-service breakdown) can sum to LESS than its parent model's own
+        total for as long as that deleted service's old series remain in
+        the query window — the same "won't add up exactly, self-heals as
+        old series age out" tradeoff `active_tenants` documents for the
+        tenant-id -> org-name cutover.
+
+        Each per-service row's own `model_id` is read straight from the
+        Prometheus label when present (the new source of truth), falling
+        back to the DB-joined value from `get_names_and_models_by_service_ids`
+        only when no row for that service_id carried a non-empty `model_id`
+        yet — i.e. a legacy pre-upgrade series (recorded before ai4i-core
+        1.0.18 started stamping this label) or a resolution failure. This
+        self-heals as pre-upgrade series age out of the window; there's no
+        after-the-fact fix, same reasoning as the tenant-id cutover.
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
@@ -432,10 +530,11 @@ class MeteringService:
             tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
         tokens_sel = "{" + ",".join(tokens_parts) + "}"
 
-        total_q = sum_over_window_by(f"{_METRIC}{base_sel}", "service_id", time_range)
-        success_q = sum_over_window_by(f"{_METRIC}{success_sel}", "service_id", time_range)
+        group_by = "service_id, model_id"
+        total_q = sum_over_window_by(f"{_METRIC}{base_sel}", group_by, time_range)
+        success_q = sum_over_window_by(f"{_METRIC}{success_sel}", group_by, time_range)
         tokens_q = sum_over_window_by(
-            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", "service_id", time_range
+            f"telemetry_obsv_llm_tokens_processed_sum{tokens_sel}", group_by, time_range
         )
 
         raw = await asyncio.gather(
@@ -448,31 +547,48 @@ class MeteringService:
         def _safe_list(r):
             return r if not isinstance(r, Exception) else []
 
-        totals = self._label_dict(_safe_list(raw[0]), "service_id")
-        successes = self._label_dict(_safe_list(raw[1]), "service_id")
-        tokens = self._label_dict(_safe_list(raw[2]), "service_id")
+        total_rows = _safe_list(raw[0])
+        success_rows = _safe_list(raw[1])
+        tokens_rows = _safe_list(raw[2])
+
+        # ── Per-service view (collapses across model_id — see class docstring
+        # on why a service_id can transiently carry more than one model_id
+        # label value; the per-service TOTAL must not fragment because of it).
+        totals = self._label_dict(total_rows, "service_id")
+        successes = self._label_dict(success_rows, "service_id")
+        tokens = self._label_dict(tokens_rows, "service_id")
 
         # "" means the client sent no `model` field at all — not a real service.
         service_ids = {s for s in (set(totals) | set(successes) | set(tokens)) if s != ""}
 
-        names_and_models: dict = {}
+        # Representative model_id per service_id, straight from Prometheus —
+        # first non-empty value seen wins (a service's model_id is an
+        # immutable FK, so in steady state there's only ever one; see the
+        # ROLLOUT NOTE above for the transitional exception).
+        prom_model_id: dict = {}
+        for r in (*total_rows, *success_rows, *tokens_rows):
+            sid = r["metric"].get("service_id", "")
+            mid = r["metric"].get("model_id", "") or ""
+            if sid and mid and sid not in prom_model_id:
+                prom_model_id[sid] = mid
+
+        svc_info: dict = {}
         registry_checked = False
         if self._service_repo is not None and service_ids:
             try:
-                names_and_models = await self._service_repo.get_names_and_models_by_service_ids(
+                svc_info = await self._service_repo.get_names_and_models_by_service_ids(
                     list(service_ids)
                 )
                 registry_checked = True
             except Exception:
                 logger.warning("model_breakdown: service name/model lookup failed", exc_info=True)
 
-        # service_id with no current, non-deleted mm_services row: either a
-        # genuinely deleted/renamed service (real historical traffic — see
-        # the ROLLOUT NOTE above) or one that never existed (a typo / stale
-        # integration, e.g. "llm", "llm/default"). Only computed when the
-        # registry lookup actually ran — if it's unavailable/failed we can't
-        # tell "deleted" from "DB down", so nothing is dropped.
-        ghosts = (service_ids - names_and_models.keys()) if registry_checked else set()
+        # service_id with no current row at all in mm_models (a DEPRECATED
+        # model still has a row, so it's not a ghost — see the service-level
+        # ROLLOUT NOTE above). Only computed when the registry lookup
+        # actually ran — if it's unavailable/failed we can't tell "deleted"
+        # from "DB down", so nothing is dropped.
+        ghosts = (service_ids - svc_info.keys()) if registry_checked else set()
         if ghosts:
             logger.info(
                 "model_breakdown: dropped %d unregistered service_id(s): %s",
@@ -485,10 +601,12 @@ class MeteringService:
                 continue
             total_v = totals.get(service_id, 0)
             success_v = successes.get(service_id, 0)
-            name, model_name = names_and_models.get(service_id, (service_id, None))
+            name, db_model_id, model_name = svc_info.get(service_id, (service_id, None, None))
+            model_id = prom_model_id.get(service_id) or db_model_id
             services.append({
                 "service_id": service_id,
                 "name": name,
+                "model_id": model_id,
                 "model_name": model_name,
                 "requests": total_v,
                 "native_units": float(tokens.get(service_id, 0)),
@@ -497,17 +615,67 @@ class MeteringService:
 
         services.sort(key=lambda s: s["requests"], reverse=True)
 
+        # ── Model-level view (collapses across service_id) — the
+        # authoritative source for model_consumption_ranking/kpis; see the
+        # model-level ROLLOUT NOTE above for why this is independent of the
+        # service-existence filtering `services` above went through.
+        model_totals_raw = self._label_dict(total_rows, "model_id")
+        model_successes_raw = self._label_dict(success_rows, "model_id")
+        model_tokens_raw = self._label_dict(tokens_rows, "model_id")
+        model_ids = {
+            m for m in (set(model_totals_raw) | set(model_successes_raw) | set(model_tokens_raw))
+            if m != ""
+        }
+
+        model_names: dict = {}
+        model_registry_checked = False
+        if self._model_repo is not None and model_ids:
+            try:
+                model_names = await self._model_repo.get_model_names(list(model_ids))
+                model_registry_checked = True
+            except Exception:
+                logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
+
+        # model_id with no current Registry row at all — a DEPRECATED model
+        # still has a row (see get_model_names) so it's not a ghost, only a
+        # hard-deleted or stale/never-existent id is. An empty-model_id row
+        # (e.g. a pre-upgrade series with no label at all) was already
+        # excluded by the `!= ""` filter above and never reaches here.
+        # Skipped (nothing dropped) only when the registry lookup itself is
+        # unavailable.
+        model_ghosts = (model_ids - model_names.keys()) if model_registry_checked else set()
+        if model_ghosts:
+            logger.info(
+                "model_breakdown: dropped %d unregistered model_id(s): %s",
+                len(model_ghosts), sorted(model_ghosts),
+            )
+
+        model_totals = []
+        for model_id in model_ids:
+            if model_id in model_ghosts:
+                continue
+            total_v = model_totals_raw.get(model_id, 0)
+            success_v = model_successes_raw.get(model_id, 0)
+            model_totals.append({
+                "model_id": model_id,
+                "model_name": model_names.get(model_id, model_id),
+                "requests": total_v,
+                "native_units": float(model_tokens_raw.get(model_id, 0)),
+                "success_pct": round(success_v / total_v * 100, 2) if total_v else 0.0,
+            })
+
         return {
             "services": services,
+            "model_totals": model_totals,
             "filters": {"tenant": tenant, "time_range": time_range or "all"},
         }
 
     async def registry_model_count(self) -> Optional[int]:
-        """Distinct models currently registered in the Registry — see
-        ModelRepository.count_distinct_models for why this is a distinct
-        (case-insensitive) model-name count, spanning both ACTIVE and
-        DEPRECATED versions, rather than a raw `mm_models` row count (which
-        would over-count a model with several versions).
+        """Distinct model NAMES currently registered — see ModelRepository.
+        count_distinct_models for why this is name-keyed (spanning both
+        ACTIVE and DEPRECATED), not model_id-keyed, and why
+        `model_consumption_kpis`'s `active_models` dedupes down to the same
+        name-level granularity so it stays a guaranteed subset of this count.
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -525,72 +693,52 @@ class MeteringService:
             return None
 
     @staticmethod
-    def _model_identity(model_name: str) -> str:
-        """Case-fold a resolved `model_name` into the grouping key used
-        everywhere a model is counted/aggregated in this file — matches
-        generate_model_id's own identity rule (name is lower-cased before
-        hashing; see app/utils/hashing.py), so "Gemma" and "gemma" are always
-        treated as the same model, never as two."""
-        return model_name.casefold()
-
-    @staticmethod
     def model_consumption_ranking(
-        services: list[dict], limit: int
+        model_totals: list[dict], limit: int
     ) -> tuple[Optional[dict], list[dict], int]:
-        """Aggregate the service-level rows from `model_breakdown` up to
-        model-level, for the Model Consumption summary's `most_used` KPI and
-        the `top_models` ranking (AI4IDS-2790).
+        """Rank `model_breakdown`'s already-grouped `model_totals` for the
+        Model Consumption summary's `most_used` KPI and the `top_models`
+        ranking (AI4IDS-2790).
 
-        Only services with a RESOLVED `model_name` are counted — the same
-        population `model_consumption_kpis`'s `active_models` counts. A
-        service whose model lookup failed isn't an identifiable Registry
-        model, so it can't be one on this ranking either; it still appears
-        in the raw per-service `breakdown` list, just not here. Because of
-        that, the `grand_total` this returns is NOT the full window's total
-        requests — it's the sum over resolved-model services only, which is
-        also the denominator `consumption_pct` is computed against. Callers
-        must surface this `grand_total` (not some other "total requests"
-        figure) alongside `consumption_pct`, or the percentages won't add up
-        against whatever total gets displayed next to them.
+        Takes `model_totals` (one row per `model_id`, already collapsed
+        across every contributing service_id and Registry-validated by
+        `model_breakdown` — see its ROLLOUT NOTEs) rather than the flat
+        per-service `services` list: grouping now happens at the Prometheus
+        query itself (`by (service_id, model_id)`), not here, so a model's
+        total is never short-changed by a per-service existence filter this
+        function has no visibility into.
+
+        `grand_total` here IS the full sum across `model_totals` — unlike
+        the old service-level grouping, there's no separate "unresolved"
+        bucket to exclude: `model_breakdown` never emits a `model_totals`
+        entry it hasn't already validated against the Registry. Callers
+        must still surface this `grand_total` (not some other "total
+        requests" figure) alongside `consumption_pct`, or the percentages
+        won't add up against whatever total gets displayed next to them.
 
         consumption_pct per model = this model's total requests / grand_total
-        * 100 — its SHARE of total requests among resolved-model services.
-        A model backed by >1 service is the SUM of those services' requests
-        (equivalently, the sum of their individual shares) — not an average —
-        which keeps two things true:
-          - consumption_pct values sum to ~100% across the full ranked list
-            (small drift from the 2dp rounding on each row — e.g. three
-            equal-traffic models give 33.33 x 3 = 99.99, not a bug), and
-          - `most_used` and `top_models[0]` always name the same model, since
-            both rank on total requests (dividing by the same grand_total
-            preserves order).
+        * 100 — its SHARE of total requests. `most_used` and `top_models[0]`
+        always name the same model, since both rank on total requests
+        (dividing by the same grand_total preserves order).
 
         Returns (most_used, ranked, grand_total) — most_used/ranked are
-        None/[] when there's no traffic from any resolved-model service;
-        grand_total is always an int (0 in that case).
+        None/[] when there's no traffic at all; grand_total is always an int
+        (0 in that case).
         """
-        active = [s for s in services if s["requests"] > 0 and s.get("model_name")]
-        grand_total = sum(s["requests"] for s in active)
+        active = [m for m in model_totals if m["requests"] > 0]
+        grand_total = sum(m["requests"] for m in active)
         if not active or not grand_total:
             return None, [], 0
-
-        groups: dict[str, dict] = {}
-        for s in active:
-            key = MeteringService._model_identity(s["model_name"])
-            # First-seen casing wins the display name — so "Gemma" and "gemma"
-            # (two versions saved with different casing) merge into one row
-            # instead of splitting the same model's traffic across two.
-            g = groups.setdefault(key, {"model_name": s["model_name"], "requests": 0})
-            g["requests"] += s["requests"]
 
         ranked = sorted(
             (
                 {
-                    "model_name": g["model_name"],
-                    "requests": g["requests"],
-                    "consumption_pct": round(g["requests"] / grand_total * 100, 2),
+                    "model_id": m["model_id"],
+                    "model_name": m["model_name"],
+                    "requests": m["requests"],
+                    "consumption_pct": round(m["requests"] / grand_total * 100, 2),
                 }
-                for g in groups.values()
+                for m in active
             ),
             key=lambda m: m["requests"],
             reverse=True,
@@ -605,42 +753,48 @@ class MeteringService:
         return most_used, top, grand_total
 
     @staticmethod
-    def model_consumption_kpis(services: list[dict]) -> dict:
-        """Scalar KPIs for the Model Consumption summary (AI4IDS-2790), computed
-        over services with traffic (`requests > 0`):
+    def model_consumption_kpis(services: list[dict], model_totals: list[dict]) -> dict:
+        """Scalar KPIs for the Model Consumption summary (AI4IDS-2790):
 
-        - `active_models`: count of DISTINCT resolved Registry model names
-          (case-folded — see `_model_identity`) — the same population
-          `model_consumption_ranking` groups by (a service whose model
-          lookup failed isn't a model here either). Always an int; 0 (not
+        - `active_models`: count of DISTINCT model NAMES (case-insensitive)
+          among `model_totals` entries with traffic (`requests > 0`) —
+          matches `registry_model_count`/`ModelRepository.
+          count_distinct_models`'s identity (also name-based), so
+          `active_models` stays a guaranteed subset of `total_models`.
+          `model_totals`/`top_models` themselves stay `model_id`-keyed (a
+          model with two concurrently-ACTIVE versions both receiving
+          traffic is two separate rows there — see `model_breakdown`); this
+          KPI NUMBER is the one place identity drops to name-level, so two
+          such versions count once here, not twice. Always an int; 0 (not
           None) when there's no traffic at all — 0 is itself a real,
           meaningful answer ("no models were active"), unlike
           `overall_success_rate_pct`, which is genuinely undefined with no
           data to average.
         - `overall_success_rate_pct`: REQUEST-WEIGHTED success rate — sum(
-          requests * success_pct) / sum(requests) — matching the FE's
-          existing (previously dormant) fallback formula, so this field
-          doesn't silently change what the dashboard already shows once
-          populated. Deliberately a WIDER population than `active_models`/
-          the ranking: it's computed over every service with traffic,
-          INCLUDING ones whose model lookup failed, since success/failure is
-          a traffic-health signal independent of whether the model behind it
+          requests * success_pct) / sum(requests) over `services` (not
+          `model_totals`) — matching the FE's existing (previously dormant)
+          fallback formula, so this field doesn't silently change what the
+          dashboard already shows once populated. Deliberately the WIDER,
+          service-level population: includes every service with traffic,
+          even one whose model lookup failed, since success/failure is a
+          traffic-health signal independent of whether the model behind it
           was identifiable. None when there's no traffic to average over.
         - `worst`: the active service with the highest failure rate — raw
           dict, consumed by the caller to build `highest_failure_rate`
           (which stays service-level, not aggregated to model-level). None
           when there's no traffic.
         """
-        active = [s for s in services if s["requests"] > 0]
-        active_models = len(
-            {MeteringService._model_identity(s["model_name"]) for s in active if s.get("model_name")}
-        )
-        total_requests = sum(s["requests"] for s in active)
+        active_models = len({
+            m["model_name"].casefold() for m in model_totals if m["requests"] > 0
+        })
+
+        active_services = [s for s in services if s["requests"] > 0]
+        total_requests = sum(s["requests"] for s in active_services)
         overall_success_rate_pct = (
-            round(sum(s["requests"] * s["success_pct"] for s in active) / total_requests, 2)
+            round(sum(s["requests"] * s["success_pct"] for s in active_services) / total_requests, 2)
             if total_requests else None
         )
-        worst = max(active, key=lambda s: 100 - s["success_pct"]) if active else None
+        worst = max(active_services, key=lambda s: 100 - s["success_pct"]) if active_services else None
         return {
             "active_models": active_models,
             "overall_success_rate_pct": overall_success_rate_pct,

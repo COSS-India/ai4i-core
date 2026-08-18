@@ -25,9 +25,9 @@ the same values already used to bill the request and attached to the
 ai-inference OTel span. Orchestrator.route_inference (Triton) and the LLM
 chat route mirror them onto ``request.state``: ``billed_input`` /
 ``billed_output`` are the billed quantities (via ``set_billed_state``);
-``source_lang`` / ``target_lang`` / ``model`` / ``service_id`` are metric
-labels, not billing data (languages + model via ``set_metric_labels``,
-service_id set at resolution time). This middleware only reads them, so
+``source_lang`` / ``target_lang`` / ``model`` / ``model_id`` / ``service_id``
+are metric labels, not billing data (languages + model + model_id via
+``set_metric_labels``, service_id set at resolution time). This middleware only reads them, so
 Prometheus can never disagree with what was actually billed, and the request
 body is never parsed a second time. OCR bills and is tracked purely by image
 count (``billed_input`` via ``track_ocr_characters``) — there is no separate
@@ -36,7 +36,7 @@ size-based metric.
 import asyncio
 import logging
 import time
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, Union
 from urllib.parse import unquote
 
 from fastapi import Request
@@ -89,27 +89,72 @@ def set_billed_state(
     st.billed_output = billed_output
 
 
+class _Unset:
+    """Sentinel type distinguishing "caller omitted this argument" from any
+    real value a caller might pass (including an explicit ""). Its own type
+    — rather than a bare ``object()`` typed as ``str`` — lets the parameter
+    annotations below say what's actually accepted: a ``str``, or this
+    sentinel."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
+
 def set_metric_labels(
     request: Request,
     *,
-    source_lang: str = "",
-    target_lang: str = "",
-    model: str = "",
+    source_lang: Union[str, _Unset] = _UNSET,
+    target_lang: Union[str, _Unset] = _UNSET,
+    model: Union[str, _Unset] = _UNSET,
+    model_id: Union[str, _Unset] = _UNSET,
 ) -> None:
     """Record Prometheus metric LABELS on ``request.state`` (not billing data).
 
     ``source_lang`` / ``target_lang`` drive the per-language dashboard
     breakdown for NMT/TTS/ASR/transliteration; ``model`` is the ``model``
-    label on the LLM token metric. None of these are billed quantities —
-    they're dimensions on the metrics. They ride request.state only so the
-    middleware doesn't re-read the body to label its metrics; a service that
-    lacks a given dimension simply never sets it (the middleware defaults it
-    to "").
+    label on the LLM token metric; ``model_id`` is the Model Registry's
+    stable identifier for the model behind the service (distinct from
+    ``model`` — see MetricsCollector._init_metrics), set on
+    ``telemetry_obsv_requests_total``/``_duration_seconds``/
+    ``_llm_tokens_processed``. None of these are billed quantities — they're
+    dimensions on the metrics. They ride request.state only so the
+    middleware doesn't re-read the body to label its metrics.
+
+    A field the caller doesn't pass is left as-is if already set, or
+    defaulted to "" on first write — it is NOT reset to "". This matters
+    because ``model_id`` is typically known (and set) as soon as the service
+    resolves, BEFORE a handler runs, while ``source_lang``/``target_lang``
+    are usually only known AFTER it runs — so a caller commonly calls this
+    twice per request (once early with just ``model_id``, once later with
+    the rest). Overwriting-to-"" on every call would let the second,
+    partial call silently erase the first call's ``model_id`` — losing it
+    specifically on any request that fails/raises between the two calls
+    (e.g. an upstream 502), which is exactly when a caller most needs the
+    label preserved. See orchestrator.route_inference for the concrete
+    two-call pattern.
     """
     st = request.state
-    st.source_lang = source_lang
-    st.target_lang = target_lang
-    st.model = model
+    if source_lang is not _UNSET:
+        st.source_lang = source_lang
+    elif not hasattr(st, "source_lang"):
+        st.source_lang = ""
+    if target_lang is not _UNSET:
+        st.target_lang = target_lang
+    elif not hasattr(st, "target_lang"):
+        st.target_lang = ""
+    if model is not _UNSET:
+        st.model = model
+    elif not hasattr(st, "model"):
+        st.model = ""
+    if model_id is not _UNSET:
+        st.model_id = model_id
+    elif not hasattr(st, "model_id"):
+        st.model_id = ""
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -182,6 +227,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         source_lang = getattr(request.state, "source_lang", "") or ""
         target_lang = getattr(request.state, "target_lang", "") or ""
         model = getattr(request.state, "model", "") or ""
+        model_id = getattr(request.state, "model_id", "") or ""
 
         # Fire-and-forget: emit metrics WITHOUT blocking the response.
         self._schedule_metrics(
@@ -197,6 +243,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             source_lang=source_lang,
             target_lang=target_lang,
             model=model,
+            model_id=model_id,
         )
 
         return response
@@ -248,6 +295,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 billed_input=getattr(request.state, "billed_input", None),
                 billed_output=getattr(request.state, "billed_output", None),
                 model=getattr(request.state, "model", "") or "",
+                model_id=getattr(request.state, "model_id", "") or "",
             )
 
     # ------------------------------------------------------------------
@@ -310,6 +358,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         source_lang: str = "",
         target_lang: str = "",
         model: str = "",
+        model_id: str = "",
     ) -> None:
         """Emit Prometheus metrics out-of-band, using the already-billed count.
 
@@ -326,6 +375,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration=duration,
                 tenant=tenant,
                 service_id=service_id,
+                model_id=model_id,
             )
 
             # Non-2xx or no billed_* set (e.g. a non-inference path, or the
@@ -344,6 +394,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         tenant=tenant,
                         service_id=service_id,
                         endpoint=path,
+                        model_id=model_id,
                     )
                 return
 
