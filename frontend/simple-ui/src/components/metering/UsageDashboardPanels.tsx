@@ -62,6 +62,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
         data={modelQuery.data}
         isLoading={modelQuery.isLoading}
         errorMessage={parseQueryError(modelQuery.error)}
+        isPlatformWide={false}
       />
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (
@@ -129,6 +130,7 @@ export const AdopterDashboardPanels: React.FC<AdopterPanelsProps> = ({
         data={modelQuery.data}
         isLoading={modelQuery.isLoading}
         errorMessage={parseQueryError(modelQuery.error)}
+        isPlatformWide={!scopeTenantId}
       />
     )}
     {subTab === METERING.SUB_TAB.USAGE_SPEND && (

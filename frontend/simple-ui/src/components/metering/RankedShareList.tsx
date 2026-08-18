@@ -3,6 +3,7 @@ import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { meteringColorAt } from "../../utils/meteringColors";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
+import InfoTip from "../common/InfoTip";
 import MeteringTableText from "./MeteringTableText";
 
 export interface RankedShareRow {
@@ -17,6 +18,8 @@ interface RankedShareListProps {
   headerLeft?: string;
   headerTotal?: string;
   headerRight?: string;
+  tipTotal?: string;
+  tipRight?: string;
 }
 
 const RankedShareList: React.FC<RankedShareListProps> = ({
@@ -24,17 +27,23 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
   headerLeft = METERING.SECTIONS.RANKED_SHARE.HEADER_LEFT,
   headerTotal = METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS,
   headerRight = METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT,
+  tipTotal = METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS,
+  tipRight = METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.PCT_OF_TOTAL,
 }) => (
   <VStack align="stretch" spacing={4} flex="1.5" w="full">
     <HStack justify="space-between" fontSize="xs" color="gray.500" px={1}>
       <Text fontWeight="medium">{replaceTenantCopy(headerLeft)}</Text>
       <HStack spacing={2} flexShrink={0}>
-        <Text fontWeight="medium" minW="88px" textAlign="right">
-          {replaceTenantCopy(headerTotal)}
-        </Text>
-        <Text minW="56px" textAlign="right">
-          {headerRight}
-        </Text>
+        <HStack spacing={1} minW="88px" justify="flex-end">
+          <Text fontWeight="medium" textAlign="right">
+            {replaceTenantCopy(headerTotal)}
+          </Text>
+          {tipTotal ? <InfoTip message={tipTotal} /> : null}
+        </HStack>
+        <HStack spacing={1} minW="56px" justify="flex-end">
+          <Text textAlign="right">{headerRight}</Text>
+          {tipRight ? <InfoTip message={tipRight} /> : null}
+        </HStack>
       </HStack>
     </HStack>
     {rows.map((row, i) => {

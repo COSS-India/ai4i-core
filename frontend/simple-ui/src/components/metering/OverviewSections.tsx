@@ -1,4 +1,4 @@
-import { Box, Flex, SimpleGrid } from "@chakra-ui/react";
+import { SimpleGrid } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type { OverviewResponse, PlatformAdoption } from "../../types/metering";
@@ -7,7 +7,7 @@ import {
   formatTenantLabel,
 } from "../../utils/meteringFormatters";
 import { meteringColorAt } from "../../utils/meteringColors";
-import MeteringDonutChart from "./MeteringDonutChart";
+import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
 
@@ -45,6 +45,7 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
           valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
           invertTrend={kpi.key === "failed"}
           helper={kpi.helper ?? fallbackHelper}
+          tooltip={METERING.KPI.TOOLTIPS[kpi.key as keyof typeof METERING.KPI.TOOLTIPS]}
         />
       );
     })}
@@ -82,8 +83,8 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
       subtitle={section.SUBTITLE}
       sectionLabel
     >
-      <Flex direction={{ base: "column", lg: "row" }} gap={8} align="center">
-        <Box flex="1" w="full" maxW={{ lg: "360px" }} mx="auto">
+      <DonutRankedLayout
+        chart={
           <MeteringDonutChart
             data={pieData}
             height={260}
@@ -93,17 +94,18 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
             centerPrimary={section.DONUT_PRIMARY}
             centerSecondary={section.DONUT_SECONDARY}
           />
-        </Box>
-
-        <RankedShareList
-          rows={conc.top_tenants.map((row) => ({
-            rank: row.rank,
-            label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
-            formattedValue: row.formatted_requests,
-            percentage: row.percentage,
-          }))}
-        />
-      </Flex>
+        }
+        list={
+          <RankedShareList
+            rows={conc.top_tenants.map((row) => ({
+              rank: row.rank,
+              label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
+              formattedValue: row.formatted_requests,
+              percentage: row.percentage,
+            }))}
+          />
+        }
+      />
     </MeteringSectionCard>
   );
 };
@@ -149,6 +151,7 @@ export const PlatformAdoptionSection: React.FC<PlatformAdoptionSectionProps> = (
               }
               pctChange={activeCell?.pct_change}
               helper={card.helper}
+              tooltip={card.tooltip}
               valueColor="gray.800"
             />
           );
