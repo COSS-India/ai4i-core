@@ -17,7 +17,7 @@ export function isPlatformAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "ADMIN");
 }
 
-/** Program Admin — restricted role, sees Usage Dashboard (and Profile) only. */
+/** Usage Viewer (PROGRAM ADMIN) — restricted role, sees Usage Dashboard (and Profile) only. */
 export function isProgramAdminUser(roles?: string[]): boolean {
   return userHasRole(roles, "PROGRAM ADMIN");
 }
@@ -48,7 +48,7 @@ export function isUsageDashboardOnlyUser(roles?: string[]): boolean {
   return isProgramAdminUser(roles);
 }
 
-/** Usage Dashboard — platform ADMIN (adopter view), Tenant Admin, or Program Admin. */
+/** Usage Dashboard — platform ADMIN (adopter view), Tenant Admin, or Usage Viewer. */
 export function canAccessUsageDashboard(roles?: string[]): boolean {
   if (!roles?.length) return false;
   return isDefaultAdminUser(roles) || isTenantAdminUser(roles) || isProgramAdminUser(roles);

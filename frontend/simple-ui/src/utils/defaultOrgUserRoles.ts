@@ -1,6 +1,6 @@
 /**
  * Default Organisation user roles.
- * Tenant-user API only accepts USER | TENANT ADMIN; Moderator/Program Admin go
+ * Tenant-user API only accepts USER | TENANT ADMIN; Moderator/Usage Viewer go
  * via role API.
  */
 
@@ -67,7 +67,7 @@ export async function syncDefaultOrgUserRole(
   const target = norm(targetRole);
   if (!isDefaultOrgUserRole(target)) {
     throw new Error(
-      "Default Organisation users may only be User, Moderator, Program Admin, or Admin.",
+      "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
     );
   }
   const existing =

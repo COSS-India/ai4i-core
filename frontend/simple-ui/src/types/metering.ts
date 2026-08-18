@@ -142,13 +142,28 @@ export interface ModelConsumptionRow {
   failure_rate_pct: number;
 }
 
+/** Model-level ranking row from GET /metering/model-consumption (`top_models`). */
+export interface TopModelRow {
+  rank: number;
+  model_name: string;
+  consumption_pct: number;
+  requests: number;
+  formatted_requests: string;
+}
+
+export type ModelTopN = 5 | 10;
+
 export interface ModelConsumptionSummary {
+  /** Distinct Registry models (platform-wide; not tenant-scoped). */
+  total_models?: number | null;
+  /** Distinct models with ≥1 service that had traffic in-window (scoped). */
+  active_models?: number | null;
   most_used?: {
     service_id?: string | null;
     name?: string | null;
     requests: number;
   } | null;
-  /** Request-weighted success across all models with traffic. */
+  /** Request-weighted success across all services with traffic. */
   overall_success_rate_pct?: number | null;
 }
 
@@ -156,5 +171,8 @@ export interface ModelConsumptionSummary {
 export interface ModelConsumptionResponse extends MeteringResponseMeta {
   scope: MeteringScope;
   summary?: ModelConsumptionSummary | null;
+  top_models?: TopModelRow[];
+  /** Denominator for `top_models[].consumption_pct` (resolved-model traffic only). */
+  top_models_total_requests?: number;
   breakdown: ModelConsumptionRow[];
 }

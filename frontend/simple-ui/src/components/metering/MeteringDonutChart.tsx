@@ -70,6 +70,8 @@ interface MeteringDonutChartProps {
   legendItems?: DonutLegendItem[];
   legendVariant?: "dotted" | "simple";
   chartMaxW?: string | Record<string, string>;
+  /** Denominator for tooltip %. Defaults to the sum of slice values. */
+  total?: number;
 }
 
 const DonutLegend: React.FC<{
@@ -109,8 +111,10 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
   legendItems,
   legendVariant = "dotted",
   chartMaxW,
+  total: totalOverride,
 }) => {
-  const total = data.reduce((sum, d) => sum + d.value, 0);
+  const sliceTotal = data.reduce((sum, d) => sum + d.value, 0);
+  const total = totalOverride && totalOverride > 0 ? totalOverride : sliceTotal;
   if (data.length === 0) return null;
 
   const chart = (
@@ -185,5 +189,27 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
 
   return chart;
 };
+
+/** Donut stays vertically centered; the ranked list scrolls beside it. */
+export const DonutRankedLayout: React.FC<{
+  chart: React.ReactNode;
+  list: React.ReactNode;
+}> = ({ chart, list }) => (
+  <Flex direction={{ base: "column", lg: "row" }} gap={8} align="center">
+    <Box flexShrink={0} w="full" maxW={{ lg: "360px" }} mx="auto">
+      {chart}
+    </Box>
+    <Box
+      flex="1.5"
+      minW={0}
+      w="full"
+      maxH={{ lg: "420px" }}
+      overflowY={{ lg: "auto" }}
+      pr={{ lg: 1 }}
+    >
+      {list}
+    </Box>
+  </Flex>
+);
 
 export default MeteringDonutChart;

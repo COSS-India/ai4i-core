@@ -9,6 +9,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
+import InfoTip from "../common/InfoTip";
 
 interface MeteringSectionCardProps {
   title: string;
@@ -83,6 +84,8 @@ interface KpiCardProps {
   helper?: string;
   valueColor?: string;
   invertTrend?: boolean;   // true = an increase is "bad" (red), e.g. Failed
+  /** Hover explanation for computed / non-obvious metrics. */
+  tooltip?: string;
 }
 
 export const KpiCard: React.FC<KpiCardProps> = ({
@@ -92,6 +95,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   helper,
   valueColor = "gray.800",
   invertTrend = false,
+  tooltip,
 }) => {
   const trendColor =
     pctChange == null || pctChange === 0
@@ -104,15 +108,18 @@ export const KpiCard: React.FC<KpiCardProps> = ({
     <Card variant="outline" borderColor="gray.200" bg="white" shadow="sm" borderRadius="lg" h="full">
       <CardBody py={5} px={5}>
         <VStack align="flex-start" spacing={3}>
-          <Text
-            fontSize="xs"
-            fontWeight="semibold"
-            color="gray.500"
-            textTransform="uppercase"
-            letterSpacing="wider"
-          >
-            {label}
-          </Text>
+          <HStack spacing={1.5} align="center">
+            <Text
+              fontSize="xs"
+              fontWeight="semibold"
+              color="gray.500"
+              textTransform="uppercase"
+              letterSpacing="wider"
+            >
+              {label}
+            </Text>
+            {tooltip ? <InfoTip message={tooltip} /> : null}
+          </HStack>
           <Text fontSize="3xl" fontWeight="bold" color={valueColor} lineHeight="1.1">
             {value ?? "—"}
           </Text>

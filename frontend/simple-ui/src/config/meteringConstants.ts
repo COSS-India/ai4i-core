@@ -63,6 +63,14 @@ export const METERING = {
       failed: "of all requests",
       avg_rps: "requests per second",
     },
+    TOOLTIPS: {
+      total_requests:
+        "Total LLM inference requests in the selected time window (successful and failed).",
+      successful: "LLM requests that completed successfully in the selected time window.",
+      failed: "LLM requests that failed in the selected time window.",
+      avg_rps:
+        "Average LLM requests per second over the selected time window (total requests ÷ window duration).",
+    },
   },
   GRAPH: {
     SERIES_KEYS: {
@@ -88,6 +96,12 @@ export const METERING = {
     { id: "10", label: "Top 10" },
     { id: "25", label: "Top 25" },
   ] as const,
+  /** Model Usage tab — Top 5 / Top 10 ranking toggle (API `limit`). */
+  MODEL_TOP_N_SEGMENT_OPTIONS: [
+    { id: "5", label: "Top 5" },
+    { id: "10", label: "Top 10" },
+  ] as const,
+  MODEL_TOP_N_DEFAULT: 10 as const,
   SUB_TABS: [
     { id: "overview", label: "Overview" },
     { id: "tenant", label: `${INSTITUTION} Consumption` },
@@ -123,6 +137,22 @@ export const METERING = {
     TOTAL_ALLOCATED: "TOTAL ALLOCATED",
     TOTAL_USED: "TOTAL USED",
     TOTAL_REMAINING: "TOTAL REMAINING",
+    TOOLTIPS: {
+      TOTAL_ALLOCATED:
+        "Sum of budget and token allowances assigned to institutions for this billing period.",
+      TOTAL_USED: "Sum of budget spent and tokens consumed in this billing period.",
+      TOTAL_REMAINING:
+        "Budget and tokens still available (allocated minus used) for this billing period.",
+      ALLOCATED_BUDGET: "Monetary budget assigned to this institution for the billing period.",
+      BUDGET:
+        "How much of the allocated budget has been spent versus what remains in this period.",
+      ALLOCATED_TOKENS: "Token allowance assigned to this institution for the billing period.",
+      TOKEN_USAGE:
+        "Tokens consumed versus remaining allowance in this billing period. Multi-task institutions expand for a per-type breakdown.",
+      USAGE: "Quota consumed versus remaining for this model task type.",
+      SPEND: "Monetary spend for this model task type in the selected billing period.",
+      SHARE: "This row's spend as a percentage of the institution's total spend in the period.",
+    },
   },
   COLORS: {
     RANK: ["#DD6B20", "#3182CE", "#38A169", "#805AD5", "#00B5D8"] as const,
@@ -206,26 +236,31 @@ export const METERING = {
           key: "total_tenants",
           label: `Total ${INSTITUTIONS.toLowerCase()}`,
           helper: "registered on platform",
+          tooltip: `All ${INSTITUTIONS.toLowerCase()} registered on the platform (not filtered by the time window).`,
         },
         {
           key: "active_24h",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 24 hours",
+          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 24 hours.`,
         },
         {
           key: "active_7d",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 7 days",
+          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 7 days.`,
         },
         {
           key: "active_30d",
           label: `Active ${INSTITUTIONS.toLowerCase()}`,
           helper: "last 30 days",
+          tooltip: `${INSTITUTIONS} with at least one LLM request in the last 30 days.`,
         },
         {
           key: "new_tenants_7d",
           label: `New ${INSTITUTIONS.toLowerCase()}`,
           helper: "onboarded in last 7 days",
+          tooltip: `${INSTITUTIONS} registered on the platform in the last 7 days.`,
         },
       ] as const,
     },
@@ -237,6 +272,13 @@ export const METERING = {
       TABLE_REQUESTS: "Requests",
       TABLE_SHARE: "Share",
       AVG_REQUESTS_LABEL: `Average Requests Per Active ${INSTITUTION}`,
+      TOOLTIPS: {
+        AVG_REQUESTS:
+          `Total LLM requests in the selected window divided by the number of active ${INSTITUTIONS.toLowerCase()}.`,
+        REQUESTS: "LLM request count for this institution in the selected time window.",
+        SHARE:
+          "This institution's share of total platform LLM requests in the selected time window.",
+      },
     },
     REQUEST_VOLUME: {
       TITLE: "Request volume & health",
@@ -246,30 +288,53 @@ export const METERING = {
       FAILURE_RATE_SUFFIX: "failure rate",
       Y_AXIS_REQUESTS: "REQUESTS",
     },
-    // Model Consumption tab — per-service LLM usage from /model-consumption
+    // Model Consumption tab — model-level KPIs + per-service drill-down
     MODEL: {
       TITLE: "Model consumption",
       SUBTITLE:
-        "Per-service LLM request distribution · reflects selected time window",
-      BREAKDOWN_TITLE: "Model breakdown",
+        "Model request distribution · reflects selected time window",
+      BREAKDOWN_TITLE: "Model consumption Drill down",
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across LLM services ·",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
+      TOTAL_MODELS: "Total models",
+      ACTIVE_MODELS: "Active models",
       MOST_USED: "Most used model",
-      OVERALL_SUCCESS: "Overall success rate",
+      OVERALL_SUCCESS: "Overall success rate %",
       SUCCESS_RATE_SUFFIX: "across all models",
       REQUESTS_SUFFIX: "requests",
-      TABLE_SERVICE: "Service",
-      TABLE_MODEL: "Model",
+      REQUESTS_ACROSS_INSTITUTIONS: `requests across all ${INSTITUTIONS}`,
+      REQUESTS_ACROSS_INSTITUTION: `requests across this ${INSTITUTION}`,
+      TABLE_MODEL: "Model Name",
+      TABLE_SERVICE: "Service Name",
       TABLE_TOTAL_REQUESTS: "Total requests",
-      TABLE_NATIVE: "Native consumption",
+      TABLE_NATIVE: "Token consumption",
       TABLE_SUCCESS: "Success rate %",
       TABLE_FAILURE: "Failure rate %",
+      TOOLTIPS: {
+        TOTAL_MODELS:
+          "Distinct models in the Registry (active and deprecated versions collapsed by name).",
+        ACTIVE_MODELS:
+          "Models with at least one service that had traffic in the selected time window.",
+        OVERALL_SUCCESS:
+          "Request-weighted average success rate across all services with traffic.",
+        MOST_USED: "Model with the highest total request count in the selected time window.",
+        TOTAL_REQUESTS: "LLM request count for this service in the selected time window.",
+        CONSUMPTION_PCT:
+          "This model's share of requests among services with a resolved Registry model name.",
+        TOKEN_CONSUMPTION: "Tokens processed for this service in the selected time window.",
+        SUCCESS_RATE: "Share of successful requests for this service.",
+        FAILURE_RATE: "Share of failed requests for this service (100 − success rate).",
+      },
     },
     RANKED_SHARE: {
       HEADER_LEFT: INSTITUTION,
       HEADER_TOTAL_REQUESTS: "Total requests",
       HEADER_RIGHT: "% of total",
+      TOOLTIPS: {
+        TOTAL_REQUESTS: "Request count for this row in the selected time window.",
+        PCT_OF_TOTAL: "This row's share of the total requests shown in the list.",
+      },
     },
   },
   SERVICE_CSS_KEYS: {

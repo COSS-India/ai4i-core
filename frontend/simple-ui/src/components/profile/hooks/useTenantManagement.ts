@@ -946,7 +946,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({
         type: "warning",
         message:
-          "Default Organisation users may only be User, Moderator, Program Admin, or Admin.",
+          "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
       });
       return;
     }
@@ -1536,7 +1536,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({
         type: "warning",
         message:
-          "Default Organisation users may only be User, Moderator, Program Admin, or Admin.",
+          "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
       });
       return;
     }
