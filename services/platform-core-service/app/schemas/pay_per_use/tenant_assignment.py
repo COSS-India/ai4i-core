@@ -34,8 +34,12 @@ class ReviseBudgetRequest(BaseModel):
 
 class ReviseBudgetResponse(BaseModel):
     tenant_id: str
-    budget_limit: Decimal
-    available_balance: Decimal
+    # Matches PPUTenantTierAssignment.budget_limit/available_balance's
+    # Numeric(15, 8) column precision — without a bound here, Swagger's
+    # example generator has no length limit to work from and produces an
+    # arbitrarily long digit string instead of a realistic value.
+    budget_limit: Decimal = Field(..., max_digits=15, decimal_places=8,examples=["1000.00000000"])
+    available_balance: Decimal = Field(..., max_digits=15, decimal_places=8,examples=["750.50000000"])
     updated_at: datetime
 
 
@@ -43,8 +47,8 @@ class TierAssignResponse(BaseModel):
     tenant_id: str
     tier_id: str
     tier_name: str
-    budget_limit: Decimal
-    available_balance: Decimal
+    budget_limit: Decimal = Field(..., max_digits=15, decimal_places=8,examples=["1000.00000000"])
+    available_balance: Decimal = Field(..., max_digits=15, decimal_places=8,examples=["750.50000000"])
     effective_from: datetime
     effective_to: datetime
     updated_at: datetime
