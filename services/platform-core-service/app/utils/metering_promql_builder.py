@@ -310,6 +310,25 @@ def build_base_selectors(
     series (see ObservabilityMiddleware). When both are given, ``tenant_id``
     is the effective filter; ``tenant`` is only applied when ``tenant_id`` is
     absent, so older call sites that still pass just a name keep working.
+
+    KNOWN CUTOVER GAP (accepted, tracked in the ticket, not fixed here):
+    when ``tenant_id`` is given, this selector matches ONLY series written
+    after tenant_id started being emitted — pre-cutover series for that same
+    tenant have no tenant_id label at all and are silently excluded. Unlike
+    the platform-wide views (active_tenants/usage_concentration/
+    tenant_ranking/heatmap), which recover this data via a (tenant_id,
+    tenant) group-by + merge, a single-tenant filter can't do the same
+    without either an invalid PromQL construct (an `or` of two selectors
+    can't be wrapped in a range vector like `increase(...[24h])`, which
+    every windowed query here uses) or doubling every tenant-scoped query
+    and merging in Python — a real fix, deliberately deferred. Every caller
+    that passes ``tenant_id`` through to a windowed query (request_total,
+    avg_per_active_tenant_previous, service_breakdown, model_breakdown,
+    tenant_ranking(tenant_id=...), usage_by_tenant_service, and
+    _native_unit_queries in metering_service.py) inherits this gap: a
+    single-tenant view can be missing up to ~30 days of that tenant's
+    history right after this label's rollout. QA should expect this when
+    re-testing by selecting a specific (especially a just-renamed) tenant.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:

@@ -68,6 +68,9 @@ class MeteringService:
         task_types: Optional[list[str]] = None,
         tenant_id: Optional[str] = None,
     ) -> dict:
+        """KNOWN CUTOVER GAP when ``tenant_id`` is given (this is the
+        single-tenant-scoped Overview view): see build_base_selectors'
+        docstring — accepted, not fixed here, tracked in the ticket."""
         task_sel = build_task_type_selector(task_types)
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
@@ -292,14 +295,23 @@ class MeteringService:
 
         Used as the denominator for avg_requests_per_tenant's vs-previous trend.
         Returns None when there's no bounded window (e.g. time_range='all').
+
+        Counts DISTINCT REAL TENANTS the same way active_tenants does — group
+        by (tenant_id, tenant), then _merge_tenant_rows — not a raw
+        count(sum by(tenant_id)), which would merge every different
+        pre-cutover tenant (they all share an empty tenant_id) into a single
+        group and undercount, inflating the vs-previous trend (and, via
+        avg_per_active_tenant_previous, the reported average requests per
+        tenant too).
         """
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
-        promql = f"count(sum by(tenant_id)(increase({metric}[{window}] offset {window}) > 0))"
+        promql = f"sum by(tenant_id, tenant)(increase({metric}[{window}] offset {window}) > 0)"
         try:
-            return int(round(float(await self._client.scalar(promql))))
+            rows = await self._client.query(promql)
+            return len(self._merge_tenant_rows(rows))
         except Exception:
             return None
 
@@ -309,20 +321,27 @@ class MeteringService:
     ) -> Optional[int]:
         """Avg requests per active tenant in the PREVIOUS window (offset by one
         window) — same offset pattern as request_total's prev counts. Drives the
-        Avg-Requests-Per-Tenant trend. None when unbounded or no prior activity."""
+        Avg-Requests-Per-Tenant trend. None when unbounded or no prior activity.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket."""
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
-        active_q = f"count(sum by(tenant_id)(increase({metric}[{window}] offset {window}) > 0))"
+        # See active_tenants_count_previous — same (tenant_id, tenant) +
+        # _merge_tenant_rows treatment, so this doesn't undercount active
+        # tenants (and inflate the resulting average) whenever several
+        # different pre-cutover tenants share an empty tenant_id.
+        active_q = f"sum by(tenant_id, tenant)(increase({metric}[{window}] offset {window}) > 0)"
         try:
-            total, active = await asyncio.gather(
-                self._client.scalar(total_q), self._client.scalar(active_q)
+            total, active_rows = await asyncio.gather(
+                self._client.scalar(total_q), self._client.query(active_q)
             )
-            if total is None or active is None:
-                return None  # no prior-window data — not an error
-            total_v, active_v = float(total), float(active)
+            active_v = len(self._merge_tenant_rows(active_rows))
+            total_v = float(total)
             return round(total_v / active_v) if active_v > 0 else None
         except Exception:
             logger.warning("avg_per_active_tenant_previous: Prometheus query failed", exc_info=True)
@@ -460,6 +479,10 @@ class MeteringService:
         Fires all Prometheus queries in a single asyncio.gather:
           - 4–5 endpoint-grouped queries for request counts / prev period
           - 1 scalar query per service that has a dedicated native-unit metric
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket.
         """
         # Use the broader regex so /api/v1/chat (LLM) is included alongside
         # the standard /api/v1/{task}/inference endpoints.
@@ -499,23 +522,24 @@ class MeteringService:
         self, tenant: Optional[str], time_range: Optional[str],
         tenant_id: Optional[str] = None,
     ) -> dict:
-        """Per-service LLM usage: requests, tokens, success %, grouped by
-        `service_id` — the tenant-facing service the client called (the
-        OpenAI `model` field as sent), NOT the `model` Prometheus label.
+        """LLM usage grouped by BOTH `service_id` (the tenant-facing service
+        the client called — the OpenAI `model` field as sent) AND `model_id`
+        (the Registry's stable identity for the model actually behind that
+        service, stamped server-side by inference-service at MMS-resolution
+        time — see ai4i-core 1.0.18's `MetricsCollector` — NOT derived from
+        anything the client sends). One PromQL pass, `by (service_id,
+        model_id)`, so both dimensions come from the same series: `services`
+        below is the per-service breakdown (one row per service_id, for the
+        "service" column), and the model-level rollup consumed by
+        `model_consumption_ranking`/`model_consumption_kpis` is computed
+        independently from the same raw rows, collapsed by `model_id` alone
+        — see the second ROLLOUT NOTE below for why that's deliberately NOT
+        just "re-aggregate the (ghost-filtered) `services` list".
 
-        The `model` label (the real upstream model echoed back by the
-        inference engine) is intentionally not grouped or filtered on here:
-        one service maps to exactly one model, but many services can share
-        the same underlying model, so grouping by model would merge
-        distinct services' traffic and destroy tenant attribution. See
-        model-consumption-api-highlevel-design.md §1/§5. Each row's
-        `model_name` (informational only) is resolved via a batched
-        mm_services -> mm_models DB lookup (mm_services.model_id is an
-        opaque hash, not a display name — see
-        ServiceRepository.get_names_and_models_by_service_ids), not from
-        Prometheus — the `model` label is absent on failed requests and can
-        differ between the buffered and streaming response paths for the
-        same service.
+        The `model` label (the upstream inference engine's own echoed model
+        name — absent on failures, can differ between the buffered/streaming
+        paths) is intentionally never grouped or filtered on; `model_name`
+        below is always the Registry's name for `model_id`, not this label.
 
         Fires 3 queries in one asyncio.gather: total requests, successful
         requests, and tokens processed — each grouped by `(service_id,
@@ -565,6 +589,10 @@ class MeteringService:
         1.0.18 started stamping this label) or a resolution failure. This
         self-heals as pre-upgrade series age out of the window; there's no
         after-the-fact fix, same reasoning as the tenant-id cutover.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket.
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
@@ -574,12 +602,15 @@ class MeteringService:
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
             extra=['status_code=~"2.."'], tenant_id=tenant_id,
         )
-        # telemetry_obsv_llm_tokens_processed_sum has no tenant_id label (only
-        # telemetry_obsv_requests_total does — see metrics.py), so this stays
-        # name-based; a rename can still stale this one series, same as the
-        # other native-unit metrics in _native_unit_queries.
+        # telemetry_obsv_llm_tokens_processed_sum now carries tenant_id
+        # alongside tenant (see metrics.py) — prefer it, same precedence as
+        # build_base_selectors/_native_unit_queries, so tokens stay
+        # continuous across a rename instead of resetting next to request
+        # counts (from base_sel/success_sel above) that stay continuous.
         tokens_parts = ['token_type="total"', 'tenant!="unknown"']
-        if tenant:
+        if tenant_id:
+            tokens_parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
+        elif tenant:
             tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
         tokens_sel = "{" + ",".join(tokens_parts) + "}"
 
@@ -858,6 +889,11 @@ class MeteringService:
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None,
         tenant_id: Optional[str] = None,
     ) -> dict:
+        """KNOWN CUTOVER GAP when ``tenant_id`` is given (scoping the ranking
+        to one tenant): see build_base_selectors' docstring — accepted, not
+        fixed here, tracked in the ticket. Unscoped (no tenant_id) calls are
+        unaffected — they already recover pre-cutover data via the
+        (tenant_id, tenant) group-by + _merge_tenant_rows."""
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
@@ -929,11 +965,23 @@ class MeteringService:
 
         merge_key is tenant_id when present, so a same-window rename (which
         produces rows sharing one tenant_id but different tenant labels)
-        buckets into ONE entry instead of splitting across two. It falls
-        back to the tenant name when tenant_id is empty (pre-cutover series,
-        written before the label existed) — those rows are kept and shown
-        under their own name instead of being dropped or collapsing into one
-        "unknown" pseudo-tenant that could out-rank a real one."""
+        buckets into ONE entry instead of splitting across two. For a row
+        with no tenant_id, a first pass over `results` learns tenant_id from
+        any OTHER row sharing its tenant name (see _merge_tenant_rows for the
+        full reasoning) — this is what keeps a tenant whose traffic spans
+        the pre/post-cutover boundary as one bucket instead of two. Only
+        when no id can be found for the name at all does it fall back to a
+        name-only bucket, so genuinely unresolvable pre-cutover rows are
+        still kept and shown under their own name instead of being dropped
+        or collapsing into one "unknown" pseudo-tenant that could out-rank a
+        real one."""
+        id_by_name: dict[str, str] = {}
+        for r in results:
+            tid = r["metric"].get("tenant_id", "")
+            name = r["metric"].get("tenant", "")
+            if tid and name:
+                id_by_name[name] = tid
+
         tenant_task: dict[str, dict] = {}
         for r in results:
             ep = r["metric"].get(PROMETHEUS_API_PATH_LABEL, "")
@@ -945,9 +993,10 @@ class MeteringService:
             v = max(0, round(float(r["value"][1])))
             if v <= 0:
                 continue
-            key = tenant_id_label or f"name:{tenant_label}"
+            resolved_id = tenant_id_label or id_by_name.get(tenant_label, "")
+            key = resolved_id or f"name:{tenant_label}"
             bucket = tenant_task.setdefault(
-                key, {"tenant_id": tenant_id_label, "tenant": tenant_label, "tasks": {}}
+                key, {"tenant_id": resolved_id, "tenant": tenant_label, "tasks": {}}
             )
             if tenant_label:
                 bucket["tenant"] = tenant_label
@@ -1012,6 +1061,11 @@ class MeteringService:
         same-window rename doesn't split a tenant's traffic across two
         buckets. When ``tenant_id`` (or ``tenant``) is given, the matrix is
         scoped to that single tenant.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` (or ``tenant``) scopes the
+        matrix to one tenant: see build_base_selectors' docstring —
+        accepted, not fixed here, tracked in the ticket. The unscoped
+        top-N matrix (no tenant_id/tenant filter) is unaffected.
         """
         active_services = services or list(SERVICE_BREAKDOWN_CONFIG)
 
@@ -1110,6 +1164,10 @@ class MeteringService:
         ``tenant_id`` is preferred over ``tenant`` when given, same
         precedence as build_base_selectors, so this stays correct across a
         tenant rename instead of silently returning platform-wide numbers.
+
+        KNOWN CUTOVER GAP when ``tenant_id`` is given: see
+        build_base_selectors' docstring — accepted, not fixed here, tracked
+        in the ticket.
         """
         native_tasks: list[str] = []
         native_coros = []
@@ -1262,25 +1320,41 @@ class MeteringService:
 
         _by_tenant_promql/_tenant_delta_promql group by BOTH labels so a
         pre-cutover row (empty tenant_id) still carries a usable tenant name
-        instead of being dropped. But that means a tenant renamed WITHIN
-        this window now produces two rows sharing one tenant_id with
-        different tenant names — merging by tenant_id (when present) sums
-        those back into one row so the rename doesn't split the tenant's
-        traffic. A row with no tenant_id has nothing else to key on, so
-        it's merged by its tenant name instead — pre-cutover series under
-        different historical names still end up as separate entries (there's
-        no rename history to unify them by), but at least survive instead
-        of being dropped or collapsed into one shared "unknown" bucket.
+        instead of being dropped. That means the SAME active tenant produces
+        two rows for as long as its traffic spans the cutover: an old row
+        with no tenant_id, and a new one with it — both carrying the same
+        ``tenant`` name. A first pass learns tenant_id from whichever rows
+        already have one (name -> id), so the second pass can fold a
+        no-id row into that same tenant's bucket by matching its name,
+        instead of keying it "name:<x>" and creating a second, unmergeable
+        entry for a tenant that already has an id. (A tenant renamed AND
+        spanning the cutover — no id-bearing row shares its old name — still
+        can't be unified this way; that's a real, accepted gap, not this
+        function's bug, since there's no rename history to match on. It's
+        also the same rare-overlap assumption that a name uniquely
+        identifies one tenant relies on: two distinct tenants that happen to
+        share an org name would incorrectly fold together here.)
         """
+        # Pass 1: which tenant_id does each name currently belong to?
+        id_by_name: dict[str, str] = {}
+        for r in rows:
+            tid = r["metric"].get("tenant_id", "")
+            name = r["metric"].get("tenant", "")
+            if tid and name:
+                id_by_name[name] = tid
+
+        # Pass 2: merge, resolving a missing tenant_id via the name lookup
+        # above before falling back to a name-only bucket.
         merged: dict[str, dict] = {}
         for r in rows:
             tid = r["metric"].get("tenant_id", "")
             name = r["metric"].get("tenant", "")
-            key = tid or f"name:{name}"
+            resolved_id = tid or id_by_name.get(name, "")
+            key = resolved_id or f"name:{name}"
             value = float(r["value"][1])
             entry = merged.get(key)
             if entry is None:
-                merged[key] = {"tenant_id": tid, "tenant": name, "value": value}
+                merged[key] = {"tenant_id": resolved_id, "tenant": name, "value": value}
             else:
                 entry["value"] += value
                 if name:
