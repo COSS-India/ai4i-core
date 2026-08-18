@@ -9,6 +9,7 @@ during collection.
 
 import os
 import sys
+import time
 import types
 from unittest.mock import MagicMock
 
@@ -65,6 +66,20 @@ class _ServiceUnavailableError(_AppError): pass
 class _UnpublishedServiceError(_AppError): pass
 class _RateLimitExceededError(_AppError): pass
 
+
+# app.schemas.common builds its ErrorResponse envelope on top of this — mirrors
+# the real ai4i_core.exceptions.ErrorDetail (code/timestamp optional & defaulted).
+class _ErrorDetail(_PydanticBaseModel):
+    message: str
+    code: str | None = None
+    timestamp: float = 0.0
+    details: str | None = None
+
+    def __init__(self, **data):
+        if data.get("timestamp") is None:
+            data["timestamp"] = time.time()
+        super().__init__(**data)
+
 def _success_response(data=None, meta=None):
     resp = {"success": True, "data": data}
     if meta:
@@ -91,6 +106,7 @@ _ai4i_exc = _conftest_stub(
     ServiceUnavailableError=_ServiceUnavailableError,
     UnpublishedServiceError=_UnpublishedServiceError,
     RateLimitExceededError=_RateLimitExceededError,
+    ErrorDetail=_ErrorDetail,
     register_exception_handlers=MagicMock(),
     # app.core.responses re-exports these — needed by any test that loads a
     # route module directly (e.g. app/routes/model.py, app/routes/service.py).

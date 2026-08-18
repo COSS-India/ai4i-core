@@ -11,6 +11,7 @@ from typing import List, Optional
 from pydantic import Field, field_validator
 
 from app.schemas.base import BaseSchema
+from app.schemas.common import DeletedIdData, MessageMeta, SuccessResponse, TotalMeta
 from app.schemas.enums.alert_management import VALID_RBAC_ROLES
 
 
@@ -108,3 +109,34 @@ class NotificationReceiverResponse(BaseSchema):
     enabled: bool
     created_at: datetime
     updated_at: datetime
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class CreateReceiverResponse(SuccessResponse[NotificationReceiverResponse]):
+    """POST /alerts/receivers"""
+
+    meta: MessageMeta
+
+
+class ListReceiversResponse(SuccessResponse[List[NotificationReceiverResponse]]):
+    """GET /alerts/receivers"""
+
+    meta: TotalMeta
+
+
+class GetReceiverResponse(SuccessResponse[NotificationReceiverResponse]):
+    """GET /alerts/receivers/{receiver_id}"""
+
+
+class UpdateReceiverResponse(SuccessResponse[NotificationReceiverResponse]):
+    """PUT /alerts/receivers/{receiver_id}"""
+
+    meta: MessageMeta
+
+
+class DeleteReceiverResponse(SuccessResponse[DeletedIdData]):
+    """DELETE /alerts/receivers/{receiver_id}"""
+
+    meta: MessageMeta

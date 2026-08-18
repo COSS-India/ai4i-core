@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ai4i_core.exceptions import ErrorDetail
 from app.schemas.base import BaseSchema
 from app.schemas.enums.model_management import (
     LicenseEnum,
@@ -21,6 +22,67 @@ _T = TypeVar("_T")
 class SuccessResponse(BaseModel, Generic[_T]):
     success: bool
     data: _T
+
+
+# ── Error envelope (shared across all platform-core domains) ────────────────
+
+
+class ErrorResponse(BaseModel):
+    """Wire format of platform-core errors: ``{"detail": {code, message, timestamp}}``.
+
+    Reuses ai4i_core's ``ErrorDetail`` (``code``/``timestamp`` optional, defaulted)
+    rather than a narrower local copy — the shared handlers in
+    ``ai4i_core.exceptions.handlers`` don't always populate every field (e.g. a
+    raw ``HTTPException(detail={"code", "message"})`` never gets a timestamp).
+    """
+
+    detail: ErrorDetail
+
+
+_ERROR_DESCRIPTIONS = {
+    401: "Not authenticated.",
+    403: "Not authorized.",
+    404: "Not found.",
+    409: "Conflict.",
+    429: "Rate limit exceeded.",
+    503: "Service unavailable.",
+}
+
+
+def error_responses(*status_codes: int) -> Dict[int, Dict[str, Any]]:
+    """Attach the common ``ErrorResponse`` schema to the given HTTP statuses.
+
+    422 is deliberately never accepted here: FastAPI's own request-validation
+    handler returns ``{"detail": [...]}`` (a list), while the app-level
+    ``ValidationError`` handler returns ``{"detail": {code, message, timestamp}}``
+    (an object) — two different shapes under the same status code, so no single
+    model can document it correctly. Let FastAPI's default 422 entry stand.
+    """
+    return {
+        code: {"model": ErrorResponse, "description": _ERROR_DESCRIPTIONS[code]}
+        for code in status_codes
+    }
+
+
+# ── Small reusable envelope pieces (``data``/``meta`` shapes shared by CRUD routes) ──
+
+
+class MessageMeta(BaseModel):
+    """``meta`` shape for envelopes that only confirm an action: ``{"message": "..."}``."""
+
+    message: str
+
+
+class TotalMeta(BaseModel):
+    """``meta`` shape for unpaginated list envelopes: ``{"total": N}``."""
+
+    total: int
+
+
+class DeletedIdData(BaseModel):
+    """``data`` shape returned after a delete: ``{"id": ...}``."""
+
+    id: int
 
 
 # ── Shared regex for entity name format: alphanumeric, hyphen, slash ──

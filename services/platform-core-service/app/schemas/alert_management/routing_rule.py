@@ -11,6 +11,7 @@ from typing import List, Optional
 from pydantic import Field
 
 from app.schemas.base import BaseSchema
+from app.schemas.common import MessageMeta, SuccessResponse, TotalMeta, DeletedIdData
 
 
 class RoutingRuleCreate(BaseSchema):
@@ -85,3 +86,46 @@ class RoutingRuleResponse(BaseSchema):
     enabled: bool
     created_at: datetime
     updated_at: datetime
+
+
+class RoutingRuleTimingUpdateData(BaseSchema):
+    """``data`` shape for ``PATCH /alerts/routing-rules/timing``."""
+
+    affected: int = Field(..., description="Number of routing rules updated")
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class CreateRoutingRuleResponse(SuccessResponse[RoutingRuleResponse]):
+    """POST /alerts/routing-rules"""
+
+    meta: MessageMeta
+
+
+class ListRoutingRulesResponse(SuccessResponse[List[RoutingRuleResponse]]):
+    """GET /alerts/routing-rules"""
+
+    meta: TotalMeta
+
+
+class UpdateRoutingRuleTimingResponse(SuccessResponse[RoutingRuleTimingUpdateData]):
+    """PATCH /alerts/routing-rules/timing"""
+
+    meta: MessageMeta
+
+
+class GetRoutingRuleResponse(SuccessResponse[RoutingRuleResponse]):
+    """GET /alerts/routing-rules/{rule_id}"""
+
+
+class UpdateRoutingRuleResponse(SuccessResponse[RoutingRuleResponse]):
+    """PUT /alerts/routing-rules/{rule_id}"""
+
+    meta: MessageMeta
+
+
+class DeleteRoutingRuleResponse(SuccessResponse[DeletedIdData]):
+    """DELETE /alerts/routing-rules/{rule_id}"""
+
+    meta: MessageMeta
