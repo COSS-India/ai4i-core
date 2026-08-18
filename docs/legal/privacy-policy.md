@@ -1,13 +1,13 @@
 # Privacy Policy
 
-*Version 1.0 · Last updated: 23 July 2026*
+*Version 1.0 · Last updated: 18 August 2026*
 *Centre for Open Societal Systems (COSS) · IIIT-Bangalore · Bengaluru, India*
 
 ## 1. Introduction
 
-AI4I Orchestrate is an open-source, self-hostable Language AI orchestration platform developed by the Centre for Open Societal Systems ("COSS"), formed at IIIT-Bangalore (IIIT-B) in partnership with EkStep Foundation. COSS is registered at 26/C, IIIT Bangalore, Electronics City Phase 1, Bengaluru – 560100, Karnataka, India.
+AI Switch is an open-source, self-hostable Language AI orchestration platform developed by the Centre for Open Societal Systems ("COSS"), formed at IIIT-Bangalore (IIIT-B) in partnership with EkStep Foundation. COSS is registered at 26/C, IIIT Bangalore, Electronics City Phase 1, Bengaluru – 560100, Karnataka, India.
 
-This Privacy Policy explains how COSS collects, uses, stores, and protects personal data of users of the AI4I Orchestrate platform ("Platform"), and describes your rights under applicable Indian law, including the Digital Personal Data Protection Act 2023 ("DPDP Act").
+This Privacy Policy explains how COSS collects, uses, stores, and protects personal data of users of the AI Switch platform ("Platform"), and describes your rights under applicable Indian law, including the Digital Personal Data Protection Act 2023 ("DPDP Act").
 
 By registering on and using the Platform, you acknowledge that you have read, understood, and agree to the practices described in this Privacy Policy.
 
@@ -15,9 +15,9 @@ By registering on and using the Platform, you acknowledge that you have read, un
 
 This Privacy Policy applies to all individuals who register on and use the Platform, including platform administrators, organisation administrators, and users registered under an organisation's account (collectively referred to as "Users" in this Policy).
 
-This Policy applies to the reference deployment of AI4I Orchestrate operated by COSS. It does not apply to:
+This Policy applies to the reference deployment of AI Switch operated by COSS. It does not apply to:
 
-- Self-hosted deployments where organisations deploy AI4I Orchestrate on their own infrastructure. In those deployments, the organisation is the Data Fiduciary and is responsible for its own Privacy Policy.
+- Self-hosted deployments where organisations deploy AI Switch on their own infrastructure. In those deployments, the organisation is the Data Fiduciary and is responsible for its own Privacy Policy.
 - Third-party websites or services linked from the Platform.
 
 ## 3. What Personal Data We Collect
@@ -76,7 +76,7 @@ In line with the DPDP Act 2023, COSS is the **Data Fiduciary** for the reference
 
 ## 6. AI Service Data — Adopters' Responsibility
 
-AI4I Orchestrate is designed as an open, self-hostable platform for Language AI services. When organisations ("Adopters") deploy the Platform on their own infrastructure, they are the Data Fiduciaries for the personal data of their own end users.
+AI Switch is designed as an open, self-hostable platform for Language AI services. When organisations ("Adopters") deploy the Platform on their own infrastructure, they are the Data Fiduciaries for the personal data of their own end users.
 
 Adopters are responsible for:
 
@@ -151,9 +151,9 @@ Personal data of users of the reference deployment is stored on servers located 
 
 ## 13. Children
 
-AI4I Orchestrate is an enterprise platform designed for use by organisations, government bodies, and research institutions. It is not directed at individuals under 18 years of age.
+AI Switch is an enterprise platform designed for use by organisations, government bodies, and research institutions. It is not directed at individuals under 18 years of age.
 
-Adopters who deploy AI4I Orchestrate for use cases involving minors are responsible for obtaining verifiable parental consent in accordance with the DPDP Act 2023 and applicable law.
+Adopters who deploy AI Switch for use cases involving minors are responsible for obtaining verifiable parental consent in accordance with the DPDP Act 2023 and applicable law.
 
 ## 14. Changes to This Policy
 

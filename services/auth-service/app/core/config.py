@@ -7,7 +7,7 @@ Reads its own environment variables; no dependency on a shared env library.
 from pathlib import Path
 from typing import Optional
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.constants import ENV_DEVELOPMENT
@@ -132,7 +132,13 @@ class AuthSettings(BaseSettings):
     # stays the single source of truth for which env vars this service expects.
     email_provider: str = "smtp"
     email_from: Optional[str] = None
-    email_from_name: str = "AI Switch"
+    # Product name used in email subject/body copy. Independent of the SMTP
+    # From display name so EMAIL_FROM_NAME="COSS Support" does not become
+    # "Welcome to COSS Support".
+    platform_name: str = "AI Switch"
+    # SMTP From-header display name. Defaults to platform_name so they stay
+    # aligned out of the box; override independently when they should differ.
+    email_from_name: str = ""
     email_reply_to: Optional[str] = None
     email_extra_headers: Optional[str] = None
     smtp_host: Optional[str] = None
@@ -192,6 +198,16 @@ class AuthSettings(BaseSettings):
 
     def get_rs256_key_path(self) -> Path:
         return Path(self.rs256_key_directory)
+
+    def get_platform_name(self) -> str:
+        """Product name for email subject/body copy. Falls back to AI Switch."""
+        return (self.platform_name or "").strip() or "AI Switch"
+
+    @model_validator(mode="after")
+    def _default_email_from_name(self) -> "AuthSettings":
+        if not (self.email_from_name or "").strip():
+            self.email_from_name = (self.platform_name or "").strip() or "AI Switch"
+        return self
 
     @field_validator("access_token_expire_minutes", "reset_token_expire_minutes")
     @classmethod

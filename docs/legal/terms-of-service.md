@@ -1,17 +1,17 @@
 # Terms of Service
 
-*Version 1.0 · Last updated: 23 July 2026*
+*Version 1.0 · Last updated: 18 August 2026*
 *Centre for Open Societal Systems (COSS) · IIIT-Bangalore · Bengaluru, India*
 
-These Terms of Service ("Terms") govern your access to and use of the AI4I Orchestrate platform ("Platform"), operated by the Centre for Open Societal Systems ("COSS"), formed at IIIT-Bangalore (IIIT-B) in partnership with EkStep Foundation, registered at 26/C, IIIT Bangalore, Electronics City Phase 1, Bengaluru – 560100, Karnataka, India.
+These Terms of Service ("Terms") govern your access to and use of the AI Switch platform ("Platform"), operated by the Centre for Open Societal Systems ("COSS"), formed at IIIT-Bangalore (IIIT-B) in partnership with EkStep Foundation, registered at 26/C, IIIT Bangalore, Electronics City Phase 1, Bengaluru – 560100, Karnataka, India.
 
 By registering on or using the Platform, you agree to be bound by these Terms and our Privacy Policy. If you do not agree, please do not use the Platform.
 
 ## 1. Definitions
 
-**"Platform"** means the AI4I Orchestrate Language AI orchestration service.
+**"Platform"** means the AI Switch Language AI orchestration service.
 
-**"Adopter"** means any government ministry, institution, or organisation that deploys AI4I Orchestrate on its own infrastructure under the MIT License.
+**"Adopter"** means any government ministry, institution, or organisation that deploys AI Switch on its own infrastructure under the MIT License.
 
 **"Admin"** means a person designated to administer a deployment of the Platform, with authority over platform-level configuration and tenant management.
 
@@ -44,7 +44,7 @@ Adopters using the Platform are responsible for:
 - Informing their end users about how their data is being processed through the Platform's AI Services and obtaining any required consents.
 - Maintaining their own Privacy Policy and Terms of Use for their end users.
 
-Adopters who deploy AI4I Orchestrate on their own infrastructure are solely responsible for data governance, security, and legal compliance in that deployment. COSS has no access to and bears no responsibility for data in self-hosted deployments.
+Adopters who deploy AI Switch on their own infrastructure are solely responsible for data governance, security, and legal compliance in that deployment. COSS has no access to and bears no responsibility for data in self-hosted deployments.
 
 ## 4. Tenant Responsibilities
 
@@ -93,13 +93,13 @@ You must not use the Platform to:
 
 8.1 Content you submit to the Platform for processing is not stored or claimed by COSS. You retain full ownership of your Content at all times.
 
-8.2 The AI4I Orchestrate software is open-source, licensed under the MIT License (Copyright © IIIT-B on behalf of COSS). The source code is available at [https://github.com/COSS-India/ai4i-core](https://github.com/COSS-India/ai4i-core).
+8.2 The AI Switch software is open-source, licensed under the MIT License (Copyright © IIIT-B on behalf of COSS). The source code is available at [https://github.com/COSS-India/ai4i-core](https://github.com/COSS-India/ai4i-core).
 
 8.3 Use of the Platform does not grant you any ownership or licence rights over the Platform's infrastructure or COSS's proprietary materials beyond those expressly set out above.
 
 ## 9. Privacy
 
-The collection and use of your personal data is governed by the AI4I Orchestrate Privacy Policy. By accepting these Terms, you also accept the Privacy Policy.
+The collection and use of your personal data is governed by the AI Switch Privacy Policy. By accepting these Terms, you also accept the Privacy Policy.
 
 ## 10. Account Deletion
 

@@ -19,8 +19,6 @@ from app.models.user import User
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "emails"
 _renderer = TemplateRenderer([_TEMPLATE_DIR])
 
-_DEFAULT_PLATFORM_NAME = "AI Switch"
-
 
 def _display_name(user: User) -> str:
     """Render-safe greeting name. Falls back to a generic greeting when
@@ -30,9 +28,8 @@ def _display_name(user: User) -> str:
 
 
 def _platform_name() -> str:
-    """Adopter-configurable product name (EMAIL_FROM_NAME / default AI Switch)."""
-    name = (settings.email_from_name or "").strip()
-    return name or _DEFAULT_PLATFORM_NAME
+    """Adopter-configurable product name (PLATFORM_NAME / default AI Switch)."""
+    return settings.get_platform_name()
 
 
 def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
