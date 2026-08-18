@@ -248,6 +248,24 @@ class LanguagePair(BaseSchema):
     targetScriptCode: Optional[SupportedScriptsEnum] = Field(None, description="Optional. ISO-15924 script code.")
 
 
+class LanguagePairLenient(BaseSchema):
+    """Read-side mirror of ``LanguagePair`` — string-typed rather than
+    enum-typed. Live model/service rows have been observed with
+    ``sourceLanguage: "*"`` (a wildcard, not a ``SupportedLanguagesEnum``
+    member); the strict enum 500s the whole list response on any such row,
+    so a response model reading back whatever was actually persisted must
+    not be stricter than the data really is."""
+
+    model_config = ConfigDict(extra="allow")
+
+    sourceLanguage: Optional[str] = None
+    sourceLanguageName: Optional[str] = None
+    sourceScriptCode: Optional[str] = None
+    targetLanguage: Optional[str] = None
+    targetLanguageName: Optional[str] = None
+    targetScriptCode: Optional[str] = None
+
+
 # ── Training dataset ──
 
 

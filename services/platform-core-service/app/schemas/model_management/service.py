@@ -22,6 +22,7 @@ from app.schemas.common import (
     AsyncApiDetails,
     BenchmarkEntry,
     InferenceApiKey,
+    LanguagePairLenient,
     MessageMeta,
     SuccessResponse,
     SuccessResponseWithMeta,
@@ -862,26 +863,6 @@ class ServiceInferenceEndpoint(BaseSchema):
     providerName: Optional[str] = None
     infraDescription: Optional[str] = None
     inferenceModelId: Optional[str] = None
-
-
-class LanguagePairLenient(BaseSchema):
-    """`languages` item — lenient mirror of common.LanguagePair.
-
-    _normalize_languages() (serializers.py) explicitly tolerates legacy rows
-    where a language was stored as a bare string rather than a full
-    LanguagePair object — sourceLanguage is coerced to a string in that case,
-    which may not be a recognized SupportedLanguagesEnum member. Kept as
-    `str` rather than the enum for that reason.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    sourceLanguage: Optional[str] = None
-    sourceLanguageName: Optional[str] = None
-    sourceScriptCode: Optional[str] = None
-    targetLanguage: Optional[str] = None
-    targetLanguageName: Optional[str] = None
-    targetScriptCode: Optional[str] = None
 
 
 class ServiceResponse(BaseSchema):

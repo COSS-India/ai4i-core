@@ -16,6 +16,7 @@ from app.schemas.common import (
     Benchmark,
     InferenceApiKey,
     LanguagePair,
+    LanguagePairLenient,
     MessageMeta,
     SuccessResponse,
     SuccessResponseWithMeta,
@@ -493,7 +494,11 @@ class ModelResponse(BaseSchema):
     versionStatus: Optional[str] = None
     versionStatusUpdatedAt: Optional[str] = None
     description: Optional[str] = None
-    languages: List[LanguagePair] = Field(default_factory=list)
+    # LanguagePairLenient, not the strict LanguagePair used on create/update —
+    # live rows have been observed with sourceLanguage: "*" (a wildcard),
+    # which isn't a SupportedLanguagesEnum member and 500s GET /models
+    # entirely if this field is enum-typed. See LanguagePairLenient's docstring.
+    languages: List[LanguagePairLenient] = Field(default_factory=list)
     isLangDetectionEnabled: bool = False
     isMultilingual: bool = False
     domain: List[str] = Field(default_factory=list)
