@@ -141,17 +141,6 @@ export function formatNativeConsumption(
   return unit ? `${nativeUnits.toLocaleString()} ${unit}` : nativeUnits.toLocaleString();
 }
 
-/**
- * Token / request scaling for Model Usage (AI4IDS-2790):
- * ≥1M → `1.2M`, ≥1K → `284.0K`, else plain integer.
- */
-export function formatScaledCount(n: number): string {
-  if (!Number.isFinite(n)) return METERING.GRAPH.EMPTY_VALUE;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(Math.round(n));
-}
-
 export function formatMeteringRefreshTime(iso?: string, nowMs = Date.now()): string {
   if (!iso) return METERING.REFRESH.JUST_NOW;
   const diff = Math.max(0, nowMs - new Date(iso).getTime());
@@ -331,18 +320,18 @@ export function deriveModelInsights(
   const activeModels = summary?.active_models ?? null;
 
   if (summary?.most_used || summary?.overall_success_rate_pct != null || totalModels != null) {
-    const mostUsedName =
-      summary?.most_used?.name?.trim() ||
-      summary?.most_used?.service_id ||
-      METERING.GRAPH.EMPTY_VALUE;
+    const mostUsed = summary?.most_used;
+    const mostUsedName = mostUsed
+      ? mostUsed.name?.trim() || mostUsed.service_id || METERING.GRAPH.EMPTY_VALUE
+      : METERING.GRAPH.EMPTY_VALUE;
     return {
       totalModels,
       activeModels,
       mostUsedName,
-      mostUsedRequests: summary?.most_used?.requests ?? 0,
+      mostUsedRequests: mostUsed?.requests ?? 0,
       overallSuccessRate:
         summary?.overall_success_rate_pct ?? derived?.overallSuccessRate ?? null,
-      totalRequests: derived?.totalRequests ?? summary?.most_used?.requests ?? 0,
+      totalRequests: derived?.totalRequests ?? mostUsed?.requests ?? 0,
     };
   }
 

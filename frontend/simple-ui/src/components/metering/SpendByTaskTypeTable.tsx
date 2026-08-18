@@ -8,7 +8,7 @@ import {
   type AggregatedTaskUsage,
 } from "../../utils/usageSpendHelpers";
 import type { TenantTierBreakdown, TierTaskTypeUsage } from "../../types/usageSpend";
-import InfoTip from "../common/InfoTip";
+import { ThWithTip } from "../common/InfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
@@ -76,29 +76,33 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
       <Table size="sm" variant="simple">
         <Thead bg="gray.50">
           <Tr>
-            <InfoTip
-              header="MODEL TASK TYPE"
+            <ThWithTip
               w="26%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
-            />
-            <InfoTip
-              header="USAGE"
+            >
+              MODEL TASK TYPE
+            </ThWithTip>
+            <ThWithTip
               message={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
               w="38%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
-            />
-            <InfoTip
-              header="SPEND"
+            >
+              USAGE
+            </ThWithTip>
+            <ThWithTip
               message={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
               w="20%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
-            />
-            <InfoTip
-              header="SHARE"
+            >
+              SPEND
+            </ThWithTip>
+            <ThWithTip
               message={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
               w="16%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
-            />
+            >
+              SHARE
+            </ThWithTip>
           </Tr>
         </Thead>
         <Tbody>

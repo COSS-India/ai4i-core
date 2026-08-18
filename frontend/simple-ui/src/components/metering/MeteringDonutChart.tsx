@@ -70,6 +70,8 @@ interface MeteringDonutChartProps {
   legendItems?: DonutLegendItem[];
   legendVariant?: "dotted" | "simple";
   chartMaxW?: string | Record<string, string>;
+  /** Denominator for tooltip %. Defaults to the sum of slice values. */
+  total?: number;
 }
 
 const DonutLegend: React.FC<{
@@ -109,8 +111,10 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
   legendItems,
   legendVariant = "dotted",
   chartMaxW,
+  total: totalOverride,
 }) => {
-  const total = data.reduce((sum, d) => sum + d.value, 0);
+  const sliceTotal = data.reduce((sum, d) => sum + d.value, 0);
+  const total = totalOverride && totalOverride > 0 ? totalOverride : sliceTotal;
   if (data.length === 0) return null;
 
   const chart = (

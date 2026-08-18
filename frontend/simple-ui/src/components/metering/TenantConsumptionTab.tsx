@@ -7,7 +7,7 @@ import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import { formatTenantLabel, getWindowLabel } from "../../utils/meteringFormatters";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
-import InfoTip from "../common/InfoTip";
+import { ThWithTip } from "../common/InfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import MeteringTableText from "./MeteringTableText";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -71,26 +71,19 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <InfoTip header={section.TABLE_RANK} w="72px" />
-                  <InfoTip
-                    header={replaceTenantCopy(section.TABLE_INSTITUTION)}
-                    minW="240px"
-                  />
-                  <InfoTip
-                    header={section.TABLE_REQUESTS}
-                    message={section.TOOLTIPS.REQUESTS}
-                    isNumeric
-                  />
-                  <InfoTip
-                    header={section.TABLE_SHARE}
-                    message={section.TOOLTIPS.SHARE}
-                    minW="180px"
-                  />
-                  <InfoTip
-                    header="%"
-                    message={section.TOOLTIPS.SHARE}
-                    isNumeric
-                  />
+                  <ThWithTip w="72px">{section.TABLE_RANK}</ThWithTip>
+                  <ThWithTip minW="240px">
+                    {replaceTenantCopy(section.TABLE_INSTITUTION)}
+                  </ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.REQUESTS} isNumeric>
+                    {section.TABLE_REQUESTS}
+                  </ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.SHARE} minW="180px">
+                    {section.TABLE_SHARE}
+                  </ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.SHARE} isNumeric>
+                    %
+                  </ThWithTip>
                 </Tr>
               </Thead>
               <Tbody>

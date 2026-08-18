@@ -21,7 +21,7 @@ import {
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import MeteringAsyncState from "./MeteringAsyncState";
-import InfoTip from "../common/InfoTip";
+import { ThWithTip } from "../common/InfoTip";
 import { BudgetCell, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
 import { UsageSpendExpandRows } from "./UsageSpendExpandRows";
 
@@ -175,16 +175,20 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <InfoTip header="INSTITUTION" w={widths.institution} sx={thSx} />
-            <InfoTip header="TIER" w={widths.tier} sx={thSx} />
-            <InfoTip
-              header="ALLOCATED BUDGET (INR)"
+            <ThWithTip w={widths.institution} sx={thSx}>
+              INSTITUTION
+            </ThWithTip>
+            <ThWithTip w={widths.tier} sx={thSx}>
+              TIER
+            </ThWithTip>
+            <ThWithTip
               message={tips.ALLOCATED_BUDGET}
               w={widths.allocatedBudget}
               sx={thSx}
-            />
-            <InfoTip
-              header="BUDGET"
+            >
+              ALLOCATED BUDGET (INR)
+            </ThWithTip>
+            <ThWithTip
               message={tips.BUDGET}
               w={widths.budget}
               sx={thSx}
@@ -198,20 +202,22 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
                   {sortOrder === "desc" ? "↓" : "↑"}
                 </Text>
               </Text>
-            </InfoTip>
-            <InfoTip
-              header="ALLOCATED TOKENS"
+            </ThWithTip>
+            <ThWithTip
               message={tips.ALLOCATED_TOKENS}
               w={widths.allocatedTokens}
               sx={thSx}
-            />
+            >
+              ALLOCATED TOKENS
+            </ThWithTip>
             {showTokenUsage ? (
-              <InfoTip
-                header="TOKEN USAGE"
+              <ThWithTip
                 message={tips.TOKEN_USAGE}
                 w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}
                 sx={thSx}
-              />
+              >
+                TOKEN USAGE
+              </ThWithTip>
             ) : null}
           </Tr>
         </Thead>

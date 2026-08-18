@@ -16,14 +16,15 @@ import {
   buildModelBreakdownChart,
   buildTopModelsChart,
   deriveModelInsights,
-  formatScaledCount,
+  formatCompactNumber,
+  formatNativeConsumption,
   getWindowLabel,
 } from "../../utils/meteringFormatters";
 import { meteringServiceColor } from "../../utils/meteringColors";
 import MeteringAsyncState from "./MeteringAsyncState";
 import MeteringDataTable from "./MeteringDataTable";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
-import InfoTip from "../common/InfoTip";
+import { ThWithTip } from "../common/InfoTip";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -59,13 +60,18 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
     [data?.summary, breakdown],
   );
 
-  const mostUsedHelper = insights
-    ? `${formatScaledCount(insights.mostUsedRequests)} ${
-        isPlatformWide
-          ? section.REQUESTS_ACROSS_INSTITUTIONS
-          : section.REQUESTS_ACROSS_INSTITUTION
-      }`
-    : undefined;
+  const mostUsedHelper =
+    insights && insights.mostUsedRequests > 0
+      ? `${formatCompactNumber(insights.mostUsedRequests, "indian")} ${
+          isPlatformWide
+            ? section.REQUESTS_ACROSS_INSTITUTIONS
+            : section.REQUESTS_ACROSS_INSTITUTION
+        }`
+      : undefined;
+
+  const hasMostUsed = Boolean(
+    insights && insights.mostUsedName !== METERING.GRAPH.EMPTY_VALUE,
+  );
 
   return (
     <MeteringAsyncState
@@ -104,10 +110,14 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               <KpiCard
                 label={section.MOST_USED}
                 value={
-                  <HStack spacing={2}>
-                    <Box w={2} h={2} borderRadius="full" bg="green.400" />
-                    <Text as="span">{insights.mostUsedName}</Text>
-                  </HStack>
+                  hasMostUsed ? (
+                    <HStack spacing={2}>
+                      <Box w={2} h={2} borderRadius="full" bg="green.400" />
+                      <Text as="span">{insights.mostUsedName}</Text>
+                    </HStack>
+                  ) : (
+                    METERING.GRAPH.EMPTY_VALUE
+                  )
                 }
                 helper={mostUsedHelper}
                 tooltip={section.TOOLTIPS.MOST_USED}
@@ -139,6 +149,11 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                   showTooltip
                   centerPrimary={section.DONUT_PRIMARY}
                   centerSecondary={section.DONUT_SECONDARY}
+                  total={
+                    visibleTopModels.length
+                      ? data.top_models_total_requests
+                      : undefined
+                  }
                 />
               }
               list={
@@ -146,7 +161,9 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                   rows={visibleTopModels.map((row) => ({
                     rank: row.rank,
                     label: row.model_name,
-                    formattedValue: row.formatted_requests || formatScaledCount(row.requests),
+                    formattedValue:
+                      row.formatted_requests ||
+                      formatCompactNumber(row.requests, "indian"),
                     percentage: row.consumption_pct,
                   }))}
                   headerLeft="Model"
@@ -168,28 +185,20 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             <MeteringDataTable>
               <Thead bg="gray.50">
                 <Tr>
-                  <InfoTip header={section.TABLE_MODEL} />
-                  <InfoTip header={section.TABLE_SERVICE} />
-                  <InfoTip
-                    header={section.TABLE_TOTAL_REQUESTS}
-                    message={section.TOOLTIPS.TOTAL_REQUESTS}
-                    isNumeric
-                  />
-                  <InfoTip
-                    header={section.TABLE_NATIVE}
-                    message={section.TOOLTIPS.TOKEN_CONSUMPTION}
-                    isNumeric
-                  />
-                  <InfoTip
-                    header={section.TABLE_SUCCESS}
-                    message={section.TOOLTIPS.SUCCESS_RATE}
-                    isNumeric
-                  />
-                  <InfoTip
-                    header={section.TABLE_FAILURE}
-                    message={section.TOOLTIPS.FAILURE_RATE}
-                    isNumeric
-                  />
+                  <ThWithTip>{section.TABLE_MODEL}</ThWithTip>
+                  <ThWithTip>{section.TABLE_SERVICE}</ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.TOTAL_REQUESTS} isNumeric>
+                    {section.TABLE_TOTAL_REQUESTS}
+                  </ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.TOKEN_CONSUMPTION} isNumeric>
+                    {section.TABLE_NATIVE}
+                  </ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.SUCCESS_RATE} isNumeric>
+                    {section.TABLE_SUCCESS}
+                  </ThWithTip>
+                  <ThWithTip message={section.TOOLTIPS.FAILURE_RATE} isNumeric>
+                    {section.TABLE_FAILURE}
+                  </ThWithTip>
                 </Tr>
               </Thead>
               <Tbody>
@@ -207,10 +216,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                       </HStack>
                     </Td>
                     <Td isNumeric fontSize="sm">
-                      {formatScaledCount(row.requests)}
+                      {formatCompactNumber(row.requests, "indian")}
                     </Td>
                     <Td isNumeric fontSize="sm" color="gray.600">
-                      {formatScaledCount(row.native_units)}
+                      {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
                     </Td>
                     <Td isNumeric fontSize="sm" color="green.600" fontWeight="medium">
                       {row.success_pct.toFixed(2)}
