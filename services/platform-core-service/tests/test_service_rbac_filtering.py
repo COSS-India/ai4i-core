@@ -73,7 +73,11 @@ _FULL_SERVICE = {
     },
     "api_key": "super-secret-key",
     "healthStatus": "healthy",
-    "benchmarks": {"p99": 120},
+    # service.benchmarks is only ever written from ServiceCreateRequest's own
+    # Optional[Dict[str, List[BenchmarkEntry]]] (service_service.py:
+    # jsonable_encoder(payload.benchmarks)) — a bare {"p99": 120} scalar
+    # doesn't match that shape and never occurs in real data.
+    "benchmarks": {"p99": [{"output_length": 120}]},
     "hardwareDescription": "8x A100",
     "costPerUnit": 0.5,
     "unitSize": 1,

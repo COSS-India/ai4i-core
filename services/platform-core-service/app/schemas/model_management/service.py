@@ -26,6 +26,7 @@ from app.schemas.common import (
     SuccessResponse,
     SuccessResponseWithMeta,
     TaskSpec,
+    TaskSpecLenient,
     TotalMeta,
     validate_entity_name,
 )
@@ -821,6 +822,66 @@ class ServiceBulkEndpointUpdateRequest(BaseSchema):
 
 
 # ── Response ──
+#
+# The classes below mirror request-side schemas (InferenceAPIEndPoint,
+# TaskSpec, LanguagePair) field-for-field, but WITHOUT their validators and
+# with every field optional — a response model reads back whatever a row
+# actually holds (including data written before a validator existed, or via
+# ServiceUpdateRequest's looser partial-patch typing on the same JSONB
+# column), so it must never be stricter than what's genuinely guaranteed to
+# be there. Concretely: InferenceAPIEndPoint._validate_schema requires each
+# `schema` entry to be a full, non-empty ULCA contract — reusing it directly
+# here would 500 on read for any row that predates that check.
+
+
+class ServiceSchemaEntry(BaseSchema):
+    """One entry of the ULCA `schema` (InferenceSchemaArray) array — lenient
+    mirror of what InferenceAPIEndPoint's validator otherwise requires
+    (taskType + non-empty request/response) on write."""
+
+    model_config = ConfigDict(extra="allow")
+
+    taskType: Optional[str] = None
+    request: Optional[Any] = None
+    response: Optional[Any] = None
+
+
+class ServiceInferenceEndpoint(BaseSchema):
+    """`inferenceEndPoint` — lenient read-side mirror of InferenceAPIEndPoint."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    callbackUrl: Optional[str] = None
+    inferenceApiKey: Optional[InferenceApiKey] = None
+    isMultilingualEnabled: Optional[bool] = None
+    supportedInputFormats: Optional[SupportedFormats] = None
+    supportedOutputFormats: Optional[SupportedFormats] = None
+    endpoint_schema: Optional[List[ServiceSchemaEntry]] = Field(None, alias="schema")
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
+    providerName: Optional[str] = None
+    infraDescription: Optional[str] = None
+    inferenceModelId: Optional[str] = None
+
+
+class LanguagePairLenient(BaseSchema):
+    """`languages` item — lenient mirror of common.LanguagePair.
+
+    _normalize_languages() (serializers.py) explicitly tolerates legacy rows
+    where a language was stored as a bare string rather than a full
+    LanguagePair object — sourceLanguage is coerced to a string in that case,
+    which may not be a recognized SupportedLanguagesEnum member. Kept as
+    `str` rather than the enum for that reason.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    sourceLanguage: Optional[str] = None
+    sourceLanguageName: Optional[str] = None
+    sourceScriptCode: Optional[str] = None
+    targetLanguage: Optional[str] = None
+    targetLanguageName: Optional[str] = None
+    targetScriptCode: Optional[str] = None
 
 
 class ServiceResponse(BaseSchema):
@@ -837,11 +898,11 @@ class ServiceResponse(BaseSchema):
     )
     modelId: str
     modelVersion: str
-    task: Optional[Dict[str, Any]] = None
+    task: Optional[TaskSpecLenient] = None
     taskType: Optional[str] = Field(
         None, description="Deprecated — use `task.type`."
     )
-    inferenceEndPoint: Optional[Dict[str, Any]] = None
+    inferenceEndPoint: Optional[ServiceInferenceEndpoint] = None
     endpoint: Optional[str] = Field(
         None, description="Deprecated — use `inferenceEndPoint.callbackUrl`."
     )
@@ -856,7 +917,11 @@ class ServiceResponse(BaseSchema):
     # a PATCH can genuinely persist a bare string into this JSONB column, so
     # the response must accept either shape rather than only the object one.
     healthStatus: Optional[Union[ServiceStatus, str]] = None
-    benchmarks: Optional[Dict[str, Any]] = None
+    # Matches ServiceCreateRequest/ServiceUpdateRequest's own
+    # Optional[Dict[str, List[BenchmarkEntry]]] — a per-key list of benchmark
+    # entries (BenchmarkEntry has no required fields, so this is safe to read
+    # back even for a row written before some of its fields existed).
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: bool = False
     isTryItDefault: bool = False
     publishedAt: Optional[str] = None
@@ -866,6 +931,10 @@ class ServiceResponse(BaseSchema):
     unitRate: Optional[float] = None
     tierIds: Optional[List[str]] = None
     tierNames: Optional[List[str]] = None
+    # Genuinely free-form: "a sample of what a correct response looks like"
+    # for this service's own task type (see
+    # validate_expected_response_schema's docstring) — there is no fixed
+    # field set to name here, unlike the fields above.
     expectedResponseSchema: Optional[Dict[str, Any]] = None
     # service_to_dict() also emits these two — added here to match; without
     # them FastAPI would silently strip both from every response (createdAt
@@ -879,7 +948,7 @@ class ServiceResponse(BaseSchema):
 class ServiceListItem(ServiceResponse):
     """List response item — augmented with the inline model snippet."""
 
-    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
 
 
