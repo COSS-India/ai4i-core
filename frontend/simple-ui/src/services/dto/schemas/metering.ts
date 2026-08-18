@@ -140,7 +140,17 @@ export const modelConsumptionRowSchema = z.object({
   failure_rate_pct: z.number(),
 });
 
+export const topModelRowSchema = z.object({
+  rank: z.number(),
+  model_name: z.string(),
+  consumption_pct: z.number(),
+  requests: z.number(),
+  formatted_requests: z.string(),
+});
+
 export const modelConsumptionSummarySchema = z.object({
+  total_models: z.number().nullable().optional(),
+  active_models: z.number().nullable().optional(),
   most_used: z
     .object({
       service_id: z.string().nullable().optional(),
@@ -155,6 +165,8 @@ export const modelConsumptionSummarySchema = z.object({
 export const modelConsumptionResponseSchema = z.object({
   scope: meteringScopeSchema,
   summary: modelConsumptionSummarySchema.nullable().optional(),
+  top_models: z.array(topModelRowSchema).optional().default([]),
+  top_models_total_requests: z.number().optional().default(0),
   breakdown: z.array(modelConsumptionRowSchema),
   ...meteringResponseMetaSchema,
 });

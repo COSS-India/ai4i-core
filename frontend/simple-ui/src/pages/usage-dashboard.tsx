@@ -17,6 +17,7 @@ import { getTenantIdFromToken } from "../utils/helpers";
 import {
   canAccessUsageDashboard,
 } from "../utils/rbac";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const UsageDashboardPage: React.FC = () => {
   const router = useRouter();
@@ -75,7 +76,7 @@ const UsageDashboardPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Usage Dashboard - AI4Inclusion Console</title>
+        <title>{`Usage Dashboard - ${getPlatformName()}`}</title>
         <meta
           name="description"
           content={`Monitor service consumption, model consumption, ${INSTITUTION.toLowerCase()} activity, and platform throughput`}

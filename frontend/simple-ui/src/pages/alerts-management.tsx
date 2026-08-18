@@ -12,6 +12,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import AlertingTab from "../components/profile/AlertingTab";
+import { getPlatformName } from "../config/runtimeConfig";
 
 /**
  * Alerts Management temporarily removed from UI.
@@ -75,7 +76,7 @@ const AlertsManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Alerts Management - AI4I Platform</title>
+        <title>{`Alerts Management - ${getPlatformName()}`}</title>
         <meta name="description" content="Manage alert definitions, notification receivers, and routing rules" />
       </Head>
 

@@ -7,12 +7,11 @@ import {
   Tbody,
   Td,
   Text,
-  Th,
   Thead,
-  Tooltip,
   Tr,
 } from "@chakra-ui/react";
 import React from "react";
+import { METERING } from "../../config/meteringConstants";
 import {
   USAGE_SPEND_ACCENT,
   aggregateTasks,
@@ -22,6 +21,7 @@ import {
 } from "../../utils/usageSpendHelpers";
 import type { TenantUsageItem } from "../../types/usageSpend";
 import MeteringAsyncState from "./MeteringAsyncState";
+import { ThWithTip } from "../common/InfoTip";
 import { BudgetCell, TenantAvatar, TierBadge, UsageCell } from "./UsageSpendCells";
 import { UsageSpendExpandRows } from "./UsageSpendExpandRows";
 
@@ -44,7 +44,7 @@ interface UsageSpendTenantTableProps {
   onTenantClick: (row: TenantUsageItem) => void;
 }
 
-const th = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
+const thSx = { fontSize: "11px", letterSpacing: "0.04em", color: "gray.600" } as const;
 
 /**
  * Column widths for each layout, so the table still fills the container either
@@ -162,6 +162,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
   const widths = showTokenUsage
     ? COLUMN_WIDTHS.withTokenUsage
     : COLUMN_WIDTHS.withoutTokenUsage;
+  const tips = METERING.USAGE_SPEND.TOOLTIPS;
 
   return (
   <MeteringAsyncState
@@ -174,19 +175,49 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       <Table size="sm" variant="simple" sx={{ "th, td": { verticalAlign: "middle" } }}>
         <Thead bg="gray.50">
           <Tr>
-            <Th {...th} w={widths.institution}>INSTITUTION</Th>
-            <Th {...th} w={widths.tier}>TIER</Th>
-            <Th {...th} w={widths.allocatedBudget}>ALLOCATED BUDGET (INR)</Th>
-            <Th {...th} w={widths.budget} cursor="pointer" userSelect="none" onClick={onToggleSort}>
-              <Tooltip label="Sorted by amount spent" hasArrow placement="top" openDelay={200}>
-                <Text as="span">
-                  BUDGET <Text as="span" fontSize="10px">{sortOrder === "desc" ? "↓" : "↑"}</Text>
+            <ThWithTip w={widths.institution} sx={thSx}>
+              INSTITUTION
+            </ThWithTip>
+            <ThWithTip w={widths.tier} sx={thSx}>
+              TIER
+            </ThWithTip>
+            <ThWithTip
+              message={tips.ALLOCATED_BUDGET}
+              w={widths.allocatedBudget}
+              sx={thSx}
+            >
+              ALLOCATED BUDGET (INR)
+            </ThWithTip>
+            <ThWithTip
+              message={tips.BUDGET}
+              w={widths.budget}
+              sx={thSx}
+              cursor="pointer"
+              userSelect="none"
+              onClick={onToggleSort}
+            >
+              <Text as="span">
+                BUDGET{" "}
+                <Text as="span" fontSize="10px">
+                  {sortOrder === "desc" ? "↓" : "↑"}
                 </Text>
-              </Tooltip>
-            </Th>
-            <Th {...th} w={widths.allocatedTokens}>ALLOCATED TOKENS</Th>
+              </Text>
+            </ThWithTip>
+            <ThWithTip
+              message={tips.ALLOCATED_TOKENS}
+              w={widths.allocatedTokens}
+              sx={thSx}
+            >
+              ALLOCATED TOKENS
+            </ThWithTip>
             {showTokenUsage ? (
-              <Th {...th} w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}>TOKEN USAGE</Th>
+              <ThWithTip
+                message={tips.TOKEN_USAGE}
+                w={COLUMN_WIDTHS.withTokenUsage.tokenUsage}
+                sx={thSx}
+              >
+                TOKEN USAGE
+              </ThWithTip>
             ) : null}
           </Tr>
         </Thead>

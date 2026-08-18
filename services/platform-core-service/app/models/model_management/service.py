@@ -59,13 +59,31 @@ class Service(Base):
     inference_server_type = Column(String(32), nullable=False, server_default="triton")
     ssl_verify = Column(Boolean, nullable=False, server_default="true")
     api_key = Column(String(255), nullable=True)
+    # ULCA InferenceAPIEndPoint alignment. `inference_api_key` is the new
+    # canonical {name, value} shape; `api_key` above is kept only as a
+    # deprecated legacy value (no dual-write, no backfill).
+    inference_api_key = Column(JSONB, nullable=True)
+    # ULCA's `schema` (InferenceSchemaArray) — required at the API layer on
+    # new creates, nullable here since existing rows have none and are never
+    # backfilled. Distinct from expected_response_schema below (that's a
+    # live smoke-test fixture, this is a declared per-task contract).
+    inference_schema = Column(JSONB, nullable=True)
+    # Service owns its own sync/async-ness rather than inheriting the linked
+    # Model's — two services wrapping the same model version can genuinely
+    # differ here (e.g. dedicated-GPU sync tier vs. shared/queued async tier).
+    is_sync_api = Column(Boolean, nullable=True)
+    async_api_details = Column(JSONB, nullable=True)
+    is_multilingual_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    supported_input_formats = Column(JSONB, nullable=True)
+    supported_output_formats = Column(JSONB, nullable=True)
+    provider_name = Column(String(100), nullable=True)
+    inference_model_id = Column(String(100), nullable=True)
     health_status = Column(JSONB, nullable=True)
     benchmarks = Column(JSONB, nullable=True)
     # Sample of a correct response for this endpoint, supplied by the admin
     # at creation time and re-validated against on every endpoint change —
     # see app/utils/endpoint_validator.py's response-shape check.
     expected_response_schema = Column(JSONB, nullable=True)
-    policy = Column(JSONB, nullable=True)
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
     published_at = Column(DateTime(timezone=True), nullable=True)
     is_try_it_default = Column(Boolean, nullable=False, default=False, server_default="false")

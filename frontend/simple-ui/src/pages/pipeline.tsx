@@ -42,6 +42,7 @@ import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
 import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
 import { showToast } from "../utils/toast";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const pageDefaults = getServicePageDefaults("pipeline");
 
@@ -207,7 +208,7 @@ const PipelinePage: React.FC = () => {
     <ServicePageLayout
       serviceId="pipeline"
       headingSize="lg"
-      headTitle="Speech to Speech | AI4Inclusion Console"
+      headTitle={`Speech to Speech | ${getPlatformName()}`}
       headDescription="Transform spoken input into translated speech output using chained AI models"
       headerExtra={
         <Button

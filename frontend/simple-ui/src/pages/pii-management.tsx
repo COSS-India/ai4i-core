@@ -6,6 +6,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import PiiManagement from "../components/pii/PiiManagement";
 import { useAuth } from "../hooks/useAuth";
+import { getPlatformName } from "../config/runtimeConfig";
 
 /**
  * PII Guardrail temporarily removed from UI.
@@ -69,7 +70,7 @@ const PiiManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>PII Guardrail - AI4I Platform</title>
+        <title>{`PII Guardrail - ${getPlatformName()}`}</title>
         <meta name="description" content="PII detection and policy management" />
       </Head>
 
