@@ -64,6 +64,11 @@ logs/
 .run/
 *.pid
 
+# Generated results from scripts/llm-load-test*.py (contains raw model I/O)
+scripts/llm-load-test-results.csv
+scripts/llm-load-test-100-110-tokens-results.csv
+scripts/llm-load-test-500-plus-tokens-results.csv
+
 # Database
 *.db
 *.sqlite3
