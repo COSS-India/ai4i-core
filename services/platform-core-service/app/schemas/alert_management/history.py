@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.base import BaseSchema
-from app.schemas.common import SuccessResponse
+from app.schemas.common import SuccessResponseWithMeta
 
 
 class AlertHistoryItem(BaseSchema):
@@ -128,7 +128,7 @@ class AlertHistoryListMeta(BaseModel):
     offset: int
 
 
-class ListAlertHistoryResponse(SuccessResponse[List[AlertHistoryItem]]):
+class ListAlertHistoryResponse(SuccessResponseWithMeta):
     """GET /alerts/history
 
     Note: ``data`` is the flat page of items (not the ``{items, total}`` shape
@@ -136,4 +136,5 @@ class ListAlertHistoryResponse(SuccessResponse[List[AlertHistoryItem]]):
     matching what ``AlertHistoryService.list`` + the route actually return.
     """
 
+    data: List[AlertHistoryItem]
     meta: AlertHistoryListMeta

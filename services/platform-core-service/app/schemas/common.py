@@ -24,6 +24,17 @@ class SuccessResponse(BaseModel, Generic[_T]):
     data: _T
 
 
+class SuccessResponseWithMeta(SuccessResponse):
+    """``SuccessResponse`` plus a ``meta`` sibling — ``{"success": true, "data": ..., "meta": ...}``.
+
+    Route response classes override both ``data`` and ``meta`` directly with
+    concrete types, the same way plain ``SuccessResponse`` subclasses override
+    only ``data``.
+    """
+
+    meta: Any
+
+
 # ── Error envelope (shared across all platform-core domains) ────────────────
 
 

@@ -11,7 +11,13 @@ from typing import List, Optional
 from pydantic import Field
 
 from app.schemas.base import BaseSchema
-from app.schemas.common import MessageMeta, SuccessResponse, TotalMeta, DeletedIdData
+from app.schemas.common import (
+    DeletedIdData,
+    MessageMeta,
+    SuccessResponse,
+    SuccessResponseWithMeta,
+    TotalMeta,
+)
 
 
 class RoutingRuleCreate(BaseSchema):
@@ -97,35 +103,42 @@ class RoutingRuleTimingUpdateData(BaseSchema):
 # ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
 
 
-class CreateRoutingRuleResponse(SuccessResponse[RoutingRuleResponse]):
+class CreateRoutingRuleResponse(SuccessResponseWithMeta):
     """POST /alerts/routing-rules"""
 
+    data: RoutingRuleResponse
     meta: MessageMeta
 
 
-class ListRoutingRulesResponse(SuccessResponse[List[RoutingRuleResponse]]):
+class ListRoutingRulesResponse(SuccessResponseWithMeta):
     """GET /alerts/routing-rules"""
 
+    data: List[RoutingRuleResponse]
     meta: TotalMeta
 
 
-class UpdateRoutingRuleTimingResponse(SuccessResponse[RoutingRuleTimingUpdateData]):
+class UpdateRoutingRuleTimingResponse(SuccessResponseWithMeta):
     """PATCH /alerts/routing-rules/timing"""
 
+    data: RoutingRuleTimingUpdateData
     meta: MessageMeta
 
 
-class GetRoutingRuleResponse(SuccessResponse[RoutingRuleResponse]):
+class GetRoutingRuleResponse(SuccessResponse):
     """GET /alerts/routing-rules/{rule_id}"""
 
+    data: RoutingRuleResponse
 
-class UpdateRoutingRuleResponse(SuccessResponse[RoutingRuleResponse]):
+
+class UpdateRoutingRuleResponse(SuccessResponseWithMeta):
     """PUT /alerts/routing-rules/{rule_id}"""
 
+    data: RoutingRuleResponse
     meta: MessageMeta
 
 
-class DeleteRoutingRuleResponse(SuccessResponse[DeletedIdData]):
+class DeleteRoutingRuleResponse(SuccessResponseWithMeta):
     """DELETE /alerts/routing-rules/{rule_id}"""
 
+    data: DeletedIdData
     meta: MessageMeta
