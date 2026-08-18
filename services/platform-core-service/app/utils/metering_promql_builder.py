@@ -315,7 +315,7 @@ def build_base_selectors(
     if inference_only:
         selectors.append(f'{PROMETHEUS_API_PATH_LABEL}=~"{endpoint_regex or INFERENCE_ENDPOINT_REGEX}"')
     if tenant_id:
-        selectors.append(f'tenant_id="{tenant_id}"')
+        selectors.append(f'tenant_id="{escape_label_value(tenant_id)}"')
     elif tenant:
         selectors.append(f'tenant="{escape_label_value(tenant)}"')
     if service_id:

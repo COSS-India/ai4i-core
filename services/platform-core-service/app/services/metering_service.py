@@ -360,7 +360,7 @@ class MeteringService:
         # tenant_id (immutable) is preferred over tenant (the organisation
         # name) so this survives a tenant rename — see build_base_selectors.
         _tenant_part = (
-            f',tenant_id="{tenant_id}"' if tenant_id
+            f',tenant_id="{escape_label_value(tenant_id)}"' if tenant_id
             else (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
         )
         _base = _ep + ',tenant!="unknown"' + _tenant_part
@@ -811,7 +811,7 @@ class MeteringService:
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant_part = (
-            f',tenant_id="{tenant_id}"' if tenant_id
+            f',tenant_id="{escape_label_value(tenant_id)}"' if tenant_id
             else (f',tenant="{escape_label_value(tenant)}"' if tenant else '')
         )
         base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_part + '}'
@@ -1065,11 +1065,14 @@ class MeteringService:
         across a rename (see _by_tenant_promql/_tenant_delta_promql); this
         fills in whatever the organisation is named *right now* for the UI,
         rather than showing the raw id. Empty/falsy ids (series from before
-        the tenant_id label existed, or "unknown") are skipped. Returns {}
-        (never None) on a DB miss so callers can always call .get() safely —
-        the raw id/label is still shown as a fallback, just not the name.
+        the tenant_id label existed, or "unknown") and non-numeric ids
+        (auth-service tolerates non-numeric tenant ids elsewhere) are
+        skipped rather than passed to int(), so one bad id can't fail the
+        whole batch. Returns {} (never None) on a DB miss so callers can
+        always call .get() safely — the raw id/label is still shown as a
+        fallback, just not the name.
         """
-        ids = {tid for tid in tenant_ids if tid}
+        ids = {tid for tid in tenant_ids if tid and tid.isdigit()}
         if self._auth_db is None or not ids:
             return {}
         try:

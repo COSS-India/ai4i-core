@@ -92,6 +92,19 @@ class TestBuildBaseSelectors:
         sel = build_base_selectors(inference_only=False, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX)
         assert PROMETHEUS_API_PATH_LABEL not in sel
 
+    def test_tenant_id_preferred_over_tenant(self):
+        sel = build_base_selectors(tenant="acme", tenant_id="5")
+        assert 'tenant_id="5"' in sel
+        assert 'tenant="acme"' not in sel
+
+    def test_tenant_id_with_quote_is_escaped(self):
+        """tenant_id is interpolated via the same escape_label_value helper
+        as tenant, for consistency in the shared selector builder — not
+        reachable with a real numeric id today, but keeps this safe if a
+        caller ever passes something other than a validated digit string."""
+        sel = build_base_selectors(inference_only=False, tenant_id='5"} or {evil="1')
+        assert sel == '{tenant!="unknown",tenant_id="5\\"} or {evil=\\"1"}'
+
 
 class TestSumOverWindow:
     def test_with_window_uses_increase(self):
@@ -1067,6 +1080,23 @@ class TestResolveTenantNames:
         names = await svc._resolve_tenant_names({"1"})
 
         assert names == {}
+
+    async def test_non_numeric_id_does_not_crash_whole_batch(self):
+        """auth-service tolerates non-numeric tenant ids elsewhere, so one
+        garbage id in the set must not blow up int() and take every other
+        (valid, numeric) id in the batch down with it."""
+        db_result = MagicMock()
+        db_result.all.return_value = [(1, "acme")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1", "not-a-number"})
+
+        assert names == {"1": "acme"}
+        # only the numeric id is ever sent to the DB
+        query_params = auth_db.execute.call_args[0][1]
+        assert query_params["ids"] == [1]
 
 
 class TestFormatCount:
