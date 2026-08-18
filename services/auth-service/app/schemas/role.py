@@ -10,6 +10,7 @@ from pydantic import AliasChoices, Field
 
 from app.models.role_name import RoleName
 from app.schemas.base import BaseSchema
+from app.schemas.common import MessageData, SuccessResponse
 
 
 class RoleResponse(BaseSchema):
@@ -52,3 +53,61 @@ class RoleAssignRequest(BaseSchema):
 class GuestServicesAssignRequest(BaseSchema):
     """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
     services: list[str] = Field(default_factory=list)
+
+
+class GetUserRolesData(BaseSchema):
+    user_id: str
+    roles: list[str]
+
+
+class GuestServicesData(BaseSchema):
+    services: list[str]
+
+
+class ListRolesResponse(SuccessResponse):
+    """GET /auth/roles/list"""
+
+    data: list[RoleResponse]
+
+
+class AssignRoleResponse(SuccessResponse):
+    """POST /auth/roles/assign"""
+
+    data: MessageData
+
+
+class RemoveRoleResponse(SuccessResponse):
+    """POST /auth/roles/remove"""
+
+    data: MessageData
+
+
+class GetUserRolesResponse(SuccessResponse):
+    """GET /auth/roles/user/{user_id}"""
+
+    data: GetUserRolesData
+
+
+class AssignGuestServicesResponse(SuccessResponse):
+    """POST /auth/roles/assign/guest/services"""
+
+    data: GuestServicesData
+
+
+class ListGuestServicesResponse(SuccessResponse):
+    """GET /auth/roles/list/guest/services"""
+
+    data: GuestServicesData
+
+
+
+class ListPermissionsResponse(SuccessResponse):
+    """GET /auth/permissions/"""
+
+    data: list[PermissionResponse]
+
+
+class ListInferencePermissionsResponse(SuccessResponse):
+    """GET /auth/inference/permissions"""
+
+    data: list[InferencePermissionResponse]

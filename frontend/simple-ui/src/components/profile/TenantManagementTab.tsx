@@ -1886,7 +1886,7 @@ export default function TenantManagementTab({
                 <FormLabel>Role</FormLabel>
                 <Select
                   value={tm.editUserForm.role}
-                  isDisabled={!tm.editUserRolesLoaded}
+                  isDisabled={!tm.editUserRolesLoaded || tm.isEditUserOnlyAdmin}
                   onChange={(e) =>
                     tm.setEditUserForm({
                       ...tm.editUserForm,
@@ -1903,6 +1903,12 @@ export default function TenantManagementTab({
                 {!tm.editUserRolesLoaded && (
                   <FormHelperText>
                     Roles could not be loaded; role changes are disabled.
+                  </FormHelperText>
+                )}
+                {tm.isEditUserOnlyAdmin && (
+                  <FormHelperText>
+                    You are the only Admin in the default organisation and
+                    cannot change your role.
                   </FormHelperText>
                 )}
               </FormControl>

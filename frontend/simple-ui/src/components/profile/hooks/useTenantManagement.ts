@@ -213,6 +213,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
   /** False when GET /roles/user failed — role field must not drive sync. */
   const [editUserRolesLoaded, setEditUserRolesLoaded] = useState(true);
+  /** Role the edit form opened with, to detect operator-made role changes. */
+  const [editUserInitialFormRole, setEditUserInitialFormRole] = useState("");
+  /** True if the user being edited is the only Admin in the default org. */
+  const [isEditUserOnlyAdmin, setIsEditUserOnlyAdmin] = useState(false);
 
   // Delete user confirmation
   const [deleteUserTarget, setDeleteUserTarget] =
@@ -946,7 +950,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       showToast({
         type: "warning",
         message:
-          "Default Organisation users may only be User, Moderator, or Usage Viewer.",
+          "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
       });
       return;
     }
@@ -1470,16 +1474,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       let role: TenantUserFormRole = DEFAULT_TENANT_USER_ROLE;
       let editRow: TenantUserView = unmasked;
       let rolesLoaded = true;
+      let isOnlyAdmin = false;
       if (editingDefaultOrg) {
         const enriched = await enrichDefaultOrgTenantUser(unmasked);
         editRow = enriched.user;
         rolesLoaded = enriched.rolesLoaded;
         const resolved = resolveDefaultOrgFormRole(editRow.roles);
         role =
-          isDefaultOrgUserRole(resolved) ||
-          resolved === "ADMIN" ||
-          resolved === "PROGRAM ADMIN" ||
-          resolved === "GUEST"
+          isDefaultOrgUserRole(resolved) || resolved === "GUEST"
             ? (resolved as TenantUserFormRole)
             : DEFAULT_TENANT_USER_ROLE;
         editRow = { ...editRow, role };
@@ -1490,11 +1492,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
               "Could not load roles for this user. Role changes are disabled until reload.",
           });
         }
+        // Check if this user is the only active Admin in the default org.
+        const activeAdminCount = users.filter(
+          (u) => userHasRole(u.roles, "ADMIN") && u.is_active,
+        ).length;
+        isOnlyAdmin =
+          activeAdminCount === 1 &&
+          userHasRole(editRow.roles, "ADMIN") &&
+          editRow.is_active;
       } else {
         role = resolvePrimaryTenantAssignableRole(unmasked);
       }
       setEditUserRow(editRow);
       setEditUserRolesLoaded(rolesLoaded);
+      setEditUserInitialFormRole(role);
+      setIsEditUserOnlyAdmin(isOnlyAdmin);
       setEditUserForm({
         tenant_id: tenantId,
         user_id: unmasked.user_id,
@@ -1522,6 +1534,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     );
   };
 
+  /** True when the operator is editing their own row. */
+  const isEditingSelfUser =
+    Boolean(editUserForm.user_id) &&
+    Boolean(user?.user_id) &&
+    String(editUserForm.user_id) === String(user?.user_id);
+
+  /**
+   * True when the operator changed the role field since the form opened.
+   * Deliberately role-scheme agnostic so it also covers regular tenants
+   * (USER <-> TENANT ADMIN), not just default-org roles.
+   */
+  const isEditUserRoleChanged = () =>
+    editUserForm.role.trim().toUpperCase() !==
+    editUserInitialFormRole.trim().toUpperCase();
+
   const handleSaveEditUser = async () => {
     if (!editUserForm.tenant_id || !editUserForm.user_id) return;
     const errors = collectEditUserErrors();
@@ -1533,15 +1560,27 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const isDefaultOrg = tenant != null && isDefaultTenant(tenant);
     if (
       isDefaultOrg &&
-      editUserForm.role !== "ADMIN" &&
-      editUserForm.role !== "PROGRAM ADMIN" &&
       editUserForm.role !== "GUEST" &&
       !isDefaultOrgUserRole(editUserForm.role)
     ) {
       showToast({
         type: "warning",
         message:
-          "Default Organisation users may only be User, Moderator, or Usage Viewer.",
+          "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
+      });
+      return;
+    }
+    // Last-admin guard: if editing self as the only Admin, cannot change role.
+    if (
+      isDefaultOrg &&
+      isEditingSelfUser &&
+      isEditUserOnlyAdmin &&
+      isEditUserRoleChanged()
+    ) {
+      showToast({
+        type: "warning",
+        message:
+          "You are the only Admin in the default organisation and cannot change your role",
       });
       return;
     }
@@ -1620,6 +1659,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setEditUserRow(null);
     setEditUserFormErrors({});
     setEditUserRolesLoaded(true);
+    setEditUserInitialFormRole("");
+    setIsEditUserOnlyAdmin(false);
   };
 
   // ----- Delete tenant user -----
@@ -1789,6 +1830,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleEditUserPhoneChange,
     canSubmitEditUserForm,
     closeEditUserModal,
+    isEditingSelfUser,
+    isEditUserOnlyAdmin,
     // Delete user
     deleteUserTarget,
     isDeleteUserDialogOpen,

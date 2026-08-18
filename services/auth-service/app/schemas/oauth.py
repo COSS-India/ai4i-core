@@ -2,7 +2,9 @@
 OAuth2 schemas.
 """
 
+from app.schemas.auth import LoginResponse
 from app.schemas.base import BaseSchema
+from app.schemas.common import SuccessResponse
 
 
 class OAuth2ProviderInfo(BaseSchema):
@@ -16,3 +18,32 @@ class OAuth2ExchangeRequest(BaseSchema):
     """One-time code exchange — sent by the SPA after the OAuth redirect."""
 
     code: str
+
+
+class AuthorizeData(BaseSchema):
+    authorization_url: str
+    state: str
+
+
+class ListProvidersResponse(SuccessResponse):
+    """GET /auth/oauth2/providers"""
+
+    data: list[OAuth2ProviderInfo]
+
+
+class AuthorizeResponse(SuccessResponse):
+    """GET /auth/oauth2/{provider}/authorize — JSON (Accept: application/json)."""
+
+    data: AuthorizeData
+
+
+class CallbackResponse(SuccessResponse):
+    """GET /auth/oauth2/{provider}/callback — JSON when there is no SPA redirect."""
+
+    data: LoginResponse
+
+
+class ExchangeCodeResponse(SuccessResponse):
+    """POST /auth/oauth2/exchange"""
+
+    data: LoginResponse

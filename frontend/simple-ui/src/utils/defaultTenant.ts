@@ -61,6 +61,7 @@ export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "MODERATOR", label: "Moderator" },
   { value: "PROGRAM ADMIN", label: "Usage Viewer" },
+  { value: "ADMIN", label: "Admin" },
 ] as const;
 
 export type DefaultOrgUserRole =
@@ -68,18 +69,17 @@ export type DefaultOrgUserRole =
 
 /**
  * Role filter options for Default Organisation users. Includes roles that are no
- * longer assignable but may still exist in `roles[]` (Admin, Guest).
+ * longer assignable but may still exist in `roles[]` (Guest).
  */
 export const DEFAULT_TENANT_PLATFORM_ROLE_FILTER_LIST = [
   ...DEFAULT_ORG_USER_ROLE_OPTIONS,
   { value: "GUEST", label: "Guest" },
-  { value: "ADMIN", label: "Admin" },
 ] as const;
 
 export const DEFAULT_ORG_USER_FORM_ROLE_OPTIONS = DEFAULT_ORG_USER_ROLE_OPTIONS;
 
 /**
- * Roles replaced when syncing to a default-org role (ADMIN excluded).
+ * Roles replaced when syncing to a default-org role.
  * Keeps GUEST so legacy guests are cleared on reassignment.
  */
 export const DEFAULT_ORG_MANAGED_ROLES = [
@@ -87,6 +87,7 @@ export const DEFAULT_ORG_MANAGED_ROLES = [
   "MODERATOR",
   "GUEST",
   "PROGRAM ADMIN",
+  "ADMIN",
   "TENANT ADMIN",
 ] as const;
 

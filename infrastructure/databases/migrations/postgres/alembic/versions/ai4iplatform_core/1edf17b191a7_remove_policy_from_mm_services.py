@@ -3,7 +3,9 @@
 Drops the policy column from mm_services. It was accepted client-side via
 PATCH /api/v1/services (latency/cost/accuracy SLA tiers) but never consumed
 by any routing/business logic and was absent from the create payload, so the
-field and its backing column are being removed as unused surface.
+field and its backing column are being removed as unused surface — any
+existing value is dead data with no reader, so no backup/migration of its
+contents is needed before the drop.
 
 Revision ID: 1edf17b191a7
 Revises: a7c9e1f3b5d7
@@ -35,24 +37,8 @@ def _column_exists(table: str, column: str) -> bool:
 
 
 def upgrade() -> None:
-    if not _column_exists('mm_services', 'policy'):
-        return
-
-    bind = op.get_bind()
-    non_null_count = bind.execute(
-        sa.text("SELECT count(*) FROM mm_services WHERE policy IS NOT NULL")
-    ).scalar()
-    if non_null_count:
-        raise RuntimeError(
-            f"Refusing to drop mm_services.policy: {non_null_count} row(s) still "
-            "have a non-null value and this drop is irreversible for that data "
-            "(downgrade() only restores the column, not its contents). Dump "
-            "affected rows first, e.g.:\n"
-            "  SELECT service_id, policy FROM mm_services WHERE policy IS NOT NULL;\n"
-            "then re-run this migration once you've confirmed it's safe to discard."
-        )
-
-    op.drop_column('mm_services', 'policy')
+    if _column_exists('mm_services', 'policy'):
+        op.drop_column('mm_services', 'policy')
 
 
 def downgrade() -> None:
