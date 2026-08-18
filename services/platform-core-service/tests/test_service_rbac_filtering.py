@@ -53,10 +53,23 @@ _FULL_SERVICE = {
     "languages": [{"sourceLanguage": "en"}],
     "versionStatus": "ACTIVE",
     "model": {
+        # name/version/task are required on ModelResponse (ServiceDetailResponse's
+        # embedded model card) — model_to_dict() always supplies them for a
+        # real row, so the fixture needs them too now that view_service's
+        # return value is validated against that schema.
+        #
+        # adapterConfig is top-level here (matching model_to_dict()'s actual
+        # output — services/model-management/serializers.py flattens the ORM
+        # inference_endpoint column's own "adapterConfig" key straight onto
+        # the model dict). There is no "inferenceEndPoint" wrapper on a model
+        # card — that's a Service-level concept (Service.inferenceEndPoint,
+        # built by _service_inference_endpoint) — a previous version of this
+        # fixture conflated the two.
         "modelId": "model-1",
-        "inferenceEndPoint": {
-            "adapter_config": {"inputs": [], "outputs": [], "version": "1.0"},
-        },
+        "name": "asr-model",
+        "version": "1.0",
+        "task": {"type": "asr"},
+        "adapterConfig": {"inputs": [], "outputs": [], "version": "1.0"},
     },
     "api_key": "super-secret-key",
     "healthStatus": "healthy",
@@ -111,11 +124,11 @@ class TestFilterServiceFields:
         """Regression: inference-service's internal GET /services/{id} call
         carries no permission headers, so it always hits this filtered path.
         Dropping "model" here breaks every inference request platform-wide,
-        since adapter_config lives at model.inferenceEndPoint.adapter_config
-        and GenericTritonMapper fails validation without it (AI4IDS-2562
+        since adapter_config lives at model.adapterConfig and
+        GenericTritonMapper fails validation without it (AI4IDS-2562
         investigation)."""
         filtered = _filter_service_fields(_FULL_SERVICE)
-        assert filtered["model"]["inferenceEndPoint"]["adapter_config"] == {
+        assert filtered["model"]["adapterConfig"] == {
             "inputs": [], "outputs": [], "version": "1.0",
         }
 
@@ -188,8 +201,14 @@ class TestViewServiceRoute:
             request=_make_request(""), service_id="svc-1", svc=svc
         )
 
-        assert "api_key" not in result["data"]
-        assert result["data"]["serviceId"] == "svc-1"
+        # view_service now returns a GetServiceResponse instance (not a plain
+        # dict) — attribute access for the object itself, and
+        # model_dump(exclude_unset=True) to inspect exactly what the route's
+        # response_model_exclude_unset=True will actually put on the wire
+        # (a filtered-out field must be genuinely absent, not present as null).
+        dumped = result.data.model_dump(exclude_unset=True)
+        assert "api_key" not in dumped
+        assert result.data.serviceId == "svc-1"
 
     @pytest.mark.asyncio
     async def test_no_permission_header_still_returns_adapter_config(self) -> None:
@@ -205,7 +224,7 @@ class TestViewServiceRoute:
 
         result = await view_service(request=request, service_id="svc-1", svc=svc)
 
-        assert result["data"]["model"]["inferenceEndPoint"]["adapter_config"] == {
+        assert result.data.model.adapterConfig.model_dump(exclude_none=True) == {
             "inputs": [], "outputs": [], "version": "1.0",
         }
 
@@ -218,7 +237,7 @@ class TestViewServiceRoute:
             request=_make_request("1"), service_id="svc-1", svc=svc
         )
 
-        assert result["data"]["api_key"] == "super-secret-key"
+        assert result.data.api_key == "super-secret-key"
 
 
 class TestTryItServiceListRoute:

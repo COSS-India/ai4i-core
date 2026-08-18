@@ -51,6 +51,7 @@ class ErrorResponse(BaseModel):
 
 
 _ERROR_DESCRIPTIONS = {
+    400: "Bad request.",
     401: "Not authenticated.",
     403: "Not authorized.",
     404: "Not found.",

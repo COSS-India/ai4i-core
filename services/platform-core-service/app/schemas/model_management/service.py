@@ -12,7 +12,7 @@ integrations use the ULCA-conformant shape.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -22,7 +22,11 @@ from app.schemas.common import (
     AsyncApiDetails,
     BenchmarkEntry,
     InferenceApiKey,
+    MessageMeta,
+    SuccessResponse,
+    SuccessResponseWithMeta,
     TaskSpec,
+    TotalMeta,
     validate_entity_name,
 )
 from app.schemas.enums.model_management import (
@@ -847,7 +851,11 @@ class ServiceResponse(BaseSchema):
         None,
         description="Deprecated, masked — use `inferenceEndPoint.inferenceApiKey` (also masked).",
     )
-    healthStatus: Optional[ServiceStatus] = None
+    # ServiceCreateRequest.healthStatus is Optional[ServiceStatus] ({status,
+    # lastUpdated}), but ServiceUpdateRequest.healthStatus is Optional[str] —
+    # a PATCH can genuinely persist a bare string into this JSONB column, so
+    # the response must accept either shape rather than only the object one.
+    healthStatus: Optional[Union[ServiceStatus, str]] = None
     benchmarks: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     isTryItDefault: bool = False
@@ -859,6 +867,11 @@ class ServiceResponse(BaseSchema):
     tierIds: Optional[List[str]] = None
     tierNames: Optional[List[str]] = None
     expectedResponseSchema: Optional[Dict[str, Any]] = None
+    # service_to_dict() also emits these two — added here to match; without
+    # them FastAPI would silently strip both from every response (createdAt
+    # is read by the frontend's Services table, ServicesManagement.tsx).
+    deletedAt: Optional[str] = None
+    createdAt: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -881,3 +894,96 @@ class ServiceDetailResponse(ServiceResponse):
     """Full service view — includes embedded model card."""
 
     model: Optional[ModelResponse] = None
+
+
+# ── Route-specific ``data`` / ``meta`` shapes ──
+
+
+class ServicesData(BaseSchema):
+    """``data`` shape shared by the two service-list routes: ``{"services": [...]}``."""
+
+    services: List[ServiceListItem]
+
+
+class ServiceListMeta(BaseSchema):
+    """``meta`` shape for ``GET /services`` — pagination info alongside the page of items."""
+
+    total: int
+    offset: int
+    limit: Optional[int] = None
+
+
+class CreateServiceData(BaseSchema):
+    """``data`` shape for ``POST /services``."""
+
+    serviceId: str
+    name: str
+
+
+class UpdateServiceData(BaseSchema):
+    """``data`` shape for ``PATCH /services`` — single-service update branch."""
+
+    serviceId: str
+
+
+class UpdateServiceEndpointsData(BaseSchema):
+    """``data`` shape for ``PATCH /services`` — bulk endpoint-update branch."""
+
+    serviceIds: List[str]
+
+
+class DeleteServiceData(BaseSchema):
+    """``data`` shape for ``DELETE /services/{service_id}``."""
+
+    serviceId: str
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class ListTryItServicesResponse(SuccessResponseWithMeta):
+    """GET /services/try-it-service-list"""
+
+    data: ServicesData
+    meta: TotalMeta
+
+
+class ListServicesResponse(SuccessResponseWithMeta):
+    """GET /services"""
+
+    data: ServicesData
+    meta: ServiceListMeta
+
+
+class GetServiceResponse(SuccessResponse):
+    """GET /services/{service_id}"""
+
+    data: ServiceDetailResponse
+
+
+class CreateServiceResponse(SuccessResponseWithMeta):
+    """POST /services"""
+
+    data: CreateServiceData
+    meta: MessageMeta
+
+
+class UpdateServiceResponse(SuccessResponseWithMeta):
+    """PATCH /services — single-service update branch"""
+
+    data: UpdateServiceData
+    meta: MessageMeta
+
+
+class UpdateServiceEndpointsResponse(SuccessResponseWithMeta):
+    """PATCH /services — bulk endpoint-update branch"""
+
+    data: UpdateServiceEndpointsData
+    meta: MessageMeta
+
+
+class DeleteServiceResponse(SuccessResponseWithMeta):
+    """DELETE /services/{service_id}"""
+
+    data: DeleteServiceData
+    meta: MessageMeta
