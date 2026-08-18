@@ -18,7 +18,7 @@ from app.core.responses import success_response
 from app.dependencies.auth import get_current_user, get_current_user_id, get_user_context
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_api_key_service, get_role_service
-from app.core.config import RoleName
+from app.core.constants import RoleName
 from app.models.user import User
 from app.schemas.api_key import (
     CreateAPIKeyRequest,

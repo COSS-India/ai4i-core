@@ -42,7 +42,7 @@ from app.core.messages import (
     LOG_ERROR_OAUTH_TOKEN_EXCHANGE_STATUS,
     LOG_ERROR_OAUTH_USERINFO,
 )
-from app.core.config import RoleName
+from app.core.constants import RoleName
 from app.models.user import CreationType, User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.tenant_repository import TenantRepository

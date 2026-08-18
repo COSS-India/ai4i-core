@@ -147,7 +147,7 @@ class TestTenantAdminRoleRemoval:
     async def test_tenant_admin_remove_role_within_tenant(self, role_name):
         from unittest.mock import AsyncMock, MagicMock, patch
         from app.dependencies.tenant_scope import enforce_target_user_same_tenant
-        from app.core.config import RoleName
+        from app.core.constants import RoleName
 
         caller = self._make_user(tenant_id=1)
         target = self._make_user(tenant_id=1)
@@ -169,7 +169,7 @@ class TestTenantAdminRoleRemoval:
         from unittest.mock import AsyncMock, MagicMock, patch
         from fastapi import HTTPException
         from app.dependencies.tenant_scope import enforce_target_user_same_tenant
-        from app.core.config import RoleName
+        from app.core.constants import RoleName
 
         caller = self._make_user(tenant_id=1)
         target = self._make_user(tenant_id=2)  # different tenant
@@ -209,7 +209,7 @@ class TestGetUserRolesAccess:
         import inspect
         from unittest.mock import AsyncMock, MagicMock, patch
         from app.core.exceptions import InsufficientPermissionsError
-        from app.core.config import RoleName
+        from app.core.constants import RoleName
         from app.routes.role import get_user_roles
 
         moderator = self._make_user(tenant_id=1)
@@ -227,7 +227,7 @@ class TestGetUserRolesAccess:
     @pytest.mark.asyncio
     async def test_admin_bypasses_cross_tenant_check(self):
         from unittest.mock import AsyncMock, MagicMock, patch
-        from app.core.config import RoleName
+        from app.core.constants import RoleName
         from app.routes.role import get_user_roles
 
         caller = self._make_user(tenant_id=1)

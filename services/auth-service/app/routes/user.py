@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import RoleId
+from app.core.constants import RoleId
 from app.core.exceptions import UserNotFoundError
 from app.utils.auth_helper import check_permission_ids
 from app.core.responses import success_response, to_response
@@ -16,7 +16,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.core.database import get_db
 from app.dependencies.services import get_user_service
-from app.core.config import RoleName
+from app.core.constants import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.schemas.user import UserListResponse, UserUpdate

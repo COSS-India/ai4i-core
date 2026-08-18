@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
-from app.core.config import RoleName
+from app.core.constants import RoleName
 
 
 class Role(Base):
