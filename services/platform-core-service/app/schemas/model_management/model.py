@@ -212,10 +212,15 @@ class ModelCreateRequest(BaseSchema):
         None,
         alias="schema",
         description=(
-            "Optional. Task-specific inference request/response contract "
-            "(e.g. {\"taskType\": \"translation\", \"model_name\": \"...\"}). "
-            "The nested ``model_name`` key is used by the inference service "
-            "to construct the Triton URL."
+            "Optional overall, but when provided must be complete: "
+            "'model_name', 'taskType', 'request', and 'response' are all "
+            "required. Task-specific inference request/response contract "
+            "(e.g. {\"taskType\": \"translation\", \"model_name\": \"...\", "
+            "\"request\": {...}, \"response\": {...}}). The nested "
+            "``model_name`` key is used by the inference service to "
+            "construct the Triton URL; ``taskType``/``request``/``response`` "
+            "are what a Service created against this model later derives "
+            "its own inferenceEndPoint.schema from."
         ),
     )
     callbackUrl: Optional[str] = Field(
@@ -259,12 +264,20 @@ class ModelCreateRequest(BaseSchema):
 
     @field_validator("endpoint_schema", mode="after")
     @classmethod
-    def _require_model_name_in_schema(cls, v: Any) -> Any:
-        if v is not None and "model_name" not in v:
-            raise ValueError(
-                "schema must include 'model_name' — the Triton model identifier "
-                "used to construct the inference URL (e.g. 'indictrans2-en-hi')"
-            )
+    def _require_complete_schema(cls, v: Any) -> Any:
+        if v is not None:
+            missing = [f for f in ("model_name", "taskType", "request", "response") if f not in v]
+            if missing:
+                raise ValueError(
+                    f"schema must include {missing} — 'model_name' is the "
+                    "Triton model identifier used to construct the "
+                    "inference URL (e.g. 'indictrans2-en-hi'); "
+                    "'taskType'/'request'/'response' together are the "
+                    "declared per-task contract that a Service created "
+                    "against this model later derives its own "
+                    "inferenceEndPoint.schema from when none is supplied "
+                    "directly on the Service."
+                )
         return v
 
     @field_validator("adapterConfig", mode="after")
@@ -387,7 +400,11 @@ class ModelUpdateRequest(BaseSchema):
     endpoint_schema: Optional[Dict[str, Any]] = Field(
         None,
         alias="schema",
-        description="Optional — omit to leave unchanged. Replaces the stored schema entirely when provided.",
+        description=(
+            "Optional — omit to leave unchanged. Replaces the stored "
+            "schema entirely when provided, so 'model_name', 'taskType', "
+            "'request', and 'response' must all be present in what you send."
+        ),
     )
     callbackUrl: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
     inferenceApiKey: Optional[InferenceApiKey] = Field(None, description="Optional — omit to leave unchanged.")
@@ -411,12 +428,20 @@ class ModelUpdateRequest(BaseSchema):
 
     @field_validator("endpoint_schema", mode="after")
     @classmethod
-    def _require_model_name_in_schema(cls, v: Any) -> Any:
-        if v is not None and "model_name" not in v:
-            raise ValueError(
-                "schema must include 'model_name' — the Triton model identifier "
-                "used to construct the inference URL (e.g. 'indictrans2-en-hi')"
-            )
+    def _require_complete_schema(cls, v: Any) -> Any:
+        if v is not None:
+            missing = [f for f in ("model_name", "taskType", "request", "response") if f not in v]
+            if missing:
+                raise ValueError(
+                    f"schema must include {missing} — 'model_name' is the "
+                    "Triton model identifier used to construct the "
+                    "inference URL (e.g. 'indictrans2-en-hi'); "
+                    "'taskType'/'request'/'response' together are the "
+                    "declared per-task contract that a Service created "
+                    "against this model later derives its own "
+                    "inferenceEndPoint.schema from when none is supplied "
+                    "directly on the Service."
+                )
         return v
 
     @field_validator("license", mode="before")

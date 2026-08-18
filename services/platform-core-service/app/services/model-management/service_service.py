@@ -728,6 +728,17 @@ class ServiceService:
                     ),
                     code="SCHEMA_REQUIRED",
                 )
+            # The model's own schema validator only requires `model_name`
+            # inside `schema` — it never required `taskType` (unlike
+            # Service's stricter per-entry shape) — so a model registered
+            # before this derivation existed can legitimately have a
+            # schema with no `taskType` in it. Backfill it from the
+            # model's own `task.type` (required, always populated) rather
+            # than assuming the model's schema already carries it — that's
+            # also exactly the value we're about to cross-check against
+            # below, so this can't introduce a mismatch.
+            model_schema = dict(model_schema)
+            model_schema.setdefault("taskType", (model.task or {}).get("type"))
             schema = [model_schema]
             try:
                 validate_inference_schema_entries(schema)

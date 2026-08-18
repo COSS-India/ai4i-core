@@ -102,7 +102,17 @@ def test_patch_with_inference_end_point_rejected():
         ModelUpdateRequest(modelId="abc123", version="1.0", inferenceEndPoint={"callbackUrl": "http://x"})
 
 
-# ── schema requires model_name ─────────────────────────────────────────────────
+# ── schema requires model_name/taskType/request/response together ─────────────
+# A Service created against this model later derives its own
+# inferenceEndPoint.schema from these same four keys, and can't be given one
+# manually — so an incomplete schema here can never be filled in downstream.
+
+_COMPLETE_SCHEMA = {
+    "model_name": "my-model",
+    "taskType": "translation",
+    "request": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    "response": {"output": [{"target": "string"}]},
+}
 
 
 def test_create_schema_without_model_name_rejected():
@@ -110,14 +120,24 @@ def test_create_schema_without_model_name_rejected():
         ModelCreateRequest(**_base_payload(**{"schema": {"taskType": "translation"}}))
 
 
-def test_create_schema_with_model_name_accepted():
-    req = ModelCreateRequest(**_base_payload(**{"schema": {"model_name": "my-model"}}))
-    assert req.endpoint_schema == {"model_name": "my-model"}
+def test_create_schema_with_only_model_name_rejected():
+    with pytest.raises(ValidationError, match="taskType"):
+        ModelCreateRequest(**_base_payload(**{"schema": {"model_name": "my-model"}}))
+
+
+def test_create_complete_schema_accepted():
+    req = ModelCreateRequest(**_base_payload(**{"schema": _COMPLETE_SCHEMA}))
+    assert req.endpoint_schema == _COMPLETE_SCHEMA
 
 
 def test_patch_schema_without_model_name_rejected():
     with pytest.raises(ValidationError, match="model_name"):
         ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": {"taskType": "translation"}})
+
+
+def test_patch_complete_schema_accepted():
+    req = ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": _COMPLETE_SCHEMA})
+    assert req.endpoint_schema == _COMPLETE_SCHEMA
 
 
 # ── adapterConfig requires inputs and outputs ──────────────────────────────────
