@@ -51,6 +51,7 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
+import { getPlatformName } from "../config/runtimeConfig";
 
 /** Auto-refresh interval when enabled (within 30–45s range). */
 const AUTO_REFRESH_MS = 37_000;
@@ -511,7 +512,7 @@ const LogsPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Logs Dashboard - AI4Inclusion Console</title>
+        <title>{`Logs Dashboard - ${getPlatformName()}`}</title>
         <meta name="description" content="View telemetry traces and request outcomes" />
       </Head>
 

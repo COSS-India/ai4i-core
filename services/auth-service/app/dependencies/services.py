@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
@@ -37,7 +38,15 @@ from app.services.user_service import UserService
 
 @lru_cache(maxsize=1)
 def _email_client_singleton() -> EmailClient:
-    return EmailClient(build_provider(EmailSettings()))
+    email_settings = EmailSettings()
+    email_settings = email_settings.model_copy(
+        update={
+            "email_from_name": settings.resolve_smtp_from_name(
+                email_settings.email_from_name
+            )
+        }
+    )
+    return EmailClient(build_provider(email_settings))
 
 
 def get_email_client() -> EmailClient:

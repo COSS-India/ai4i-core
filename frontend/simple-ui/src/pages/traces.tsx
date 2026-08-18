@@ -40,6 +40,7 @@ import {
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
 import { API_V1, INFERENCE_TRACE_PATHS } from "../services/apiEndpoints";
+import { getPlatformName } from "../config/runtimeConfig";
 
 // Utility functions to extract and categorize spans
 interface ProcessedSpan {
@@ -2169,7 +2170,7 @@ const TracesPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Trace Viewer - AI4Inclusion Console</title>
+        <title>{`Trace Viewer - ${getPlatformName()}`}</title>
         <meta name="description" content="View and analyze request traces" />
       </Head>
 

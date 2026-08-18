@@ -15,6 +15,7 @@ import { GlobalToastRegistrar } from '../utils/toast';
 import AuthGuard from '../components/auth/AuthGuard';
 import {
   applyRuntimeConfig,
+  DEFAULT_PLATFORM_NAME,
   getServerRuntimeConfig,
   type RuntimeConfig,
 } from '../config/runtimeConfig';
@@ -72,6 +73,7 @@ export default function MyApp({
         apiUrl: "",
         telemetryServiceUrl: "",
         enabledTaskTypes: "",
+        platformName: DEFAULT_PLATFORM_NAME,
       },
   );
   syncApiClientBaseUrl();

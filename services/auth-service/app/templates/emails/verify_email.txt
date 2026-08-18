@@ -1,10 +1,10 @@
-AI4I Platform
+{{ platform_name }}
 ================================
 
 Verify your email
 -----------------
 
-Hi {{ display_name }}, thanks for signing up for AI4I Platform.
+Hi {{ display_name }}, thanks for signing up for {{ platform_name }}.
 
 Confirm this is your email address to activate your account. You can sign
 in with the password you chose at signup as soon as it's verified.
@@ -19,4 +19,4 @@ Didn't sign up? You can safely ignore this email -- the link will expire
 on its own and the account will remain inactive.
 
 --
-This is an automated message from AI4I Platform.
+This is an automated message from {{ platform_name }}.

@@ -28,6 +28,7 @@ import RolesTab from "../components/profile/RolesTab";
 import { listTenants, listUsers } from "../services/tenantService";
 import { resolveDefaultTenantId, tenantUsersToAuthUsers } from "../utils/defaultTenant";
 import { canChangeOwnPassword } from "../utils/rbac";
+import { getPlatformName } from "../config/runtimeConfig";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -117,7 +118,7 @@ const ProfilePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Profile - AI4I Platform</title>
+        <title>{`Profile - ${getPlatformName()}`}</title>
         <meta name="description" content="User profile" />
       </Head>
 
