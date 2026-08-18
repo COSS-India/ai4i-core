@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ai4i_core.context import (
     get_llm_usage_input_tokens,
+    get_llm_usage_model_id,
     get_llm_usage_model_name,
     get_llm_usage_output_tokens,
 )
@@ -476,7 +477,11 @@ def _bridge_llm_usage_to_request(request: Request) -> None:
         billed_input=get_llm_usage_input_tokens() or 0,
         billed_output=get_llm_usage_output_tokens() or 0,
     )
-    set_metric_labels(request, model=get_llm_usage_model_name() or "")
+    set_metric_labels(
+        request,
+        model=get_llm_usage_model_name() or "",
+        model_id=get_llm_usage_model_id() or "",
+    )
 
 
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
@@ -527,6 +532,15 @@ async def _run_llm_chat_stream(
             req_attrs.update(get_context_attributes())
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+        # Unlike the success path below, this branch never reaches the
+        # generator's post-stream bridge call — without this, a failed
+        # streaming request carries no model_id (model_breakdown drops the
+        # empty-model_id bucket entirely, so the failure silently vanishes
+        # from the model's totals instead of counting against its
+        # success_pct). model_id may itself be "" here too (e.g. resolution
+        # failed before MMS ever returned one) — the bridge handles that via
+        # its own `or ""` fallback, same as the success path.
+        _bridge_llm_usage_to_request(request)
         return JSONResponse(status_code=status_code, content=result)
 
     async def gen():

@@ -20,6 +20,12 @@ _auth_type_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("
 _llm_usage_input_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_input_tokens", default=None)
 _llm_usage_output_tokens_var: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("llm_usage_output_tokens", default=None)
 _llm_usage_model_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_usage_model_name", default=None)
+# Distinct from llm_usage_model_name: this is the Model Registry's stable
+# identity for the model behind the service (resolved via MMS at service
+# lookup, before the upstream inference engine even responds), whereas
+# model_name is the upstream engine's own echoed model name (only known
+# after the response). Both are metric labels — see ai4i_core.observability.
+_llm_usage_model_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_usage_model_id", default=None)
 
 
 def generate_trace_id() -> str:
@@ -113,3 +119,15 @@ def get_llm_usage_model_name() -> Optional[str]:
 
 def reset_llm_usage_model_name(token: contextvars.Token) -> None:
     _llm_usage_model_name_var.reset(token)
+
+
+def set_llm_usage_model_id(model_id: Optional[str]) -> contextvars.Token:
+    return _llm_usage_model_id_var.set(model_id)
+
+
+def get_llm_usage_model_id() -> Optional[str]:
+    return _llm_usage_model_id_var.get()
+
+
+def reset_llm_usage_model_id(token: contextvars.Token) -> None:
+    _llm_usage_model_id_var.reset(token)

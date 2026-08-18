@@ -114,7 +114,8 @@ class ServiceSummary(BaseModel):
 class ServiceModelRow(BaseModel):
     service_id: str                     # raw value the client sent in the OpenAI `model` field; the grouping key
     name: str                           # mm_services.name, falls back to service_id when unresolved
-    model_name: Optional[str] = None    # mm_services.model_id — the actual model behind the service; informational only
+    model_id: Optional[str] = None      # mm_models.model_id — stable (name, version) hash; the model-level grouping key (FE: group rows by this, not model_name)
+    model_name: Optional[str] = None    # mm_models.name — the actual model behind the service; display only, not an identity
     requests: int
     native_units: float = 0.0
     native_unit_suffix: str = "tokens"
@@ -127,6 +128,7 @@ class MostUsedModel(BaseModel):
     service backed by this model. ``service_id`` is omitted (None) since a
     model can be fronted by more than one service."""
     service_id: Optional[str] = None
+    model_id: Optional[str] = None
     name: Optional[str] = None
     requests: int = 0
 
@@ -146,6 +148,7 @@ class TopModelRow(BaseModel):
     ``requests`` is the SUM of requests across the model's service(s).
     """
     rank: int
+    model_id: str
     model_name: str
     consumption_pct: float
     requests: int

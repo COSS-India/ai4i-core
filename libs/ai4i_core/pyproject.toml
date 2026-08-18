@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai4i-core"
-version = "1.0.18"
+version = "1.0.20"
 description = "AI4I Core - consolidated utility libraries (exceptions, logging, telemetry, observability, bootstrap, email) for AI4I microservices"
 readme = "README.md"
 requires-python = ">=3.11"

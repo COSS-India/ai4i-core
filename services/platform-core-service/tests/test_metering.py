@@ -5,6 +5,7 @@ No running services required.
 """
 from __future__ import annotations
 
+import asyncio
 import math
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -442,15 +443,26 @@ class TestServiceBreakdown:
 
 @pytest.mark.asyncio
 class TestModelBreakdown:
-    def _row(self, service_id: str, value: float):
-        return [{"metric": {"service_id": service_id}, "value": [0, str(value)]}]
+    def _row(self, service_id: str, value: float, model_id: str = ""):
+        return [{"metric": {"service_id": service_id, "model_id": model_id}, "value": [0, str(value)]}]
 
-    def _rows(self, pairs: dict):
-        return [{"metric": {"service_id": s}, "value": [0, str(v)]} for s, v in pairs.items()]
+    def _rows(self, pairs: dict, model_ids: dict = None):
+        """pairs: {service_id: value}. model_ids: optional {service_id: model_id},
+        defaulting to "" (no Prometheus label — e.g. a pre-upgrade series)."""
+        model_ids = model_ids or {}
+        return [
+            {"metric": {"service_id": s, "model_id": model_ids.get(s, "")}, "value": [0, str(v)]}
+            for s, v in pairs.items()
+        ]
 
     def _repo(self, mapping: dict):
         repo = MagicMock()
         repo.get_names_and_models_by_service_ids = AsyncMock(return_value=mapping)
+        return repo
+
+    def _model_repo(self, mapping: dict):
+        repo = MagicMock()
+        repo.get_model_names = AsyncMock(return_value=mapping)
         return repo
 
     async def test_groups_by_service_id_and_computes_success_pct(self):
@@ -464,7 +476,7 @@ class TestModelBreakdown:
             return self._row("MH-gemma-32b", 100)
 
         client.query = AsyncMock(side_effect=fake_query)
-        repo = self._repo({"MH-gemma-32b": ("Mahavistaar Gemma 32B", "gemma-3-27b-it")})
+        repo = self._repo({"MH-gemma-32b": ("Mahavistaar Gemma 32B", "hash-gemma-v1", "gemma-3-27b-it")})
         svc = MeteringService(client=client, service_repo=repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
@@ -473,6 +485,7 @@ class TestModelBreakdown:
         assert row["success_pct"] == 90.0
         assert row["native_units"] == 12345.0
         assert row["name"] == "Mahavistaar Gemma 32B"
+        assert row["model_id"] == "hash-gemma-v1"
         assert row["model_name"] == "gemma-3-27b-it"
 
     async def test_name_falls_back_to_service_id_when_unresolved(self):
@@ -510,7 +523,7 @@ class TestModelBreakdown:
             return self._rows({"live-service": 100, "deleted-service": 50})
 
         client.query = AsyncMock(side_effect=fake_query)
-        repo = self._repo({"live-service": ("Live Service", "gemma-3-27b-it")})
+        repo = self._repo({"live-service": ("Live Service", "hash-gemma-v1", "gemma-3-27b-it")})
         svc = MeteringService(client=client, service_repo=repo)
 
         result = await svc.model_breakdown(tenant=None, time_range="24h")
@@ -523,6 +536,7 @@ class TestModelBreakdown:
         assert row["success_pct"] == 90.0
         assert row["native_units"] == 12345.0
         assert row["name"] == "Live Service"
+        assert row["model_id"] == "hash-gemma-v1"
         assert row["model_name"] == "gemma-3-27b-it"
 
     async def test_name_falls_back_to_service_id_when_registry_lookup_fails(self):
@@ -625,18 +639,181 @@ class TestModelBreakdown:
         assert len(request_calls) == 2  # total + success
         for promql in request_calls:
             assert LLM_CHAT_ENDPOINT_REGEX in promql
-            assert "by(service_id)" in promql
+            assert "by(service_id, model_id)" in promql
             assert "by(model)" not in promql
 
     async def test_repo_not_queried_when_no_traffic(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
         repo = self._repo({})
-        svc = MeteringService(client=client, service_repo=repo)
+        model_repo = self._model_repo({})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
 
         await svc.model_breakdown(tenant=None, time_range="24h")
 
         repo.get_names_and_models_by_service_ids.assert_not_called()
+        model_repo.get_model_names.assert_not_called()
+
+    # ── model_totals: grouped/validated by model_id, from the Prometheus
+    # label directly — see the ROLLOUT NOTEs on model_breakdown() ──────────
+
+    async def test_model_totals_uses_prometheus_model_id(self):
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-1", 90, model_id="hash-gemma-v1")
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-1", 12345, model_id="hash-gemma-v1")
+            return self._row("svc-1", 100, model_id="hash-gemma-v1")
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert len(result["model_totals"]) == 1
+        m = result["model_totals"][0]
+        assert m["model_id"] == "hash-gemma-v1"
+        assert m["model_name"] == "Gemma 3 27B"
+        assert m["requests"] == 100
+        assert m["success_pct"] == 90.0
+        assert m["native_units"] == 12345.0
+
+    async def test_model_totals_sums_multiple_services_under_one_model(self):
+        """Two DIFFERENT services backed by the same model_id must collapse
+        into ONE model_totals entry summing both — this is the actual
+        grouping-by-model_id the tab now asked for, done at the PromQL layer
+        via `by (service_id, model_id)`, not by re-aggregating `services`."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return []
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return []
+            return self._rows(
+                {"svc-a": 300, "svc-b": 100},
+                model_ids={"svc-a": "hash-gemma-v1", "svc-b": "hash-gemma-v1"},
+            )
+
+        client.query = AsyncMock(side_effect=fake_query)
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["requests"] == 400
+
+    async def test_model_totals_excludes_model_with_no_registry_row(self):
+        """A model_id with no mm_models row at all (hard-deleted, or a
+        stale/never-existent id) is excluded. Contrast with
+        test_model_totals_keeps_deprecated_model below: a DEPRECATED-but-
+        present model must NOT be excluded the same way."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-old-model"))
+        model_repo = self._model_repo({})  # no row at all for this model_id
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert result["model_totals"] == []
+
+    async def test_model_totals_keeps_deprecated_model(self):
+        """A DEPRECATED model version still has a row in mm_models and can
+        still be serving live traffic — deprecating is the normal step
+        before activating a replacement version (see ModelRepository.
+        get_model_names) — so it must not be treated as a ghost the way a
+        hard-deleted model_id is."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-deprecated-v1"))
+        model_repo = self._model_repo({"hash-deprecated-v1": "Old Gemma"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["model_id"] == "hash-deprecated-v1"
+        assert result["model_totals"][0]["model_name"] == "Old Gemma"
+
+    async def test_model_totals_skipped_when_registry_lookup_unavailable(self):
+        """No model_repo at all (e.g. DB unavailable) — can't validate, so
+        nothing is dropped rather than zeroing out every model."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-gemma-v1"))
+        svc = MeteringService(client=client)  # no model_repo
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert result["model_totals"][0]["model_id"] == "hash-gemma-v1"
+        assert result["model_totals"][0]["model_name"] == "hash-gemma-v1"  # falls back to raw id
+
+    async def test_model_totals_excludes_empty_model_id_bucket(self):
+        """Rows with no model_id label at all (pre-upgrade series, or a
+        resolution failure) must never form their own model_totals entry
+        keyed by the empty string."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10))  # model_id="" (default)
+        model_repo = self._model_repo({})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        assert result["model_totals"] == []
+        model_repo.get_model_names.assert_not_called()
+
+    async def test_deleted_service_traffic_still_counts_toward_active_model_total(self):
+        """THE key behavioral change: a service can be dropped from the
+        per-service `services` breakdown (ghost — deleted from mm_services)
+        while its traffic still counts toward its model's total, as long as
+        the model itself still has a Registry row — model-level totals are
+        collapsed directly from Prometheus by model_id, independent of
+        per-service existence filtering. See model_breakdown()'s second
+        ROLLOUT NOTE."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql or "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return []
+            return self._rows(
+                {"live-svc": 100, "deleted-svc": 50},
+                model_ids={"live-svc": "hash-gemma-v1", "deleted-svc": "hash-gemma-v1"},
+            )
+
+        client.query = AsyncMock(side_effect=fake_query)
+        # Service registry only knows about live-svc — deleted-svc is a ghost.
+        repo = self._repo({"live-svc": ("Live Svc", "hash-gemma-v1", "Gemma 3 27B")})
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        service_ids = [s["service_id"] for s in result["services"]]
+        assert "deleted-svc" not in service_ids
+        assert "live-svc" in service_ids
+
+        # The model's total is 150 (100 + 50) even though the flat
+        # per-service breakdown only shows live-svc's 100.
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["requests"] == 150
+
+    async def test_service_row_model_id_falls_back_to_db_when_prometheus_empty(self):
+        """A legacy pre-upgrade series (no model_id label yet) still gets a
+        model_id on its per-service row via the DB join fallback."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10))  # model_id="" from Prometheus
+        repo = self._repo({"svc-1": ("Svc 1", "hash-gemma-v1", "Gemma 3 27B")})
+        svc = MeteringService(client=client, service_repo=repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "svc-1")
+        assert row["model_id"] == "hash-gemma-v1"
+
+    async def test_service_row_model_id_prefers_prometheus_over_db(self):
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-from-prometheus"))
+        repo = self._repo({"svc-1": ("Svc 1", "hash-from-db", "Gemma 3 27B")})
+        svc = MeteringService(client=client, service_repo=repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+        row = next(s for s in result["services"] if s["service_id"] == "svc-1")
+        assert row["model_id"] == "hash-from-prometheus"
 
 
 @pytest.mark.asyncio
@@ -662,12 +839,13 @@ class TestRegistryModelCount:
 
 
 class TestModelConsumptionRanking:
-    """AI4IDS-2790 — model-level aggregation of model_breakdown's service rows."""
+    """AI4IDS-2790 — ranks `model_breakdown`'s already-grouped `model_totals`
+    (one row per model_id, grouping now happens at the Prometheus query layer
+    via `by (service_id, model_id)` — see TestModelBreakdown for that)."""
 
-    def _svc_row(self, service_id, name, model_name, requests, success_pct=100.0):
+    def _model_row(self, model_id, model_name, requests, success_pct=100.0):
         return {
-            "service_id": service_id,
-            "name": name,
+            "model_id": model_id,
             "model_name": model_name,
             "requests": requests,
             "native_units": 0.0,
@@ -675,20 +853,22 @@ class TestModelConsumptionRanking:
         }
 
     def test_no_traffic_returns_empty(self):
-        services = [self._svc_row("s1", "Svc 1", "gemma", 0)]
-        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+        model_totals = [self._model_row("id-gemma", "gemma", 0)]
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(model_totals, limit=10)
         assert most_used is None
         assert ranked == []
         assert grand_total == 0
 
-    def test_single_service_per_model(self):
-        services = [
-            self._svc_row("s1", "Svc 1", "gemma", 300),
-            self._svc_row("s2", "Svc 2", "llama", 100),
+    def test_ranks_by_requests_descending(self):
+        model_totals = [
+            self._model_row("id-gemma", "gemma", 300),
+            self._model_row("id-llama", "llama", 100),
         ]
-        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(model_totals, limit=10)
 
-        assert most_used == {"model_name": "gemma", "requests": 300, "consumption_pct": 75.0}
+        assert most_used == {
+            "model_id": "id-gemma", "model_name": "gemma", "requests": 300, "consumption_pct": 75.0,
+        }
         assert grand_total == 400
         assert [m["model_name"] for m in ranked] == ["gemma", "llama"]
         assert ranked[0]["rank"] == 1
@@ -696,119 +876,59 @@ class TestModelConsumptionRanking:
         assert ranked[1]["consumption_pct"] == 25.0
         assert ranked[0]["formatted_requests"] == "300"
 
-    def test_multi_service_model_sums_requests_and_shares(self):
-        # gemma: two services, 300 + 100 = 400 requests; llama: 300 requests. grand_total=700.
-        services = [
-            self._svc_row("s1", "Svc 1", "gemma", 300),
-            self._svc_row("s2", "Svc 2", "gemma", 100),
-            self._svc_row("s3", "Svc 3", "llama", 300),
-        ]
-        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
-
-        assert grand_total == 700
-        gemma = next(m for m in ranked if m["model_name"] == "gemma")
-        assert gemma["requests"] == 400
-        # SHARE of grand_total, not an average of the two services' individual shares
-        # (which would be (42.857...+14.285...)/2 = 28.57 — must NOT be that).
-        assert gemma["consumption_pct"] == round(400 / 700 * 100, 2)
-        # most_used ranks by total requests -> gemma (400) beats llama (300)
-        assert most_used["model_name"] == "gemma"
-        assert most_used["requests"] == 400
-
     def test_most_used_always_agrees_with_top_ranked_model(self):
-        """Regression for the case where ranking by an averaged per-service %
-        could crown a different model than the one with the most requests —
-        A/a1=300, A/a2=100 (400 total), B/b1=250. A must win both `most_used`
-        and rank #1, since both are now derived from the same total-requests
-        ordering."""
-        services = [
-            self._svc_row("a1", "Svc A1", "A", 300),
-            self._svc_row("a2", "Svc A2", "A", 100),
-            self._svc_row("b1", "Svc B1", "B", 250),
+        model_totals = [
+            self._model_row("id-A", "A", 400),
+            self._model_row("id-B", "B", 250),
         ]
-        most_used, ranked, _ = MeteringService.model_consumption_ranking(services, limit=10)
+        most_used, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=10)
 
-        assert most_used["model_name"] == "A"
-        assert ranked[0]["model_name"] == "A"
+        assert most_used["model_id"] == "id-A"
+        assert ranked[0]["model_id"] == "id-A"
         # consumption_pct values sum to ~100% across the full ranked list
         # (exact here; in general only within a couple hundredths of 100 due
         # to per-row 2dp rounding).
         assert round(sum(m["consumption_pct"] for m in ranked), 2) == 100.0
 
-    def test_case_insensitive_identity_merges_into_one_model(self):
-        """"Gemma" and "gemma" (e.g. two versions saved with different name
-        casing) must merge into a single ranked row, matching
-        generate_model_id's own case-insensitive identity rule — not split
-        the same model's traffic across two rows."""
-        services = [
-            self._svc_row("s1", "Svc 1", "Gemma", 300),
-            self._svc_row("s2", "Svc 2", "gemma", 100),
-        ]
-        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
-
-        assert grand_total == 400
-        assert len(ranked) == 1
-        assert ranked[0]["requests"] == 400
-        assert ranked[0]["consumption_pct"] == 100.0
-        # First-seen casing is kept as the display name.
-        assert ranked[0]["model_name"] == "Gemma"
-        assert most_used["model_name"] == "Gemma"
-
-    def test_unresolved_model_name_excluded_entirely(self):
-        """A service whose model lookup failed isn't a model here — unlike
-        the old fallback-to-service-name behaviour, it contributes to neither
-        `most_used` nor `top_models` (it still appears in the raw per-service
-        `breakdown` list elsewhere, just not in this model-level view), and
-        its requests are excluded from `grand_total` too."""
-        services = [
-            self._svc_row("s1", "Svc 1", "gemma", 50),
-            self._svc_row("s2", "Orphan Service", None, 500),
-        ]
-        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
-
-        assert most_used["model_name"] == "gemma"
-        assert [m["model_name"] for m in ranked] == ["gemma"]
-        # grand_total only counts resolved-model services, so gemma is 100% of it —
-        # NOT 50/550. Callers must render this grand_total alongside
-        # consumption_pct, not the full window's total requests.
-        assert grand_total == 50
-        assert ranked[0]["consumption_pct"] == 100.0
-
-    def test_all_unresolved_returns_empty(self):
-        services = [self._svc_row("s1", "Orphan Service", None, 50)]
-        most_used, ranked, grand_total = MeteringService.model_consumption_ranking(services, limit=10)
-
-        assert most_used is None
-        assert ranked == []
-        assert grand_total == 0
-
     def test_limit_caps_ranked_list(self):
-        services = [
-            self._svc_row(f"s{i}", f"Svc {i}", f"model-{i}", 10 * (i + 1))
+        model_totals = [
+            self._model_row(f"id-{i}", f"model-{i}", 10 * (i + 1))
             for i in range(5)
         ]
-        _, ranked, _ = MeteringService.model_consumption_ranking(services, limit=2)
+        _, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=2)
         assert len(ranked) == 2
         assert [m["rank"] for m in ranked] == [1, 2]
 
-    def test_zero_request_services_excluded_from_consumption_pct(self):
-        services = [
-            self._svc_row("s1", "Svc 1", "gemma", 100),
-            self._svc_row("s2", "Svc 2", "unused-model", 0),
+    def test_zero_request_models_excluded_from_consumption_pct(self):
+        model_totals = [
+            self._model_row("id-gemma", "gemma", 100),
+            self._model_row("id-unused", "unused-model", 0),
         ]
-        _, ranked, _ = MeteringService.model_consumption_ranking(services, limit=10)
+        _, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=10)
         assert [m["model_name"] for m in ranked] == ["gemma"]
         assert ranked[0]["consumption_pct"] == 100.0
 
 
 class TestModelConsumptionKpis:
     """AI4IDS-2790 — overall_success_rate_pct is REQUEST-WEIGHTED (matches the
-    FE's existing fallback formula), not a plain average across services."""
+    FE's existing fallback formula), not a plain average across services.
+    `active_models` now just counts `model_totals` entries with traffic —
+    model_breakdown() has already grouped/validated those by model_id."""
 
-    def _row(self, service_id, name, model_name, requests, success_pct):
+    def _row(self, service_id, name, model_name, requests, success_pct, model_id=None):
         return {
             "service_id": service_id,
             "name": name,
+            "model_id": model_id,
+            "model_name": model_name,
+            "requests": requests,
+            "native_units": 0.0,
+            "success_pct": success_pct,
+        }
+
+    def _model_row(self, model_id, model_name, requests, success_pct=100.0):
+        return {
+            "model_id": model_id,
             "model_name": model_name,
             "requests": requests,
             "native_units": 0.0,
@@ -821,7 +941,7 @@ class TestModelConsumptionKpis:
             self._row("s1", "Svc 1", "gemma", 900, 100.0),
             self._row("s2", "Svc 2", "llama", 100, 50.0),
         ]
-        kpis = MeteringService.model_consumption_kpis(services)
+        kpis = MeteringService.model_consumption_kpis(services, [])
         assert kpis["overall_success_rate_pct"] == 95.0
 
     def test_zero_request_services_excluded_from_average(self):
@@ -829,45 +949,50 @@ class TestModelConsumptionKpis:
             self._row("s1", "Svc 1", "gemma", 100, 80.0),
             self._row("s2", "Svc 2", "unused-model", 0, 0.0),
         ]
-        kpis = MeteringService.model_consumption_kpis(services)
+        kpis = MeteringService.model_consumption_kpis(services, [])
         assert kpis["overall_success_rate_pct"] == 80.0
 
     def test_no_traffic_gives_none_rate_but_zero_active_models(self):
         """0 is a real answer for active_models ("no models were active");
         only overall_success_rate_pct is genuinely undefined with no data."""
         services = [self._row("s1", "Svc 1", "gemma", 0, 0.0)]
-        kpis = MeteringService.model_consumption_kpis(services)
+        kpis = MeteringService.model_consumption_kpis(services, [])
         assert kpis["overall_success_rate_pct"] is None
         assert kpis["active_models"] == 0
         assert kpis["worst"] is None
 
-    def test_active_models_counts_distinct_resolved_model_names(self):
-        services = [
-            self._row("s1", "Svc 1", "gemma", 10, 100.0),
-            self._row("s2", "Svc 2", "gemma", 5, 100.0),   # same model, 2nd service
-            self._row("s3", "Svc 3", "llama", 20, 100.0),
-            self._row("s4", "Svc 4", None, 15, 100.0),      # unresolved -> excluded
+    def test_active_models_counts_model_totals_with_traffic(self):
+        """model_totals is already one row per Registry-validated model_id,
+        each with a distinct name here — counting distinct names gives the
+        same answer as counting rows in this case."""
+        model_totals = [
+            self._model_row("id-gemma", "gemma", 15),
+            self._model_row("id-llama", "llama", 20),
+            self._model_row("id-idle", "idle-model", 0),  # no traffic -> excluded
         ]
-        kpis = MeteringService.model_consumption_kpis(services)
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
         assert kpis["active_models"] == 2
 
-    def test_active_models_is_case_insensitive(self):
-        """"Gemma" and "gemma" must count as one model, matching
-        generate_model_id's case-insensitive identity rule — not two."""
-        services = [
-            self._row("s1", "Svc 1", "Gemma", 10, 100.0),
-            self._row("s2", "Svc 2", "gemma", 5, 100.0),
+    def test_active_models_dedupes_multiple_active_versions_of_same_name(self):
+        """Two concurrently-ACTIVE versions of the same model (distinct
+        model_ids, e.g. a canary rollout) both receiving traffic must count
+        as ONE active model, matching registry_model_count's name-based
+        identity — otherwise active_models could exceed total_models."""
+        model_totals = [
+            self._model_row("id-gemma-v1", "Gemma", 15),
+            self._model_row("id-gemma-v2", "gemma", 5),  # same name, different casing
+            self._model_row("id-llama", "llama", 20),
         ]
-        kpis = MeteringService.model_consumption_kpis(services)
-        assert kpis["active_models"] == 1
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
+        assert kpis["active_models"] == 2
 
-    def test_worst_picks_highest_failure_rate_among_active(self):
+    def test_worst_picks_highest_failure_rate_among_active_services(self):
         services = [
             self._row("s1", "Svc 1", "gemma", 100, 90.0),   # 10% failure
             self._row("s2", "Svc 2", "llama", 50, 60.0),    # 40% failure — worst
             self._row("s3", "Svc 3", "idle-model", 0, 0.0),  # no traffic -> excluded
         ]
-        kpis = MeteringService.model_consumption_kpis(services)
+        kpis = MeteringService.model_consumption_kpis(services, [])
         assert kpis["worst"]["service_id"] == "s2"
 
 
@@ -999,6 +1124,123 @@ class TestActiveTenantsExcludesUnknown:
         returned = {t["tenant"] for t in result["active_tenants"]}
         assert returned == {"acme"}
         assert "pending-org" not in returned
+
+    async def test_valid_names_param_skips_auth_db_fetch(self):
+        """Passing valid_names (a pre-fetched set of tenant ids) explicitly
+        must not touch self._auth_db at all — not for the id filter, and not
+        for name resolution either — this is what lets overview_tenant_data()
+        share ONE fetch across several active_tenants() calls instead of each
+        one racing to use the same AsyncSession concurrently (see its
+        docstring). Since the id filter isn't fetched internally here, name
+        resolution is skipped too and the raw `tenant` label is shown as-is."""
+        prom_rows = [
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "2", "tenant": "ghost-org"}, "value": [0, "3"]},
+        ]
+        auth_db = AsyncMock()
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+
+        result = await svc.active_tenants("24h", valid_names={"1"})
+
+        auth_db.execute.assert_not_called()
+        assert result["count"] == 1
+        assert {t["tenant"] for t in result["active_tenants"]} == {"acme"}
+
+    async def test_valid_names_none_means_unfiltered(self):
+        """Explicitly passing None (e.g. the auth DB was unavailable when
+        overview_tenant_data() pre-fetched it) must behave like the
+        no-filter fallback, not like an empty allow-list."""
+        prom_rows = [{"metric": {"tenant": "acme"}, "value": [0, "5"]}]
+        svc = _make_service(query_return=prom_rows)
+
+        result = await svc.active_tenants("24h", valid_names=None)
+        assert result["count"] == 1
+
+
+@pytest.mark.asyncio
+class TestOverviewTenantData:
+    """Regression coverage for the AsyncSession concurrency bug: gathering
+    tenant_count() together with several active_tenants() calls (each
+    independently hitting self._auth_db) intermittently raised
+    sqlalchemy.exc.InvalidRequestError. overview_tenant_data() must run every
+    auth-DB touch sequentially before firing the per-window Prometheus
+    queries concurrently."""
+
+    async def test_auth_db_touched_sequentially_not_concurrently(self):
+        """tenant_count()'s 2 queries + the 1 valid-names fetch must all
+        complete one at a time — never more than one in-flight execute()."""
+        in_flight = 0
+        max_concurrent = 0
+
+        async def fake_execute(*args, **kwargs):
+            nonlocal in_flight, max_concurrent
+            in_flight += 1
+            max_concurrent = max(max_concurrent, in_flight)
+            await asyncio.sleep(0)  # yield, so a real race would surface
+            in_flight -= 1
+            result = MagicMock()
+            result.scalar.return_value = 1
+            result.all.return_value = []
+            return result
+
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=fake_execute)
+        svc = _make_service(query_return=[], auth_db=auth_db)
+
+        await svc.overview_tenant_data(["24h", "7d", "30d"])
+
+        assert max_concurrent == 1
+
+    async def test_valid_names_fetched_once_and_shared_across_windows(self):
+        prom_rows = [{"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]}]
+        auth_db = AsyncMock()
+        total_result = MagicMock(scalar=lambda: 1)
+        ids_result = MagicMock()
+        ids_result.all.return_value = [(1,)]
+        # tenant_count() issues 2 execute()s, then the valid-ids fetch is a 3rd.
+        auth_db.execute = AsyncMock(side_effect=[total_result, total_result, ids_result])
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+
+        tc, active_by_range = await svc.overview_tenant_data(["24h", "7d", "30d"])
+
+        assert auth_db.execute.await_count == 3  # not 1 (tenant_count) + 3x1 (per window)
+        assert set(active_by_range.keys()) == {"24h", "7d", "30d"}
+        for window_result in active_by_range.values():
+            assert window_result["count"] == 1
+
+    async def test_returns_tenant_count_result(self):
+        auth_db = AsyncMock()
+        result = MagicMock()
+        result.scalar.return_value = 7
+        names_result = MagicMock()
+        names_result.all.return_value = []
+        auth_db.execute = AsyncMock(side_effect=[result, result, names_result])
+        svc = _make_service(query_return=[], auth_db=auth_db)
+
+        tc, _ = await svc.overview_tenant_data(["24h"])
+        assert tc["total_tenants"] == 7
+        assert tc["auth_db_available"] is True
+
+    async def test_prometheus_failure_in_one_window_does_not_raise(self):
+        """A failing Prometheus query in one window must come back as an
+        Exception in the returned dict, not propagate out of this method —
+        otherwise the caller (routes/metering.py) never reaches
+        _partition_results and /overview 500s instead of degrading."""
+        auth_db = AsyncMock()
+        count_result = MagicMock(scalar=lambda: 1)
+        names_result = MagicMock()
+        names_result.all.return_value = []
+        auth_db.execute = AsyncMock(side_effect=[count_result, count_result, names_result])
+
+        client = MagicMock()
+        client.query = AsyncMock(side_effect=RuntimeError("prometheus unreachable"))
+        svc = MeteringService(client=client, auth_db=auth_db)
+
+        tc, active_by_range = await svc.overview_tenant_data(["24h", "7d"])
+
+        assert isinstance(active_by_range["24h"], RuntimeError)
+        assert isinstance(active_by_range["7d"], RuntimeError)
+        assert tc["auth_db_available"] is True
 
 
 @pytest.mark.asyncio

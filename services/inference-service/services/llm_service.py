@@ -8,6 +8,7 @@ import httpx
 
 from ai4i_core.context import (
     set_llm_usage_input_tokens,
+    set_llm_usage_model_id,
     set_llm_usage_model_name,
     set_llm_usage_output_tokens,
 )
@@ -182,6 +183,14 @@ class OpenAIProxyService:
         model_name = (service_info.get("adapter_config") or {}).get("model_name", "") if isinstance(payload, dict) else ""
         if model_name and isinstance(payload, dict):
             payload = {**payload, "model": model_name}
+
+        # Registry identity (mm_models.model_id, via MMS) is known as soon as
+        # the service resolves — unlike model_name below (the upstream
+        # engine's own echoed value, only known after the response) — so set
+        # it once here rather than duplicating this in both proxy_traced and
+        # proxy_traced_stream. Same task-scoped contextvar->request.state
+        # bridge _bridge_llm_usage_to_request() uses for the others.
+        set_llm_usage_model_id(service_info.get("model_id") or "")
 
         return url, service_id, model_name, payload
 
