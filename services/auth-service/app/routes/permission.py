@@ -22,12 +22,12 @@ from app.services.role_service import RoleService
 router = APIRouter(
     prefix="/auth/permissions",
     tags=["Permissions"],
-    responses=error_responses(401, 422),
+    responses=error_responses(401),
 )
 inference_router = APIRouter(
     prefix="/auth/inference",
     tags=["Permissions"],
-    responses=error_responses(401, 422),
+    responses=error_responses(401),
 )
 
 

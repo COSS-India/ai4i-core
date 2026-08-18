@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from ai4i_core.exceptions import ErrorDetail
 from app.schemas.base import BaseSchema
 
 
@@ -15,16 +16,21 @@ class SuccessResponse(BaseSchema):
     data: Any
 
 
-class ErrorDetail(BaseSchema):
-    """Inner object of every handler error body: ``{code, message, timestamp}``."""
+class MessageData(BaseSchema):
+    """Payload for enveloped responses that only confirm an action: ``{"message": "..."}``."""
 
-    code: str
     message: str
-    timestamp: float
 
 
 class ErrorResponse(BaseSchema):
-    """Wire format of auth-service errors: ``{"detail": {code, message, timestamp}}``."""
+    """Wire format of auth-service errors: ``{"detail": {code, message, timestamp}}``.
+
+    Reuses ai4i_core's ``ErrorDetail`` (``code``/``timestamp`` optional, defaulted)
+    rather than redeclaring a narrower copy — the handlers in
+    ``ai4i_core.exceptions.handlers`` don't always populate every field (e.g. a
+    raw ``HTTPException(detail={"code", "message"})`` never gets a timestamp),
+    so this must stay no stricter than what those handlers actually emit.
+    """
 
     detail: ErrorDetail
 
@@ -34,7 +40,6 @@ _ERROR_DESCRIPTIONS = {
     403: "Not authorized.",
     404: "Not found.",
     409: "Conflict.",
-    422: "Validation error.",
     503: "Service unavailable.",
 }
 

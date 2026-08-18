@@ -28,12 +28,11 @@ from app.schemas.api_key import (
     CreateAPIKeyResponse,
     ListAllAPIKeysResponse,
     ListAPIKeysResponse,
-    RevokeAPIKeyData,
     RevokeAPIKeyResponse,
     UpdateAPIKeyRequest,
     UpdateAPIKeyResponse,
 )
-from app.schemas.common import error_responses
+from app.schemas.common import MessageData, error_responses
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
 from app.utils.masking import mask_api_key, mask_email
@@ -43,7 +42,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/auth",
     tags=["API Keys"],
-    responses=error_responses(401, 422),
+    responses=error_responses(401),
 )
 
 _KeyId = Annotated[int, Path(ge=1, description="Numeric ID of the API key.")]
@@ -219,7 +218,7 @@ async def revoke_api_key(
         raise EntityNotFoundError("API key")
 
     await svc.revoke_by_obj(db_key)
-    return RevokeAPIKeyResponse(data=RevokeAPIKeyData(message="API key revoked."))
+    return RevokeAPIKeyResponse(data=MessageData(message="API key revoked."))
 
 
 @router.get(

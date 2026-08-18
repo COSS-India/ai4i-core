@@ -13,7 +13,7 @@ from pydantic import AliasChoices, EmailStr, Field, StrictBool, field_serializer
 
 from app.models.user import CreationType
 from app.schemas.base import BaseSchema
-from app.schemas.common import SuccessResponse
+from app.schemas.common import MessageData, SuccessResponse
 from app.models.tenant import TenantStatus
 from app.models.role_name import RoleName
 
@@ -307,10 +307,6 @@ class TenantPlanData(BaseSchema):
     allowed_services: list[Any] = Field(default_factory=list)
 
 
-class TenantMessageData(BaseSchema):
-    message: str
-
-
 class DeleteTenantUserData(BaseSchema):
     user_id: str
     deleted: bool
@@ -373,7 +369,7 @@ class UpdateTenantUserStatusResponse(SuccessResponse):
 class ResendTenantUserSetupLinkResponse(SuccessResponse):
     """POST /auth/tenants/{tenant_id}/users/{user_id}/resend-setup-link"""
 
-    data: TenantMessageData
+    data: MessageData
 
 
 class UpdateTenantUserResponse(SuccessResponse):

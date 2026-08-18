@@ -54,7 +54,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/auth/oauth2",
     tags=["OAuth2"],
-    responses=error_responses(422),
 )
 
 

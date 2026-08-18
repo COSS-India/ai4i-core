@@ -10,7 +10,7 @@ from pydantic import AliasChoices, Field
 
 from app.models.role_name import RoleName
 from app.schemas.base import BaseSchema
-from app.schemas.common import SuccessResponse
+from app.schemas.common import MessageData, SuccessResponse
 
 
 class RoleResponse(BaseSchema):
@@ -55,10 +55,6 @@ class GuestServicesAssignRequest(BaseSchema):
     services: list[str] = Field(default_factory=list)
 
 
-class RoleMessageData(BaseSchema):
-    message: str
-
-
 class GetUserRolesData(BaseSchema):
     user_id: str
     roles: list[str]
@@ -77,13 +73,13 @@ class ListRolesResponse(SuccessResponse):
 class AssignRoleResponse(SuccessResponse):
     """POST /auth/roles/assign"""
 
-    data: RoleMessageData
+    data: MessageData
 
 
 class RemoveRoleResponse(SuccessResponse):
     """POST /auth/roles/remove"""
 
-    data: RoleMessageData
+    data: MessageData
 
 
 class GetUserRolesResponse(SuccessResponse):

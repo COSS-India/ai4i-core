@@ -321,7 +321,16 @@ async def _validate_jwt(
     responses={
         401: {
             "model": ValidateTokenErrorResponse,
-            "description": "Missing, invalid, expired, or revoked token (or unknown API key).",
+            "description": (
+                "Expired, invalid, or revoked JWT — body is "
+                "{valid, error, message} with a machine-readable `error` code. "
+                "Two other 401 cases exist on this endpoint but have a different "
+                "body: a missing token raises AuthenticationRequiredError, "
+                "rendered as the platform's {detail: {code, message, timestamp}} "
+                "envelope; an unknown/revoked API key returns the same "
+                "{valid, error, message} shape but with `error` set to a "
+                "human-readable sentence rather than a code."
+            ),
         },
         403: {
             "model": ValidateTokenErrorResponse,

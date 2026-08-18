@@ -11,7 +11,7 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_tenant_service
 from app.models.tenant import TenantStatus
 from app.models.user import User
-from app.schemas.common import error_responses
+from app.schemas.common import MessageData, error_responses
 from app.schemas.tenant import (
     CreateTenantResponse,
     CreateTenantUserResponse,
@@ -23,7 +23,6 @@ from app.schemas.tenant import (
     ListTenantUsersResponse,
     ResendTenantUserSetupLinkResponse,
     TenantCreate,
-    TenantMessageData,
     TenantResponse,
     TenantStatusUpdate,
     TenantUpdate,
@@ -41,7 +40,7 @@ from app.services.tenant_service import TenantService
 router = APIRouter(
     prefix="/auth/tenants",
     tags=["Tenants"],
-    responses=error_responses(401, 422),
+    responses=error_responses(401),
 )
 
 
@@ -287,7 +286,7 @@ async def resend_tenant_user_setup_link(
         current_user, tenant_id, user_id, background_tasks
     )
     return ResendTenantUserSetupLinkResponse(
-        data=TenantMessageData(
+        data=MessageData(
             message="A password setup link has been sent to the user's email."
         )
     )

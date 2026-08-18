@@ -37,7 +37,7 @@ from app.core.constants import (
     TIMEZONE_MAX_LENGTH,
 )
 from app.schemas.base import BaseSchema
-from app.schemas.common import SuccessResponse
+from app.schemas.common import MessageData, SuccessResponse
 
 _PASSWORD_FIELD = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
@@ -167,10 +167,6 @@ class GetSetupTokenStatusResponse(BaseSchema):
 
 
 # ── Enveloped responses (these routes already returned {success, data}) ──
-
-class MessageData(BaseSchema):
-    message: str
-
 
 class CheckEmailData(BaseSchema):
     exists: bool

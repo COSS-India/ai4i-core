@@ -55,7 +55,6 @@ from app.utils.masking import mask_email
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"],
-    responses=error_responses(422),
 )
 
 

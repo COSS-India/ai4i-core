@@ -18,7 +18,7 @@ from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.common import error_responses
+from app.schemas.common import MessageData, error_responses
 from app.schemas.role import (
     AssignGuestServicesResponse,
     AssignRoleResponse,
@@ -30,7 +30,6 @@ from app.schemas.role import (
     ListRolesResponse,
     RemoveRoleResponse,
     RoleAssignRequest,
-    RoleMessageData,
     RoleResponse,
 )
 from app.services.role_service import RoleService
@@ -39,7 +38,7 @@ from app.services.tenant_lifecycle import assert_tenant_admin_assignable
 router = APIRouter(
     prefix="/auth/roles",
     tags=["Roles"],
-    responses=error_responses(401, 422),
+    responses=error_responses(401),
 )
 
 
@@ -88,7 +87,7 @@ async def assign_role(
         await assert_tenant_admin_assignable(TenantRepository(db), target.tenant_id)
     await svc.assign_role(body.user_id, body.role_name)
     return AssignRoleResponse(
-        data=RoleMessageData(
+        data=MessageData(
             message=f"Role '{body.role_name.value}' assigned to user {body.user_id}."
         )
     )
@@ -116,7 +115,7 @@ async def remove_role(
     )
     await svc.remove_role(body.user_id, body.role_name)
     return RemoveRoleResponse(
-        data=RoleMessageData(
+        data=MessageData(
             message=f"Role '{body.role_name.value}' removed from user {body.user_id}."
         )
     )

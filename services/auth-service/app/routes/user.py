@@ -33,7 +33,7 @@ from app.services.user_service import UserService
 router = APIRouter(
     prefix="/auth",
     tags=["Users"],
-    responses=error_responses(401, 422),
+    responses=error_responses(401),
 )
 
 

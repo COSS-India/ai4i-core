@@ -8,7 +8,7 @@ from typing import Optional
 from pydantic import ConfigDict, Field
 
 from app.schemas.base import BaseSchema
-from app.schemas.common import SuccessResponse
+from app.schemas.common import MessageData, SuccessResponse
 
 
 # ── Requests ──
@@ -89,10 +89,6 @@ class APIKeyAdminItem(APIKeyItem):
     username: Optional[str] = None
 
 
-class RevokeAPIKeyData(BaseSchema):
-    message: str
-
-
 # ── Route responses: inherit SuccessResponse and override ``data`` ──
 
 class CreateAPIKeyResponse(SuccessResponse):
@@ -116,7 +112,7 @@ class UpdateAPIKeyResponse(SuccessResponse):
 class RevokeAPIKeyResponse(SuccessResponse):
     """DELETE /auth/api-keys/{key_id}"""
 
-    data: RevokeAPIKeyData
+    data: MessageData
 
 
 class ListAllAPIKeysResponse(SuccessResponse):
