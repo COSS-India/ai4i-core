@@ -134,7 +134,7 @@ class TestRecordMetricsFailurePath:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="s1",
+            service_type="translation", tenant="t1", tenant_id="", service_id="s1",
             status_code=502, duration=0.1,
             billed_input=999, billed_output=0,
         )
@@ -149,7 +149,7 @@ class TestRecordMetricsFailurePath:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="s1",
+            service_type="translation", tenant="t1", tenant_id="", service_id="s1",
             status_code=200, duration=0.1,
             billed_input=None, billed_output=None,
         )
@@ -162,7 +162,7 @@ class TestLLMMetrics:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/chat", method="POST", service_type="llm",
-            tenant="t1", service_id="s1", status_code=200, duration=0.2,
+            tenant="t1", tenant_id="", service_id="s1", status_code=200, duration=0.2,
             billed_input=10, billed_output=20, model="gemma", model_id="hash-gemma-v1",
         )
         mw.metrics_collector.track_llm_tokens.assert_called_once()
@@ -182,7 +182,7 @@ class TestLLMMetrics:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/chat", method="POST",
-            service_type="llm", tenant="t1", service_id="s1",
+            service_type="llm", tenant="t1", tenant_id="", service_id="s1",
             status_code=200, duration=0.2,
             billed_input=0, billed_output=0,
         )
@@ -199,14 +199,14 @@ class TestValuesComeFromState:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="s1",
+            service_type="translation", tenant="t1", tenant_id="", service_id="s1",
             status_code=200, duration=0.1,
             billed_input=10, billed_output=0,
             source_lang="en", target_lang="hi",
         )
         mw.metrics_collector.track_nmt_characters.assert_called_once_with(
             source_lang="en", target_lang="hi", characters=10,
-            tenant="t1", service_id="s1",
+            tenant="t1", tenant_id="", service_id="s1",
         )
 
     @pytest.mark.asyncio
@@ -214,7 +214,7 @@ class TestValuesComeFromState:
         mw = _middleware()
         await mw._record_metrics(
             path="/api/v1/nmt/inference", method="POST",
-            service_type="translation", tenant="t1", service_id="state-service-id",
+            service_type="translation", tenant="t1", tenant_id="", service_id="state-service-id",
             status_code=200, duration=0.1,
             billed_input=10, billed_output=0,
             source_lang="en", target_lang="hi",
@@ -233,7 +233,7 @@ class TestPerServiceUnitDispatch:
             tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_ocr_characters.assert_called_once_with(
-            characters=3, tenant="t1", service_id="s1",
+            characters=3, tenant="t1", tenant_id="", service_id="s1",
         )
 
     def test_ner_emits_billed_character_count_not_word_count(self):
@@ -244,7 +244,7 @@ class TestPerServiceUnitDispatch:
             tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_ner_tokens.assert_called_once_with(
-            tokens=42, tenant="t1", service_id="s1",
+            tokens=42, tenant="t1", tenant_id="", service_id="s1",
         )
 
     @pytest.mark.parametrize("service_type,tracker", [
@@ -274,7 +274,7 @@ class TestPerServiceUnitDispatch:
             target_lang="", tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_tts_characters.assert_called_once_with(
-            language="hi", characters=777, tenant="t1", service_id="s1",
+            language="hi", characters=777, tenant="t1", tenant_id="", service_id="s1",
         )
 
 

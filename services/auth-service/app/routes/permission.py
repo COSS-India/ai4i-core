@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from app.core.responses import to_response
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
-from app.models.role_name import RoleName
+from app.core.constants import RoleName
 from app.models.user import User
 from app.schemas.common import error_responses
 from app.schemas.role import (

@@ -242,12 +242,3 @@ from app.core import pii_crypto  # noqa: E402
 pii_crypto.configure_key(
     settings.pii_encryption_key.get_secret_value() if settings.pii_encryption_key else None
 )
-
-
-# ── Role IDs (must match the seeded values in roles table) ───────────
-class RoleId:
-    ADMIN = 1
-    MODERATOR = 2
-    GUEST = 3
-    USER = 4
-    TENANT_ADMIN = 5

@@ -29,12 +29,12 @@ from app.schemas.common import (
     TaskSpec,
     TaskSpecLenient,
     TotalMeta,
+    is_recognized_schema_task_type,
     validate_entity_name,
 )
 from app.schemas.enums.model_management import (
     AudioFormatEnum,
     InferenceServerTypeEnum,
-    TaskTypeEnum,
     TextFormatEnum,
     resolve_task_type,
 )
@@ -84,17 +84,8 @@ class SupportedFormats(BaseSchema):
     )
 
 
-# `schema` entries describe ULCA-shaped request/response contracts, so they
-# may legitimately use either our TaskTypeEnum values or ULCA's own
-# discriminator vocabulary where the two differ (nmt vs translation,
-# language-detection vs txt-lang-detection). Derived from TaskTypeEnum
-# (rather than duplicated as a literal set) so a task type added there
-# later doesn't also need remembering here — only the two ULCA-only
-# spellings are literals.
-_INFERENCE_SCHEMA_TASK_TYPES = {m.value for m in TaskTypeEnum} | {"translation", "txt-lang-detection"}
-
 # Same nmt/translation and language-detection/txt-lang-detection equivalence
-# as _INFERENCE_SCHEMA_TASK_TYPES above, but keyed so both spellings of a
+# as common.INFERENCE_SCHEMA_TASK_TYPES, but keyed so both spellings of a
 # pair resolve to the same equivalence set — used to check a `schema` entry
 # actually describes the service's own task, not just *some* recognized
 # task (without this, a TTS service could ship an `asr` schema entry and
@@ -130,7 +121,7 @@ def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str,
         task_type = entry.get("taskType")
         if not task_type:
             raise ValueError(f"schema[{i}] must include 'taskType'")
-        if task_type not in _INFERENCE_SCHEMA_TASK_TYPES:
+        if not is_recognized_schema_task_type(task_type):
             raise ValueError(
                 f"schema[{i}].taskType '{task_type}' is not a recognized task type"
             )

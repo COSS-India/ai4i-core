@@ -156,6 +156,21 @@ class TaskSpecLenient(BaseSchema):
         return v
 
 
+# A `schema`/`inferenceEndPoint.schema` entry's `taskType` may legitimately
+# use either our own TaskTypeEnum values or ULCA's own discriminator
+# vocabulary where the two differ (nmt vs translation, language-detection
+# vs txt-lang-detection). Shared by Model's `schema` validator and Service's
+# `inferenceEndPoint.schema` validator so the recognized set can't drift
+# between the two independently-maintained copies.
+INFERENCE_SCHEMA_TASK_TYPES = {m.value for m in TaskTypeEnum} | {"translation", "txt-lang-detection"}
+
+
+def is_recognized_schema_task_type(task_type: Any) -> bool:
+    """True if `task_type` is a recognized value for a schema entry's
+    `taskType` — see INFERENCE_SCHEMA_TASK_TYPES above."""
+    return task_type in INFERENCE_SCHEMA_TASK_TYPES
+
+
 # ── Inference endpoint supporting types ──
 
 

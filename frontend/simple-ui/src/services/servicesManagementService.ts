@@ -169,10 +169,8 @@ export const createService = async (
     const apiPayload: Record<string, unknown> = {
       serviceId: serviceData.serviceId || serviceData.service_id,
       name: serviceData.name,
-      serviceDescription:
-        serviceData.serviceDescription || serviceData.description,
-      hardwareDescription:
-        serviceData.hardwareDescription || "Default hardware",
+      description: serviceData.serviceDescription || serviceData.description,
+      hardwareDescription: serviceData.hardwareDescription,
       publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
       modelId: serviceData.modelId || serviceData.model_id,
       modelVersion:
