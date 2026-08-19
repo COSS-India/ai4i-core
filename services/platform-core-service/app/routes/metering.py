@@ -42,7 +42,7 @@ from app.schemas.metering import (
     UsageConcentration,
 )
 from app.services.metering_service import MeteringService
-from app.utils.metering_promql_builder import SERVICE_BREAKDOWN_CONFIG, WINDOW_STEP
+from app.utils.metering_promql_builder import API_KEY_AUTH_TYPE, SERVICE_BREAKDOWN_CONFIG, WINDOW_STEP
 
 logger = logging.getLogger(__name__)
 
@@ -554,7 +554,7 @@ async def get_overview(
     # UI/playground calls are free — restrict the request-count KPI and the
     # request-volume chart to API-key-authenticated traffic only, same as
     # payperuse_consumer/handler.py already restricts billing.
-    auth_type_filter = "api_key"
+    auth_type_filter = API_KEY_AUTH_TYPE
 
     cache_key = (
         f"metering:overview:v2:{window}:{scope_tenant_name or 'all'}:"

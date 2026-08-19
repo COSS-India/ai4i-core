@@ -16,6 +16,8 @@ from app.utils.metering_promql_builder import (
     LLM_CHAT_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
+    API_KEY_AUTH_TYPE,
+    api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
     escape_label_value,
@@ -235,7 +237,7 @@ class MeteringService:
         that need more than one window in the same request must go through
         `overview_tenant_data` instead of calling this directly per window.
         """
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type='api_key')}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
         if valid_names is _UNSET:
             prom_results, valid_names = await asyncio.gather(
@@ -272,7 +274,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type='api_key')}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         promql = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
         try:
             return int(round(float(await self._client.scalar(promql))))
@@ -288,7 +290,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, auth_type='api_key')}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, auth_type=API_KEY_AUTH_TYPE)}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
         active_q = f"count(sum by(tenant)(increase({metric}[{window}] offset {window}) > 0))"
         try:
@@ -372,7 +374,7 @@ class MeteringService:
         self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None, auth_type='api_key')}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
 
@@ -431,7 +433,7 @@ class MeteringService:
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _base = (
             _ep + ',tenant!="unknown"' + (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
-            + ',auth_type="api_key"'
+            + ',' + api_key_auth_type_selector()
         )
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
@@ -526,13 +528,13 @@ class MeteringService:
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            auth_type="api_key",
+            auth_type=API_KEY_AUTH_TYPE,
         )
         success_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'], auth_type="api_key",
+            extra=['status_code=~"2.."'], auth_type=API_KEY_AUTH_TYPE,
         )
-        tokens_parts = ['token_type="total"', 'tenant!="unknown"', 'auth_type="api_key"']
+        tokens_parts = ['token_type="total"', 'tenant!="unknown"', api_key_auth_type_selector()]
         if tenant:
             tokens_parts.append(f'tenant="{escape_label_value(tenant)}"')
         tokens_sel = "{" + ",".join(tokens_parts) + "}"
@@ -811,7 +813,7 @@ class MeteringService:
     async def tenant_ranking(
         self, limit: int, time_range: Optional[str], tenant: Optional[str] = None
     ) -> dict:
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, auth_type='api_key')}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
 
@@ -944,7 +946,7 @@ class MeteringService:
 
         _ep = f'{PROMETHEUS_API_PATH_LABEL}=~"{SERVICE_BREAKDOWN_ENDPOINT_REGEX}"'
         _tenant_sel = f',tenant="{escape_label_value(tenant)}"' if tenant else ''
-        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + ',auth_type="api_key"' + '}'
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_sel + ',' + api_key_auth_type_selector() + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
@@ -1030,7 +1032,7 @@ class MeteringService:
                 continue
             extra = cfg.get("native_extra_labels") or []
             parts = [f'tenant="{escape_label_value(tenant)}"'] if tenant else []
-            parts.append('auth_type="api_key"')
+            parts.append(api_key_auth_type_selector())
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
             # Use increase()-based counting (via sum_over_window), NOT a raw

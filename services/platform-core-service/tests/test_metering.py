@@ -14,10 +14,12 @@ import pytest
 # ── Builder tests ─────────────────────────────────────────────────────────────
 
 from app.utils.metering_promql_builder import (
+    API_KEY_AUTH_TYPE,
     LLM_CHAT_ENDPOINT_REGEX,
     PROMETHEUS_API_PATH_LABEL,
     SERVICE_BREAKDOWN_CONFIG,
     WINDOW_STEP,
+    api_key_auth_type_selector,
     apply_time_range,
     build_base_selectors,
     escape_label_value,
@@ -92,6 +94,25 @@ class TestBuildBaseSelectors:
     def test_endpoint_regex_ignored_when_not_inference_only(self):
         sel = build_base_selectors(inference_only=False, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX)
         assert PROMETHEUS_API_PATH_LABEL not in sel
+
+    def test_no_auth_type_filter_by_default(self):
+        sel = build_base_selectors()
+        assert "auth_type" not in sel
+
+    def test_auth_type_filter_is_fail_open_not_exact_equality(self):
+        # A plain equality match (auth_type="api_key") would silently drop
+        # every series recorded before this label existed, or any request
+        # the gateway never stamped with X-Auth-Type — see
+        # api_key_auth_type_selector's docstring. Pin the fail-open form so a
+        # future edit can't regress back to an exact match.
+        sel = build_base_selectors(auth_type=API_KEY_AUTH_TYPE)
+        assert 'auth_type=~"api_key|"' in sel
+        assert 'auth_type="api_key"' not in sel
+
+
+class TestApiKeyAuthTypeSelector:
+    def test_matches_api_key_and_absent_label(self):
+        assert api_key_auth_type_selector() == 'auth_type=~"api_key|"'
 
 
 class TestSumOverWindow:
@@ -998,6 +1019,91 @@ class TestThroughput:
             inference_only=True, tenant=None, service_id=None, time_range="1h"
         )
         assert result["avg_rps"] == pytest.approx(7.42, rel=1e-3)
+
+
+@pytest.mark.asyncio
+class TestMeteringQueriesRestrictToApiKeyTraffic:
+    """UI/playground calls authenticate via JWT, not an API key — every
+    metering query must exclude that traffic, the same way
+    payperuse_consumer/handler.py already restricts PPU billing to
+    API-key calls. Pins the fail-open selector (not an exact-equality
+    match) at each call site, so a future edit that reverts to
+    ``auth_type="api_key"`` — silently dropping every series recorded
+    before the label existed — gets caught here.
+    """
+
+    async def test_active_tenants(self):
+        svc = _make_service(query_return=[])
+        await svc.active_tenants("24h")
+        promql = svc._client.query.call_args[0][0]
+        assert 'auth_type=~"api_key|"' in promql
+
+    async def test_active_tenants_count_previous(self):
+        svc = _make_service(scalar_return=1.0)
+        await svc.active_tenants_count_previous("24h")
+        promql = svc._client.scalar.call_args[0][0]
+        assert 'auth_type=~"api_key|"' in promql
+
+    async def test_avg_per_active_tenant_previous(self):
+        svc = _make_service(scalar_return=1.0)
+        await svc.avg_per_active_tenant_previous("24h")
+        for call in svc._client.scalar.call_args_list:
+            assert 'auth_type=~"api_key|"' in call[0][0]
+
+    async def test_usage_concentration(self):
+        svc = _make_service(query_return=[])
+        await svc.usage_concentration(limit=5, time_range="24h")
+        promql = svc._client.query.call_args[0][0]
+        assert 'auth_type=~"api_key|"' in promql
+
+    async def test_tenant_ranking(self):
+        svc = _make_service(query_return=[])
+        await svc.tenant_ranking(limit=10, time_range="24h")
+        promql = svc._client.query.call_args[0][0]
+        assert 'auth_type=~"api_key|"' in promql
+
+    async def test_usage_by_tenant_service(self):
+        svc = _make_service(query_return=[])
+        await svc.usage_by_tenant_service(limit=10, time_range="24h", services=None)
+        promql = svc._client.query.call_args[0][0]
+        assert 'auth_type=~"api_key|"' in promql
+
+    async def test_service_breakdown_request_count_queries(self):
+        svc = _make_service(query_return=[])
+        await svc.service_breakdown(tenant=None, time_range="24h")
+        for call in svc._client.query.call_args_list:
+            promql = call[0][0]
+            # Native-unit scalar queries go through _client.scalar, not
+            # _client.query — this only covers the request-count queries.
+            if "telemetry_obsv_requests_total" in promql:
+                assert 'auth_type=~"api_key|"' in promql
+
+    async def test_service_breakdown_native_unit_queries(self):
+        svc = _make_service(scalar_return=0.0)
+        await svc.service_breakdown(tenant=None, time_range="24h")
+        assert svc._client.scalar.call_args_list, "expected at least one native-unit query"
+        for call in svc._client.scalar.call_args_list:
+            assert 'auth_type=~"api_key|"' in call[0][0]
+
+    async def test_model_breakdown(self):
+        svc = _make_service(query_return=[])
+        await svc.model_breakdown(tenant=None, time_range="24h")
+        for call in svc._client.query.call_args_list:
+            assert 'auth_type=~"api_key|"' in call[0][0]
+
+    async def test_request_total_when_caller_passes_api_key_filter(self):
+        # request_total's auth_type is caller-supplied (routes/metering.py
+        # passes API_KEY_AUTH_TYPE for the dashboard) rather than hardcoded,
+        # unlike every other method above — covering the "filter applied
+        # when asked" half; the default (no filter) is intentional and
+        # covered by TestBuildBaseSelectors.test_no_auth_type_filter_by_default.
+        svc = _make_service(scalar_return=0.0)
+        await svc.request_total(
+            inference_only=True, tenant=None, service_id=None,
+            time_range="24h", auth_type=API_KEY_AUTH_TYPE,
+        )
+        for call in svc._client.scalar.call_args_list:
+            assert 'auth_type=~"api_key|"' in call[0][0]
 
 
 @pytest.mark.asyncio

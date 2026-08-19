@@ -18,6 +18,16 @@ from app.core.config import settings
 # metering_service.py must match on this label.
 PROMETHEUS_API_PATH_LABEL = settings.prometheus_api_path_label
 
+# The single auth_type value the Metering Dashboard restricts itself to —
+# UI/playground calls authenticate via JWT, not this. Defined once here (not
+# repeated as a literal at every call site in metering_service.py) so the
+# policy has one home; every selector below also matches it fail-open (see
+# api_key_auth_type_selector) rather than by exact equality, since an exact
+# match would silently drop every series recorded before this label existed,
+# and any request the gateway doesn't stamp with X-Auth-Type at all —
+# payperuse_consumer/handler.py fails open the same way for billing.
+API_KEY_AUTH_TYPE = "api_key"
+
 # Allowed time range values mapped to Prometheus duration strings.
 # None means no window — returns the cumulative counter value.
 TIME_RANGES: dict = {
@@ -103,6 +113,24 @@ def build_task_type_selector(task_types: list[str] | None) -> str | None:
             patterns.append(f"/api/v1/{task.replace('_', '-')}/inference")
     regex = "|".join(patterns)
     return f'{PROMETHEUS_API_PATH_LABEL}=~"{regex}"'
+
+
+def api_key_auth_type_selector() -> str:
+    """Build the ``auth_type`` selector fragment (no braces) that restricts
+    the Metering Dashboard to API-key traffic, fail-open on absence.
+
+    ``auth_type=~"api_key|"`` — not the exact-equality ``auth_type="api_key"``
+    — because Prometheus treats an absent label as the empty string for
+    matching purposes: every series recorded before this label existed, and
+    any request the gateway doesn't stamp with X-Auth-Type at all, has no
+    ``auth_type`` label rather than one set to something else. An equality
+    match would silently exclude those series for as long as they remain in
+    the query window (up to the full 7d/30d retention), rather than just the
+    JWT/UI traffic it's meant to exclude. Self-heals as pre-rollout series
+    age out — see payperuse_consumer/handler.py for the same fail-open
+    reasoning applied to billing.
+    """
+    return f'auth_type=~"{API_KEY_AUTH_TYPE}|"'
 
 
 def escape_label_value(value: str) -> str:
@@ -307,7 +335,10 @@ def build_base_selectors(
     started carrying this label once ObservabilityMiddleware began forwarding
     X-Auth-Type, so callers can filter UI/JWT traffic out of request counts
     the same way payperuse_consumer/handler.py already restricts billing to
-    API-key calls.
+    API-key calls. Matched fail-open (``=~"value|"``, not ``="value"``) so a
+    series with no auth_type label at all (recorded before this label
+    existed, or a request the gateway never stamped) isn't silently dropped
+    — see api_key_auth_type_selector's docstring.
     """
     selectors: list[str] = ['tenant!="unknown"']
     if inference_only:
@@ -317,7 +348,7 @@ def build_base_selectors(
     if service_id:
         selectors.append(f'service_id="{service_id}"')
     if auth_type:
-        selectors.append(f'auth_type="{escape_label_value(auth_type)}"')
+        selectors.append(f'auth_type=~"{escape_label_value(auth_type)}|"')
     if extra:
         selectors.extend(extra)
     return "{" + ",".join(selectors) + "}"

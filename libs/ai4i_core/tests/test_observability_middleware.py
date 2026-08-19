@@ -206,7 +206,7 @@ class TestValuesComeFromState:
         )
         mw.metrics_collector.track_nmt_characters.assert_called_once_with(
             source_lang="en", target_lang="hi", characters=10,
-            tenant="t1", service_id="s1",
+            tenant="t1", service_id="s1", auth_type="",
         )
 
     @pytest.mark.asyncio
@@ -233,7 +233,7 @@ class TestPerServiceUnitDispatch:
             tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_ocr_characters.assert_called_once_with(
-            characters=3, tenant="t1", service_id="s1",
+            characters=3, tenant="t1", service_id="s1", auth_type="",
         )
 
     def test_ner_emits_billed_character_count_not_word_count(self):
@@ -244,7 +244,7 @@ class TestPerServiceUnitDispatch:
             tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_ner_tokens.assert_called_once_with(
-            tokens=42, tenant="t1", service_id="s1",
+            tokens=42, tenant="t1", service_id="s1", auth_type="",
         )
 
     @pytest.mark.parametrize("service_type,tracker", [
@@ -274,7 +274,7 @@ class TestPerServiceUnitDispatch:
             target_lang="", tenant="t1", service_id="s1",
         )
         mw.metrics_collector.track_tts_characters.assert_called_once_with(
-            language="hi", characters=777, tenant="t1", service_id="s1",
+            language="hi", characters=777, tenant="t1", service_id="s1", auth_type="",
         )
 
 
