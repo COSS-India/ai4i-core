@@ -75,15 +75,37 @@ export function formatSpendMoney(n: number, currency = "INR"): string {
   }
 }
 
+const UNIT_SHORT_LABEL: Record<string, string> = {
+  tokens: "tokens",
+  characters: "chars",
+  audio_minutes: "min",
+  minutes: "min",
+  images: "imgs",
+  requests: "reqs",
+};
+
+export function shortUnitLabel(unit: string): string {
+  const u = (unit || "").trim().toLowerCase();
+  return UNIT_SHORT_LABEL[u] ?? (unit || "").trim();
+}
+
+function compactCount(n: number): string {
+  const abs = Math.abs(n);
+  const scaled = (div: number, suffix: string) =>
+    `${(n / div).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  if (abs >= 1e9) return scaled(1e9, "B");
+  if (abs >= 1e6) return scaled(1e6, "M");
+  if (abs >= 1e3) return scaled(1e3, "K");
+  return String(Math.round(n));
+}
+
 export function formatSpendUnit(n: number, unit: string): string {
-  const u = (unit || "").toLowerCase();
-  if (u === "tokens" || u === "characters") {
-    if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M ${unit}`;
-    if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K ${unit}`;
-    return `${Math.round(n)} ${unit}`;
-  }
-  if (u === "minutes") return `${Math.round(n).toLocaleString("en-IN")} min`;
-  return `${Math.round(n).toLocaleString("en-IN")} ${unit || ""}`.trim();
+  return `${compactCount(n)} ${shortUnitLabel(unit)}`.trim();
+}
+
+/** Exact locale-grouped figure — for tooltips, where compaction would hide precision. */
+export function formatSpendUnitExact(n: number, unit: string): string {
+  return `${Math.round(n).toLocaleString("en-IN")} ${shortUnitLabel(unit)}`.trim();
 }
 
 export interface SpendTokenTotals {

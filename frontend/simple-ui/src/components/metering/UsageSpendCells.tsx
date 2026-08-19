@@ -6,6 +6,7 @@ import {
   USAGE_SPEND_WARNING,
   formatSpendMoney,
   formatSpendUnit,
+  formatSpendUnitExact,
   spendBarColor,
   tenantAvatarBg,
   tenantInitials,
@@ -63,11 +64,20 @@ export function RatioBar({
   if (layout === "topRight") {
     return (
       <Box minW="170px">
-        <Flex justify="flex-end" fontSize="12.5px" mb="6px">
+        <Flex justify="flex-end" fontSize="12.5px" mb="6px" whiteSpace="nowrap">
           <Text fontWeight="semibold">{main}</Text>
         </Flex>
         {wrappedBar}
-        <Text fontSize="11.5px" mt="5px" color={captionColor} fontWeight={captionWeight} textAlign="left">
+        <Text
+          fontSize="11.5px"
+          mt="5px"
+          color={captionColor}
+          fontWeight={captionWeight}
+          textAlign="left"
+          whiteSpace="nowrap"
+          overflow="hidden"
+          textOverflow="ellipsis"
+        >
           {caption}
         </Text>
       </Box>
@@ -76,14 +86,22 @@ export function RatioBar({
 
   return (
     <Box minW="170px">
-      <Flex justify="space-between" fontSize="12.5px" mb="6px">
+      <Flex align="baseline" gap="10px" fontSize="12.5px" mb="6px" whiteSpace="nowrap">
         <Text fontWeight="semibold">{main}</Text>
-        <Text color="gray.500" fontWeight="normal">
+        <Text color="gray.500" fontWeight="normal" ml="auto">
           {of}
         </Text>
       </Flex>
       {wrappedBar}
-      <Text fontSize="11.5px" mt="5px" color={captionColor} fontWeight={captionWeight}>
+      <Text
+        fontSize="11.5px"
+        mt="5px"
+        color={captionColor}
+        fontWeight={captionWeight}
+        whiteSpace="nowrap"
+        overflow="hidden"
+        textOverflow="ellipsis"
+      >
         {caption}
       </Text>
     </Box>
@@ -196,6 +214,7 @@ export function UsageCell({
       main={formatSpendUnit(used, unit)}
       of={`of ${formatSpendUnit(limit, unit)}`}
       caption={`${formatSpendUnit(Math.max(left, 0), unit)} left · ${pct.toFixed(0)}%`}
+      tooltip={`${formatSpendUnitExact(used, unit)} of ${formatSpendUnitExact(limit, unit)} · ${ratioTooltip(pct)}`}
     />
   );
 }
