@@ -114,8 +114,6 @@ class TenantUserRole(str, Enum):
     TENANT_ADMIN = RoleName.TENANT_ADMIN.value
     PROGRAM_ADMIN = RoleName.PROGRAM_ADMIN.value
     MODERATOR = RoleName.MODERATOR.value
-    ADMIN = RoleName.ADMIN.value
-    GUEST = RoleName.GUEST.value
 
 
 
