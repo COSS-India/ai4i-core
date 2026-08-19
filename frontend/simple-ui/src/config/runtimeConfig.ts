@@ -13,6 +13,9 @@
 /** Default product display name (AI4IDS-2809). Override with PLATFORM_NAME. */
 export const DEFAULT_PLATFORM_NAME = "AI Switch";
 
+/** Default instance logo. Override with ADOPTER_LOGO_URL (http(s) or same-origin path). */
+export const DEFAULT_ADOPTER_LOGO_SRC = "/AI4Inclusion_Logo.svg";
+
 export type RuntimeConfig = {
   /** Browser-facing API origin. Empty ⇒ same-origin (Next.js proxy). */
   apiUrl: string;
@@ -22,16 +25,19 @@ export type RuntimeConfig = {
   enabledTaskTypes: string;
   /** Product/brand name shown in UI titles, consent, headers. */
   platformName: string;
+  /** ConfigMap `ADOPTER_LOGO_URL`; empty ⇒ default SVG. */
+  adopterLogoUrl: string;
 };
 
-const EMPTY: RuntimeConfig = {
+export const EMPTY_RUNTIME_CONFIG: RuntimeConfig = {
   apiUrl: "",
   telemetryServiceUrl: "",
   enabledTaskTypes: "",
   platformName: DEFAULT_PLATFORM_NAME,
+  adopterLogoUrl: "",
 };
 
-let cached: RuntimeConfig = { ...EMPTY };
+let cached: RuntimeConfig = { ...EMPTY_RUNTIME_CONFIG };
 
 function firstEnv(...keys: string[]): string {
   for (const key of keys) {
@@ -58,6 +64,7 @@ export function getServerRuntimeConfig(): RuntimeConfig {
     platformName:
       firstEnv("PLATFORM_NAME", "NEXT_PUBLIC_PLATFORM_NAME") ||
       DEFAULT_PLATFORM_NAME,
+    adopterLogoUrl: firstEnv("ADOPTER_LOGO_URL", "NEXT_PUBLIC_ADOPTER_LOGO_URL"),
   };
 }
 
@@ -72,6 +79,7 @@ export function applyRuntimeConfig(config: RuntimeConfig): void {
     enabledTaskTypes: (config.enabledTaskTypes ?? "").trim(),
     platformName:
       (config.platformName ?? "").trim() || DEFAULT_PLATFORM_NAME,
+    adopterLogoUrl: (config.adopterLogoUrl ?? "").trim(),
   };
   if (typeof window !== "undefined") {
     window.__RUNTIME_CONFIG__ = cached;
@@ -89,6 +97,20 @@ export function getTelemetryServiceUrl(): string {
 /** Platform display name for titles, consent copy, headers, etc. */
 export function getPlatformName(): string {
   return cached.platformName || DEFAULT_PLATFORM_NAME;
+}
+
+/** Logo from ConfigMap; invalid/unset ⇒ default SVG. */
+export function getAdopterLogoSrc(): string {
+  const raw = (cached.adopterLogoUrl ?? "").trim();
+  if (!raw) return DEFAULT_ADOPTER_LOGO_SRC;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
+  try {
+    const { protocol } = new URL(raw);
+    if (protocol === "http:" || protocol === "https:") return raw;
+  } catch {
+    /* use default */
+  }
+  return DEFAULT_ADOPTER_LOGO_SRC;
 }
 
 /** Parsed allowlist; empty array ⇒ no filter (full catalog). */

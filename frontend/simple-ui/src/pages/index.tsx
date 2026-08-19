@@ -32,6 +32,7 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
+import AdopterLogo from "../components/common/AdopterLogo";
 import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
@@ -222,6 +223,7 @@ const HomePage: React.FC = () => {
         <VStack spacing={10} w="full" align="center" alignSelf="stretch">
           {/* Hero Section */}
           <Box textAlign="center" w="full">
+            <AdopterLogo maxH="72px" maxW="280px" mx="auto" mb={4} />
             <Heading size="lg" fontWeight="bold" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               AI Accessibility Studio
             </Heading>
