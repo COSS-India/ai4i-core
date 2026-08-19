@@ -4,7 +4,6 @@ Auth service configuration — self-contained pydantic-settings class.
 Reads its own environment variables; no dependency on a shared env library.
 """
 
-import enum
 from pathlib import Path
 from typing import Optional
 
