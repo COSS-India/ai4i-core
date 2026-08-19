@@ -2,44 +2,6 @@
 total across all pages, not just the current page of results, and Success +
 Failures must reconcile with Total Requests (each trace counts once).
 
-History:
-- v1 bug: GET /telemetry/traces/search built `aggregations.total`/`by_level`/
-  `by_task` by counting only `data` (the current page, capped at page_size),
-  while the pagination footer already used the correct full-result `total`
-  (an OpenSearch cardinality aggregation).
-- v2 bug (introduced by the first fix): the replacement used a raw OpenSearch
-  `terms` aggregation on `attributes.status`/`attributes.task_type` scoped to
-  a trace_id join. Two issues: (a) those fields are mapped `text` with a
-  `.keyword` sub-field in this index, so a `terms` agg on the bare field
-  throws and gets silently swallowed by the client, producing empty
-  aggregations; (b) even after using `.keyword`, bucketing raw span docs by
-  status let a trace with disagreeing spans (e.g. a retried request) count
-  toward more than one status bucket, so Success + Failures could exceed
-  Total.
-- v3 bug (introduced during PR review, in response to a performance
-  comment): folding classification into `_collect_all_trace_ids`'s composite
-  aggregation via a `top_hits` sub-aggregation was verified against live
-  data (task_types filter active) to silently miscount a Failure trace as
-  Success - a `task_types` filter only matches the 'model'/'ai-inference'
-  spans, so the 'request' span carrying the real status never entered that
-  filtered aggregation's document set to begin with, regardless of top_hits
-  size.
-- Fix: `_compute_full_breakdown` reuses the exact same per-trace extraction
-  logic as the table rows (`_build_traces_map` - first non-unknown status
-  wins, mirroring the app's own precedence rule) against an unfiltered,
-  by-trace-id-only span fetch (same principle Step 3 already relied on for
-  the page), batched and run concurrently via asyncio.to_thread so the
-  synchronous OpenSearch client doesn't block the event loop for the whole
-  fan-out.
-- Also covered here: a batch's span fetch is capped at a total span count,
-  not a per-trace_id count, so a skewed batch can silently drop the oldest
-  trace_ids out of the sorted response window without `hits` ever being
-  fully empty - `_compute_full_breakdown` now detects this by comparing
-  which trace_ids it actually classified against which it asked about, and
-  reports it via a `truncated` return value the caller folds into
-  `aggregations.partial`.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -207,14 +169,13 @@ def test_compute_full_breakdown_counts_each_trace_exactly_once():
 
 
 def test_compute_full_breakdown_ignores_filter_specific_fields():
-    """Regression test for the v3 bug: classification must not reuse the
-    original filter_query's must/filter clauses (e.g. a task_types filter
-    only matches the 'model'/'ai-inference' spans, which would hide the
-    'request' span's real status if reused). Asserts directly on the
-    outgoing query shape - a mock that returns the same response regardless
-    of what query it receives would pass this test whether or not the fix
-    is actually in place, so the query itself is what's checked here, not
-    just the classification result."""
+    """Classification must not reuse the original filter_query's must/filter
+    clauses (e.g. a task_types filter only matches the 'model'/'ai-inference'
+    spans, which would hide the 'request' span's real status if reused).
+    Asserts directly on the outgoing query shape - a mock that returns the
+    same response regardless of what query it receives would pass this test
+    whether or not the fix is actually in place, so the query itself is what's
+    checked here, not just the classification result."""
     client = MagicMock()
     captured_queries = []
 
