@@ -3,12 +3,11 @@
 from typing import Optional
 from uuid import UUID
 
-import re
-
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
 from app.core.constants import RoleId
 from app.core.responses import to_response
+from app.utils.auth_helper import has_permission_id
 from app.utils.masking import mask_pii_in_dict
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_tenant_service
@@ -88,9 +87,7 @@ async def list_tenants(
 
     Restricted to ADMIN and PROGRAM_ADMIN. Contact PII is masked.
     """
-    raw = request.headers.get("X-Permission-Ids", "")
-    ids = {int(m) for m in re.findall(r"\d+", raw)}
-    is_admin = RoleId.ADMIN in ids
+    is_admin = has_permission_id(request, RoleId.ADMIN)
     tenants = await svc.list_tenants(current_user, offset, limit, status_filter, is_admin=is_admin)
     return ListTenantsResponse(
         data=[mask_pii_in_dict(to_response(t, TenantResponse)) for t in tenants]
@@ -122,9 +119,7 @@ async def get_tenant(
     Tenant admins are limited to their own tenant. Pass `unmask=true` only
     for the edit form (ADMIN / TENANT_ADMIN).
     """
-    raw = request.headers.get("X-Permission-Ids", "")
-    ids = {int(m) for m in re.findall(r"\d+", raw)}
-    is_admin = RoleId.ADMIN in ids
+    is_admin = has_permission_id(request, RoleId.ADMIN)
     tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask, is_admin=is_admin)
     return GetTenantResponse(data=svc.build_tenant_response(tenant, unmask=unmask))
 
