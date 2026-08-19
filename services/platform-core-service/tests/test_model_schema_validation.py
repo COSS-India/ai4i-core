@@ -102,10 +102,14 @@ def test_patch_with_inference_end_point_rejected():
         ModelUpdateRequest(modelId="abc123", version="1.0", inferenceEndPoint={"callbackUrl": "http://x"})
 
 
-# ── schema requires model_name/taskType/request/response together ─────────────
+# ── schema requires model_name/taskType/request/response together (create only) ─
 # A Service created against this model later derives its own
 # inferenceEndPoint.schema from these same four keys, and can't be given one
-# manually — so an incomplete schema here can never be filled in downstream.
+# manually — so an incomplete schema on CREATE can never be filled in
+# downstream. PATCH deliberately stays at model_name-only (see
+# ModelUpdateRequest._require_model_name_in_schema) — it replaces the stored
+# schema outright, so re-enforcing completeness there would 422 a plain edit
+# of a model whose stored schema predates this rule.
 
 _COMPLETE_SCHEMA = {
     "model_name": "my-model",
@@ -125,6 +129,27 @@ def test_create_schema_with_only_model_name_rejected():
         ModelCreateRequest(**_base_payload(**{"schema": {"model_name": "my-model"}}))
 
 
+def test_create_schema_missing_request_and_response_rejected():
+    """model_name and taskType alone aren't enough either — request/response
+    are checked independently, not just implied by the other two being
+    present."""
+    with pytest.raises(ValidationError, match=r"request.*response|response.*request"):
+        ModelCreateRequest(
+            **_base_payload(**{"schema": {"model_name": "my-model", "taskType": "translation"}})
+        )
+
+
+def test_create_schema_with_unrecognized_task_type_rejected():
+    """A taskType outside the recognized set (e.g. a value that isn't one of
+    our TaskTypeEnum values or ULCA's own discriminator spellings) must be
+    caught here — Service creation rejects it anyway, so this is strictly
+    earlier, not different."""
+    with pytest.raises(ValidationError, match="not a recognized task type"):
+        ModelCreateRequest(
+            **_base_payload(**{"schema": {**_COMPLETE_SCHEMA, "taskType": "text-generation"}})
+        )
+
+
 def test_create_complete_schema_accepted():
     req = ModelCreateRequest(**_base_payload(**{"schema": _COMPLETE_SCHEMA}))
     assert req.endpoint_schema == _COMPLETE_SCHEMA
@@ -133,6 +158,15 @@ def test_create_complete_schema_accepted():
 def test_patch_schema_without_model_name_rejected():
     with pytest.raises(ValidationError, match="model_name"):
         ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": {"taskType": "translation"}})
+
+
+def test_patch_incomplete_schema_accepted():
+    """PATCH deliberately does NOT re-enforce taskType/request/response —
+    only model_name — so a model whose stored schema predates the stricter
+    create-time rule can still be edited without also having to backfill
+    those three fields in the same request."""
+    req = ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": {"model_name": "my-model"}})
+    assert req.endpoint_schema == {"model_name": "my-model"}
 
 
 def test_patch_complete_schema_accepted():

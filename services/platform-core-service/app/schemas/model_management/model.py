@@ -20,6 +20,7 @@ from app.schemas.common import (
     TaskSpec,
     TaskSpecLenient,
     TrainingDataset,
+    is_recognized_schema_task_type,
     validate_entity_name,
     validate_license,
 )
@@ -278,6 +279,15 @@ class ModelCreateRequest(BaseSchema):
                     "inferenceEndPoint.schema from when none is supplied "
                     "directly on the Service."
                 )
+            task_type = v.get("taskType")
+            if not is_recognized_schema_task_type(task_type):
+                raise ValueError(
+                    f"schema.taskType '{task_type}' is not a recognized "
+                    "task type — a Service later derives its own "
+                    "inferenceEndPoint.schema from this value, and Service "
+                    "creation rejects an unrecognized one anyway, so "
+                    "catching it here is strictly earlier, not different."
+                )
         return v
 
     @field_validator("adapterConfig", mode="after")
@@ -402,8 +412,11 @@ class ModelUpdateRequest(BaseSchema):
         alias="schema",
         description=(
             "Optional — omit to leave unchanged. Replaces the stored "
-            "schema entirely when provided, so 'model_name', 'taskType', "
-            "'request', and 'response' must all be present in what you send."
+            "schema entirely when provided; only 'model_name' is required "
+            "(looser than create's full-completeness rule, so a model "
+            "whose stored schema predates that rule can still be PATCHed "
+            "without also having to backfill 'taskType'/'request'/"
+            "'response' in the same request)."
         ),
     )
     callbackUrl: Optional[str] = Field(None, description="Optional — omit to leave unchanged.")
@@ -426,22 +439,22 @@ class ModelUpdateRequest(BaseSchema):
             )
         return values
 
+    # Deliberately NOT the same strictness as ModelCreateRequest's
+    # _require_complete_schema (PR review): PATCH replaces the stored
+    # `schema` outright, so requiring the full set here would 422 a
+    # GET-edit-PATCH round trip on any model whose stored schema predates
+    # that stricter rule (or was itself only ever PATCHed, since this has
+    # always been the only check on the update path) — exactly the rows
+    # ServiceService._resolve_inference_schema's backfill exists to handle.
+    # Keep this at model_name only until/unless those rows get migrated.
     @field_validator("endpoint_schema", mode="after")
     @classmethod
-    def _require_complete_schema(cls, v: Any) -> Any:
-        if v is not None:
-            missing = [f for f in ("model_name", "taskType", "request", "response") if f not in v]
-            if missing:
-                raise ValueError(
-                    f"schema must include {missing} — 'model_name' is the "
-                    "Triton model identifier used to construct the "
-                    "inference URL (e.g. 'indictrans2-en-hi'); "
-                    "'taskType'/'request'/'response' together are the "
-                    "declared per-task contract that a Service created "
-                    "against this model later derives its own "
-                    "inferenceEndPoint.schema from when none is supplied "
-                    "directly on the Service."
-                )
+    def _require_model_name_in_schema(cls, v: Any) -> Any:
+        if v is not None and "model_name" not in v:
+            raise ValueError(
+                "schema must include 'model_name' — the Triton model identifier "
+                "used to construct the inference URL (e.g. 'indictrans2-en-hi')"
+            )
         return v
 
     @field_validator("license", mode="before")

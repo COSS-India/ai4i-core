@@ -599,12 +599,15 @@ class TestSchemaDerivationAndTaskTypeConsistency:
 
     @pytest.mark.asyncio
     async def test_create_derives_schema_backfilling_missing_task_type(self) -> None:
-        """Regression: a model's own schema validator only requires
-        `model_name` — never `taskType` — so a model registered before
-        derivation existed can have a schema with no `taskType` at all.
-        Derivation must backfill it from the model's own `task.type`
-        rather than failing outright (caught live against a real llm
-        service whose model had exactly this shape)."""
+        """Regression: ModelCreateRequest now requires `taskType` inside
+        `schema`, but ModelUpdateRequest deliberately doesn't (PATCH
+        replaces the schema outright — re-enforcing completeness there
+        would break editing a model whose schema predates this rule), and
+        nothing migrates already-stored rows either. So a model can still
+        legitimately have a schema with no `taskType` in it. Derivation
+        must backfill it from the model's own `task.type` rather than
+        failing outright (caught live against a real llm service whose
+        model had exactly this shape)."""
         svc = _make_svc()
         model_schema_no_task_type = {
             "model_name": "some-llm-model",
@@ -631,6 +634,38 @@ class TestSchemaDerivationAndTaskTypeConsistency:
 
         instance = svc._services.add.await_args.args[0]
         assert instance.inference_schema == [{**model_schema_no_task_type, "taskType": "llm"}]
+
+    @pytest.mark.asyncio
+    async def test_create_raises_when_model_task_has_no_type_to_backfill(self) -> None:
+        """The backfill sources `model.task.type` — if that's itself
+        missing (a legacy/malformed model row), the backfilled `taskType`
+        is None, which is exactly as unusable as if it were never
+        attempted. Must fail with the same clear SCHEMA_REQUIRED error as
+        "no schema at all", not a confusing None-shaped one."""
+        svc = _make_svc()
+        model_schema_no_task_type = {
+            "model_name": "some-llm-model",
+            "request": {"messages": [{"role": "user", "content": "Hello"}]},
+            "response": {"choices": [{"message": {"content": "Hi"}}]},
+        }
+        svc._models.get_by_id_version = AsyncMock(
+            return_value=MagicMock(
+                inference_endpoint={"schema": model_schema_no_task_type},
+                task={},  # no "type" key at all
+            )
+        )
+        base = {
+            **_ULCA_BASE,
+            "task": {"type": "llm"},
+            "inferenceEndPoint": {
+                "callbackUrl": "http://localhost:8080",
+                "infraDescription": "test-hw-cluster",
+            },
+        }
+        payload = ServiceCreateRequest(serviceId="svc-no-backfill-source", **base)
+
+        with pytest.raises(ValidationError, match="inferenceEndPoint.schema could not be derived"):
+            await svc.create_service(payload, created_by="user-1")
 
     @pytest.mark.asyncio
     async def test_create_raises_when_omitted_and_model_has_no_schema(self) -> None:
