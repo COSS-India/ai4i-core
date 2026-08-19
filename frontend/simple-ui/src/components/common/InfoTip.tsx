@@ -36,11 +36,9 @@ export const ThWithTip: React.FC<ThWithTipProps> = ({
     {...thProps}
   >
     <HStack spacing={1} justify={isNumeric ? "flex-end" : "flex-start"}>
-      {typeof children === "string" ? (
-        <Text as="span" color="inherit">{children}</Text>
-      ) : (
-        children
-      )}
+      <Text as="span" color="inherit">
+        {children}
+      </Text>
       {message ? <InfoTip message={message} /> : null}
     </HStack>
   </Th>
