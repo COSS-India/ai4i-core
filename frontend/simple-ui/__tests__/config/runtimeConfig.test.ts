@@ -1,20 +1,30 @@
 import {
   applyRuntimeConfig,
+  DEFAULT_ADOPTER_LOGO_SRC,
   DEFAULT_PLATFORM_NAME,
+  getAdopterLogoSrc,
   getPlatformName,
   getServerRuntimeConfig,
 } from '../../src/config/runtimeConfig';
 
-const ENV_KEYS = ['PLATFORM_NAME', 'NEXT_PUBLIC_PLATFORM_NAME'] as const;
+const ENV_KEYS = [
+  'PLATFORM_NAME',
+  'NEXT_PUBLIC_PLATFORM_NAME',
+  'ADOPTER_LOGO_URL',
+  'NEXT_PUBLIC_ADOPTER_LOGO_URL',
+] as const;
+
+const EMPTY_CONFIG = {
+  apiUrl: '',
+  telemetryServiceUrl: '',
+  enabledTaskTypes: '',
+  platformName: DEFAULT_PLATFORM_NAME,
+  adopterLogoUrl: '',
+};
 
 describe('getPlatformName', () => {
   afterEach(() => {
-    applyRuntimeConfig({
-      apiUrl: '',
-      telemetryServiceUrl: '',
-      enabledTaskTypes: '',
-      platformName: DEFAULT_PLATFORM_NAME,
-    });
+    applyRuntimeConfig(EMPTY_CONFIG);
   });
 
   it('falls back to AI Switch when unset', () => {
@@ -24,9 +34,7 @@ describe('getPlatformName', () => {
 
   it('returns the applied runtime config value', () => {
     applyRuntimeConfig({
-      apiUrl: '',
-      telemetryServiceUrl: '',
-      enabledTaskTypes: '',
+      ...EMPTY_CONFIG,
       platformName: 'Custom Brand',
     });
     expect(getPlatformName()).toBe('Custom Brand');
@@ -34,12 +42,28 @@ describe('getPlatformName', () => {
 
   it('falls back when the applied name is blank', () => {
     applyRuntimeConfig({
-      apiUrl: '',
-      telemetryServiceUrl: '',
-      enabledTaskTypes: '',
+      ...EMPTY_CONFIG,
       platformName: '   ',
     });
     expect(getPlatformName()).toBe(DEFAULT_PLATFORM_NAME);
+  });
+});
+
+describe('getAdopterLogoSrc', () => {
+  afterEach(() => {
+    applyRuntimeConfig(EMPTY_CONFIG);
+  });
+
+  it('falls back to default SVG when unset', () => {
+    expect(getAdopterLogoSrc()).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+  });
+
+  it('uses ConfigMap URL when set', () => {
+    applyRuntimeConfig({
+      ...EMPTY_CONFIG,
+      adopterLogoUrl: 'https://cdn.example.com/logo.png',
+    });
+    expect(getAdopterLogoSrc()).toBe('https://cdn.example.com/logo.png');
   });
 });
 
@@ -86,5 +110,12 @@ describe('getServerRuntimeConfig platformName', () => {
   it('treats whitespace-only PLATFORM_NAME as unset', () => {
     process.env.PLATFORM_NAME = '   ';
     expect(getServerRuntimeConfig().platformName).toBe(DEFAULT_PLATFORM_NAME);
+  });
+
+  it('reads ADOPTER_LOGO_URL', () => {
+    process.env.ADOPTER_LOGO_URL = 'https://cdn.example.com/logo.png';
+    expect(getServerRuntimeConfig().adopterLogoUrl).toBe(
+      'https://cdn.example.com/logo.png',
+    );
   });
 });

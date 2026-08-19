@@ -74,6 +74,7 @@ export default function MyApp({
         telemetryServiceUrl: "",
         enabledTaskTypes: "",
         platformName: DEFAULT_PLATFORM_NAME,
+        adopterLogoUrl: "",
       },
   );
   syncApiClientBaseUrl();

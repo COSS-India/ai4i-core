@@ -7,7 +7,6 @@ import {
   Divider,
   Heading,
   Icon,
-  Image,
   Text,
   useColorModeValue,
   VStack,
@@ -52,8 +51,8 @@ import {
   canSeeServiceCards,
   isUsageDashboardOnlyUser,
 } from "../../utils/rbac";
+import AdopterLogo from "./AdopterLogo";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
-import { getPlatformName } from "../../config/runtimeConfig";
 
 const safeColorMap = {
   [TABS.asr]: { // Coral → Pastel Coral
@@ -656,11 +655,8 @@ const Sidebar: React.FC = () => {
             alignItems="center"
             justifyContent="center"
           >
-            <Image
-              src="/AI4Inclusion_Logo.svg"
-              alt={`${getPlatformName()} Logo`}
+            <AdopterLogo
               boxSize={isExpanded ? 16 : 10}
-              objectFit="contain"
               transition="all 0.2s ease"
             />
           </Box>
