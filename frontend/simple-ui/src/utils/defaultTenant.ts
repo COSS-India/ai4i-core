@@ -14,7 +14,7 @@ export const DEFAULT_TENANT_ASSIGNABLE_ROLES = [
   "ADMIN",
   "MODERATOR",
   "USER",
-  "PROGRAM ADMIN",
+  "USAGE VIEWER",
 ] as const;
 
 export type DefaultTenantAssignableRole = (typeof DEFAULT_TENANT_ASSIGNABLE_ROLES)[number];
@@ -23,7 +23,7 @@ const ASSIGNABLE_ROLE_LABELS: Record<DefaultTenantAssignableRole, string> = {
   ADMIN: "Admin",
   MODERATOR: "Moderator",
   USER: "User",
-  "PROGRAM ADMIN": "Usage Viewer",
+  "USAGE VIEWER": "Usage Viewer",
 };
 
 export function isDefaultTenantAssignableRole(role: string): boolean {
@@ -60,7 +60,7 @@ export function isDefaultTenant(tenant: { organisation?: string | null }): boole
 export const DEFAULT_ORG_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "MODERATOR", label: "Moderator" },
-  { value: "PROGRAM ADMIN", label: "Usage Viewer" },
+  { value: "USAGE VIEWER", label: "Usage Viewer" },
   { value: "ADMIN", label: "Admin" },
 ] as const;
 
@@ -86,7 +86,7 @@ export const DEFAULT_ORG_MANAGED_ROLES = [
   "USER",
   "MODERATOR",
   "GUEST",
-  "PROGRAM ADMIN",
+  "USAGE VIEWER",
   "ADMIN",
   "TENANT ADMIN",
 ] as const;
@@ -97,7 +97,7 @@ const PLATFORM_ROLE_LABELS: Record<string, string> = {
   MODERATOR: "Moderator",
   GUEST: "Guest",
   "TENANT ADMIN": `${INSTITUTION} Admin`,
-  "PROGRAM ADMIN": "Usage Viewer",
+  "USAGE VIEWER": "Usage Viewer",
 };
 
 export function isDefaultOrgUserRole(role: string): role is DefaultOrgUserRole {

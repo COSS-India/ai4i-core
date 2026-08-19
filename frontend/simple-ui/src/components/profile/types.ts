@@ -45,7 +45,7 @@ export type TenantUserFormRole =
   | TenantAssignableRole
   | DefaultOrgUserRole
   | "ADMIN"
-  | "PROGRAM ADMIN"
+  | "USAGE VIEWER"
   /** No longer assignable; retained so existing guests survive a profile-only edit. */
   | "GUEST";
 
