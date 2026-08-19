@@ -748,6 +748,40 @@ class TestModelBreakdown:
         assert result["model_totals"][0]["model_name"] == "test-llm-aug6-3"
         assert result["model_totals"][0]["requests"] == 14
 
+    async def test_effective_model_id_resolved_per_service_not_per_row(self):
+        """A single service_id whose rows are inconsistently labeled across
+        the 3 queries (e.g. the success-count row was scraped before the
+        model_id label existed, but the total/tokens rows for the SAME
+        service already carry it) must resolve to ONE model_id for every
+        one of that service's rows — matching prom_model_id's per-service
+        resolution, the same one `services` already uses at the
+        prom_model_id.get(service_id) or db_model_id line. Resolving per
+        ROW instead would split this service's success count off into a
+        separate (wrongly excluded) empty-model_id bucket, understating
+        the model's success_pct instead of just being consistently whole."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-1", 9)  # no model_id label on this row
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-1", 900, model_id="hash-gemma-v1")
+            return self._row("svc-1", 10, model_id="hash-gemma-v1")
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({"svc-1": ("Svc 1", "hash-gemma-v1", "Gemma 3 27B")})
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        m = result["model_totals"][0]
+        assert m["model_id"] == "hash-gemma-v1"
+        assert m["requests"] == 10
+        assert m["native_units"] == 900.0
+        assert m["success_pct"] == 90.0  # 9/10 — the unlabeled row still attributed correctly
+
     async def test_model_totals_sums_prometheus_and_db_fallback_rows_together(self):
         """One service already carries the Prometheus model_id label,
         another (same model) doesn't yet — both must collapse into the
