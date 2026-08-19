@@ -728,6 +728,22 @@ class ServiceService:
                     ),
                     code="SCHEMA_REQUIRED",
                 )
+            # Legacy-rows-only gap: ModelCreateRequest now requires
+            # `taskType` inside `schema`, but ModelUpdateRequest deliberately
+            # doesn't (PATCH replaces the schema outright, so re-enforcing
+            # completeness there would break editing a model whose schema
+            # predates this rule) — so a model can still legitimately have
+            # a schema with no `taskType` in it. Backfill it from the
+            # model's own `task.type` (required, always populated) rather
+            # than leaving derivation to fail outright on those rows. This
+            # does NOT guarantee agreement with the Service's own `taskType`
+            # from the create payload — the cross-check below still runs
+            # against that value, so a genuine model/service task-type
+            # mismatch now surfaces as SCHEMA_TASK_TYPE_MISMATCH here
+            # instead of SCHEMA_REQUIRED, which is the more accurate error
+            # for that case anyway.
+            model_schema = dict(model_schema)
+            model_schema.setdefault("taskType", (model.task or {}).get("type"))
             schema = [model_schema]
             try:
                 validate_inference_schema_entries(schema)
