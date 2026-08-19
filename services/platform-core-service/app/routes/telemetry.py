@@ -26,6 +26,136 @@ ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
 # is always correct regardless of task type or nesting shape.
 _SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2}
 
+# Safety cap on how many matching trace_ids we'll enumerate to build the
+# by_level/by_task breakdown. Keeps a very large filtered result set from
+# generating an unbounded number of OpenSearch round trips; total (used by
+# the pagination footer and the Total Requests card) is unaffected by this
+# cap since it comes from a single cardinality aggregation.
+_MAX_BREAKDOWN_TRACE_IDS = 20000
+
+
+def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_query: dict, limit: int) -> list:
+    """Enumerate every distinct trace_id matching filter_query, up to `limit`.
+
+    Uses a composite aggregation (not collapse+size) so it isn't bound by
+    OpenSearch's default 10k result-window limit.
+    """
+    trace_ids = []
+    after_key = None
+
+    while len(trace_ids) < limit:
+        composite = {
+            "size": min(10000, limit - len(trace_ids)),
+            "sources": [{"trace_id": {"terms": {"field": "context.trace_id.keyword"}}}],
+        }
+        if after_key:
+            composite["after"] = after_key
+
+        response = opensearch_client.search_traces(
+            query=filter_query,
+            size=0,
+            aggs={"trace_ids": {"composite": composite}},
+        )
+        trace_ids_agg = response.get("aggregations", {}).get("trace_ids", {})
+        buckets = trace_ids_agg.get("buckets", [])
+        if not buckets:
+            break
+
+        trace_ids.extend(bucket["key"]["trace_id"] for bucket in buckets)
+
+        after_key = trace_ids_agg.get("after_key")
+        if not after_key:
+            break
+
+    return trace_ids
+
+
+def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
+    """Reduce raw span hits into one record per trace_id.
+
+    task_type comes from the 'model' span and url from the 'request' span;
+    status is whichever span's status is encountered first in hit order
+    (hits are timestamp-desc by default, so this is the most recent span
+    carrying a defined status). A trace's spans can disagree on status (e.g.
+    a retried request), so this precedence rule is what keeps a trace's
+    status single-valued instead of counted under more than one outcome.
+    """
+    traces_map = {}
+    for hit in hits:
+        source = hit.get("_source", {})
+        trace_id = source.get("context", {}).get("trace_id")
+        if not trace_id:
+            continue
+
+        span_name = source.get("name")
+        attrs = source.get("attributes", {})
+
+        if trace_id not in traces_map:
+            traces_map[trace_id] = {
+                "trace_id": trace_id,
+                "service": source.get("service_name") or "ai4x-inference",
+                "task_type": None,
+                "status": "unknown",
+                "url": None,
+                "tenant_id": tenant_filter or attrs.get("tenantId") or "system",
+                "timestamp": source.get("@timestamp") or source.get("timestamp"),
+            }
+        elif not traces_map[trace_id]["service"] or traces_map[trace_id]["service"] == "ai4x-inference":
+            # Upgrade the service name from a later span if a real name is present
+            if source.get("service_name"):
+                traces_map[trace_id]["service"] = source.get("service_name")
+
+        # Extract task_type from model span
+        if span_name == "model" and not traces_map[trace_id]["task_type"]:
+            traces_map[trace_id]["task_type"] = attrs.get("task_type")
+
+        # Extract url from request span
+        if span_name == "request" and not traces_map[trace_id]["url"]:
+            traces_map[trace_id]["url"] = attrs.get("url")
+
+        # Extract status from any span
+        if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
+            traces_map[trace_id]["status"] = attrs.get("status", "unknown")
+
+    return traces_map
+
+
+# Spans-per-trace ceiling used when sizing a fetch (mirrors Step 3's
+# "generous per-trace span ceiling" below). Keeps batch_size * this under
+# OpenSearch's default 10k result-window limit.
+_SPAN_CEILING_PER_TRACE = 50
+_TRACE_ID_FETCH_BATCH_SIZE = max(1, 10000 // _SPAN_CEILING_PER_TRACE)
+
+
+def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trace_ids: list, tenant_filter: Optional[str]) -> tuple:
+    """Status/task_type breakdown across ALL matching traces (not just the page).
+
+    Reuses the exact same per-trace extraction as the table rows (_build_traces_map)
+    so each trace contributes to exactly one status/task bucket - unlike a raw
+    OpenSearch terms aggregation over spans, which can double-count a trace whose
+    spans disagree on status and would make Success + Failures exceed Total.
+    """
+    by_level = {}
+    by_task = {}
+
+    for start in range(0, len(trace_ids), _TRACE_ID_FETCH_BATCH_SIZE):
+        batch = trace_ids[start:start + _TRACE_ID_FETCH_BATCH_SIZE]
+        trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in batch]
+        spans_response = opensearch_client.search_traces(
+            query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
+            size=len(batch) * _SPAN_CEILING_PER_TRACE,
+            source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
+        )
+        batch_traces = _build_traces_map(spans_response.get("hits", {}).get("hits", []), tenant_filter)
+
+        for trace in batch_traces.values():
+            status_key = trace.get("status") or "unknown"
+            task_key = trace.get("task_type") or "unknown"
+            by_level[status_key] = by_level.get(status_key, 0) + 1
+            by_task[task_key] = by_task.get(task_key, 0) + 1
+
+    return by_level, by_task
+
 
 def _check_permission_ids(request: Request, *allowed: int) -> None:
     """Raise if X-Permission-IDS header does not contain any of the allowed role IDs."""
@@ -185,59 +315,23 @@ async def search_traces_opensearch(
             trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in paginated_trace_ids]
             spans_response = opensearch_client.search_traces(
                 query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
-                size=len(paginated_trace_ids) * 50,  # generous per-trace span ceiling
+                size=len(paginated_trace_ids) * _SPAN_CEILING_PER_TRACE,
                 source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
             )
-
-            for hit in spans_response.get("hits", {}).get("hits", []):
-                source = hit.get("_source", {})
-                trace_id = source.get("context", {}).get("trace_id")
-                if not trace_id:
-                    continue
-
-                span_name = source.get("name")
-                attrs = source.get("attributes", {})
-
-                if trace_id not in traces_map:
-                    traces_map[trace_id] = {
-                        "trace_id": trace_id,
-                        "service": source.get("service_name") or "ai4x-inference",
-                        "task_type": None,
-                        "status": "unknown",
-                        "url": None,
-                        "tenant_id": tenant_filter or attrs.get("tenantId") or "system",
-                        "timestamp": source.get("@timestamp") or source.get("timestamp"),
-                    }
-                elif not traces_map[trace_id]["service"] or traces_map[trace_id]["service"] == "ai4x-inference":
-                    # Upgrade the service name from a later span if a real name is present
-                    if source.get("service_name"):
-                        traces_map[trace_id]["service"] = source.get("service_name")
-
-                # Extract task_type from model span
-                if span_name == "model" and not traces_map[trace_id]["task_type"]:
-                    traces_map[trace_id]["task_type"] = attrs.get("task_type")
-
-                # Extract url from request span
-                if span_name == "request" and not traces_map[trace_id]["url"]:
-                    traces_map[trace_id]["url"] = attrs.get("url")
-
-                # Extract status from any span
-                if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
-                    traces_map[trace_id]["status"] = attrs.get("status", "unknown")
+            traces_map = _build_traces_map(spans_response.get("hits", {}).get("hits", []), tenant_filter)
 
         # Emit in the newest-first order established by the collapse page
         data = [traces_map[tid] for tid in paginated_trace_ids if tid in traces_map]
 
-        # Calculate aggregations
-        by_level = {}
-        by_task = {}
-        for trace in data:
-            # .get(..., "unknown") does not help when the value is explicitly None
-            trace_status = trace.get("status") or "unknown"
-            task_type_key = trace.get("task_type") or "unknown"
-
-            by_level[trace_status] = by_level.get(trace_status, 0) + 1
-            by_task[task_type_key] = by_task.get(task_type_key, 0) + 1
+        # Calculate aggregations across ALL matching traces (not just this page) so the
+        # summary cards match the pagination footer's total instead of the page size.
+        if total > _MAX_BREAKDOWN_TRACE_IDS:
+            logger.warning(
+                f"Trace breakdown capped at {_MAX_BREAKDOWN_TRACE_IDS} of {total} matching "
+                "traces; by_level/by_task counts may undercount for this filter."
+            )
+        all_trace_ids = _collect_all_trace_ids(opensearch_client, filter_query, min(total, _MAX_BREAKDOWN_TRACE_IDS))
+        by_level, by_task = _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
 
         return SearchTracesResponse(
 
@@ -246,7 +340,7 @@ async def search_traces_opensearch(
             page=page,
             pageSize=page_size,
             aggregations={
-                "total": len(data),
+                "total": total,
                 "by_level": by_level,
                 "by_task": by_task,
             }
