@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from ai4i_core.observability import set_billed_state, set_metric_labels
 
-from models.common import GenericInferenceResponse
+from models.common import ChatCompletionRequest, ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
@@ -252,7 +252,7 @@ async def run_llm_try_it(
 
 @router.post(
     "/ner/inference",
-    response_model=None,
+    response_model=GenericInferenceResponse,
     summary="NER Inference Endpoint",
     description="Route inference requests to NER TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -341,7 +341,7 @@ async def run_asr_inference(
 
 @router.post(
     "/tts/inference",
-    response_model=None,
+    response_model=GenericInferenceResponse,
     summary="TTS Inference Endpoint",
     description="Route inference requests to TTS TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -366,7 +366,7 @@ async def run_tts_inference(
 
 @router.post(
     "/audio-lang-detection/inference",
-    response_model=None,
+    response_model=GenericInferenceResponse,
     summary="Audio Language Detection Inference Endpoint",
     description="Route inference requests to Audio Language Detection TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -390,7 +390,7 @@ async def run_audio_lang_detection_inference(
 
 @router.post(
     "/speaker-diarization/inference",
-    response_model=None,
+    response_model=GenericInferenceResponse,
     summary="Speaker Diarization Inference Endpoint",
     description="Route inference requests to Speaker Diarization TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -414,7 +414,7 @@ async def run_speaker_diarization_inference(
 
 @router.post(
     "/language-diarization/inference",
-    response_model=None,
+    response_model=GenericInferenceResponse,
     summary="Language Diarization Inference Endpoint",
     description="Route inference requests to Language Diarization TaskService",
     openapi_extra={"requestBody": {"content": {"application/json": {"example": {
@@ -594,24 +594,28 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
     "/chat/completions",
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses={200: {"model": ChatCompletionResponse, "description": "Successful Response"}},
 )
 async def chat_completions(
     request: Request,
-    payload: Dict[str, Any] = Body(...),
+    payload: ChatCompletionRequest,
 ) -> Response:
-    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
+    """OpenAI-compatible chat completions, proxied verbatim to the upstream LLM."""
+    return await _run_llm_chat(request, payload.model_dump(exclude_unset=True), path="/v1/chat/completions")
 
 
 @router.post(
     "/chat",
     summary="LLM Chat",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
+    responses={200: {"model": ChatCompletionResponse, "description": "Successful Response"}},
 )
 async def chat(
     request: Request,
-    payload: Dict[str, Any] = Body(...),
+    payload: ChatCompletionRequest,
 ) -> Response:
-    return await _run_llm_chat(request, payload, path="/v1/chat/completions")
+    """Alias of /chat/completions; proxied verbatim to the upstream LLM."""
+    return await _run_llm_chat(request, payload.model_dump(exclude_unset=True), path="/v1/chat/completions")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
