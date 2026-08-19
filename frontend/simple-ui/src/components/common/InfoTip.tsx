@@ -1,4 +1,4 @@
-import { Box, HStack, Icon, Th, Tooltip } from "@chakra-ui/react";
+import { Box, HStack, Icon, Text, Th, Tooltip } from "@chakra-ui/react";
 import React from "react";
 import { FiInfo } from "react-icons/fi";
 
@@ -36,7 +36,11 @@ export const ThWithTip: React.FC<ThWithTipProps> = ({
     {...thProps}
   >
     <HStack spacing={1} justify={isNumeric ? "flex-end" : "flex-start"}>
-      {children}
+      {typeof children === "string" ? (
+        <Text as="span" color="inherit">{children}</Text>
+      ) : (
+        children
+      )}
       {message ? <InfoTip message={message} /> : null}
     </HStack>
   </Th>

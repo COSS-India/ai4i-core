@@ -17,16 +17,14 @@ export const ADOPTER_ADMIN_GUIDE_HREF =
 export const ONBOARDING_GUIDE_HREF = INSTITUTION_ADMIN_GUIDE_HREF;
 
 export function canSeeOnboardingGuide(roles?: string[]): boolean {
-  return (
-    isDefaultAdminUser(roles) ||
-    isAdopterAdminUser(roles) ||
-    isTenantAdminUser(roles)
-  );
+  // Moderator (Adopter Admin without platform ADMIN) does not see the guide.
+  if (isAdopterAdminUser(roles)) return false;
+  return isDefaultAdminUser(roles) || isTenantAdminUser(roles);
 }
 
-/** Adopter Admin (ADMIN / MODERATOR) gets the Adopter guide; Institution Admin gets theirs. */
+/** Platform ADMIN gets the Adopter guide; Institution Admin gets theirs. */
 export function getOnboardingGuideHref(roles?: string[]): string {
-  if (isDefaultAdminUser(roles) || isAdopterAdminUser(roles)) {
+  if (isDefaultAdminUser(roles)) {
     return ADOPTER_ADMIN_GUIDE_HREF;
   }
   return INSTITUTION_ADMIN_GUIDE_HREF;
