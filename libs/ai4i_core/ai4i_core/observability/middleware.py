@@ -64,6 +64,13 @@ def _tenant_label(request: Request) -> str:
     return unquote((request.headers.get("X-Tenant-Name") or "").strip()) or "unknown"
 
 
+def _auth_type(request: Request) -> str:
+    """Read the gateway-injected X-Auth-Type header (set by auth-service
+    /validate: "api_key" for API-key calls, the JWT token_type otherwise).
+    """
+    return (request.headers.get("X-Auth-Type") or "").strip()
+
+
 def _tenant_id_label(request: Request) -> str:
     """Read the ``tenant_id`` metric label from the gateway-injected
     X-Tenant-Id header (the tenant's immutable numeric id, set by
@@ -236,6 +243,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # service_id is populated during request handling by model-management.
         tenant_label = _tenant_label(request)
         tenant_id_label = _tenant_id_label(request)
+        auth_type = _auth_type(request)
         # service_id is set on request.state by the route handler for LLM
         # (from payload serviceId before proxy_traced is called) and by the
         # orchestrator for Triton services. Falls back to empty string.
@@ -265,6 +273,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             service_id=service_id,
             status_code=response.status_code,
             duration=duration,
+            auth_type=auth_type,
             billed_input=billed_input,
             billed_output=billed_output,
             source_lang=source_lang,
@@ -321,6 +330,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 service_id=service_id,
                 status_code=status_code,
                 duration=duration,
+                auth_type=_auth_type(request),
                 billed_input=getattr(request.state, "billed_input", None),
                 billed_output=getattr(request.state, "billed_output", None),
                 model=getattr(request.state, "model", "") or "",
@@ -383,6 +393,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_id: str,
         status_code: int,
         duration: float,
+        auth_type: str = "",
         billed_input: Optional[float] = None,
         billed_output: Optional[float] = None,
         source_lang: str = "",
@@ -397,7 +408,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         """
         try:
             # Request count + duration fire for every request, regardless of
-            # whether a billed unit was recorded.
+            # whether a billed unit was recorded. auth_type ("api_key" for
+            # API-key calls, the JWT token_type for UI/session calls, ""
+            # when the gateway doesn't forward X-Auth-Type) rides along as a
+            # label so the metering dashboard can filter request counts down
+            # to API-key traffic without dropping UI traffic from Prometheus.
             self.metrics_collector.track_request(
                 method=method,
                 endpoint=path,
@@ -407,6 +422,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 tenant_id=tenant_id,
                 service_id=service_id,
                 model_id=model_id,
+                auth_type=auth_type,
             )
 
             # Non-2xx or no billed_* set (e.g. a non-inference path, or the
@@ -427,6 +443,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         service_id=service_id,
                         endpoint=path,
                         model_id=model_id,
+                        auth_type=auth_type,
                     )
                 return
 
@@ -439,6 +456,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     tenant=tenant,
                     tenant_id=tenant_id,
                     service_id=service_id,
+                    auth_type=auth_type,
                 )
 
         except Exception:
@@ -454,6 +472,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         tenant: str,
         service_id: str,
         tenant_id: str = "",
+        auth_type: str = "",
     ) -> None:
         """Dispatch billed_input (the single count already used for billing
         and the OpenSearch trace — see trace/span_attributes.py) to the
@@ -469,17 +488,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 self.metrics_collector.track_tts_characters(
                     language=source_lang, characters=billed_input,
                     tenant=tenant, tenant_id=tenant_id, service_id=service_id,
+                    auth_type=auth_type,
                 )
             elif service_type == "translation":
                 self.metrics_collector.track_nmt_characters(
                     source_lang=source_lang, target_lang=target_lang,
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "asr":
                 self.metrics_collector.track_asr_audio_length(
                     language=source_lang, audio_minutes=billed_input,
                     tenant=tenant, tenant_id=tenant_id, service_id=service_id,
+                    auth_type=auth_type,
                 )
             elif service_type == "ocr":
                 # billed_input is an image COUNT (inference_types.yaml unit:
@@ -488,33 +509,33 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # byte-size heuristic it used to compute independently.
                 self.metrics_collector.track_ocr_characters(
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "transliteration":
                 self.metrics_collector.track_transliteration_characters(
                     source_lang=source_lang, target_lang=target_lang,
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "language_detection":
                 self.metrics_collector.track_language_detection_characters(
                     characters=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "audio_lang_detection":
                 self.metrics_collector.track_audio_lang_detection_length(
                     audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "speaker_diarization":
                 self.metrics_collector.track_speaker_diarization_length(
                     audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "language_diarization":
                 self.metrics_collector.track_language_diarization_length(
                     audio_minutes=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
             elif service_type == "ner":
                 # billed_input is a CHARACTER count (inference_types.yaml
@@ -523,7 +544,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # it now carries the same character count billing uses.
                 self.metrics_collector.track_ner_tokens(
                     tokens=billed_input, tenant=tenant, tenant_id=tenant_id,
-                    service_id=service_id,
+                    service_id=service_id, auth_type=auth_type,
                 )
         except Exception:
             if self.config.debug:

@@ -16,6 +16,8 @@ from app.utils.metering_promql_builder import (
     LLM_CHAT_ENDPOINT_REGEX,
     ENDPOINT_TO_TASK,
     PROMETHEUS_API_PATH_LABEL,
+    API_KEY_AUTH_TYPE,
+    api_key_auth_type_selector,
     build_base_selectors,
     build_task_type_selector,
     escape_label_value,
@@ -67,6 +69,7 @@ class MeteringService:
         time_range: Optional[str],
         task_types: Optional[list[str]] = None,
         tenant_id: Optional[str] = None,
+        auth_type: Optional[str] = None,
     ) -> dict:
         """KNOWN CUTOVER GAP when ``tenant_id`` is given (this is the
         single-tenant-scoped Overview view): see build_base_selectors'
@@ -75,10 +78,10 @@ class MeteringService:
         extra = [task_sel] if task_sel else None
         success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
         label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=extra, tenant_id=tenant_id
+            inference_only, tenant, service_id, extra=extra, tenant_id=tenant_id, auth_type=auth_type
         )
         success_label_str = build_base_selectors(
-            inference_only, tenant, service_id, extra=success_extra, tenant_id=tenant_id
+            inference_only, tenant, service_id, extra=success_extra, tenant_id=tenant_id, auth_type=auth_type
         )
         base = f"{_METRIC}{label_str}"
         success_base = f"{_METRIC}{success_label_str}"
@@ -245,7 +248,7 @@ class MeteringService:
         this method's `count` anyway, so the resolved display list is a
         bonus reserved for standalone (unset) calls.
         """
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=True)
         resolve_names = valid_names is _UNSET
         if valid_names is _UNSET:
@@ -307,7 +310,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         promql = f"sum by(tenant_id, tenant)(increase({metric}[{window}] offset {window}) > 0)"
         try:
             rows = await self._client.query(promql)
@@ -329,7 +332,7 @@ class MeteringService:
         window = TIME_RANGES.get(time_range or "all")
         if not window:
             return None
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE)}"
         total_q = f"sum(increase({metric}[{window}] offset {window}))"
         # See active_tenants_count_previous — same (tenant_id, tenant) +
         # _merge_tenant_rows treatment, so this doesn't undercount active
@@ -416,7 +419,7 @@ class MeteringService:
         self, limit: int, time_range: Optional[str], task_types: Optional[list[str]] = None,
     ) -> dict:
         task_sel = build_task_type_selector(task_types)
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, extra=[task_sel] if task_sel else None, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._by_tenant_promql(metric, time_range, filter_zero=False)
         results = await self._client.query(promql)
         rows = [r for r in results if float(r["value"][1]) > 0]
@@ -493,7 +496,10 @@ class MeteringService:
             f',tenant_id="{escape_label_value(tenant_id)}"' if tenant_id
             else (f',tenant="{escape_label_value(tenant)}"' if tenant else "")
         )
-        _base = _ep + ',tenant!="unknown"' + _tenant_part
+        _base = (
+            _ep + ',tenant!="unknown"' + _tenant_part
+            + ',' + api_key_auth_type_selector()
+        )
         base_sel    = "{" + _base + "}"
         success_sel = "{" + _base + ',status_code=~"2.."' + "}"
 
@@ -592,18 +598,18 @@ class MeteringService:
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            tenant_id=tenant_id,
+            tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         success_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX,
-            extra=['status_code=~"2.."'], tenant_id=tenant_id,
+            extra=['status_code=~"2.."'], tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE,
         )
         # telemetry_obsv_llm_tokens_processed_sum now carries tenant_id
         # alongside tenant (see metrics.py) — prefer it, same precedence as
         # build_base_selectors/_native_unit_queries, so tokens stay
         # continuous across a rename instead of resetting next to request
         # counts (from base_sel/success_sel above) that stay continuous.
-        tokens_parts = ['token_type="total"', 'tenant!="unknown"']
+        tokens_parts = ['token_type="total"', 'tenant!="unknown"', api_key_auth_type_selector()]
         if tenant_id:
             tokens_parts.append(f'tenant_id="{escape_label_value(tenant_id)}"')
         elif tenant:
@@ -913,7 +919,7 @@ class MeteringService:
         fixed here, tracked in the ticket. Unscoped (no tenant_id) calls are
         unaffected — they already recover pre-cutover data via the
         (tenant_id, tenant) group-by + _merge_tenant_rows."""
-        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id)}"
+        metric = f"{_METRIC}{build_base_selectors(inference_only=True, tenant=tenant, tenant_id=tenant_id, auth_type=API_KEY_AUTH_TYPE)}"
         promql = self._tenant_delta_promql(metric, time_range)
         results = await self._client.query(promql)
         rows = [r for r in results if float(r["value"][1]) > 0]
@@ -1093,7 +1099,7 @@ class MeteringService:
             f',tenant_id="{escape_label_value(tenant_id)}"' if tenant_id
             else (f',tenant="{escape_label_value(tenant)}"' if tenant else '')
         )
-        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_part + '}'
+        base_sel = '{' + _ep + ',tenant!="unknown"' + _tenant_part + ',' + api_key_auth_type_selector() + '}'
         metric = f"{_METRIC}{base_sel}"
         window = TIME_RANGES.get(time_range or "all")
 
@@ -1203,6 +1209,7 @@ class MeteringService:
                 parts = [f'tenant="{escape_label_value(tenant)}"']
             else:
                 parts = []
+            parts.append(api_key_auth_type_selector())
             parts.extend(extra)
             sel = "{" + ",".join(parts) + "}" if parts else ""
             # Use increase()-based counting (via sum_over_window), NOT a raw
