@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -304,13 +305,89 @@ async def handle_ppu_usage(msg: Message) -> None:
     await _post_billing(outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, outcome.pricing.task_type)
 
 
+_NOTIFY_AUTH_MAX_ATTEMPTS = 3
+_NOTIFY_AUTH_BACKOFF_BASE_S = 0.5
+# Full per-attempt timeout: set_budget_exhausted_for_tenant is not a constant-
+# time flag write — it walks every user in the tenant with one list_by_user
+# query each (api_key_service.py:358) — so a large tenant genuinely needs the
+# whole 5s, and an attempt timing out doesn't mean the write itself failed
+# (it may land after we've moved on). Shortening this would time out attempts
+# that were about to succeed and just relabel that as "enforcement flag NOT
+# set". Bound the *total* time some other way (see _NOTIFY_AUTH_DEADLINE_S)
+# instead of starving individual attempts.
+_NOTIFY_AUTH_TIMEOUT_S = 5.0
+# Overall deadline across all attempts of one _notify_auth call, checked only
+# between attempts (never mid-flight, so an in-progress attempt always keeps
+# its full 5s). main.py's consumer processes one message at a time, and
+# _post_billing can call this twice (wallet + quota) — without a cap, 3 slow
+# (5s) attempts x2 calls would hold that single message for 33s. This bounds
+# a slow-auth-service run to ~2 attempts (~10.5s) per call; a fast-failing
+# one (connection refused, etc.) still gets all 3 attempts, since that only
+# costs ~1.5s of backoff.
+_NOTIFY_AUTH_DEADLINE_S = 10.0
+
+
 async def _notify_auth(path: str, body: dict) -> None:
-    """POST to auth-service internal endpoint to update API key Redis flags."""
+    """POST to auth-service internal endpoint to update API key Redis flags.
+
+    Retries transport errors and 5xx/429 responses with exponential backoff
+    (0.5s/1s) — this call is the only thing that flips /auth/validate's
+    budget/quota-exhausted Redis flag (see routes/validation.py::
+    _validate_api_key). A 4xx other than 429 (e.g. a malformed tenant_id,
+    see app/routes/internal.py) is a permanent misconfiguration, not a
+    transient failure, so it fails fast instead of burning the whole retry
+    budget on something that can never succeed.
+
+    This narrows the enforcement gap, it doesn't close it: whichever way
+    this gives up — retries exhausted, deadline spent, or a permanent
+    rejection — the flag stays unset. By then the span is already marked
+    billed in Redis (see handle_ppu_usage), so a Kafka redelivery of *this*
+    span won't re-fire the notification — recovery still depends on this
+    tenant's next billed request re-triggering it. A durable fix (a
+    persisted outbox retried by a background job, or a periodic
+    reconciliation job comparing wallet balances to Redis flags) is tracked
+    as separate follow-up work, not attempted here.
+
+    One AsyncClient is reused across attempts (shared connection pool)
+    rather than opened fresh per attempt.
+    """
     url = f"{settings.AUTH_SERVICE_URL}{path}"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(url, json=body)
-            resp.raise_for_status()
-    except Exception as exc:
-        # Log and continue — billing event must not fail over a notification error.
-        logger.error("Failed to notify auth-service %s: %s", url, exc)
+    deadline = asyncio.get_running_loop().time() + _NOTIFY_AUTH_DEADLINE_S
+    async with httpx.AsyncClient(timeout=_NOTIFY_AUTH_TIMEOUT_S) as client:
+        for attempt in range(1, _NOTIFY_AUTH_MAX_ATTEMPTS + 1):
+            try:
+                resp = await client.post(url, json=body)
+                resp.raise_for_status()
+                return
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status < 500 and status != 429:
+                    # Alert-worthy, same phrasing as the exhausted-retries path below:
+                    # this is the worse of the two give-up modes — it fails identically
+                    # on every attempt, so it never self-heals the way a transient
+                    # failure does (a later billed request naturally retries that one).
+                    logger.error(
+                        "auth-service rejected notification with permanent %d error — "
+                        "budget/quota enforcement flag NOT set | url=%s body=%s",
+                        status, url, body,
+                    )
+                    return
+                last_exc = exc
+            except Exception as exc:
+                last_exc = exc
+
+            if attempt == _NOTIFY_AUTH_MAX_ATTEMPTS or asyncio.get_running_loop().time() >= deadline:
+                # Log and continue — billing event must not fail over a notification
+                # error. Alert-worthy: the exhaustion flag was NOT set, so enforcement
+                # for this tenant silently lapses until their next billed request.
+                logger.error(
+                    "Failed to notify auth-service after %d attempt(s) — budget/quota "
+                    "enforcement flag NOT set | url=%s body=%s error=%s",
+                    attempt, url, body, last_exc,
+                )
+                return
+            logger.warning(
+                "auth-service notify failed, retrying (attempt %d/%d) | url=%s error=%s",
+                attempt, _NOTIFY_AUTH_MAX_ATTEMPTS, url, last_exc,
+            )
+            await asyncio.sleep(_NOTIFY_AUTH_BACKOFF_BASE_S * (2 ** (attempt - 1)))
