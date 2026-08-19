@@ -35,10 +35,14 @@ _MAX_BREAKDOWN_TRACE_IDS = 20000
 
 
 def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_query: dict, limit: int) -> list:
-    """Enumerate every distinct trace_id matching filter_query, up to `limit`.
+    """Get the ID of every log that matches the current filters - not just one page's worth.
 
-    Uses a composite aggregation (not collapse+size) so it isn't bound by
-    OpenSearch's default 10k result-window limit.
+    OpenSearch refuses to return more than 10,000 results in a single request,
+    so this asks for results in batches (a "composite" aggregation, which comes
+    with a bookmark called `after_key`) and keeps asking for the next batch
+    until either every matching trace_id has been collected or `limit` is
+    reached. `limit` exists so a filter that matches an extreme number of
+    traces can't turn into an unbounded number of requests.
     """
     trace_ids = []
     after_key = None
@@ -71,14 +75,22 @@ def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_quer
 
 
 def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
-    """Reduce raw span hits into one record per trace_id.
+    """Turn a list of raw span records into one summary record per trace (log).
 
-    task_type comes from the 'model' span and url from the 'request' span;
-    status is whichever span's status is encountered first in hit order
-    (hits are timestamp-desc by default, so this is the most recent span
-    carrying a defined status). A trace's spans can disagree on status (e.g.
-    a retried request), so this precedence rule is what keeps a trace's
-    status single-valued instead of counted under more than one outcome.
+    A single log is made up of several spans (request, model, ai-inference),
+    each carrying different pieces of information: task_type lives on the
+    'model' span, url lives on the 'request' span, and status can show up on
+    more than one span. This walks the spans and, per trace_id, keeps the
+    task_type from the 'model' span, the url from the 'request' span, and the
+    first non-unknown status it sees (hits arrive newest-first, so that's the
+    most recent span with a defined status - a trace's spans can disagree,
+    e.g. a retried request, so this rule is what keeps each trace's status
+    single-valued instead of double-counted later).
+
+    This logic itself is unchanged from before this fix - it used to be
+    written inline, once, only for the current page. It's now its own
+    function so `_compute_full_breakdown` below can reuse the exact same
+    rule instead of re-implementing it a second, possibly inconsistent, way.
     """
     traces_map = {}
     for hit in hits:
@@ -128,12 +140,19 @@ _TRACE_ID_FETCH_BATCH_SIZE = max(1, 10000 // _SPAN_CEILING_PER_TRACE)
 
 
 def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trace_ids: list, tenant_filter: Optional[str]) -> tuple:
-    """Status/task_type breakdown across ALL matching traces (not just the page).
+    """Count success/failure and task_type across ALL matching logs - not just the page.
 
-    Reuses the exact same per-trace extraction as the table rows (_build_traces_map)
-    so each trace contributes to exactly one status/task bucket - unlike a raw
-    OpenSearch terms aggregation over spans, which can double-count a trace whose
-    spans disagree on status and would make Success + Failures exceed Total.
+    This is what the "Success" and "Failures" summary cards are built from.
+    It takes the full list of trace_ids (from _collect_all_trace_ids), fetches
+    their spans in batches of _TRACE_ID_FETCH_BATCH_SIZE (to stay under
+    OpenSearch's 10k-results-per-request limit), and reduces each batch with
+    _build_traces_map so every trace resolves to exactly one status and one
+    task_type before it's tallied.
+
+    Tallying after that per-trace reduction - instead of running a raw
+    OpenSearch aggregation directly over the span documents - is what
+    guarantees Success + Failures always adds up to Total: a trace can't get
+    counted twice just because two of its spans disagree on the outcome.
     """
     by_level = {}
     by_task = {}
@@ -218,7 +237,15 @@ async def search_traces_opensearch(
     opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
 ):
     """
-    Search traces from OpenSearch using direct queries on nested fields.
+    Search traces from OpenSearch for the Logs Dashboard.
+
+    Returns one page of matching logs (`data`) plus the true pagination
+    `total`, and separately, summary counts (`aggregations`: total,
+    by_level, by_task) covering EVERY log that matches the filters - not
+    just the page being returned. The two are computed differently: `data`
+    and `total` come from a single query (Step 2 below); the summary counts
+    require looking at every matching log, so they're built via
+    _collect_all_trace_ids + _compute_full_breakdown further down.
     """
 
     # Validate user has one of the allowed roles (1, 2, or 5)
