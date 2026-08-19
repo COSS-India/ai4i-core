@@ -6,6 +6,7 @@ import {
   USAGE_SPEND_WARNING,
   formatSpendMoney,
   formatSpendUnit,
+  formatSpendUnitCompact,
   formatSpendUnitExact,
   spendBarColor,
   tenantAvatarBg,
@@ -182,6 +183,7 @@ export function UsageCell({
   percentage,
   unit,
   layout = "standard",
+  compact = false,
 }: Readonly<{
   consumed: number;
   quotaLimit?: number | null;
@@ -189,21 +191,24 @@ export function UsageCell({
   percentage?: number | null;
   unit: string;
   layout?: RatioBarLayout;
+  compact?: boolean;
 }>) {
   const limit = quotaLimit ?? 0;
   const used = consumed ?? 0;
   const left = remaining ?? Math.max(0, limit - used);
   const pct = percentage ?? (limit > 0 ? (used / limit) * 100 : 0);
+  const fmt = compact ? formatSpendUnitCompact : formatSpendUnit;
+  const exactTooltip = `${formatSpendUnitExact(used, unit)} of ${formatSpendUnitExact(limit, unit)} · ${ratioTooltip(pct)}`;
 
   if (layout === "topRight") {
     return (
       <RatioBar
         pct={pct}
-        main={formatSpendUnit(used, unit)}
-        caption={`${formatSpendUnit(Math.max(left, 0), unit)} available`}
+        main={fmt(used, unit)}
+        caption={`${fmt(Math.max(left, 0), unit)} available`}
         captionTone={pct >= 90 ? "warn" : "muted"}
         layout="topRight"
-        tooltip={ratioTooltip(pct)}
+        tooltip={compact ? exactTooltip : ratioTooltip(pct)}
       />
     );
   }
@@ -211,10 +216,10 @@ export function UsageCell({
   return (
     <RatioBar
       pct={pct}
-      main={formatSpendUnit(used, unit)}
-      of={`of ${formatSpendUnit(limit, unit)}`}
-      caption={`${formatSpendUnit(Math.max(left, 0), unit)} left · ${pct.toFixed(0)}%`}
-      tooltip={`${formatSpendUnitExact(used, unit)} of ${formatSpendUnitExact(limit, unit)} · ${ratioTooltip(pct)}`}
+      main={fmt(used, unit)}
+      of={`of ${fmt(limit, unit)}`}
+      caption={`${fmt(Math.max(left, 0), unit)} left · ${pct.toFixed(0)}%`}
+      tooltip={compact ? exactTooltip : undefined}
     />
   );
 }
@@ -275,10 +280,13 @@ export function TaskTypeLabel({
   fontSize?: string;
   fontWeight?: string;
 }) {
+  const label = formatModelTaskTypeLabel(taskType);
   return (
-    <HStack spacing={2} fontSize={fontSize} fontWeight={fontWeight}>
+    <HStack spacing={2} fontSize={fontSize} fontWeight={fontWeight} minW={0}>
       <Box w="8px" h="8px" borderRadius="full" bg={color} flexShrink={0} />
-      <Text>{formatModelTaskTypeLabel(taskType)}</Text>
+      <Tooltip label={label} hasArrow placement="top" openDelay={400}>
+        <Text noOfLines={1}>{label}</Text>
+      </Tooltip>
     </HStack>
   );
 }

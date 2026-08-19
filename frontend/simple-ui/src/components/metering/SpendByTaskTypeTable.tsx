@@ -127,8 +127,8 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
             const share = totalSpend > 0 ? ((t.spend / totalSpend) * 100).toFixed(1) : "0.0";
             const color = taskTypeColor(t.taskType, idx);
             return (
-              <Tr key={`${"tierName" in row ? row.tierName : ""}-${t.taskType}-${idx}`} h="74px">
-                <Td verticalAlign="middle">
+              <Tr key={`${"tierName" in row ? row.tierName : ""}-${t.taskType}-${idx}`}>
+                <Td>
                   <TaskTypeLabel
                     taskType={t.taskType}
                     color={color}
@@ -136,19 +136,20 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
                     fontWeight="semibold"
                   />
                 </Td>
-                <Td verticalAlign="middle">
+                <Td>
                   <UsageCell
                     consumed={t.consumed}
                     quotaLimit={t.quotaLimit}
                     remaining={t.remaining}
                     percentage={quotaUsagePercentage(t)}
                     unit={t.unit}
+                    compact
                   />
                 </Td>
-                <Td fontSize="sm" isNumeric verticalAlign="middle">
+                <Td fontSize="sm" isNumeric>
                   {formatSpendMoney(t.spend, currency)}
                 </Td>
-                <Td fontSize="12.5px" color="gray.500" isNumeric verticalAlign="middle">
+                <Td fontSize="12.5px" color="gray.500" isNumeric>
                   {share}%
                 </Td>
               </Tr>
