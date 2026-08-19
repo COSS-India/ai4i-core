@@ -1270,7 +1270,7 @@ function PiiMappingDetailModal({
           </Text>
           <Box>
             <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              Tenant ID
+              {INSTITUTION} ID
             </Text>
             <Text fontSize="sm" fontFamily="mono">
               {mapping.tenant_id}

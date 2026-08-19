@@ -1033,7 +1033,7 @@ export default function TenantManagementTab({
                 )}
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
                   <Box>
-                    <Text fontWeight="semibold">Tenant ID</Text>
+                    <Text fontWeight="semibold">{INSTITUTION} ID</Text>
                     <Text fontFamily="mono">{t.tenant_id}</Text>
                   </Box>
                   <Box>
