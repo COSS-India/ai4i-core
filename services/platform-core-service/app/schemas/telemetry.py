@@ -69,6 +69,10 @@ class SearchTraceAggregations(BaseModel):
     total: int
     by_level: Optional[Dict[str, int]] = None
     by_task: Optional[Dict[str, int]] = None
+    # True when the matching set exceeded the server's breakdown cap
+    # (_MAX_BREAKDOWN_TRACE_IDS) - by_level/by_task then cover only a subset
+    # of `total` and should be treated as partial rather than exact.
+    partial: bool = False
 
 
 class SearchTracesResponse(BaseModel):

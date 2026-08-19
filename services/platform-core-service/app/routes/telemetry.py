@@ -1,5 +1,6 @@
 """Telemetry API endpoints for querying traces."""
 import re
+import asyncio
 import logging
 from typing import Optional
 
@@ -30,9 +31,21 @@ _SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2}
 # by_level/by_task breakdown. Keeps a very large filtered result set from
 # generating an unbounded number of OpenSearch round trips; total (used by
 # the pagination footer and the Total Requests card) is unaffected by this
-# cap since it comes from a single cardinality aggregation.
+# cap since it comes from a single cardinality aggregation. Above this cap,
+# composite aggregation buckets come back in ascending lexicographic order
+# of trace_id (not recency), so the covered slice is an arbitrary sample,
+# not "the most recent N" - callers must treat by_level/by_task as partial
+# when aggregations.partial is set.
 _MAX_BREAKDOWN_TRACE_IDS = 20000
 
+# Cap the cardinality aggregation's exactness to the same bound as the
+# breakdown enumeration above, so `total` (the pagination/Total Requests
+# figure) and sum(by_level.values()) (an exact enumeration) can't silently
+# disagree within that range. Without this, OpenSearch's cardinality agg is
+# only exact up to its default precision_threshold (3000) and falls back to
+# an approximate HyperLogLog++ estimate beyond it - which would drift from
+# the exact breakdown count at the ticket's own reported scale (11,401).
+_TOTAL_PRECISION_THRESHOLD = min(_MAX_BREAKDOWN_TRACE_IDS, 40000)  # 40000 is OpenSearch's own hard ceiling
 
 def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_query: dict, limit: int) -> list:
     """Get the ID of every log that matches the current filters - not just one page's worth.
@@ -43,6 +56,16 @@ def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_quer
     until either every matching trace_id has been collected or `limit` is
     reached. `limit` exists so a filter that matches an extreme number of
     traces can't turn into an unbounded number of requests.
+
+    Raises RuntimeError if a page comes back without an "aggregations" key,
+    which signals the query itself failed (rejected/malformed query, cluster
+    error, etc - `OpenSearchTraceClient.search_traces` swallows the real
+    exception and returns a bare hits-only dict with no "aggregations" key
+    at all). Treating that missing key the same as "no more matching traces"
+    is what silently produced Success: 0 / Failures: 0 next to a correct
+    Total earlier in this fix's history (a rejected aggregation query looks
+    identical to "search finished" unless this is checked explicitly) - so
+    this fails loudly instead of guessing.
     """
     trace_ids = []
     after_key = None
@@ -60,7 +83,14 @@ def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_quer
             size=0,
             aggs={"trace_ids": {"composite": composite}},
         )
-        trace_ids_agg = response.get("aggregations", {}).get("trace_ids", {})
+
+        if "aggregations" not in response:
+            raise RuntimeError(
+                "OpenSearch composite aggregation for trace enumeration returned no "
+                "aggregations - the query likely failed; see server logs for the underlying error."
+            )
+
+        trace_ids_agg = response["aggregations"].get("trace_ids", {})
         buckets = trace_ids_agg.get("buckets", [])
         if not buckets:
             break
@@ -132,41 +162,98 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
     return traces_map
 
 
-# Spans-per-trace ceiling used when sizing a fetch (mirrors Step 3's
-# "generous per-trace span ceiling" below). Keeps batch_size * this under
-# OpenSearch's default 10k result-window limit.
+# Spans-per-trace ceiling used when sizing Step 3's per-page span fetch below.
+# Keeps page_size * this under OpenSearch's default 10k result-window limit.
 _SPAN_CEILING_PER_TRACE = 50
-_TRACE_ID_FETCH_BATCH_SIZE = max(1, 10000 // _SPAN_CEILING_PER_TRACE)
+
+# The breakdown's own, tighter per-trace span ceiling (vs. Step 3's 50 above).
+# ~3 spans/trace has been observed in this index; 15 keeps a 5x margin over
+# that while allowing much bigger batches - and therefore far fewer
+# OpenSearch round trips - than reusing Step 3's more conservative ceiling
+# would (10000 // 15 = 666 trace_ids per batch, vs 10000 // 50 = 200).
+_BREAKDOWN_SPAN_CEILING_PER_TRACE = 15
+_BREAKDOWN_BATCH_SIZE = max(1, 10000 // _BREAKDOWN_SPAN_CEILING_PER_TRACE)
+
+# How many of those batch fetches run at once. Each is a blocking OpenSearch
+# call offloaded to a worker thread (see _compute_full_breakdown), so this
+# bounds how many worker threads - and how much concurrent load on the
+# OpenSearch cluster - one dashboard request can use at a time.
+_BREAKDOWN_CONCURRENCY = 5
 
 
-def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trace_ids: list, tenant_filter: Optional[str]) -> tuple:
+async def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trace_ids: list, tenant_filter: Optional[str]) -> tuple:
     """Count success/failure and task_type across ALL matching logs - not just the page.
 
     This is what the "Success" and "Failures" summary cards are built from.
     It takes the full list of trace_ids (from _collect_all_trace_ids), fetches
-    their spans in batches of _TRACE_ID_FETCH_BATCH_SIZE (to stay under
-    OpenSearch's 10k-results-per-request limit), and reduces each batch with
-    _build_traces_map so every trace resolves to exactly one status and one
-    task_type before it's tallied.
+    their spans in batches of _BREAKDOWN_BATCH_SIZE, and reduces each batch
+    with _build_traces_map so every trace resolves to exactly one status and
+    one task_type before it's tallied. Tallying after that per-trace
+    reduction - instead of a raw OpenSearch aggregation over span documents -
+    is what guarantees Success + Failures always adds up to Total: a trace
+    can't get counted twice just because two of its spans disagree.
 
-    Tallying after that per-trace reduction - instead of running a raw
-    OpenSearch aggregation directly over the span documents - is what
-    guarantees Success + Failures always adds up to Total: a trace can't get
-    counted twice just because two of its spans disagree on the outcome.
+    Each batch re-fetches its trace_ids' spans unfiltered by the original
+    query filters (same as Step 3 already does for the page), rather than
+    reusing whatever documents happened to satisfy those filters. This
+    matters concretely: a `task_types` filter only matches the 'model'/
+    'ai-inference' spans (they're the only spans carrying attributes.task_type)
+    - the 'request' span, which carries attributes.status, never matches
+    that filter at all. An earlier version of this function tried folding
+    classification directly into the filtered enumeration query via a
+    top_hits sub-aggregation to cut down on round trips, and it was verified
+    against live data (task_types filter active, exactly this ticket's own
+    repro) to silently miscount a Failure trace as Success, because the
+    'request' span carrying its real status was outside that filtered
+    aggregation's document set entirely - not just outside the top_hits
+    window size. This function fetches by trace_id only, with no filter
+    reuse, specifically to avoid that.
+
+    Batches run concurrently (bounded by _BREAKDOWN_CONCURRENCY, via
+    asyncio.to_thread) instead of one after another. `opensearch_client`'s
+    underlying HTTP client is synchronous, so a naive sequential loop here
+    blocks this async request handler's event loop for the entire fan-out -
+    at the ticket's reported scale of 11,401 traces that was ~58 sequential
+    blocking calls with _SPAN_CEILING_PER_TRACE's batch size; at
+    _BREAKDOWN_BATCH_SIZE it's ~18 calls, and running them concurrently
+    keeps the event loop free to serve other requests while they're in
+    flight instead of stalling on them one at a time.
     """
+    if not trace_ids:
+        return {}, {}
+
     by_level = {}
     by_task = {}
+    semaphore = asyncio.Semaphore(_BREAKDOWN_CONCURRENCY)
+    batches = [trace_ids[i:i + _BREAKDOWN_BATCH_SIZE] for i in range(0, len(trace_ids), _BREAKDOWN_BATCH_SIZE)]
 
-    for start in range(0, len(trace_ids), _TRACE_ID_FETCH_BATCH_SIZE):
-        batch = trace_ids[start:start + _TRACE_ID_FETCH_BATCH_SIZE]
+    async def fetch_batch(batch: list) -> dict:
         trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in batch]
-        spans_response = opensearch_client.search_traces(
-            query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
-            size=len(batch) * _SPAN_CEILING_PER_TRACE,
-            source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
-        )
-        batch_traces = _build_traces_map(spans_response.get("hits", {}).get("hits", []), tenant_filter)
+        async with semaphore:
+            return await asyncio.to_thread(
+                opensearch_client.search_traces,
+                query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
+                size=len(batch) * _BREAKDOWN_SPAN_CEILING_PER_TRACE,
+                source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
+            )
 
+    responses = await asyncio.gather(*(fetch_batch(batch) for batch in batches))
+
+    for batch, response in zip(batches, responses):
+        hits = response.get("hits", {}).get("hits", [])
+        if not hits:
+            # Every trace_id in `batch` was just enumerated as matching the filters,
+            # so a batch of zero spans for known-existing traces is suspicious - most
+            # likely the same silent-failure pattern _collect_all_trace_ids guards
+            # against, but a plain (non-aggregation) search response has no
+            # equivalent structural signal to detect it for certain, so this can
+            # only warn rather than raise.
+            logger.warning(
+                f"Trace breakdown batch of {len(batch)} known trace_ids returned zero spans; "
+                "OpenSearch may have failed silently for this batch (see client-level logs)."
+            )
+
+        batch_traces = _build_traces_map(hits, tenant_filter)
         for trace in batch_traces.values():
             status_key = trace.get("status") or "unknown"
             task_key = trace.get("task_type") or "unknown"
@@ -319,7 +406,10 @@ async def search_traces_opensearch(
             from_=offset,
             source_fields=["context.trace_id"],
             collapse={"field": "context.trace_id.keyword"},
-            aggs={"trace_count": {"cardinality": {"field": "context.trace_id.keyword"}}},
+            aggs={"trace_count": {"cardinality": {
+                "field": "context.trace_id.keyword",
+                "precision_threshold": _TOTAL_PRECISION_THRESHOLD,
+            }}},
         )
 
         # Total count is the number of matching traces (not spans)
@@ -352,13 +442,14 @@ async def search_traces_opensearch(
 
         # Calculate aggregations across ALL matching traces (not just this page) so the
         # summary cards match the pagination footer's total instead of the page size.
-        if total > _MAX_BREAKDOWN_TRACE_IDS:
+        is_partial = total > _MAX_BREAKDOWN_TRACE_IDS
+        if is_partial:
             logger.warning(
                 f"Trace breakdown capped at {_MAX_BREAKDOWN_TRACE_IDS} of {total} matching "
-                "traces; by_level/by_task counts may undercount for this filter."
+                "traces; by_level/by_task counts are partial for this filter."
             )
         all_trace_ids = _collect_all_trace_ids(opensearch_client, filter_query, min(total, _MAX_BREAKDOWN_TRACE_IDS))
-        by_level, by_task = _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
+        by_level, by_task = await _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
 
         return SearchTracesResponse(
 
@@ -370,6 +461,7 @@ async def search_traces_opensearch(
                 "total": total,
                 "by_level": by_level,
                 "by_task": by_task,
+                "partial": is_partial,
             }
         )
 
