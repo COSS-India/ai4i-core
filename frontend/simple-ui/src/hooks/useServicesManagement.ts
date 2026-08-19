@@ -97,6 +97,8 @@ export function useServicesManagement() {
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+ 
+  const [createFormEpoch, setCreateFormEpoch] = useState(0);
   const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(
     null,
   );
@@ -606,6 +608,7 @@ export function useServicesManagement() {
   }, [queryClient]);
 
   const resetCreateForm = () => {
+    setCreateFormEpoch((n) => n + 1);
     setFormData(emptyServiceForm());
     setPricePerUnit("");
     setUnitSize("");
@@ -809,36 +812,50 @@ export function useServicesManagement() {
    * ULCA length rules — create only. PATCH does not carry them, so an edit
    * of a pre-existing service that predates these limits stays submittable.
    */
-  const isCreateMode = !editingService;
-  const serviceIdLengthError = isCreateMode
-    ? validateServiceIdLength(formData.serviceId)
-    : null;
   /**
-   * LLM services copy the Service ID into `name`, so the ID must also clear
-   * the tighter 5-100 name rule there.
-   */
-  const llmServiceIdNameError =
-    isCreateMode &&
-    isLlmTaskType &&
-    (formData.serviceId || "").trim().length > SERVICE_NAME_MAX_LEN
-      ? `Service ID must not exceed ${SERVICE_NAME_MAX_LEN} characters, because it is also used as the Service Name.`
-      : null;
-  /**
-   * Only the duplicate-ID clash is surfaced as a field error — it is the one
-   * failure an admin cannot infer from the disabled Create button. The length
-   * rules below gate the button and are explained by each field's hint text.
+   * Registry-state clash — surfaced immediately, since unlike the length
+   * rules it cannot be stated up-front in hint text.
    */
   const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
+
+  /**
+   * ULCA length/charset rules — create only. PATCH carries none of them, so
+   * editing a service that predates these limits stays submittable.
+   *
+   * Each value doubles as the field's error message (the form reveals it
+   * once that field has been blurred) and as a Create-button gate. A short
+   * description looks filled in, so the disabled button alone would not say
+   * which field is at fault.
+   */
+  const isCreateMode = !editingService;
   const serviceDescriptionError = isCreateMode
     ? validateServiceDescription(formData.serviceDescription)
     : null;
-  // LLM services derive their name from the Service ID, so the name rule is
-  // only user-facing for non-LLM tasks.
+  // LLM derives its name from the Service ID, so the separate Service Name
+  // field only exists — and only needs validating — for non-LLM tasks.
   const serviceNameError =
     isCreateMode && !isLlmTaskType ? validateServiceName(formData.name) : null;
   const hardwareDescriptionError = isCreateMode
     ? validateHardwareDescription(formData.hardwareDescription)
     : null;
+  /**
+   * Service ID length, plus the tighter name cap when the ID doubles as the
+   * Service Name. Kept apart from `serviceIdError` so the duplicate clash
+   * can show immediately while this one waits for blur.
+   */
+  const serviceIdLengthError = !isCreateMode
+    ? null
+    : (validateServiceIdLength(formData.serviceId) ??
+      (isLlmTaskType &&
+      (formData.serviceId || "").trim().length > SERVICE_NAME_MAX_LEN
+        ? `Service ID must not exceed ${SERVICE_NAME_MAX_LEN} characters, because it is also used as the Service Name.`
+        : null));
+
+  const meetsCreateFieldRules =
+    !serviceDescriptionError &&
+    !serviceNameError &&
+    !hardwareDescriptionError &&
+    !serviceIdLengthError;
 
   // LLM: Service Name is derived from Service ID (not shown). Non-LLM: both required.
   const hasRequiredServiceIdentity = isLlmTaskType
@@ -848,11 +865,7 @@ export function useServicesManagement() {
   const canCreateService =
     hasRequiredServiceIdentity &&
     !serviceIdExists &&
-    !serviceIdLengthError &&
-    !llmServiceIdNameError &&
-    !serviceDescriptionError &&
-    !serviceNameError &&
-    !hardwareDescriptionError &&
+    meetsCreateFieldRules &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
@@ -942,6 +955,7 @@ export function useServicesManagement() {
             .filter((id): id is string => !!id);
       setSelectedTiers(tierIds);
       setEditingService(service);
+      setCreateFormEpoch((n) => n + 1);
       // Fill model name/submission date from the model record (read-only display)
       if (modelId) {
         handleModelNameChange(modelId);
@@ -1257,6 +1271,11 @@ export function useServicesManagement() {
     canCreateService,
     isLlmTaskType,
     serviceIdError,
+    serviceIdLengthError,
+    serviceDescriptionError,
+    serviceNameError,
+    hardwareDescriptionError,
+    createFormEpoch,
     isSubmitting,
     handleSubmit,
     handleCancelForm,

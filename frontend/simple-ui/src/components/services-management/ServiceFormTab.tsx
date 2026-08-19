@@ -41,6 +41,7 @@ import {
   SERVICE_ID_MIN_LEN,
   SERVICE_NAME_MAX_LEN,
   SERVICE_NAME_MIN_LEN,
+  sanitizeServiceName,
 } from "./serviceFormValidation";
 
 /** Billing unit-size presets shown as a dropdown. */
@@ -74,6 +75,10 @@ interface ServiceFormTabProps {
   canCreateService: boolean;
   isLlmTaskType: boolean;
   serviceIdError?: string | null;
+  serviceIdLengthError?: string | null;
+  serviceDescriptionError?: string | null;
+  serviceNameError?: string | null;
+  hardwareDescriptionError?: string | null;
   isSubmitting: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
@@ -116,6 +121,10 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
   canCreateService,
   isLlmTaskType,
   serviceIdError,
+  serviceIdLengthError,
+  serviceDescriptionError,
+  serviceNameError,
+  hardwareDescriptionError,
   isSubmitting,
   onSubmit,
   onCancel,
@@ -127,6 +136,18 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
     }
     return opts;
   }, [unitSize]);
+
+  const [blurred, setBlurred] = useState<Record<string, boolean>>({});
+  const markBlurred = (field: string) =>
+    setBlurred((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  const afterBlur = (field: string, error?: string | null): string | null =>
+    blurred[field] ? (error ?? null) : null;
+
+  const nameError = afterBlur("name", serviceNameError);
+  const descriptionError = afterBlur("serviceDescription", serviceDescriptionError);
+  const infraError = afterBlur("hardwareDescription", hardwareDescriptionError);
+  // Duplicate clash wins and shows immediately; length waits for blur.
+  const idError = serviceIdError ?? afterBlur("serviceId", serviceIdLengthError);
 
   const [tierSearch, setTierSearch] = useState("");
   const filteredTiers = useMemo(() => {
@@ -256,25 +277,32 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
             {/* Service Name (non-LLM) + Service ID */}
             {showServiceName && (
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={!!nameError}>
                 <FormLabel fontWeight="semibold">Service Name</FormLabel>
                 <Input
                   value={formData.name || ""}
-                  onChange={(e) => onInputChange("name", e.target.value)}
+                  onBlur={() => markBlurred("name")}
+                  onChange={(e) =>
+                    onInputChange("name", sanitizeServiceName(e.target.value))
+                  }
                   placeholder="Enter service name e.g. asr-conformer-gpu"
                   bg={editingService ? "gray.50" : "white"}
                   isReadOnly={!!editingService}
                 />
-                {!editingService && (
-                  <FormHelperText fontSize="xs" color="gray.500">
-                    {SERVICE_NAME_MIN_LEN}-{SERVICE_NAME_MAX_LEN} characters,
-                    e.g. asr-conformer-gpu.
-                  </FormHelperText>
-                )}
+                {!editingService &&
+                  (nameError ? (
+                    <FormErrorMessage>{nameError}</FormErrorMessage>
+                  ) : (
+                    <FormHelperText fontSize="xs" color="gray.500">
+                      {SERVICE_NAME_MIN_LEN}-{SERVICE_NAME_MAX_LEN} characters.
+                      Letters, numbers, - and / only (no spaces) — e.g.
+                      asr-conformer-gpu.
+                    </FormHelperText>
+                  ))}
               </FormControl>
             )}
 
-            <FormControl isRequired isInvalid={!!serviceIdError}>
+            <FormControl isRequired isInvalid={!!idError}>
               <FormLabel fontWeight="semibold">Service ID</FormLabel>
               <Input
                 value={formData.serviceId || ""}
@@ -286,6 +314,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                     : /[^a-zA-Z0-9/_-]/g;
                   onInputChange("serviceId", e.target.value.replaceAll(allowed, ""));
                 }}
+                onBlur={() => markBlurred("serviceId")}
                 placeholder={
                   isLlmTaskType && formData.modelName
                     ? `${formData.modelName}/…`
@@ -300,37 +329,41 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                   the Service ID; it is also used as the Service Name.
                 </Text>
               )}
-              {!editingService && !serviceIdError && (
+              {!editingService && !idError && (
                 <FormHelperText fontSize="xs" color="gray.500">
-                  At least {SERVICE_ID_MIN_LEN} characters. Applies to new
-                  services only.
+                  At least {SERVICE_ID_MIN_LEN} characters.
                 </FormHelperText>
               )}
-              {serviceIdError && (
-                <FormErrorMessage>{serviceIdError}</FormErrorMessage>
-              )}
+              {idError && <FormErrorMessage>{idError}</FormErrorMessage>}
             </FormControl>
 
             {/* Service Description */}
-            <FormControl isRequired={!editingService}>
+            <FormControl
+              isRequired={!editingService}
+              isInvalid={!!descriptionError}
+            >
               <FormLabel fontWeight="semibold">Service Description</FormLabel>
               <Textarea
                 value={formData.serviceDescription || ""}
                 onChange={(e) =>
                   onInputChange("serviceDescription", e.target.value)
                 }
+                onBlur={() => markBlurred("serviceDescription")}
                 placeholder="Provide a brief description of what this service does"
                 bg="white"
                 rows={4}
               />
-              {!editingService && (
-                <FormHelperText fontSize="xs" color="gray.500">
-                  Required. {SERVICE_DESCRIPTION_MIN_LEN}-
-                  {SERVICE_DESCRIPTION_MAX_LEN} characters —{" "}
-                  {(formData.serviceDescription || "").trim().length}/
-                  {SERVICE_DESCRIPTION_MAX_LEN} entered.
-                </FormHelperText>
-              )}
+              {!editingService &&
+                (descriptionError ? (
+                  <FormErrorMessage>{descriptionError}</FormErrorMessage>
+                ) : (
+                  <FormHelperText fontSize="xs" color="gray.500">
+                    Required. {SERVICE_DESCRIPTION_MIN_LEN}-
+                    {SERVICE_DESCRIPTION_MAX_LEN} characters —{" "}
+                    {(formData.serviceDescription || "").trim().length}/
+                    {SERVICE_DESCRIPTION_MAX_LEN} entered.
+                  </FormHelperText>
+                ))}
             </FormControl>
 
             {/* Endpoint */}
@@ -354,23 +387,28 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </FormControl>
 
             {/* Hardware Description → inferenceEndPoint.infraDescription */}
-            <FormControl isRequired={!editingService}>
+            <FormControl isRequired={!editingService} isInvalid={!!infraError}>
               <FormLabel fontWeight="semibold">Hardware Description</FormLabel>
               <Input
                 value={formData.hardwareDescription || ""}
                 onChange={(e) =>
                   onInputChange("hardwareDescription", e.target.value)
                 }
+                onBlur={() => markBlurred("hardwareDescription")}
                 placeholder="e.g. Auto-scalable deployment, using T4 GPUs"
                 bg={editingService ? "gray.50" : "white"}
                 isReadOnly={!!editingService}
               />
-              {!editingService && (
-                <FormHelperText fontSize="xs" color="gray.500">
-                  {INFRA_DESCRIPTION_MIN_LEN}-{INFRA_DESCRIPTION_MAX_LEN}{" "}
-                  characters. Describes the infrastructure this service runs on.
-                </FormHelperText>
-              )}
+              {!editingService &&
+                (infraError ? (
+                  <FormErrorMessage>{infraError}</FormErrorMessage>
+                ) : (
+                  <FormHelperText fontSize="xs" color="gray.500">
+                    {INFRA_DESCRIPTION_MIN_LEN}-{INFRA_DESCRIPTION_MAX_LEN}{" "}
+                    characters. Describes the infrastructure this service runs
+                    on.
+                  </FormHelperText>
+                ))}
             </FormControl>
 
             {/* 4. Unit Type (derived) + Unit Size */}

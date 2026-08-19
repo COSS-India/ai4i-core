@@ -13,9 +13,15 @@
 export const SERVICE_DESCRIPTION_MIN_LEN = 25;
 export const SERVICE_DESCRIPTION_MAX_LEN = 1000;
 
-/** `name` — 5-100 chars. */
+/** `name` — 5-100 chars, alphanumeric + `-` + `/` only. */
 export const SERVICE_NAME_MIN_LEN = 5;
 export const SERVICE_NAME_MAX_LEN = 100;
+
+const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9/-]+$/;
+
+/** Strips what the Service Name charset rejects — spaces, `_`, punctuation. */
+export const sanitizeServiceName = (value: string): string =>
+  value.replaceAll(/[^a-zA-Z0-9/-]/g, "");
 
 /** `inferenceEndPoint.infraDescription` — 5-100 chars (alias: `hardwareDescription`). */
 export const INFRA_DESCRIPTION_MIN_LEN = 5;
@@ -66,10 +72,20 @@ export const validateServiceDescription = (
 
 export const validateServiceName = (
   value: string | null | undefined,
-): string | null =>
-  lengthError("Service Name", value, SERVICE_NAME_MIN_LEN, SERVICE_NAME_MAX_LEN, {
-    required: true,
-  });
+): string | null => {
+  const lengthIssue = lengthError(
+    "Service Name",
+    value,
+    SERVICE_NAME_MIN_LEN,
+    SERVICE_NAME_MAX_LEN,
+    { required: true },
+  );
+  if (lengthIssue) return lengthIssue;
+  if (!SERVICE_NAME_PATTERN.test((value || "").trim())) {
+    return "Service Name may contain only letters, numbers, hyphens (-) and forward slashes (/).";
+  }
+  return null;
+};
 
 export const validateHardwareDescription = (
   value: string | null | undefined,
