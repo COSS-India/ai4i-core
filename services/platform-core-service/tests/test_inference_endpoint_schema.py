@@ -29,6 +29,16 @@ _SAMPLE_ADAPTER_CONFIG = {
     "outputs": [{"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "text"}],
 }
 
+# schema now requires model_name/taskType/request/response together — a
+# Service created against this model later derives its own
+# inferenceEndPoint.schema from these exact keys.
+_SAMPLE_SCHEMA = {
+    "model_name": "my-model",
+    "taskType": "translation",
+    "request": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    "response": {"output": [{"target": "string"}]},
+}
+
 
 # ── adapterConfig on create ────────────────────────────────────────────────────
 
@@ -45,9 +55,8 @@ def test_create_without_adapter_config_defaults_to_none():
 # ── schema (endpoint_schema) on create ────────────────────────────────────────
 
 def test_create_with_schema_populates_field():
-    schema = {"model_name": "my-model", "taskType": "translation"}
-    req = ModelCreateRequest(**_base_create(**{"schema": schema}))
-    assert req.endpoint_schema == schema
+    req = ModelCreateRequest(**_base_create(**{"schema": _SAMPLE_SCHEMA}))
+    assert req.endpoint_schema == _SAMPLE_SCHEMA
 
 
 def test_create_without_schema_defaults_to_none():
@@ -64,8 +73,8 @@ def test_patch_adapter_config_only_is_valid():
 
 
 def test_patch_schema_only_is_valid():
-    req = ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": {"model_name": "updated"}})
-    assert req.endpoint_schema == {"model_name": "updated"}
+    req = ModelUpdateRequest(modelId="abc123", version="1.0", **{"schema": _SAMPLE_SCHEMA})
+    assert req.endpoint_schema == _SAMPLE_SCHEMA
     assert req.adapterConfig is None
 
 
@@ -74,7 +83,7 @@ def test_patch_both_adapter_config_and_schema():
         modelId="abc123",
         version="1.0",
         adapterConfig=_SAMPLE_ADAPTER_CONFIG,
-        **{"schema": {"model_name": "my-model"}},
+        **{"schema": _SAMPLE_SCHEMA},
     )
     assert req.adapterConfig == _SAMPLE_ADAPTER_CONFIG
-    assert req.endpoint_schema == {"model_name": "my-model"}
+    assert req.endpoint_schema == _SAMPLE_SCHEMA
