@@ -352,8 +352,9 @@ def _platform_adoption_block(
 
 
 def _usage_concentration_block(is_admin: bool, conc: Optional[dict]) -> Optional[UsageConcentration]:
-    """``tenant`` IS the organisation name (the Prometheus label value)
-    already — no DB lookup needed."""
+    """``tenant`` is resolved via _resolve_tenant_names (DB lookup, falling
+    back to the raw Prometheus label only on a miss) — see
+    MeteringService.usage_concentration."""
     if not (is_admin and conc):
         return None
     return UsageConcentration(
@@ -654,22 +655,46 @@ async def get_tenant_consumption(
     if cached:
         return cached
 
-    results = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name, tenant_id=scope_tenant),
-        svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=task_type_filter,
-            tenant=scope_tenant_name, tenant_id=scope_tenant,
-        ),
+    async def _ranking_then_heatmap():
+        """tenant_ranking and usage_by_tenant_service both now resolve
+        tenant names via self._auth_db (_resolve_tenant_names) — a single
+        AsyncSession, not safe for concurrent use (see overview_tenant_data's
+        docstring for the exact InvalidRequestError this avoids). Unlike
+        that error, _resolve_tenant_names swallows the failure and falls
+        back to the raw Prometheus tenant label — silently showing the
+        stale pre-rename name on whichever call loses the race. So these
+        two must run sequentially relative to EACH OTHER; each still
+        degrades independently (mirrors _partition_results' per-item
+        contract) rather than one failure taking both down.
+        """
+        try:
+            ranking_result = await svc.tenant_ranking(
+                limit=limit, time_range=window, tenant=scope_tenant_name, tenant_id=scope_tenant,
+            )
+        except Exception as exc:
+            ranking_result = exc
+        try:
+            heatmap_result = await svc.usage_by_tenant_service(
+                limit=limit, time_range=window, services=task_type_filter,
+                tenant=scope_tenant_name, tenant_id=scope_tenant,
+            )
+        except Exception as exc:
+            heatmap_result = exc
+        return ranking_result, heatmap_result
+
+    (ranking, heatmap), prev_avg = await asyncio.gather(
+        _ranking_then_heatmap(),
         svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name, tenant_id=scope_tenant),
-        return_exceptions=True,
     )
-    (ranking, heatmap, prev_avg), degraded = _partition_results(results)
+    (ranking, heatmap, prev_avg), degraded = _partition_results([ranking, heatmap, prev_avg])
 
     ranking_tenants = ranking["tenants"] if ranking else []
     heatmap_rows = heatmap["tenants"] if heatmap else []
 
-    # ``tenant`` IS the organisation name (the Prometheus label value)
-    # already — no DB lookup needed.
+    # ``tenant`` is resolved via _resolve_tenant_names (DB lookup, falling
+    # back to the raw Prometheus label only on a miss) — see
+    # usage_by_tenant_service — so this is NOT always already the
+    # organisation name; it's just already the best display value available.
     for r in heatmap_rows:
         r["organisation"] = r["tenant"]
 
