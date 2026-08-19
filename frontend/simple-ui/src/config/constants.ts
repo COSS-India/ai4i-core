@@ -1015,7 +1015,6 @@ export const ALLOWED_TENANT_STATUS_TRANSITIONS: Readonly<
 
 /** Tenant-user lifecycle statuses for filters and badges (not tenant PENDING/DEACTIVATED). */
 export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
-  TENANT.USER_STATUS.PENDING,
   TENANT.USER_STATUS.ACTIVE,
   TENANT.USER_STATUS.PENDING_ACTIVATION,
   TENANT.USER_STATUS.SUSPENDED,

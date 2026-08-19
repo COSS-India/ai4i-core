@@ -17,7 +17,7 @@ import { getAnonymousSessionId, isAnonymousUser } from '../utils/anonymousSessio
 export const AGRINET_MODEL = 'agrinet-model';
 
 export const LLM_CHAT_DEFAULT_SOURCE_LANGUAGE = 'en';
-export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = 'hi';
+export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = '';
 
 export interface LLMServiceDetailsResponse {
   service_id: string;
