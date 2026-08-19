@@ -218,12 +218,26 @@ async def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trac
     _BREAKDOWN_BATCH_SIZE it's ~18 calls, and running them concurrently
     keeps the event loop free to serve other requests while they're in
     flight instead of stalling on them one at a time.
+
+    Each batch's fetch is capped at len(batch) * _BREAKDOWN_SPAN_CEILING_PER_TRACE
+    spans total (not per trace_id), sorted newest-first, so if the batch's
+    real span count exceeds that cap, the oldest trace_ids in it can end up
+    with zero spans in the response and silently drop out of the tally -
+    while other, newer trace_ids in the same batch still return spans
+    normally, so the response is never a fully-empty `hits` list a simple
+    zero-hits check could catch. This is detected by comparing which
+    trace_ids the batch actually classified against which it was asked
+    about; a mismatch flips the returned `truncated` flag so the caller can
+    mark the response `partial` instead of presenting an undercount as exact.
+
+    Returns (by_level, by_task, truncated).
     """
     if not trace_ids:
-        return {}, {}
+        return {}, {}, False
 
     by_level = {}
     by_task = {}
+    truncated = False
     semaphore = asyncio.Semaphore(_BREAKDOWN_CONCURRENCY)
     batches = [trace_ids[i:i + _BREAKDOWN_BATCH_SIZE] for i in range(0, len(trace_ids), _BREAKDOWN_BATCH_SIZE)]
 
@@ -241,26 +255,31 @@ async def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trac
 
     for batch, response in zip(batches, responses):
         hits = response.get("hits", {}).get("hits", [])
-        if not hits:
-            # Every trace_id in `batch` was just enumerated as matching the filters,
-            # so a batch of zero spans for known-existing traces is suspicious - most
-            # likely the same silent-failure pattern _collect_all_trace_ids guards
-            # against, but a plain (non-aggregation) search response has no
-            # equivalent structural signal to detect it for certain, so this can
-            # only warn rather than raise.
+        batch_traces = _build_traces_map(hits, tenant_filter)
+
+        # Every trace_id in `batch` was just enumerated as matching the filters, so
+        # any of them missing from batch_traces means the fetch above didn't return
+        # a span for it - either OpenSearch failed silently for the whole batch (a
+        # plain search response has no structural "it failed" signal, unlike the
+        # aggregations-key check in _collect_all_trace_ids), or the batch's total
+        # span count exceeded its size cap and pushed this trace_id's spans out of
+        # the sorted window. Either way, by_level/by_task undercounts these traces.
+        missing = set(batch) - set(batch_traces.keys())
+        if missing:
+            truncated = True
             logger.warning(
-                f"Trace breakdown batch of {len(batch)} known trace_ids returned zero spans; "
-                "OpenSearch may have failed silently for this batch (see client-level logs)."
+                f"Trace breakdown batch dropped {len(missing)} of {len(batch)} trace_ids "
+                "(zero spans returned for them); by_level/by_task will undercount - "
+                "marking this response partial."
             )
 
-        batch_traces = _build_traces_map(hits, tenant_filter)
         for trace in batch_traces.values():
             status_key = trace.get("status") or "unknown"
             task_key = trace.get("task_type") or "unknown"
             by_level[status_key] = by_level.get(status_key, 0) + 1
             by_task[task_key] = by_task.get(task_key, 0) + 1
 
-    return by_level, by_task
+    return by_level, by_task, truncated
 
 
 def _check_permission_ids(request: Request, *allowed: int) -> None:
@@ -442,14 +461,15 @@ async def search_traces_opensearch(
 
         # Calculate aggregations across ALL matching traces (not just this page) so the
         # summary cards match the pagination footer's total instead of the page size.
-        is_partial = total > _MAX_BREAKDOWN_TRACE_IDS
-        if is_partial:
+        is_capped = total > _MAX_BREAKDOWN_TRACE_IDS
+        if is_capped:
             logger.warning(
                 f"Trace breakdown capped at {_MAX_BREAKDOWN_TRACE_IDS} of {total} matching "
                 "traces; by_level/by_task counts are partial for this filter."
             )
         all_trace_ids = _collect_all_trace_ids(opensearch_client, filter_query, min(total, _MAX_BREAKDOWN_TRACE_IDS))
-        by_level, by_task = await _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
+        by_level, by_task, breakdown_truncated = await _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
+        is_partial = is_capped or breakdown_truncated
 
         return SearchTracesResponse(
 

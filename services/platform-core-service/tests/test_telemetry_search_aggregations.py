@@ -31,6 +31,13 @@ History:
   the page), batched and run concurrently via asyncio.to_thread so the
   synchronous OpenSearch client doesn't block the event loop for the whole
   fan-out.
+- Also covered here: a batch's span fetch is capped at a total span count,
+  not a per-trace_id count, so a skewed batch can silently drop the oldest
+  trace_ids out of the sorted response window without `hits` ever being
+  fully empty - `_compute_full_breakdown` now detects this by comparing
+  which trace_ids it actually classified against which it asked about, and
+  reports it via a `truncated` return value the caller folds into
+  `aggregations.partial`.
 """
 
 from __future__ import annotations
@@ -191,32 +198,41 @@ def test_compute_full_breakdown_counts_each_trace_exactly_once():
         }
     }
 
-    by_level, by_task = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
+    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
 
     assert by_level == {"success": 2, "failure": 1}
     assert sum(by_level.values()) == 3  # reconciles with the 3 traces, no double counting
     assert by_task == {"nmt": 1, "unknown": 2}
+    assert truncated is False
 
 
 def test_compute_full_breakdown_ignores_filter_specific_fields():
-    """Regression test for the v3 bug: classification must not be limited to
-    whatever span type happened to satisfy the original filters. Here only
-    the 'model' span would match a task_types filter, but status lives on
-    the 'request' span - _compute_full_breakdown must still see it because
-    it re-fetches by trace_id only, unfiltered by the original query."""
+    """Regression test for the v3 bug: classification must not reuse the
+    original filter_query's must/filter clauses (e.g. a task_types filter
+    only matches the 'model'/'ai-inference' spans, which would hide the
+    'request' span's real status if reused). Asserts directly on the
+    outgoing query shape - a mock that returns the same response regardless
+    of what query it receives would pass this test whether or not the fix
+    is actually in place, so the query itself is what's checked here, not
+    just the classification result."""
     client = MagicMock()
+    captured_queries = []
 
     def search_traces(**kwargs):
-        # No filter clauses reach this query at all - just a trace_id "should".
-        # Returning the 'request' span here (which a task_types filter query
-        # would never match) is exactly what the fix depends on being visible.
+        captured_queries.append(kwargs["query"])
         return {"hits": {"hits": [_span_hit("t1", "request", {"status": "failure"})]}}
 
     client.search_traces.side_effect = search_traces
 
-    by_level, _ = asyncio.run(_compute_full_breakdown(client, ["t1"], tenant_filter=None))
+    by_level, _, _ = asyncio.run(_compute_full_breakdown(client, ["t1"], tenant_filter=None))
 
     assert by_level == {"failure": 1}
+    assert len(captured_queries) == 1
+    query_bool = captured_queries[0]["bool"]
+    # No "must"/"filter" key - if the original filter_query were reused/merged
+    # in, it would show up as one of those here.
+    assert set(query_bool.keys()) == {"should", "minimum_should_match"}
+    assert query_bool["should"] == [{"match_phrase": {"context.trace_id": "t1"}}]
 
 
 def test_compute_full_breakdown_batches_large_trace_id_lists():
@@ -233,19 +249,49 @@ def test_compute_full_breakdown_batches_large_trace_id_lists():
 
     client.search_traces.side_effect = search_traces
 
-    by_level, by_task = asyncio.run(_compute_full_breakdown(client, trace_ids, tenant_filter="tenant-a"))
+    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, trace_ids, tenant_filter="tenant-a"))
 
     assert client.search_traces.call_count == 2  # one full batch + one partial batch
     assert by_level == {"success": len(trace_ids)}
+    assert truncated is False
+
+
+def test_compute_full_breakdown_flags_truncated_batch():
+    """Regression test for the review comment on span-count truncation: a
+    batch's fetch is capped at len(batch) * _BREAKDOWN_SPAN_CEILING_PER_TRACE
+    spans TOTAL (not per trace_id), sorted newest-first, so if the batch's
+    real span count exceeds that, the oldest trace_ids in it can silently
+    return zero spans while other trace_ids in the same batch still return
+    spans normally - `hits` is never fully empty, so a bare "if not hits"
+    check can't catch it. Simulates that here: the batch asks about 3
+    trace_ids but only 2 come back with spans."""
+    client = MagicMock()
+
+    def search_traces(**kwargs):
+        # t3 is silently dropped, as if its spans fell outside the size cap
+        return {"hits": {"hits": [
+            _span_hit("t1", "request", {"status": "success"}),
+            _span_hit("t2", "request", {"status": "failure"}),
+        ]}}
+
+    client.search_traces.side_effect = search_traces
+
+    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
+
+    assert truncated is True
+    # The traces that DID come back are still counted correctly
+    assert by_level == {"success": 1, "failure": 1}
+    assert sum(by_level.values()) == 2  # t3 is undercounted, not fabricated as anything
 
 
 def test_compute_full_breakdown_empty_trace_ids_skips_fetch():
     client = MagicMock()
 
-    by_level, by_task = asyncio.run(_compute_full_breakdown(client, [], tenant_filter="tenant-a"))
+    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, [], tenant_filter="tenant-a"))
 
     assert by_level == {}
     assert by_task == {}
+    assert truncated is False
     client.search_traces.assert_not_called()
 
 
