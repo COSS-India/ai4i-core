@@ -107,6 +107,11 @@ const ServicesManagement: React.FC = () => {
     canCreateService,
     isLlmTaskType,
     serviceIdError,
+    serviceIdLengthError,
+    serviceDescriptionError,
+    serviceNameError,
+    hardwareDescriptionError,
+    createFormEpoch,
     isSubmitting,
     handleSubmit,
     handleCancelForm,
@@ -406,6 +411,9 @@ const ServicesManagement: React.FC = () => {
                 {!isRegistryReadOnly && (
                   <TabPanel px={0} pt={6}>
                     <ServiceFormTab
+                      // Remount on reset/edit-load so no field is left
+                      // marked as blurred from the previous form.
+                      key={createFormEpoch}
                       cardBg={cardBg}
                       cardBorder={cardBorder}
                       editingService={editingService}
@@ -430,6 +438,10 @@ const ServicesManagement: React.FC = () => {
                       canCreateService={canCreateService}
                       isLlmTaskType={isLlmTaskType}
                       serviceIdError={serviceIdError}
+                      serviceIdLengthError={serviceIdLengthError}
+                      serviceDescriptionError={serviceDescriptionError}
+                      serviceNameError={serviceNameError}
+                      hardwareDescriptionError={hardwareDescriptionError}
                       isSubmitting={isSubmitting}
                       onSubmit={handleSubmit}
                       onCancel={handleCancelForm}

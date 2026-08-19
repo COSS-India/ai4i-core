@@ -352,8 +352,9 @@ def _platform_adoption_block(
 
 
 def _usage_concentration_block(is_admin: bool, conc: Optional[dict]) -> Optional[UsageConcentration]:
-    """``tenant`` IS the organisation name (the Prometheus label value)
-    already — no DB lookup needed."""
+    """``tenant`` is resolved via _resolve_tenant_names (DB lookup, falling
+    back to the raw Prometheus label only on a miss) — see
+    MeteringService.usage_concentration."""
     if not (is_admin and conc):
         return None
     return UsageConcentration(
@@ -458,6 +459,7 @@ async def _request_volume_chart(
     window: str,
     tenant: Optional[str],
     task_types: Optional[list[str]] = None,
+    tenant_id: Optional[str] = None,
     auth_type: Optional[str] = None,
 ) -> Optional[Graph]:
     """OVERVIEW "Request Volume" chart — successful vs failed request COUNTS per bucket:
@@ -474,10 +476,10 @@ async def _request_volume_chart(
     success_extra = [task_sel, 'status_code=~"2.."'] if task_sel else ['status_code=~"2.."']
     failed_extra = [task_sel, 'status_code=~"[45].."'] if task_sel else ['status_code=~"[45].."']
     success_sel = build_base_selectors(
-        inference_only=True, tenant=tenant, extra=success_extra, auth_type=auth_type
+        inference_only=True, tenant=tenant, extra=success_extra, tenant_id=tenant_id, auth_type=auth_type
     )
     failed_sel = build_base_selectors(
-        inference_only=True, tenant=tenant, extra=failed_extra, auth_type=auth_type
+        inference_only=True, tenant=tenant, extra=failed_extra, tenant_id=tenant_id, auth_type=auth_type
     )
     success_metric = f"telemetry_obsv_requests_total{success_sel}"
     failed_metric = f"telemetry_obsv_requests_total{failed_sel}"
@@ -575,9 +577,12 @@ async def get_overview(
     results = await asyncio.gather(
         svc.request_total(
             inference_only=True, tenant=scope_tenant_name, service_id=None, time_range=window,
-            task_types=task_type_filter, auth_type=auth_type_filter,
+            task_types=task_type_filter, tenant_id=scope_tenant, auth_type=auth_type_filter,
         ),
-        _request_volume_chart(svc, window, scope_tenant_name, task_type_filter, auth_type_filter),
+        _request_volume_chart(
+            svc, window, scope_tenant_name, task_type_filter,
+            tenant_id=scope_tenant, auth_type=auth_type_filter,
+        ),
         # Usage Concentration is platform-wide top-5; hide it when a tenant filter is applied.
         svc.usage_concentration(limit=5, time_range=window, task_types=task_type_filter)
         if (is_admin and not scope_tenant) else asyncio.sleep(0),
@@ -662,21 +667,46 @@ async def get_tenant_consumption(
     if cached:
         return cached
 
-    results = await asyncio.gather(
-        svc.tenant_ranking(limit=limit, time_range=window, tenant=scope_tenant_name),
-        svc.usage_by_tenant_service(
-            limit=limit, time_range=window, services=task_type_filter, tenant=scope_tenant_name
-        ),
-        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name),
-        return_exceptions=True,
+    async def _ranking_then_heatmap():
+        """tenant_ranking and usage_by_tenant_service both now resolve
+        tenant names via self._auth_db (_resolve_tenant_names) — a single
+        AsyncSession, not safe for concurrent use (see overview_tenant_data's
+        docstring for the exact InvalidRequestError this avoids). Unlike
+        that error, _resolve_tenant_names swallows the failure and falls
+        back to the raw Prometheus tenant label — silently showing the
+        stale pre-rename name on whichever call loses the race. So these
+        two must run sequentially relative to EACH OTHER; each still
+        degrades independently (mirrors _partition_results' per-item
+        contract) rather than one failure taking both down.
+        """
+        try:
+            ranking_result = await svc.tenant_ranking(
+                limit=limit, time_range=window, tenant=scope_tenant_name, tenant_id=scope_tenant,
+            )
+        except Exception as exc:
+            ranking_result = exc
+        try:
+            heatmap_result = await svc.usage_by_tenant_service(
+                limit=limit, time_range=window, services=task_type_filter,
+                tenant=scope_tenant_name, tenant_id=scope_tenant,
+            )
+        except Exception as exc:
+            heatmap_result = exc
+        return ranking_result, heatmap_result
+
+    (ranking, heatmap), prev_avg = await asyncio.gather(
+        _ranking_then_heatmap(),
+        svc.avg_per_active_tenant_previous(window, tenant=scope_tenant_name, tenant_id=scope_tenant),
     )
-    (ranking, heatmap, prev_avg), degraded = _partition_results(results)
+    (ranking, heatmap, prev_avg), degraded = _partition_results([ranking, heatmap, prev_avg])
 
     ranking_tenants = ranking["tenants"] if ranking else []
     heatmap_rows = heatmap["tenants"] if heatmap else []
 
-    # ``tenant`` IS the organisation name (the Prometheus label value)
-    # already — no DB lookup needed.
+    # ``tenant`` is resolved via _resolve_tenant_names (DB lookup, falling
+    # back to the raw Prometheus label only on a miss) — see
+    # usage_by_tenant_service — so this is NOT always already the
+    # organisation name; it's just already the best display value available.
     for r in heatmap_rows:
         r["organisation"] = r["tenant"]
 
@@ -733,7 +763,10 @@ async def get_service_consumption(
         return cached
 
     results = await asyncio.gather(
-        svc.service_breakdown(tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter),
+        svc.service_breakdown(
+            tenant=scope_tenant_name, time_range=window, service_filter=task_type_filter,
+            tenant_id=scope_tenant,
+        ),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)
@@ -805,7 +838,7 @@ async def get_model_consumption(
         return cached
 
     results = await asyncio.gather(
-        svc.model_breakdown(tenant=scope_tenant_name, time_range=window),
+        svc.model_breakdown(tenant=scope_tenant_name, time_range=window, tenant_id=scope_tenant),
         return_exceptions=True,
     )
     (breakdown,), degraded = _partition_results(results)

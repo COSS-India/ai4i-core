@@ -115,6 +115,21 @@ class TestApiKeyAuthTypeSelector:
         assert api_key_auth_type_selector() == 'auth_type=~"api_key|"'
 
 
+class TestTenantIdSelector:
+    def test_tenant_id_preferred_over_tenant(self):
+        sel = build_base_selectors(tenant="acme", tenant_id="5")
+        assert 'tenant_id="5"' in sel
+        assert 'tenant="acme"' not in sel
+
+    def test_tenant_id_with_quote_is_escaped(self):
+        """tenant_id is interpolated via the same escape_label_value helper
+        as tenant, for consistency in the shared selector builder — not
+        reachable with a real numeric id today, but keeps this safe if a
+        caller ever passes something other than a validated digit string."""
+        sel = build_base_selectors(inference_only=False, tenant_id='5"} or {evil="1')
+        assert sel == '{tenant!="unknown",tenant_id="5\\"} or {evil=\\"1"}'
+
+
 class TestSumOverWindow:
     def test_with_window_uses_increase(self):
         expr = sum_over_window("metric{}", "24h")
@@ -350,6 +365,59 @@ class TestTenantCount:
 
 
 @pytest.mark.asyncio
+class TestPreviousWindowActiveTenantCounts:
+    """active_tenants_count_previous / avg_per_active_tenant_previous must
+    count DISTINCT REAL TENANTS in the previous window — not distinct
+    tenant_id groups, which would merge every different pre-cutover tenant
+    (they all share an empty tenant_id) into one group and undercount."""
+
+    async def test_active_tenants_count_previous_counts_distinct_pre_cutover_tenants(self):
+        """Exact bug scenario: 3 DIFFERENT tenants active in the previous
+        window, ALL pre-cutover (no tenant_id yet) — must count as 3, not 1."""
+        prom_rows = [
+            {"metric": {"tenant": "Acme"}, "value": [0, "1"]},
+            {"metric": {"tenant": "Globex"}, "value": [0, "1"]},
+            {"metric": {"tenant": "Initech"}, "value": [0, "1"]},
+        ]
+        svc = _make_service(query_return=prom_rows)
+        result = await svc.active_tenants_count_previous("24h")
+        assert result == 3
+
+    async def test_active_tenants_count_previous_merges_tenant_spanning_the_cutover(self):
+        """A tenant active on both sides of the cutover in the previous
+        window (one row with no id, one with) must still count as ONE
+        tenant, via the same _merge_tenant_rows used elsewhere."""
+        prom_rows = [
+            {"metric": {"tenant": "Acme"}, "value": [0, "1"]},
+            {"metric": {"tenant": "Acme", "tenant_id": "7"}, "value": [0, "1"]},
+        ]
+        svc = _make_service(query_return=prom_rows)
+        result = await svc.active_tenants_count_previous("24h")
+        assert result == 1
+
+    async def test_active_tenants_count_previous_none_when_unbounded(self):
+        svc = _make_service(query_return=[])
+        assert await svc.active_tenants_count_previous("all") is None
+
+    async def test_avg_per_active_tenant_previous_not_inflated_by_pre_cutover_tenants(self):
+        """3 distinct pre-cutover tenants, 300 total previous-window requests
+        — true average is 100/tenant. Counting them as 1 (the old bug) would
+        report 300/tenant instead."""
+        prom_rows = [
+            {"metric": {"tenant": "Acme"}, "value": [0, "1"]},
+            {"metric": {"tenant": "Globex"}, "value": [0, "1"]},
+            {"metric": {"tenant": "Initech"}, "value": [0, "1"]},
+        ]
+        svc = _make_service(query_return=prom_rows, scalar_return=300.0)
+        result = await svc.avg_per_active_tenant_previous("24h")
+        assert result == 100
+
+    async def test_avg_per_active_tenant_previous_none_when_no_active_tenants(self):
+        svc = _make_service(query_return=[], scalar_return=0.0)
+        assert await svc.avg_per_active_tenant_previous("24h") is None
+
+
+@pytest.mark.asyncio
 class TestServiceBreakdown:
     def _make_endpoint_result(self, endpoint: str, value: float):
         return [{"metric": {PROMETHEUS_API_PATH_LABEL: endpoint}, "value": [0, str(value)]}]
@@ -403,6 +471,26 @@ class TestServiceBreakdown:
         # request-success count — the two differ when a request has >1 image.
         assert ocr_row["native_units"] == 512
         assert ocr_row["native_unit_suffix"] == "images"
+
+    async def test_native_unit_query_prefers_tenant_id_over_tenant(self):
+        """Native-unit metrics (tts/nmt/asr/...) now carry tenant_id too, so
+        _native_unit_queries must scope by it (and prefer it over the mutable
+        tenant name) instead of silently ignoring it and returning
+        platform-wide numbers for a tenant-scoped request."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client)
+
+        await svc.service_breakdown(tenant="acme", tenant_id="5", time_range="24h")
+
+        tts_calls = [
+            call[0][0] for call in client.scalar.call_args_list
+            if "telemetry_obsv_tts_characters_synthesized_sum" in call[0][0]
+        ]
+        assert len(tts_calls) == 1
+        assert 'tenant_id="5"' in tts_calls[0]
+        assert 'tenant="acme"' not in tts_calls[0]
 
     async def test_native_units_zero_not_null_when_no_usage(self):
         client = MagicMock()
@@ -613,6 +701,24 @@ class TestModelBreakdown:
         assert f'tenant="{escape_label_value(tenant)}"' in tokens_calls[0]
         assert f'tenant="{tenant}"' not in tokens_calls[0]
 
+    async def test_tokens_query_prefers_tenant_id_like_request_and_success_do(self):
+        """Bug scenario: a tenant renamed mid-window. Request/success queries
+        (base_sel/success_sel, via build_base_selectors) already prefer
+        tenant_id and stay continuous across the rename. Before this fix,
+        the tokens query stayed name-based, so the same table would show
+        continuous requests next to tokens that reset at the rename. All
+        three must use tenant_id, consistently, once it's given."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=[])
+        svc = MeteringService(client=client)
+
+        await svc.model_breakdown(tenant="Acme Corp", tenant_id="7", time_range="24h")
+
+        for call in client.query.call_args_list:
+            promql = call[0][0]
+            assert 'tenant_id="7"' in promql
+            assert 'tenant="Acme Corp"' not in promql
+
     async def test_llm_only_endpoint_selector_used(self):
         client = MagicMock()
         client.query = AsyncMock(return_value=[])
@@ -745,6 +851,91 @@ class TestModelBreakdown:
         result = await svc.model_breakdown(tenant=None, time_range="24h")
         assert result["model_totals"] == []
         model_repo.get_model_names.assert_not_called()
+
+    async def test_model_totals_falls_back_to_db_when_prometheus_model_id_empty(self):
+        """Regression: a service whose Prometheus series predate the
+        model_id label (or whose traffic was recorded before that
+        service's inference-service instance picked up ai4i-core 1.0.18+)
+        still resolves fine in `services` via the DB join (svc_info) — the
+        model-level view must apply the SAME fallback per-row, or this
+        traffic silently vanishes from model_totals/top_models/
+        active_models while still showing up in the per-service breakdown.
+        Reported as: the Model Consumption chart shows only one model at
+        100%, while the per-service drill-down table lists several."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("legacy-svc", 14))  # model_id="" from Prometheus
+        repo = self._repo({"legacy-svc": ("Legacy Svc", "hash-legacy-v1", "test-llm-aug6-3")})
+        model_repo = self._model_repo({"hash-legacy-v1": "test-llm-aug6-3"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["model_id"] == "hash-legacy-v1"
+        assert result["model_totals"][0]["model_name"] == "test-llm-aug6-3"
+        assert result["model_totals"][0]["requests"] == 14
+
+    async def test_effective_model_id_resolved_per_service_not_per_row(self):
+        """A single service_id whose rows are inconsistently labeled across
+        the 3 queries (e.g. the success-count row was scraped before the
+        model_id label existed, but the total/tokens rows for the SAME
+        service already carry it) must resolve to ONE model_id for every
+        one of that service's rows — matching prom_model_id's per-service
+        resolution, the same one `services` already uses at the
+        prom_model_id.get(service_id) or db_model_id line. Resolving per
+        ROW instead would split this service's success count off into a
+        separate (wrongly excluded) empty-model_id bucket, understating
+        the model's success_pct instead of just being consistently whole."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-1", 9)  # no model_id label on this row
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-1", 900, model_id="hash-gemma-v1")
+            return self._row("svc-1", 10, model_id="hash-gemma-v1")
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({"svc-1": ("Svc 1", "hash-gemma-v1", "Gemma 3 27B")})
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        m = result["model_totals"][0]
+        assert m["model_id"] == "hash-gemma-v1"
+        assert m["requests"] == 10
+        assert m["native_units"] == 900.0
+        assert m["success_pct"] == 90.0  # 9/10 — the unlabeled row still attributed correctly
+
+    async def test_model_totals_sums_prometheus_and_db_fallback_rows_together(self):
+        """One service already carries the Prometheus model_id label,
+        another (same model) doesn't yet — both must collapse into the
+        SAME model_totals entry, matching what the per-service view already
+        does for its own service_id-level fallback."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql or "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return []
+            return self._rows(
+                {"new-svc": 900, "legacy-svc": 11},
+                model_ids={"new-svc": "hash-shared-v1"},  # legacy-svc defaults to "" (not in dict)
+            )
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({
+            "new-svc": ("New Svc", "hash-shared-v1", "test-llm-aug6-3"),
+            "legacy-svc": ("Legacy Svc", "hash-shared-v1", "test-llm-aug6-3"),
+        })
+        model_repo = self._model_repo({"hash-shared-v1": "test-llm-aug6-3"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["requests"] == 911
 
     async def test_deleted_service_traffic_still_counts_toward_active_model_total(self):
         """THE key behavioral change: a service can be dropped from the
@@ -1039,9 +1230,9 @@ class TestMeteringQueriesRestrictToApiKeyTraffic:
         assert 'auth_type=~"api_key|"' in promql
 
     async def test_active_tenants_count_previous(self):
-        svc = _make_service(scalar_return=1.0)
+        svc = _make_service(query_return=[])
         await svc.active_tenants_count_previous("24h")
-        promql = svc._client.scalar.call_args[0][0]
+        promql = svc._client.query.call_args[0][0]
         assert 'auth_type=~"api_key|"' in promql
 
     async def test_avg_per_active_tenant_previous(self):
@@ -1120,17 +1311,24 @@ class TestActiveTenantsExcludesUnknown:
 
         This covers the post-DB-flush scenario where stale Prometheus series
         for deleted tenants would otherwise inflate 7d/30d active-tenant counts.
+        Filtering keys on ``tenant_id`` (immutable), not the ``tenant`` name
+        label, so a rename doesn't affect this filter.
         """
         prom_rows = [
-            {"metric": {"tenant": "1"}, "value": [0, "5"]},
-            {"metric": {"tenant": "2"}, "value": [0, "3"]},  # deleted tenant
-            {"metric": {"tenant": "3"}, "value": [0, "8"]},
+            {"metric": {"tenant_id": "1", "tenant": "1"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "2", "tenant": "2"}, "value": [0, "3"]},  # deleted tenant
+            {"metric": {"tenant_id": "3", "tenant": "3"}, "value": [0, "8"]},
         ]
-        # DB has only tenants 1 and 3; tenant 2 was deleted
+        # DB has only tenants 1 and 3; tenant 2 was deleted. First execute()
+        # call is the valid-ids query, second is the display-name lookup —
+        # empty here so the raw label is shown, keeping this test focused on
+        # the id-based filter rather than name resolution.
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(1,), (3,)]
+        names_result = MagicMock()
+        names_result.all.return_value = []
         auth_db = AsyncMock()
-        db_result = MagicMock()
-        db_result.all.return_value = [(1,), (3,)]
-        auth_db.execute = AsyncMock(return_value=db_result)
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
 
         svc = _make_service(query_return=prom_rows, auth_db=auth_db)
         result = await svc.active_tenants("7d")
@@ -1170,14 +1368,18 @@ class TestActiveTenantsExcludesUnknown:
         """A tenant whose status is PENDING (not yet ACTIVE) must not count
         as an active tenant, even if stale Prometheus series exist for it."""
         prom_rows = [
-            {"metric": {"tenant": "acme"}, "value": [0, "5"]},  # ACTIVE
-            {"metric": {"tenant": "pending-org"}, "value": [0, "3"]},  # PENDING
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},  # ACTIVE
+            {"metric": {"tenant_id": "2", "tenant": "pending-org"}, "value": [0, "3"]},  # PENDING
         ]
-        # DB WHERE status='ACTIVE' would only ever return active orgs.
+        # DB WHERE status='ACTIVE' would only ever return active tenant ids.
+        # First execute() call is the valid-ids query, second is the
+        # display-name lookup — resolves id 1 to its current org name.
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(1,)]
+        names_result = MagicMock()
+        names_result.all.return_value = [(1, "acme")]
         auth_db = AsyncMock()
-        db_result = MagicMock()
-        db_result.all.return_value = [("acme",)]
-        auth_db.execute = AsyncMock(return_value=db_result)
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
 
         svc = _make_service(query_return=prom_rows, auth_db=auth_db)
         result = await svc.active_tenants("24h")
@@ -1188,18 +1390,21 @@ class TestActiveTenantsExcludesUnknown:
         assert "pending-org" not in returned
 
     async def test_valid_names_param_skips_auth_db_fetch(self):
-        """Passing valid_names explicitly must not touch self._auth_db at
-        all — this is what lets overview_tenant_data() share ONE fetch
-        across several active_tenants() calls instead of each one racing to
-        use the same AsyncSession concurrently (see its docstring)."""
+        """Passing valid_names (a pre-fetched set of tenant ids) explicitly
+        must not touch self._auth_db at all — not for the id filter, and not
+        for name resolution either — this is what lets overview_tenant_data()
+        share ONE fetch across several active_tenants() calls instead of each
+        one racing to use the same AsyncSession concurrently (see its
+        docstring). Since the id filter isn't fetched internally here, name
+        resolution is skipped too and the raw `tenant` label is shown as-is."""
         prom_rows = [
-            {"metric": {"tenant": "acme"}, "value": [0, "5"]},
-            {"metric": {"tenant": "ghost-org"}, "value": [0, "3"]},
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "2", "tenant": "ghost-org"}, "value": [0, "3"]},
         ]
         auth_db = AsyncMock()
         svc = _make_service(query_return=prom_rows, auth_db=auth_db)
 
-        result = await svc.active_tenants("24h", valid_names={"acme"})
+        result = await svc.active_tenants("24h", valid_names={"1"})
 
         auth_db.execute.assert_not_called()
         assert result["count"] == 1
@@ -1251,13 +1456,13 @@ class TestOverviewTenantData:
         assert max_concurrent == 1
 
     async def test_valid_names_fetched_once_and_shared_across_windows(self):
-        prom_rows = [{"metric": {"tenant": "acme"}, "value": [0, "5"]}]
+        prom_rows = [{"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]}]
         auth_db = AsyncMock()
         total_result = MagicMock(scalar=lambda: 1)
-        names_result = MagicMock()
-        names_result.all.return_value = [("acme",)]
-        # tenant_count() issues 2 execute()s, then the valid-names fetch is a 3rd.
-        auth_db.execute = AsyncMock(side_effect=[total_result, total_result, names_result])
+        ids_result = MagicMock()
+        ids_result.all.return_value = [(1,)]
+        # tenant_count() issues 2 execute()s, then the valid-ids fetch is a 3rd.
+        auth_db.execute = AsyncMock(side_effect=[total_result, total_result, ids_result])
         svc = _make_service(query_return=prom_rows, auth_db=auth_db)
 
         tc, active_by_range = await svc.overview_tenant_data(["24h", "7d", "30d"])
@@ -1300,6 +1505,305 @@ class TestOverviewTenantData:
         assert isinstance(active_by_range["24h"], RuntimeError)
         assert isinstance(active_by_range["7d"], RuntimeError)
         assert tc["auth_db_available"] is True
+
+
+@pytest.mark.asyncio
+class TestTenantRenameContinuity:
+    """Covers the actual ticket behaviour: a tenant's request count must stay
+    one continuous number across a rename, shown under its current name —
+    not split into a pre-rename and a post-rename row."""
+
+    async def test_active_tenants_groups_by_tenant_id_and_tenant(self):
+        """The promql groups by BOTH tenant_id and tenant (not tenant_id
+        alone) — tenant rides along so a pre-cutover row (empty tenant_id)
+        still carries a usable name instead of being dropped; the service
+        layer (_merge_tenant_rows) is what re-merges same-tenant_id rows so
+        a same-window rename still counts as one continuous tenant."""
+        svc = _make_service(query_return=[])
+        await svc.active_tenants("30d")
+
+        promql = svc._client.query.call_args[0][0]
+        assert "sum by(tenant_id, tenant)" in promql
+
+    async def test_rename_within_window_merges_into_one_row(self):
+        """A tenant renamed WITHIN the tracked window now produces two raw
+        Prometheus rows sharing one tenant_id but different tenant labels
+        (5 requests as "OldOrg", 8 as "NewOrg") — the service layer must
+        merge them back into one row under the tenant's *current* name,
+        not show two separate "tenants" or lose either count."""
+        prom_rows = [
+            {"metric": {"tenant_id": "7", "tenant": "OldOrg"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "7", "tenant": "NewOrg"}, "value": [0, "8"]},
+        ]
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(7,)]
+        names_result = MagicMock()
+        names_result.all.return_value = [(7, "NewOrg")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("30d")
+
+        assert result["count"] == 1
+        assert result["active_tenants"] == [
+            {"tenant": "NewOrg", "request_count": 13}
+        ]
+
+    async def test_pre_cutover_row_shown_under_its_own_name_not_dropped(self):
+        """A pre-cutover row (empty tenant_id, written before the label
+        existed) can't be validated against the active-tenant-id DB check,
+        but it still carries a real tenant name — it must be kept and shown
+        under that name, not dropped and not merged into one "unknown"
+        bucket with unrelated pre-cutover tenants."""
+        prom_rows = [
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg"}, "value": [0, "42"]},
+        ]
+        svc = _make_service(query_return=prom_rows)  # no auth_db -> no id validation
+        result = await svc.active_tenants("30d")
+
+        assert result["count"] == 1
+        assert result["active_tenants"] == [
+            {"tenant": "LegacyOrg", "request_count": 42}
+        ]
+
+    async def test_tenant_spanning_the_cutover_merges_into_one_row(self):
+        """The actual failure mode a currently-active tenant hits during the
+        whole transition window: traffic BEFORE tenant_id existed (no id)
+        and traffic AFTER (with id), same tenant, same name. Naively keying
+        by "tid or name" gives these two different keys ("" -> "name:Acme"
+        vs "7") and never merges them — reintroducing the ticket's own
+        "one tenant split across two labels" bug for every active tenant,
+        not just renamed ones. Must merge into ONE row, total requests."""
+        prom_rows = [
+            {"metric": {"tenant": "Acme"}, "value": [0, "100"]},              # pre-cutover
+            {"metric": {"tenant": "Acme", "tenant_id": "7"}, "value": [0, "50"]},  # post-cutover
+        ]
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(7,)]
+        names_result = MagicMock()
+        names_result.all.return_value = [(7, "Acme")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("30d")
+
+        assert result["count"] == 1
+        assert result["active_tenants"] == [
+            {"tenant": "Acme", "request_count": 150}
+        ]
+
+    async def test_tenant_spanning_the_cutover_merges_regardless_of_row_order(self):
+        """Same scenario as above with the id-bearing row FIRST — the merge
+        must not depend on seeing the id before the no-id row, since
+        Prometheus result order isn't guaranteed."""
+        prom_rows = [
+            {"metric": {"tenant": "Acme", "tenant_id": "7"}, "value": [0, "50"]},  # post-cutover, first
+            {"metric": {"tenant": "Acme"}, "value": [0, "100"]},              # pre-cutover, second
+        ]
+        valid_ids_result = MagicMock()
+        valid_ids_result.all.return_value = [(7,)]
+        names_result = MagicMock()
+        names_result.all.return_value = [(7, "Acme")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=[valid_ids_result, names_result])
+
+        svc = _make_service(query_return=prom_rows, auth_db=auth_db)
+        result = await svc.active_tenants("30d")
+
+        assert result["count"] == 1
+        assert result["active_tenants"] == [
+            {"tenant": "Acme", "request_count": 150}
+        ]
+
+
+@pytest.mark.asyncio
+class TestResolveTenantNames:
+    """Direct coverage of _resolve_tenant_names — previously untested."""
+
+    async def test_hit_resolves_all_ids(self):
+        db_result = MagicMock()
+        db_result.all.return_value = [(1, "acme"), (2, "globex")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1", "2"})
+
+        assert names == {"1": "acme", "2": "globex"}
+
+    async def test_miss_omits_unresolved_ids(self):
+        """An id with no matching DB row (e.g. deleted tenant) is simply
+        absent from the result — callers fall back via .get(id, default)."""
+        db_result = MagicMock()
+        db_result.all.return_value = [(1, "acme")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1", "99"})
+
+        assert names == {"1": "acme"}
+        assert "99" not in names
+
+    async def test_no_auth_db_returns_empty_without_querying(self):
+        svc = _make_service(auth_db=None)
+        names = await svc._resolve_tenant_names({"1"})
+        assert names == {}
+
+    async def test_empty_id_set_returns_empty_without_querying(self):
+        """Falsy/empty ids (pre-tenant_id series) are filtered out before the
+        query; an all-falsy input must short-circuit rather than query with
+        an empty id list."""
+        auth_db = AsyncMock()
+        svc = _make_service(auth_db=auth_db)
+
+        names = await svc._resolve_tenant_names({"", None})
+
+        assert names == {}
+        auth_db.execute.assert_not_called()
+
+    async def test_db_error_returns_empty(self):
+        """A DB failure must not propagate — callers always get a dict back
+        and fall back to the raw id/label."""
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(side_effect=RuntimeError("db down"))
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1"})
+
+        assert names == {}
+
+    async def test_non_numeric_id_does_not_crash_whole_batch(self):
+        """auth-service tolerates non-numeric tenant ids elsewhere, so one
+        garbage id in the set must not blow up int() and take every other
+        (valid, numeric) id in the batch down with it."""
+        db_result = MagicMock()
+        db_result.all.return_value = [(1, "acme")]
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+
+        svc = _make_service(auth_db=auth_db)
+        names = await svc._resolve_tenant_names({"1", "not-a-number"})
+
+        assert names == {"1": "acme"}
+        # only the numeric id is ever sent to the DB
+        query_params = auth_db.execute.call_args[0][1]
+        assert query_params["ids"] == [1]
+
+
+@pytest.mark.asyncio
+class TestEmptyTenantIdFallsBackToName:
+    """A pre-tenant_id row (empty tenant_id label, written before the label
+    existed) can't be resolved via the auth DB. All three tenant-ranked
+    endpoints must keep such a row and show it under its own tenant name —
+    not drop it, and not merge it into a shared "unknown" entry with other
+    unrelated pre-cutover rows that could out-rank (or dilute the total for)
+    a real tenant. A tenant renamed WITHIN the window must still merge back
+    into one row (tested via the shared _merge_tenant_rows helper)."""
+
+    def _name_lookup_db(self, rows):
+        """auth_db mock resolving tenant_id -> name for _resolve_tenant_names
+        (a single `execute()` call, unlike active_tenants' two-call filter)."""
+        db_result = MagicMock()
+        db_result.all.return_value = rows
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=db_result)
+        return auth_db
+
+    async def test_usage_concentration_keeps_pre_cutover_row_under_its_name(self):
+        prom_rows = [
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg"}, "value": [0, "100"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
+        result = await svc.usage_concentration(limit=10, time_range="30d")
+
+        tenants = {t["tenant"] for t in result["top_tenants"]}
+        assert tenants == {"acme", "LegacyOrg"}
+        assert result["grand_total"] == 105
+
+    async def test_tenant_ranking_keeps_pre_cutover_row_under_its_name(self):
+        prom_rows = [
+            {"metric": {"tenant_id": "1", "tenant": "acme"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg"}, "value": [0, "100"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
+        result = await svc.tenant_ranking(limit=10, time_range="30d")
+
+        tenants = {t["tenant"] for t in result["tenants"]}
+        assert tenants == {"acme", "LegacyOrg"}
+        assert result["grand_total"] == 105
+
+    async def test_heatmap_keeps_pre_cutover_row_under_its_name(self):
+        prom_rows = [
+            {"metric": {"tenant_id": "1", "tenant": "acme", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "5"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrg", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "100"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(1, "acme")]))
+        result = await svc.usage_by_tenant_service(limit=10, time_range="30d", services=None)
+
+        tenants = {t["tenant"] for t in result["tenants"]}
+        assert tenants == {"acme", "LegacyOrg"}
+        assert result["grand_total"] == 105
+
+    async def test_two_unrelated_pre_cutover_rows_stay_separate_not_unknown(self):
+        """Two DIFFERENT pre-cutover tenants (both empty tenant_id) must not
+        collapse into one shared bucket just because they share an empty id
+        — they're kept apart by their distinct tenant names."""
+        prom_rows = [
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrgA"}, "value": [0, "30"]},
+            {"metric": {"tenant_id": "", "tenant": "LegacyOrgB"}, "value": [0, "70"]},
+        ]
+        svc = _make_service(query_return=prom_rows)
+        result = await svc.tenant_ranking(limit=10, time_range="30d")
+
+        tenants = {t["tenant"]: t["requests"] for t in result["tenants"]}
+        assert tenants == {"LegacyOrgA": 30, "LegacyOrgB": 70}
+        assert result["grand_total"] == 100
+
+    async def test_usage_concentration_merges_tenant_spanning_the_cutover(self):
+        """Same tenant, one row with no id (pre-cutover) and one row with an
+        id (post-cutover) — must merge into ONE row, not two, for every
+        active tenant during the whole transition window."""
+        prom_rows = [
+            {"metric": {"tenant": "Acme"}, "value": [0, "100"]},
+            {"metric": {"tenant": "Acme", "tenant_id": "7"}, "value": [0, "50"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(7, "Acme")]))
+        result = await svc.usage_concentration(limit=10, time_range="30d")
+
+        assert len(result["top_tenants"]) == 1
+        assert result["top_tenants"][0]["tenant"] == "Acme"
+        assert result["top_tenants"][0]["requests"] == 150
+        assert result["grand_total"] == 150
+
+    async def test_tenant_ranking_merges_tenant_spanning_the_cutover(self):
+        prom_rows = [
+            {"metric": {"tenant": "Acme"}, "value": [0, "100"]},
+            {"metric": {"tenant": "Acme", "tenant_id": "7"}, "value": [0, "50"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(7, "Acme")]))
+        result = await svc.tenant_ranking(limit=10, time_range="30d")
+
+        assert len(result["tenants"]) == 1
+        assert result["tenants"][0]["tenant"] == "Acme"
+        assert result["tenants"][0]["requests"] == 150
+        assert result["grand_total"] == 150
+
+    async def test_heatmap_merges_tenant_spanning_the_cutover(self):
+        prom_rows = [
+            {"metric": {"tenant": "Acme", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "100"]},
+            {"metric": {"tenant": "Acme", "tenant_id": "7", PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"}, "value": [0, "50"]},
+        ]
+        svc = _make_service(query_return=prom_rows, auth_db=self._name_lookup_db([(7, "Acme")]))
+        result = await svc.usage_by_tenant_service(limit=10, time_range="30d", services=None)
+
+        assert len(result["tenants"]) == 1
+        assert result["tenants"][0]["tenant"] == "Acme"
+        assert result["tenants"][0]["total"] == 150
+        assert result["grand_total"] == 150
 
 
 class TestFormatCount:

@@ -1,5 +1,26 @@
 """Cross-module constants used by schemas, services, and routes."""
 
+import enum
+
+
+# ── Permission IDs (match permissions.id — NOT roles.id) ─────────────
+class RoleId:
+    ADMIN = 1
+    MODERATOR = 2
+    GUEST = 3
+    USER = 4
+    TENANT_ADMIN = 5
+
+
+# ── Role Names (must match the seeded values in roles table) ──────────
+class RoleName(str, enum.Enum):
+    ADMIN = "ADMIN"
+    USER = "USER"
+    GUEST = "GUEST"
+    MODERATOR = "MODERATOR"
+    TENANT_ADMIN = "TENANT ADMIN"
+    PROGRAM_ADMIN = "PROGRAM ADMIN"
+
 
 # ── Environment ──────────────────────────────────────────────────────
 # We only differentiate "development" from everything else. Anything that
