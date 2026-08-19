@@ -114,8 +114,6 @@ class TenantUserRole(str, Enum):
     TENANT_ADMIN = RoleName.TENANT_ADMIN.value
     PROGRAM_ADMIN = RoleName.PROGRAM_ADMIN.value
     MODERATOR = RoleName.MODERATOR.value
-    ADMIN = RoleName.ADMIN.value
-    GUEST = RoleName.GUEST.value
 
 
 
@@ -292,7 +290,7 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    roles: list[TenantUserRole]
+    roles: list[str]
 
 
 class TenantPlanData(BaseSchema):

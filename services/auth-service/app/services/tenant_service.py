@@ -489,14 +489,10 @@ class TenantService:
         offset: int,
         limit: int,
         status_filter: Optional[TenantStatus],
+        *,
+        is_admin: bool = False,
     ) -> list[Tenant]:
-        # Only ADMIN may list all tenants. MODERATOR and TENANT ADMIN both hold
-        # the gateway-level tenant.read permission (needed for GET by ID and
-        # tenant-user endpoints), so they reach this method — but listing every
-        # tenant in the system is an admin-only operation.
-        roles = await self._roles.get_user_roles(current_user.id)
-        allowed = {RoleName.ADMIN.value, RoleName.PROGRAM_ADMIN.value}
-        if not allowed.intersection(roles):
+        if not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -507,13 +503,10 @@ class TenantService:
         return await self._tenants.list_all(offset=offset, limit=limit, status=status_filter)
 
     async def get_tenant(
-        self, current_user: User, tenant_id: int, *, unmask: bool = False
+        self, current_user: User, tenant_id: int, *, unmask: bool = False, is_admin: bool = False
     ) -> Tenant:
-        roles = await self._roles.get_user_roles(current_user.id)
-        if RoleName.PROGRAM_ADMIN.value not in roles:
+        if not is_admin:
             await self.enforce_scope(current_user, tenant_id)
-        # Revealing cleartext PII is limited to the roles that can edit the
-        # tenant; masked reads stay open to anyone with tenant.read scope.
         if unmask:
             await self._assert_can_reveal_pii(current_user)
         return await self._load_tenant_or_404(tenant_id)

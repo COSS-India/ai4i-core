@@ -3,9 +3,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
+from app.core.constants import RoleId
 from app.core.responses import to_response
+from app.utils.auth_helper import has_permission_id
 from app.utils.masking import mask_pii_in_dict
 from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_tenant_service
@@ -74,6 +76,7 @@ async def create_tenant(
     responses=error_responses(403),
 )
 async def list_tenants(
+    request: Request,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     status_filter: Optional[TenantStatus] = Query(None, alias="status"),
@@ -84,7 +87,8 @@ async def list_tenants(
 
     Restricted to ADMIN and PROGRAM_ADMIN. Contact PII is masked.
     """
-    tenants = await svc.list_tenants(current_user, offset, limit, status_filter)
+    is_admin = has_permission_id(request, RoleId.ADMIN)
+    tenants = await svc.list_tenants(current_user, offset, limit, status_filter, is_admin=is_admin)
     return ListTenantsResponse(
         data=[mask_pii_in_dict(to_response(t, TenantResponse)) for t in tenants]
     )
@@ -96,6 +100,7 @@ async def list_tenants(
     responses=error_responses(403, 404),
 )
 async def get_tenant(
+    request: Request,
     tenant_id: int,
     unmask: bool = Query(
         False,
@@ -114,7 +119,8 @@ async def get_tenant(
     Tenant admins are limited to their own tenant. Pass `unmask=true` only
     for the edit form (ADMIN / TENANT_ADMIN).
     """
-    tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask)
+    is_admin = has_permission_id(request, RoleId.ADMIN)
+    tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask, is_admin=is_admin)
     return GetTenantResponse(data=svc.build_tenant_response(tenant, unmask=unmask))
 
 
