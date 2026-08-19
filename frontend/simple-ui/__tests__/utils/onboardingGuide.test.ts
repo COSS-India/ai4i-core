@@ -24,8 +24,8 @@ describe("canSeeOnboardingGuide", () => {
     { roles: [] as string[] },
     { roles: ["USER"] },
     { roles: ["GUEST"] },
-    { roles: ["PROGRAM ADMIN"] },
-    { roles: ["PROGRAM_ADMIN"] },
+    { roles: ["USAGE VIEWER"] },
+    { roles: ["USAGE_VIEWER"] },
   ])("is false for $roles", ({ roles }) => {
     expect(canSeeOnboardingGuide(roles)).toBe(false);
   });
@@ -45,7 +45,7 @@ describe("getOnboardingGuideHref", () => {
     { roles: ["TENANT ADMIN"] },
     { roles: ["TENANT_ADMIN"] },
     { roles: ["USER"] },
-    { roles: ["PROGRAM ADMIN"] },
+    { roles: ["USAGE VIEWER"] },
     { roles: undefined },
     { roles: [] as string[] },
   ])("routes $roles to the Institution Admin guide", ({ roles }) => {
