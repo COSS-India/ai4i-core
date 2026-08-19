@@ -509,14 +509,21 @@ class MeteringService:
         old series age out" tradeoff `active_tenants` documents for the
         tenant-id -> org-name cutover.
 
-        Each per-service row's own `model_id` is read straight from the
+        Each row's own `model_id` — both per-service (`services`) and
+        per-row before the model-level collapse — is read straight from the
         Prometheus label when present (the new source of truth), falling
         back to the DB-joined value from `get_names_and_models_by_service_ids`
-        only when no row for that service_id carried a non-empty `model_id`
-        yet — i.e. a legacy pre-upgrade series (recorded before ai4i-core
-        1.0.18 started stamping this label) or a resolution failure. This
-        self-heals as pre-upgrade series age out of the window; there's no
-        after-the-fact fix, same reasoning as the tenant-id cutover.
+        only when that row carried no non-empty `model_id` label yet — i.e.
+        a legacy pre-upgrade series (recorded before ai4i-core 1.0.18
+        started stamping this label) or a resolution failure. The
+        model-level view applies this SAME fallback per-row before
+        collapsing by model_id (see `_effective_model_id` below) — without
+        it, a service's pre-upgrade traffic would resolve fine in
+        `services` (via svc_info) but silently disappear from
+        `model_totals`/`top_models`/`active_models` entirely, landing in
+        the excluded empty-model_id bucket instead. This self-heals as
+        pre-upgrade series age out of the window; there's no after-the-fact
+        fix, same reasoning as the tenant-id cutover.
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
@@ -619,9 +626,36 @@ class MeteringService:
         # authoritative source for model_consumption_ranking/kpis; see the
         # model-level ROLLOUT NOTE above for why this is independent of the
         # service-existence filtering `services` above went through.
-        model_totals_raw = self._label_dict(total_rows, "model_id")
-        model_successes_raw = self._label_dict(success_rows, "model_id")
-        model_tokens_raw = self._label_dict(tokens_rows, "model_id")
+        #
+        # Grouped by EFFECTIVE model_id — Prometheus label first, falling
+        # back to the DB-joined value (via svc_info, resolved above) when a
+        # row's own model_id label is empty — same precedence the
+        # per-service view already applies per service_id. Without this
+        # fallback, any series recorded before a service's model_id label
+        # existed (pre-ai4i-core-1.0.18, or before that service's traffic
+        # was first labeled) groups under the empty-string bucket and is
+        # silently excluded from model_totals entirely, even though the
+        # exact same row resolves fine in `services` above via svc_info —
+        # a real service showing real traffic in the per-service breakdown
+        # while vanishing completely from the Model Consumption chart.
+        def _effective_model_id(row: dict) -> str:
+            mid = row["metric"].get("model_id", "") or ""
+            if mid:
+                return mid
+            sid = row["metric"].get("service_id", "")
+            _, db_model_id, _ = svc_info.get(sid, (None, None, None))
+            return db_model_id or ""
+
+        def _sum_by_effective_model_id(rows: list) -> dict:
+            out: dict = {}
+            for r in rows:
+                key = _effective_model_id(r)
+                out[key] = out.get(key, 0) + round(float(r["value"][1]))
+            return out
+
+        model_totals_raw = _sum_by_effective_model_id(total_rows)
+        model_successes_raw = _sum_by_effective_model_id(success_rows)
+        model_tokens_raw = _sum_by_effective_model_id(tokens_rows)
         model_ids = {
             m for m in (set(model_totals_raw) | set(model_successes_raw) | set(model_tokens_raw))
             if m != ""
