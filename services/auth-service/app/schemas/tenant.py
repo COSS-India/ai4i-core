@@ -15,7 +15,7 @@ from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
 from app.models.tenant import TenantStatus
-from app.models.role_name import RoleName
+from app.core.constants import RoleName
 
 # Invisible Unicode characters that str.strip() does not remove:
 # soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
