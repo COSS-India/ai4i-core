@@ -13,7 +13,7 @@ from app.schemas.pay_per_use.tenant_assignment import (
     TierAssignResponse,
     TierReassignRequest,
 )
-from app.schemas.pay_per_use.tier import TierCreate, TierOut, TierUpdate
+from app.schemas.pay_per_use.tier import ListTiersResponse, TierCreate, TierOut, TierUpdate
 from app.services.pay_per_use import tenant_assignment_service, tier_service
 from ai4i_core.exceptions.responses import success_response
 from app.core.config import settings
@@ -22,7 +22,7 @@ from app.core.config import settings
 router = APIRouter(prefix="/pay-per-use", tags=["Tier Management"])
 
 
-@router.get("/tiers")
+@router.get("/tiers", response_model=ListTiersResponse)
 async def list_tiers(
     task_types: Optional[str] = Query(
         None,
@@ -30,6 +30,7 @@ async def list_tiers(
     ),
     session: AsyncSession = Depends(get_db),
 ):
+    """List active PPU tiers, optionally filtered by task type."""
     return await tier_service.list_tiers(session, task_types=task_types)
 
 
@@ -38,6 +39,7 @@ async def get_tier(
     tier_id: str = Query(...),
     session: AsyncSession = Depends(get_db),
 ):
+    """Get a single PPU tier by id."""
     return await tier_service.get_tier_by_id(tier_id, session)
 
 
@@ -47,6 +49,7 @@ async def create_tier(
     body: TierCreate,
     session: AsyncSession = Depends(get_db),
 ):
+    """Create a new PPU tier."""
     created_by = request.headers.get("X-User-Id")
     return await tier_service.create_tier(body, session, created_by=created_by)
 
@@ -57,6 +60,7 @@ async def update_tier(
     body: TierUpdate,
     session: AsyncSession = Depends(get_db),
 ):
+    """Update an existing PPU tier."""
     updated_by = request.headers.get("X-User-Id")
     return await tier_service.update_tier(
         body,
@@ -67,11 +71,18 @@ async def update_tier(
     )
 
 
-@router.delete("/tier", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/tier",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={204: {"description": "Tier deleted successfully. No content is returned."}},
+)
 async def delete_tier(
     tier_id: str = Query(...),
     session: AsyncSession = Depends(get_db),
 ):
+    """Delete a PPU tier. Returns 204 No Content on success — a delete never
+    has a response body."""
     await tier_service.delete_tier(tier_id, session)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -6,6 +6,17 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+# ── Simple acknowledgements ─────────────────────────────────────────────────
+
+class StatusResponse(BaseModel):
+    """Generic ``{"status": "..."}`` acknowledgement shared by the simple
+    admin actions below (create domain, deploy rules, activate domains,
+    delete a tenant-domain mapping) — their bodies are otherwise identical,
+    so this is reused rather than one near-duplicate class per route."""
+
+    status: str
+
+
 # ── Domain management ──────────────────────────────────────────────────────
 
 class NewDomainRequest(BaseModel):
@@ -25,6 +36,14 @@ class BulkActivateRequest(BaseModel):
 # ── Tenant → domain mapping ────────────────────────────────────────────────
 
 class TenantDomainUpsertRequest(BaseModel):
+    tenant_id: str
+    domain_id: str
+
+
+class TenantDomainUpsertResponse(BaseModel):
+    """POST /pii/admin/tenant-domain"""
+
+    status: str
     tenant_id: str
     domain_id: str
 

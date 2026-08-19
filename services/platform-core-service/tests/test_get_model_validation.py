@@ -105,7 +105,19 @@ class TestGetModelByIdRoute:
     @pytest.mark.asyncio
     async def test_valid_model_id_proceeds_to_service(self) -> None:
         svc = MagicMock()
-        svc.get_model = AsyncMock(return_value={"modelId": "abc123"})
+        # get_model_by_id now wraps the return value in ModelResponse (for
+        # Swagger docs), so this stub must satisfy that schema's required
+        # fields — modelId, name, version, task — rather than the bare
+        # {"modelId": ...} that sufficed when the route passed dicts through
+        # unvalidated.
+        svc.get_model = AsyncMock(
+            return_value={
+                "modelId": "abc123",
+                "name": "some-model",
+                "version": "1.0",
+                "task": {"type": "translation"},
+            }
+        )
 
         await get_model_by_id("abc123", version=None, svc=svc)
 

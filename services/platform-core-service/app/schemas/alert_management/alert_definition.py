@@ -9,11 +9,18 @@ deliberate changes from the source:
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import Field
 
 from app.schemas.base import BaseSchema
+from app.schemas.common import (
+    DeletedIdData,
+    MessageMeta,
+    SuccessResponse,
+    SuccessResponseWithMeta,
+    TotalMeta,
+)
 
 
 class AlertAnnotation(BaseSchema):
@@ -118,4 +125,48 @@ class AlertDefinitionResponse(BaseSchema):
     enabled: bool
     created_at: datetime
     updated_at: datetime
-    annotations: List[Dict[str, str]] = Field(default_factory=list)
+    annotations: List[AlertAnnotation] = Field(default_factory=list)
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class CreateAlertDefinitionResponse(SuccessResponseWithMeta):
+    """POST /alerts/definitions"""
+
+    data: AlertDefinitionResponse
+    meta: MessageMeta
+
+
+class ListAlertDefinitionsResponse(SuccessResponseWithMeta):
+    """GET /alerts/definitions"""
+
+    data: List[AlertDefinitionResponse]
+    meta: TotalMeta
+
+
+class GetAlertDefinitionResponse(SuccessResponse):
+    """GET /alerts/definitions/{alert_id}"""
+
+    data: AlertDefinitionResponse
+
+
+class UpdateAlertDefinitionResponse(SuccessResponseWithMeta):
+    """PUT /alerts/definitions/{alert_id}"""
+
+    data: AlertDefinitionResponse
+    meta: MessageMeta
+
+
+class DeleteAlertDefinitionResponse(SuccessResponseWithMeta):
+    """DELETE /alerts/definitions/{alert_id}"""
+
+    data: DeletedIdData
+    meta: MessageMeta
+
+
+class ToggleAlertDefinitionResponse(SuccessResponseWithMeta):
+    """PATCH /alerts/definitions/{alert_id}/enabled"""
+
+    data: AlertDefinitionResponse
+    meta: MessageMeta
