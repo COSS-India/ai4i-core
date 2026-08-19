@@ -1,6 +1,6 @@
 """Unit tests: Logs Dashboard summary cards must reflect the full filtered
 total across all pages, not just the current page of results, and Success +
-Failures must reconcile with Total Requests (each trace counts once).
+Failures must reconcile with Total Requests (each trace counts once)."""
 
 from __future__ import annotations
 
