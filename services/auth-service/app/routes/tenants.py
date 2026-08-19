@@ -85,7 +85,7 @@ async def list_tenants(
 ):
     """List tenants with optional status filter.
 
-    Restricted to ADMIN and PROGRAM_ADMIN. Contact PII is masked.
+    Restricted to ADMIN and USAGE_VIEWER. Contact PII is masked.
     """
     is_admin = has_permission_id(request, RoleId.ADMIN)
     tenants = await svc.list_tenants(current_user, offset, limit, status_filter, is_admin=is_admin)

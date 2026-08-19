@@ -19,7 +19,7 @@ class RoleName(str, enum.Enum):
     GUEST = "GUEST"
     MODERATOR = "MODERATOR"
     TENANT_ADMIN = "TENANT ADMIN"
-    PROGRAM_ADMIN = "PROGRAM ADMIN"
+    USAGE_VIEWER = "USAGE VIEWER"
 
 
 # ── Environment ──────────────────────────────────────────────────────
