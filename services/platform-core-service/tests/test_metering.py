@@ -725,6 +725,91 @@ class TestModelBreakdown:
         assert result["model_totals"] == []
         model_repo.get_model_names.assert_not_called()
 
+    async def test_model_totals_falls_back_to_db_when_prometheus_model_id_empty(self):
+        """Regression: a service whose Prometheus series predate the
+        model_id label (or whose traffic was recorded before that
+        service's inference-service instance picked up ai4i-core 1.0.18+)
+        still resolves fine in `services` via the DB join (svc_info) — the
+        model-level view must apply the SAME fallback per-row, or this
+        traffic silently vanishes from model_totals/top_models/
+        active_models while still showing up in the per-service breakdown.
+        Reported as: the Model Consumption chart shows only one model at
+        100%, while the per-service drill-down table lists several."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("legacy-svc", 14))  # model_id="" from Prometheus
+        repo = self._repo({"legacy-svc": ("Legacy Svc", "hash-legacy-v1", "test-llm-aug6-3")})
+        model_repo = self._model_repo({"hash-legacy-v1": "test-llm-aug6-3"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["model_id"] == "hash-legacy-v1"
+        assert result["model_totals"][0]["model_name"] == "test-llm-aug6-3"
+        assert result["model_totals"][0]["requests"] == 14
+
+    async def test_effective_model_id_resolved_per_service_not_per_row(self):
+        """A single service_id whose rows are inconsistently labeled across
+        the 3 queries (e.g. the success-count row was scraped before the
+        model_id label existed, but the total/tokens rows for the SAME
+        service already carry it) must resolve to ONE model_id for every
+        one of that service's rows — matching prom_model_id's per-service
+        resolution, the same one `services` already uses at the
+        prom_model_id.get(service_id) or db_model_id line. Resolving per
+        ROW instead would split this service's success count off into a
+        separate (wrongly excluded) empty-model_id bucket, understating
+        the model's success_pct instead of just being consistently whole."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql:
+                return self._row("svc-1", 9)  # no model_id label on this row
+            if "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return self._row("svc-1", 900, model_id="hash-gemma-v1")
+            return self._row("svc-1", 10, model_id="hash-gemma-v1")
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({"svc-1": ("Svc 1", "hash-gemma-v1", "Gemma 3 27B")})
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        m = result["model_totals"][0]
+        assert m["model_id"] == "hash-gemma-v1"
+        assert m["requests"] == 10
+        assert m["native_units"] == 900.0
+        assert m["success_pct"] == 90.0  # 9/10 — the unlabeled row still attributed correctly
+
+    async def test_model_totals_sums_prometheus_and_db_fallback_rows_together(self):
+        """One service already carries the Prometheus model_id label,
+        another (same model) doesn't yet — both must collapse into the
+        SAME model_totals entry, matching what the per-service view already
+        does for its own service_id-level fallback."""
+        client = MagicMock()
+
+        async def fake_query(promql):
+            if 'status_code=~"2.."' in promql or "telemetry_obsv_llm_tokens_processed_sum" in promql:
+                return []
+            return self._rows(
+                {"new-svc": 900, "legacy-svc": 11},
+                model_ids={"new-svc": "hash-shared-v1"},  # legacy-svc defaults to "" (not in dict)
+            )
+
+        client.query = AsyncMock(side_effect=fake_query)
+        repo = self._repo({
+            "new-svc": ("New Svc", "hash-shared-v1", "test-llm-aug6-3"),
+            "legacy-svc": ("Legacy Svc", "hash-shared-v1", "test-llm-aug6-3"),
+        })
+        model_repo = self._model_repo({"hash-shared-v1": "test-llm-aug6-3"})
+        svc = MeteringService(client=client, service_repo=repo, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert len(result["model_totals"]) == 1
+        assert result["model_totals"][0]["requests"] == 911
+
     async def test_deleted_service_traffic_still_counts_toward_active_model_total(self):
         """THE key behavioral change: a service can be dropped from the
         per-service `services` breakdown (ghost — deleted from mm_services)

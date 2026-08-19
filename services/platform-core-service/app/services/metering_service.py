@@ -509,14 +509,23 @@ class MeteringService:
         old series age out" tradeoff `active_tenants` documents for the
         tenant-id -> org-name cutover.
 
-        Each per-service row's own `model_id` is read straight from the
-        Prometheus label when present (the new source of truth), falling
-        back to the DB-joined value from `get_names_and_models_by_service_ids`
-        only when no row for that service_id carried a non-empty `model_id`
-        yet — i.e. a legacy pre-upgrade series (recorded before ai4i-core
-        1.0.18 started stamping this label) or a resolution failure. This
-        self-heals as pre-upgrade series age out of the window; there's no
-        after-the-fact fix, same reasoning as the tenant-id cutover.
+        Each service's `model_id` is resolved ONCE, per `service_id` (not
+        per row): the Prometheus label when any of that service's rows
+        carries one (the new source of truth), falling back to the
+        DB-joined value from `get_names_and_models_by_service_ids` only
+        when none of them do — i.e. a legacy pre-upgrade service (recorded
+        before ai4i-core 1.0.18 started stamping this label) or a
+        resolution failure. `services` and the model-level view
+        (`_effective_model_id` below) both apply this SAME per-service
+        resolution, so a service with some labeled and some unlabeled rows
+        can't split across two `model_totals` entries while `services`
+        still shows it as one. Without the fallback at all, a service's
+        pre-upgrade traffic would resolve fine in `services` (via
+        svc_info) but silently disappear from
+        `model_totals`/`top_models`/`active_models` entirely, landing in
+        the excluded empty-model_id bucket instead. This self-heals as
+        pre-upgrade series age out of the window; there's no after-the-fact
+        fix, same reasoning as the tenant-id cutover.
         """
         base_sel = build_base_selectors(
             inference_only=True, tenant=tenant, endpoint_regex=LLM_CHAT_ENDPOINT_REGEX
@@ -619,9 +628,32 @@ class MeteringService:
         # authoritative source for model_consumption_ranking/kpis; see the
         # model-level ROLLOUT NOTE above for why this is independent of the
         # service-existence filtering `services` above went through.
-        model_totals_raw = self._label_dict(total_rows, "model_id")
-        model_successes_raw = self._label_dict(success_rows, "model_id")
-        model_tokens_raw = self._label_dict(tokens_rows, "model_id")
+        #
+        # Grouped by EFFECTIVE model_id, resolved PER service_id (reusing
+        # prom_model_id, computed above) — Prometheus label first, falling
+        # back to the DB-joined value from svc_info — same precedence AND
+        # same granularity the per-service view already applies at line
+        # ~612 (`prom_model_id.get(service_id) or db_model_id`). Resolving
+        # per ROW instead (i.e. only from that row's own label) would let a
+        # service with some labeled and some unlabeled rows split across
+        # two model_totals entries whenever the label and the DB FK
+        # disagree during the rollout window, while `services` still shows
+        # it as one — this keeps the two views in agreement. Without the
+        # fallback at all, any series recorded before a service's model_id
+        # label existed (pre-ai4i-core-1.0.18, or before that service's
+        # traffic was first labeled) groups under the empty-string bucket
+        # and is silently excluded from model_totals entirely, even though
+        # the exact same service resolves fine in `services` via svc_info —
+        # real traffic in the per-service breakdown vanishing completely
+        # from the Model Consumption chart.
+        def _effective_model_id(row: dict) -> str:
+            sid = row["metric"].get("service_id", "")
+            _, db_model_id, _ = svc_info.get(sid, (None, None, None))
+            return prom_model_id.get(sid) or db_model_id or ""
+
+        model_totals_raw = self._label_dict(total_rows, _effective_model_id)
+        model_successes_raw = self._label_dict(success_rows, _effective_model_id)
+        model_tokens_raw = self._label_dict(tokens_rows, _effective_model_id)
         model_ids = {
             m for m in (set(model_totals_raw) | set(model_successes_raw) | set(model_tokens_raw))
             if m != ""
@@ -1101,12 +1133,21 @@ class MeteringService:
         return out
 
     @staticmethod
-    def _label_dict(results: list, label: str) -> dict:
-        """Map a label's value -> rounded sum from a `sum by(<label>)` result vector."""
+    def _label_dict(results: list, key) -> dict:
+        """Map a resolved key -> rounded sum from a `sum by(...)` result vector.
+
+        `key` is either a Prometheus label name (str) — extracted via
+        `metric.get(key, "")` — or a callable `row -> str` for a key that
+        isn't a single literal label (e.g. model_breakdown's effective-
+        model_id fallback, which needs more than one label on the row to
+        resolve). Keeping the rounding/summing loop here in one place, used
+        by both forms, avoids that logic drifting between two copies.
+        """
+        resolve = key if callable(key) else (lambda r: r["metric"].get(key, ""))
         out: dict = {}
         for r in results:
-            key = r["metric"].get(label, "")
-            out[key] = out.get(key, 0) + round(float(r["value"][1]))
+            k = resolve(r)
+            out[k] = out.get(k, 0) + round(float(r["value"][1]))
         return out
 
     @staticmethod
