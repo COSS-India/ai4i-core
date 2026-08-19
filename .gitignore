@@ -191,5 +191,4 @@ model-consumption-api-highlevel-design 1.md
 docs/AI4IDS-1844-ENDPOINT-VALIDATION-ANALYSIS.md
 scripts/llm-load-test-100-110-tokens-results.csv
 scripts/llm-load-test-500-plus-tokens-results.csv
-.gitignore
 scripts/llm-load-test-results.csv
