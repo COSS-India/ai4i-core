@@ -25,6 +25,17 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
+def _normalize_health_status(value: Any) -> Optional[Dict[str, Any]]:
+    """ServiceCreateRequest writes {status, lastUpdated}, but a PATCH via
+    ServiceUpdateRequest.healthStatus (Optional[str]) can persist a bare
+    string into this same JSONB column. Normalize here so every response
+    publishes one shape instead of exposing that write-time asymmetry as
+    anyOf: [object, string] on the API contract."""
+    if value is None or isinstance(value, dict):
+        return value
+    return {"status": str(value), "lastUpdated": None}
+
+
 def _mask_api_key(key: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not key:
         return key
@@ -134,7 +145,7 @@ def service_to_dict(
         # backend platform-wide (see test_triton_url_redaction.py for the
         # regression test guarding this).
         "api_key": service.api_key,
-        "healthStatus": service.health_status,
+        "healthStatus": _normalize_health_status(service.health_status),
         "benchmarks": service.benchmarks,
         "expectedResponseSchema": service.expected_response_schema,
         "isPublished": bool(service.is_published),

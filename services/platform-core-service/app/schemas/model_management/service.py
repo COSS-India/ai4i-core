@@ -12,7 +12,7 @@ integrations use the ULCA-conformant shape.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -884,16 +884,18 @@ class ServiceResponse(BaseSchema):
         None,
         description="Deprecated, masked — use `inferenceEndPoint.inferenceApiKey` (also masked).",
     )
-    # ServiceCreateRequest.healthStatus is Optional[ServiceStatus] ({status,
-    # lastUpdated}), but ServiceUpdateRequest.healthStatus is Optional[str] —
-    # a PATCH can genuinely persist a bare string into this JSONB column, so
-    # the response must accept either shape rather than only the object one.
-    healthStatus: Optional[Union[ServiceStatus, str]] = None
-    # Matches ServiceCreateRequest/ServiceUpdateRequest's own
-    # Optional[Dict[str, List[BenchmarkEntry]]] — a per-key list of benchmark
-    # entries (BenchmarkEntry has no required fields, so this is safe to read
-    # back even for a row written before some of its fields existed).
-    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    # ServiceUpdateRequest.healthStatus is Optional[str] (a PATCH can persist
+    # a bare string), while ServiceCreateRequest's is Optional[ServiceStatus]
+    # — service_to_dict() normalizes a bare string into {status, lastUpdated}
+    # before it ever reaches this schema, so the response always publishes
+    # one shape instead of exposing the write-time asymmetry as anyOf.
+    healthStatus: Optional[ServiceStatus] = None
+    # Deliberately looser than ServiceCreateRequest/ServiceUpdateRequest's own
+    # Optional[Dict[str, List[BenchmarkEntry]]]: this reads back whatever was
+    # actually persisted, including rows written before the list-of-entries
+    # shape was enforced on write — narrowing this to match the write-side
+    # schema risks 500ing the whole GET /services page on one old row.
+    benchmarks: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     isTryItDefault: bool = False
     publishedAt: Optional[str] = None

@@ -72,7 +72,11 @@ _FULL_SERVICE = {
         "adapterConfig": {"inputs": [], "outputs": [], "version": "1.0"},
     },
     "api_key": "super-secret-key",
-    "healthStatus": "healthy",
+    # service_to_dict() now normalizes a bare string (possible via
+    # ServiceUpdateRequest.healthStatus: Optional[str]) into {status,
+    # lastUpdated} before this dict is built — this fixture stands in for
+    # that already-normalized output, not the raw DB column value.
+    "healthStatus": {"status": "healthy", "lastUpdated": None},
     # service.benchmarks is only ever written from ServiceCreateRequest's own
     # Optional[Dict[str, List[BenchmarkEntry]]] (service_service.py:
     # jsonable_encoder(payload.benchmarks)) — a bare {"p99": 120} scalar

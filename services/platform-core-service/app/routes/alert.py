@@ -350,7 +350,7 @@ async def alert_history_webhook(
     ``{success, data}`` envelope — Alertmanager itself is the caller, not the
     portal, so this stays a bare acknowledgement.
     """
-    recorded = await svc.record_from_webhook(payload.model_dump())
+    recorded = await svc.record_from_webhook(payload.model_dump(exclude_unset=True))
     return AlertHistoryWebhookResponse(status="ok", recorded=recorded)
 
 
