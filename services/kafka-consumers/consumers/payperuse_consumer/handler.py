@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -304,13 +305,42 @@ async def handle_ppu_usage(msg: Message) -> None:
     await _post_billing(outcome.wallet_exhausted, outcome.quota_exhausted, ctx.tenant_id, outcome.pricing.task_type)
 
 
+_NOTIFY_AUTH_MAX_ATTEMPTS = 3
+_NOTIFY_AUTH_BACKOFF_BASE_S = 0.5
+
+
 async def _notify_auth(path: str, body: dict) -> None:
-    """POST to auth-service internal endpoint to update API key Redis flags."""
+    """POST to auth-service internal endpoint to update API key Redis flags.
+
+    Retries with exponential backoff (0.5s/1s) before giving up — this call
+    is the only thing that flips /auth/validate's budget/quota-exhausted
+    Redis flag (see routes/validation.py::_validate_api_key), so a single
+    dropped notification here previously meant enforcement silently lapsed
+    for this tenant until their next billed request happened to re-fire the
+    same notification (wallet_exhausted/quota_exhausted recompute True on
+    every subsequent deduction while the tenant stays over). Idempotent:
+    the internal endpoint only sets a flag, so retrying/re-POSTing is safe.
+    """
     url = f"{settings.AUTH_SERVICE_URL}{path}"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(url, json=body)
-            resp.raise_for_status()
-    except Exception as exc:
-        # Log and continue — billing event must not fail over a notification error.
-        logger.error("Failed to notify auth-service %s: %s", url, exc)
+    for attempt in range(1, _NOTIFY_AUTH_MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=body)
+                resp.raise_for_status()
+            return
+        except Exception as exc:
+            if attempt == _NOTIFY_AUTH_MAX_ATTEMPTS:
+                # Log and continue — billing event must not fail over a notification
+                # error. Alert-worthy: the exhaustion flag was NOT set, so enforcement
+                # for this tenant silently lapses until their next billed request.
+                logger.error(
+                    "Failed to notify auth-service after %d attempts — budget/quota "
+                    "enforcement flag NOT set | url=%s body=%s error=%s",
+                    _NOTIFY_AUTH_MAX_ATTEMPTS, url, body, exc,
+                )
+                return
+            logger.warning(
+                "auth-service notify failed, retrying (attempt %d/%d) | url=%s error=%s",
+                attempt, _NOTIFY_AUTH_MAX_ATTEMPTS, url, exc,
+            )
+            await asyncio.sleep(_NOTIFY_AUTH_BACKOFF_BASE_S * (2 ** (attempt - 1)))
