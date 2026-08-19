@@ -48,13 +48,14 @@ class GenericInferenceResponse(BaseModel):
     )
 
 
-# ── OpenAI-compatible chat schemas (routes/inference.py's /chat, /chat/completions) ──
+# ── OpenAI-compatible chat response schema (routes/inference.py's /chat, /chat/completions) ──
 #
-# /chat and /chat/completions forward the payload to an OpenAI-compatible
-# upstream LLM verbatim. These schemas document that contract for Swagger;
-# both allow extra fields so an upstream-supported field this schema doesn't
-# enumerate (tools, tool_choice, response_format, seed, ...) is still passed
-# through untouched rather than rejected at this layer.
+# /chat and /chat/completions forward the request payload to an
+# OpenAI-compatible upstream LLM verbatim — the route keeps a plain
+# Dict[str, Any] body (see _CHAT_EXAMPLE there) rather than a Pydantic
+# request model, so an upstream-supported field is never rejected here.
+# This response schema is documentation only (wired via `responses=`, not
+# `response_model=`), describing the non-streaming JSON shape for Swagger.
 
 
 class ChatMessage(BaseModel):
@@ -66,23 +67,6 @@ class ChatMessage(BaseModel):
     content: Optional[Any] = Field(
         None, description="Message text, or a content-part list for multimodal input."
     )
-
-
-class ChatCompletionRequest(BaseModel):
-    """OpenAI-compatible chat completions request body for /chat and
-    /chat/completions. Forwarded to the upstream LLM verbatim; fields beyond
-    the ones declared here (e.g. temperature, tools, response_format) still
-    pass through untouched via ``extra="allow"``."""
-
-    model_config = ConfigDict(extra="allow", json_schema_extra={"example": {
-        "model": "llm-service-1",
-        "messages": [{"role": "user", "content": "Hello, how are you?"}],
-        "stream": False,
-    }})
-
-    model: str = Field(..., description="Service identifier, as registered in the platform (OpenAI `model` field).")
-    messages: List[ChatMessage] = Field(..., description="Conversation so far, oldest first.")
-    stream: Optional[bool] = Field(False, description="If true, returns a text/event-stream SSE response.")
 
 
 class ChatChoice(BaseModel):
