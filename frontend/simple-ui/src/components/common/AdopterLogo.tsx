@@ -15,6 +15,7 @@ export default function AdopterLogo({ alt, ...props }: AdopterLogoProps) {
       alt={alt ?? `${getPlatformName()} Logo`}
       objectFit="contain"
       onError={(e) => {
+        if (e.currentTarget.src.endsWith(DEFAULT_ADOPTER_LOGO_SRC)) return;
         e.currentTarget.src = DEFAULT_ADOPTER_LOGO_SRC;
       }}
       {...props}

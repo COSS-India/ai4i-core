@@ -29,7 +29,7 @@ export type RuntimeConfig = {
   adopterLogoUrl: string;
 };
 
-const EMPTY: RuntimeConfig = {
+export const EMPTY_RUNTIME_CONFIG: RuntimeConfig = {
   apiUrl: "",
   telemetryServiceUrl: "",
   enabledTaskTypes: "",
@@ -37,7 +37,7 @@ const EMPTY: RuntimeConfig = {
   adopterLogoUrl: "",
 };
 
-let cached: RuntimeConfig = { ...EMPTY };
+let cached: RuntimeConfig = { ...EMPTY_RUNTIME_CONFIG };
 
 function firstEnv(...keys: string[]): string {
   for (const key of keys) {

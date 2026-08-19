@@ -2,6 +2,7 @@ import {
   applyRuntimeConfig,
   DEFAULT_ADOPTER_LOGO_SRC,
   DEFAULT_PLATFORM_NAME,
+  EMPTY_RUNTIME_CONFIG,
   getAdopterLogoSrc,
   getPlatformName,
   getServerRuntimeConfig,
@@ -14,17 +15,9 @@ const ENV_KEYS = [
   'NEXT_PUBLIC_ADOPTER_LOGO_URL',
 ] as const;
 
-const EMPTY_CONFIG = {
-  apiUrl: '',
-  telemetryServiceUrl: '',
-  enabledTaskTypes: '',
-  platformName: DEFAULT_PLATFORM_NAME,
-  adopterLogoUrl: '',
-};
-
 describe('getPlatformName', () => {
   afterEach(() => {
-    applyRuntimeConfig(EMPTY_CONFIG);
+    applyRuntimeConfig(EMPTY_RUNTIME_CONFIG);
   });
 
   it('falls back to AI Switch when unset', () => {
@@ -34,7 +27,7 @@ describe('getPlatformName', () => {
 
   it('returns the applied runtime config value', () => {
     applyRuntimeConfig({
-      ...EMPTY_CONFIG,
+      ...EMPTY_RUNTIME_CONFIG,
       platformName: 'Custom Brand',
     });
     expect(getPlatformName()).toBe('Custom Brand');
@@ -42,7 +35,7 @@ describe('getPlatformName', () => {
 
   it('falls back when the applied name is blank', () => {
     applyRuntimeConfig({
-      ...EMPTY_CONFIG,
+      ...EMPTY_RUNTIME_CONFIG,
       platformName: '   ',
     });
     expect(getPlatformName()).toBe(DEFAULT_PLATFORM_NAME);
@@ -51,7 +44,7 @@ describe('getPlatformName', () => {
 
 describe('getAdopterLogoSrc', () => {
   afterEach(() => {
-    applyRuntimeConfig(EMPTY_CONFIG);
+    applyRuntimeConfig(EMPTY_RUNTIME_CONFIG);
   });
 
   it('falls back to default SVG when unset', () => {
@@ -60,10 +53,58 @@ describe('getAdopterLogoSrc', () => {
 
   it('uses ConfigMap URL when set', () => {
     applyRuntimeConfig({
-      ...EMPTY_CONFIG,
+      ...EMPTY_RUNTIME_CONFIG,
       adopterLogoUrl: 'https://cdn.example.com/logo.png',
     });
     expect(getAdopterLogoSrc()).toBe('https://cdn.example.com/logo.png');
+  });
+
+  it('accepts http URLs', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      adopterLogoUrl: 'http://internal.example.com/logo.png',
+    });
+    expect(getAdopterLogoSrc()).toBe('http://internal.example.com/logo.png');
+  });
+
+  it('accepts same-origin paths', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      adopterLogoUrl: '/custom-logo.png',
+    });
+    expect(getAdopterLogoSrc()).toBe('/custom-logo.png');
+  });
+
+  it('rejects protocol-relative URLs', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      adopterLogoUrl: '//evil.com/x.png',
+    });
+    expect(getAdopterLogoSrc()).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+  });
+
+  it('rejects javascript: URLs', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      adopterLogoUrl: 'javascript:alert(1)',
+    });
+    expect(getAdopterLogoSrc()).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+  });
+
+  it('rejects data: URLs', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      adopterLogoUrl: 'data:image/svg+xml;base64,PHN2Zz4=',
+    });
+    expect(getAdopterLogoSrc()).toBe(DEFAULT_ADOPTER_LOGO_SRC);
+  });
+
+  it('rejects malformed URLs', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      adopterLogoUrl: 'not a url',
+    });
+    expect(getAdopterLogoSrc()).toBe(DEFAULT_ADOPTER_LOGO_SRC);
   });
 });
 
