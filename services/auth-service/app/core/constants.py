@@ -1,3 +1,5 @@
+"""Cross-module constants used by schemas, services, and routes."""
+
 import enum
 
 
