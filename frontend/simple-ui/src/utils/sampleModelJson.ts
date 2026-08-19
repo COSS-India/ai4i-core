@@ -153,11 +153,16 @@ export const SAMPLE_MODEL_JSON = `{
   // ── Schema ─────────────────────────────────────────────────────────────────
 
   "schema": {
-    // Required. Task-specific inference request/response contract.
-    // Specify a taskType along with the matching inference shape for this task.
-    // Discriminator — taskType: translation | transliteration | asr | tts |
-    //   ocr | txt-lang-detection | ner
-    // "model_name" is required — used to construct the Triton URL.
+    // Required whenever "schema" is provided at all: "model_name",
+    // "taskType", "request", and "response" must ALL be present, or
+    // model registration is rejected. A Service later created against
+    // this model derives its own inferenceEndPoint.schema from these
+    // same four keys — an incomplete schema here can't be filled in
+    // afterward.
+    // taskType — discriminator: translation | transliteration | asr | tts |
+    //   ocr | txt-lang-detection | ner | llm
+    // "model_name" — used to construct the Triton URL.
+    "taskType": "llm",
     "request": {
       "model": "google/gemma-5-E4B-it",
       "messages": [
@@ -167,7 +172,15 @@ export const SAMPLE_MODEL_JSON = `{
         }
       ]
     },
-    "response": {},
+    "response": {
+      "choices": [
+        {
+          "message": {
+            "content": "Hi there! How can I help you today?"
+          }
+        }
+      ]
+    },
     "model_name": "example-model",
     "modelProcessingType": null
   },

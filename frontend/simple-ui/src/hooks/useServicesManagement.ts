@@ -16,6 +16,13 @@ import {
 import { getAllModels, getModelById } from "../services/modelManagementService";
 import { fetchTiers } from "../services/tierManagementService";
 import type { Tier } from "../types/tierManagement";
+import {
+  SERVICE_NAME_MAX_LEN,
+  validateHardwareDescription,
+  validateServiceDescription,
+  validateServiceIdLength,
+  validateServiceName,
+} from "../components/services-management/serviceFormValidation";
 import type { ModelDetails } from "../types/platform";
 import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
@@ -44,6 +51,7 @@ const emptyServiceForm = (): Partial<Service> => ({
   name: "",
   serviceId: "",
   serviceDescription: "",
+  hardwareDescription: "",
   publishedOn: Math.floor(Date.now() / 1000),
   modelId: "",
   modelName: "",
@@ -89,6 +97,8 @@ export function useServicesManagement() {
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [availableTiers, setAvailableTiers] = useState<Tier[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+ 
+  const [createFormEpoch, setCreateFormEpoch] = useState(0);
   const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(
     null,
   );
@@ -598,6 +608,7 @@ export function useServicesManagement() {
   }, [queryClient]);
 
   const resetCreateForm = () => {
+    setCreateFormEpoch((n) => n + 1);
     setFormData(emptyServiceForm());
     setPricePerUnit("");
     setUnitSize("");
@@ -673,7 +684,10 @@ export function useServicesManagement() {
           name: serviceName,
           serviceId: serviceId,
           publishedOn: Math.floor(Date.now() / 1000),
-          hardwareDescription: "Default hardware",
+          // Trimmed so the length the user was validated against is the
+          // length the backend measures.
+          serviceDescription: formData.serviceDescription?.trim() || "",
+          hardwareDescription: formData.hardwareDescription?.trim() || "",
           api_key: "",
           status: "active",
           costPerUnit: pricePerUnit ? Number(pricePerUnit) : undefined,
@@ -793,7 +807,55 @@ export function useServicesManagement() {
     !editingService &&
     !!formData.serviceId?.trim() &&
     existingServiceIds.includes(formData.serviceId.trim());
+
+  /**
+   * ULCA length rules — create only. PATCH does not carry them, so an edit
+   * of a pre-existing service that predates these limits stays submittable.
+   */
+  /**
+   * Registry-state clash — surfaced immediately, since unlike the length
+   * rules it cannot be stated up-front in hint text.
+   */
   const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
+
+  /**
+   * ULCA length/charset rules — create only. PATCH carries none of them, so
+   * editing a service that predates these limits stays submittable.
+   *
+   * Each value doubles as the field's error message (the form reveals it
+   * once that field has been blurred) and as a Create-button gate. A short
+   * description looks filled in, so the disabled button alone would not say
+   * which field is at fault.
+   */
+  const isCreateMode = !editingService;
+  const serviceDescriptionError = isCreateMode
+    ? validateServiceDescription(formData.serviceDescription)
+    : null;
+  // LLM derives its name from the Service ID, so the separate Service Name
+  // field only exists — and only needs validating — for non-LLM tasks.
+  const serviceNameError =
+    isCreateMode && !isLlmTaskType ? validateServiceName(formData.name) : null;
+  const hardwareDescriptionError = isCreateMode
+    ? validateHardwareDescription(formData.hardwareDescription)
+    : null;
+  /**
+   * Service ID length, plus the tighter name cap when the ID doubles as the
+   * Service Name. Kept apart from `serviceIdError` so the duplicate clash
+   * can show immediately while this one waits for blur.
+   */
+  const serviceIdLengthError = !isCreateMode
+    ? null
+    : (validateServiceIdLength(formData.serviceId) ??
+      (isLlmTaskType &&
+      (formData.serviceId || "").trim().length > SERVICE_NAME_MAX_LEN
+        ? `Service ID must not exceed ${SERVICE_NAME_MAX_LEN} characters, because it is also used as the Service Name.`
+        : null));
+
+  const meetsCreateFieldRules =
+    !serviceDescriptionError &&
+    !serviceNameError &&
+    !hardwareDescriptionError &&
+    !serviceIdLengthError;
 
   // LLM: Service Name is derived from Service ID (not shown). Non-LLM: both required.
   const hasRequiredServiceIdentity = isLlmTaskType
@@ -803,6 +865,7 @@ export function useServicesManagement() {
   const canCreateService =
     hasRequiredServiceIdentity &&
     !serviceIdExists &&
+    meetsCreateFieldRules &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim() &&
     !!formData.task_type?.trim() &&
@@ -866,6 +929,8 @@ export function useServicesManagement() {
         serviceId: service.serviceId || service.service_id || "",
         serviceDescription:
           service.serviceDescription || service.description || "",
+        // Read-only in edit; PATCH never resends it.
+        hardwareDescription: service.hardwareDescription || "",
         publishedOn: service.publishedOn,
         modelId,
         modelName: service.model?.name || modelId,
@@ -890,6 +955,7 @@ export function useServicesManagement() {
             .filter((id): id is string => !!id);
       setSelectedTiers(tierIds);
       setEditingService(service);
+      setCreateFormEpoch((n) => n + 1);
       // Fill model name/submission date from the model record (read-only display)
       if (modelId) {
         handleModelNameChange(modelId);
@@ -1205,6 +1271,11 @@ export function useServicesManagement() {
     canCreateService,
     isLlmTaskType,
     serviceIdError,
+    serviceIdLengthError,
+    serviceDescriptionError,
+    serviceNameError,
+    hardwareDescriptionError,
+    createFormEpoch,
     isSubmitting,
     handleSubmit,
     handleCancelForm,

@@ -15,7 +15,7 @@ import { GlobalToastRegistrar } from '../utils/toast';
 import AuthGuard from '../components/auth/AuthGuard';
 import {
   applyRuntimeConfig,
-  DEFAULT_PLATFORM_NAME,
+  EMPTY_RUNTIME_CONFIG,
   getServerRuntimeConfig,
   type RuntimeConfig,
 } from '../config/runtimeConfig';
@@ -69,12 +69,8 @@ export default function MyApp({
   // Apply before children render so hooks/services see ConfigMap values.
   applyRuntimeConfig(
     runtimeConfig ??
-      (typeof window !== "undefined" ? window.__RUNTIME_CONFIG__ : undefined) ?? {
-        apiUrl: "",
-        telemetryServiceUrl: "",
-        enabledTaskTypes: "",
-        platformName: DEFAULT_PLATFORM_NAME,
-      },
+      (typeof window !== "undefined" ? window.__RUNTIME_CONFIG__ : undefined) ??
+      EMPTY_RUNTIME_CONFIG,
   );
   syncApiClientBaseUrl();
 

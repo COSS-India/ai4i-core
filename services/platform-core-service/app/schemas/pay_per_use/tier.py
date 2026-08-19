@@ -73,3 +73,16 @@ class TierOut(BaseModel):
     updatedAt: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class ListTiersResponse(BaseModel):
+    """GET /pay-per-use/tiers
+
+    Note: this endpoint's own ``{data, total}`` shape — not the
+    ``{success, data, meta}`` envelope used by the tenant-assignment routes
+    in this same file — matching what ``tier_service.list_tiers`` actually
+    returns.
+    """
+
+    data: List[TierOut]
+    total: int

@@ -9,12 +9,21 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
-from app.core.responses import success_response
 from app.dependencies.services import ModelService, get_model_service
+from app.schemas.common import MessageMeta, error_responses
 from app.schemas.enums.model_management import TaskTypeEnum, VersionStatusEnum
 from app.schemas.model_management.model import (
+    CreateModelData,
+    CreateModelResponse,
+    DeleteModelData,
+    DeleteModelResponse,
+    GetModelResponse,
+    ListModelsResponse,
     ModelCreateRequest,
+    ModelListMeta,
     ModelUpdateRequest,
+    UpdateModelData,
+    UpdateModelResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,7 +91,7 @@ async def list_models(
         description="Maximum number of items to return. Defaults to 100.",
     ),
     svc: ModelService = Depends(get_model_service),
-):
+) -> ListModelsResponse:
     """List models with optional filters and offset/limit pagination."""
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
     if version_status is not None and version_status not in valid_version_statuses:
@@ -106,95 +115,93 @@ async def list_models(
         limit=limit,
     )
     response.headers["X-Total-Count"] = str(total)
-    return success_response(
+    return ListModelsResponse(
+        success=True,
         data=items,
-        meta={"total": total, "offset": offset, "limit": limit},
+        meta=ModelListMeta(total=total, offset=offset, limit=limit),
     )
 
 
-@router.get("/{model_id:path}", summary="Retrieve Model")
+@router.get("/{model_id:path}", summary="Retrieve Model", responses=error_responses(404))
 async def get_model_by_id(
     model_id: str,
     version: Optional[str] = Query(None, description="Specific model version. If omitted, returns the latest active version."),
     svc: ModelService = Depends(get_model_service),
-):
+) -> GetModelResponse:
     """Retrieve a model by ID."""
     model_id = _validate_model_id(model_id)
     data = await svc.get_model(model_id, version=version)
-    return success_response(data=data)
+    return GetModelResponse(success=True, data=data)
 
 
 @router.post(
     "",
     status_code=201,
     summary="Register a new model version (ULCA model-schema conformant)",
-    description=(
-        "Registers a new model version in the registry. The request body "
-        "follows ULCA's `model-schema.yml` Model object: `name`, `version`, "
-        "`description`, `task`, `license`, `domain`, `submitter`, "
-        "and `trainingDataset` are required; "
-        "`refUrl`, `languages`, `isLangDetectionEnabled`, `isMultilingual`, "
-        "`licenseUrl`, `adapterConfig`, `schema`, `benchmarks`, "
-        "and `classInstance` are optional (see "
-        "each field's description in the schema below for its default, if "
-        "any). Use the 'Example Value' tab for a full worked payload."
-    ),
+    responses=error_responses(409),
 )
 async def create_model(
     request: Request,
     payload: ModelCreateRequest,
     svc: ModelService = Depends(get_model_service),
-):
-    """Create a new model version."""
+) -> CreateModelResponse:
+    """Registers a new model version in the registry. The request body
+    follows ULCA's `model-schema.yml` Model object: `name`, `version`,
+    `description`, `task`, `license`, `domain`, `submitter`,
+    and `trainingDataset` are required;
+    `refUrl`, `languages`, `isLangDetectionEnabled`, `isMultilingual`,
+    `licenseUrl`, `adapterConfig`, `schema`, `benchmarks`,
+    and `classInstance` are optional (see
+    each field's description in the schema below for its default, if
+    any). Use the 'Example Value' tab for a full worked payload.
+    """
     user_id = request.headers.get("X-User-Id")
     model_id = await svc.create_model(payload, created_by=user_id)
-    return success_response(
-        data={
-            "modelId": model_id,
-            "name": payload.name,
-            "version": payload.version,
-        },
-        meta={"message": f"Model '{payload.name}' created successfully."},
+    return CreateModelResponse(
+        success=True,
+        data=CreateModelData(modelId=model_id, name=payload.name, version=payload.version),
+        meta=MessageMeta(message=f"Model '{payload.name}' created successfully."),
     )
 
 
 @router.patch(
     "",
     summary="Partially update a model version (ULCA model-schema conformant)",
-    description=(
-        "Applies a partial update to an existing (modelId, version). Only "
-        "`modelId` and `version` are required — every other field "
-        "(`description`, `task`, `languages`, `license`, `domain`, "
-        "`submitter`, `trainingDataset`, `adapterConfig`, "
-        "`schema`, etc.) is optional; omit a field to leave it unchanged. "
-        "`name` cannot be changed (modelId is derived from name+version — "
-        "create a new version instead). `adapterConfig` is deep-merged with "
-        "the stored value; `schema` replaces the stored value entirely. "
-        "Use the 'Example Value' tab for a realistic partial-update payload."
-    ),
+    responses=error_responses(404, 409),
 )
 async def update_model(
     request: Request,
     payload: ModelUpdateRequest,
     svc: ModelService = Depends(get_model_service),
-):
-    """Update an existing model version."""
+) -> UpdateModelResponse:
+    """Applies a partial update to an existing (modelId, version). Only
+    `modelId` and `version` are required — every other field
+    (`description`, `task`, `languages`, `license`, `domain`,
+    `submitter`, `trainingDataset`, `adapterConfig`,
+    `schema`, etc.) is optional; omit a field to leave it unchanged.
+    `name` cannot be changed (modelId is derived from name+version —
+    create a new version instead). `adapterConfig` is deep-merged with
+    the stored value; `schema` replaces the stored value entirely.
+    Use the 'Example Value' tab for a realistic partial-update payload.
+    """
     user_id = request.headers.get("X-User-Id")
     await svc.update_model(payload, updated_by=user_id)
-    return success_response(
-        data={"modelId": payload.modelId, "version": payload.version},
-        meta={"message": f"Model '{payload.modelId}' updated successfully."},
+    return UpdateModelResponse(
+        success=True,
+        data=UpdateModelData(modelId=payload.modelId, version=payload.version),
+        meta=MessageMeta(message=f"Model '{payload.modelId}' updated successfully."),
     )
 
 
-@router.delete("/{model_id:path}")
+@router.delete("/{model_id:path}", responses=error_responses(404, 409))
 async def delete_model(
     model_id: str,
     svc: ModelService = Depends(get_model_service),
-):
+) -> DeleteModelResponse:
     """Delete a model by its hash-generated model ID."""
     await svc.delete_model(model_id)
-    return success_response(
-        data={"modelId": model_id},
-        meta={"message": f"Model '{model_id}' deleted successfully."},
+    return DeleteModelResponse(
+        success=True,
+        data=DeleteModelData(modelId=model_id),
+        meta=MessageMeta(message=f"Model '{model_id}' deleted successfully."),
     )

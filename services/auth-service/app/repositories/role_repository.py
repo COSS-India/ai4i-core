@@ -9,7 +9,8 @@ from sqlalchemy import delete, select , func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Permission, Role, RolePermission, UserRole
-from app.models.role_name import RoleName, role_name_to_str
+from app.core.constants import RoleName
+from app.utils.common import role_name_to_str
 from app.repositories.base import BaseRepository
 from app.models.user import User
 

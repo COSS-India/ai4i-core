@@ -73,32 +73,34 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
 
   return (
     <Box overflowX="auto" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-      <Table size="sm" variant="simple">
+      <Table size="sm" variant="simple" minW="540px" sx={{ tableLayout: "fixed" }}>
         <Thead bg="gray.50">
           <Tr>
             <ThWithTip
-              w="26%"
+              w="28%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             >
               MODEL TASK TYPE
             </ThWithTip>
             <ThWithTip
               message={METERING.USAGE_SPEND.TOOLTIPS.USAGE}
-              w="38%"
+              w="40%"
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             >
               USAGE
             </ThWithTip>
             <ThWithTip
               message={METERING.USAGE_SPEND.TOOLTIPS.SPEND}
-              w="20%"
+              w="18%"
+              isNumeric
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             >
               SPEND
             </ThWithTip>
             <ThWithTip
               message={METERING.USAGE_SPEND.TOOLTIPS.SHARE}
-              w="16%"
+              w="14%"
+              isNumeric
               sx={{ fontSize: "10.5px", letterSpacing: "0.04em", color: "gray.600" }}
             >
               SHARE
@@ -141,10 +143,13 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
                     remaining={t.remaining}
                     percentage={quotaUsagePercentage(t)}
                     unit={t.unit}
+                    compact
                   />
                 </Td>
-                <Td fontSize="sm">{formatSpendMoney(t.spend, currency)}</Td>
-                <Td fontSize="12.5px" color="gray.500">
+                <Td fontSize="sm" isNumeric>
+                  {formatSpendMoney(t.spend, currency)}
+                </Td>
+                <Td fontSize="12.5px" color="gray.500" isNumeric>
                   {share}%
                 </Td>
               </Tr>
@@ -157,10 +162,10 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
             <Td color="gray.500" fontWeight="normal" fontSize="12px">
               —
             </Td>
-            <Td fontWeight="bold" fontSize="sm">
+            <Td fontWeight="bold" fontSize="sm" isNumeric>
               {formatSpendMoney(visibleSpend, currency)}
             </Td>
-            <Td fontWeight="bold" fontSize="sm">
+            <Td fontWeight="bold" fontSize="sm" isNumeric>
               {totalSpend > 0 ? `${((visibleSpend / totalSpend) * 100).toFixed(0)}%` : "0%"}
             </Td>
           </Tr>

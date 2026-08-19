@@ -15,7 +15,7 @@ from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
 from app.models.tenant import TenantStatus
-from app.models.role_name import RoleName
+from app.core.constants import RoleName
 
 # Invisible Unicode characters that str.strip() does not remove:
 # soft hyphen, zero-width space/non-joiner/joiner, LTR/RTL marks,
@@ -112,10 +112,8 @@ class TenantUserRole(str, Enum):
 
     USER = RoleName.USER.value
     TENANT_ADMIN = RoleName.TENANT_ADMIN.value
-    PROGRAM_ADMIN = RoleName.PROGRAM_ADMIN.value
+    USAGE_VIEWER = RoleName.USAGE_VIEWER.value
     MODERATOR = RoleName.MODERATOR.value
-    ADMIN = RoleName.ADMIN.value
-    GUEST = RoleName.GUEST.value
 
 
 
@@ -292,7 +290,7 @@ class TenantUserResponse(BaseSchema):
     # from one who never set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    roles: list[TenantUserRole]
+    roles: list[str]
 
 
 class TenantPlanData(BaseSchema):

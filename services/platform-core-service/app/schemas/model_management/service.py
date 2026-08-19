@@ -22,13 +22,19 @@ from app.schemas.common import (
     AsyncApiDetails,
     BenchmarkEntry,
     InferenceApiKey,
+    LanguagePairLenient,
+    MessageMeta,
+    SuccessResponse,
+    SuccessResponseWithMeta,
     TaskSpec,
+    TaskSpecLenient,
+    TotalMeta,
+    is_recognized_schema_task_type,
     validate_entity_name,
 )
 from app.schemas.enums.model_management import (
     AudioFormatEnum,
     InferenceServerTypeEnum,
-    TaskTypeEnum,
     TextFormatEnum,
     resolve_task_type,
 )
@@ -78,17 +84,8 @@ class SupportedFormats(BaseSchema):
     )
 
 
-# `schema` entries describe ULCA-shaped request/response contracts, so they
-# may legitimately use either our TaskTypeEnum values or ULCA's own
-# discriminator vocabulary where the two differ (nmt vs translation,
-# language-detection vs txt-lang-detection). Derived from TaskTypeEnum
-# (rather than duplicated as a literal set) so a task type added there
-# later doesn't also need remembering here — only the two ULCA-only
-# spellings are literals.
-_INFERENCE_SCHEMA_TASK_TYPES = {m.value for m in TaskTypeEnum} | {"translation", "txt-lang-detection"}
-
 # Same nmt/translation and language-detection/txt-lang-detection equivalence
-# as _INFERENCE_SCHEMA_TASK_TYPES above, but keyed so both spellings of a
+# as common.INFERENCE_SCHEMA_TASK_TYPES, but keyed so both spellings of a
 # pair resolve to the same equivalence set — used to check a `schema` entry
 # actually describes the service's own task, not just *some* recognized
 # task (without this, a TTS service could ship an `asr` schema entry and
@@ -124,7 +121,7 @@ def validate_inference_schema_entries(v: List[Dict[str, Any]]) -> List[Dict[str,
         task_type = entry.get("taskType")
         if not task_type:
             raise ValueError(f"schema[{i}] must include 'taskType'")
-        if task_type not in _INFERENCE_SCHEMA_TASK_TYPES:
+        if not is_recognized_schema_task_type(task_type):
             raise ValueError(
                 f"schema[{i}].taskType '{task_type}' is not a recognized task type"
             )
@@ -817,6 +814,46 @@ class ServiceBulkEndpointUpdateRequest(BaseSchema):
 
 
 # ── Response ──
+#
+# The classes below mirror request-side schemas (InferenceAPIEndPoint,
+# TaskSpec, LanguagePair) field-for-field, but WITHOUT their validators and
+# with every field optional — a response model reads back whatever a row
+# actually holds (including data written before a validator existed, or via
+# ServiceUpdateRequest's looser partial-patch typing on the same JSONB
+# column), so it must never be stricter than what's genuinely guaranteed to
+# be there. Concretely: InferenceAPIEndPoint._validate_schema requires each
+# `schema` entry to be a full, non-empty ULCA contract — reusing it directly
+# here would 500 on read for any row that predates that check.
+
+
+class ServiceSchemaEntry(BaseSchema):
+    """One entry of the ULCA `schema` (InferenceSchemaArray) array — lenient
+    mirror of what InferenceAPIEndPoint's validator otherwise requires
+    (taskType + non-empty request/response) on write."""
+
+    model_config = ConfigDict(extra="allow")
+
+    taskType: Optional[str] = None
+    request: Optional[Any] = None
+    response: Optional[Any] = None
+
+
+class ServiceInferenceEndpoint(BaseSchema):
+    """`inferenceEndPoint` — lenient read-side mirror of InferenceAPIEndPoint."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    callbackUrl: Optional[str] = None
+    inferenceApiKey: Optional[InferenceApiKey] = None
+    isMultilingualEnabled: Optional[bool] = None
+    supportedInputFormats: Optional[SupportedFormats] = None
+    supportedOutputFormats: Optional[SupportedFormats] = None
+    endpoint_schema: Optional[List[ServiceSchemaEntry]] = Field(None, alias="schema")
+    isSyncApi: Optional[bool] = None
+    asyncApiDetails: Optional[AsyncApiDetails] = None
+    providerName: Optional[str] = None
+    infraDescription: Optional[str] = None
+    inferenceModelId: Optional[str] = None
 
 
 class ServiceResponse(BaseSchema):
@@ -833,11 +870,11 @@ class ServiceResponse(BaseSchema):
     )
     modelId: str
     modelVersion: str
-    task: Optional[Dict[str, Any]] = None
+    task: Optional[TaskSpecLenient] = None
     taskType: Optional[str] = Field(
         None, description="Deprecated — use `task.type`."
     )
-    inferenceEndPoint: Optional[Dict[str, Any]] = None
+    inferenceEndPoint: Optional[ServiceInferenceEndpoint] = None
     endpoint: Optional[str] = Field(
         None, description="Deprecated — use `inferenceEndPoint.callbackUrl`."
     )
@@ -847,7 +884,17 @@ class ServiceResponse(BaseSchema):
         None,
         description="Deprecated, masked — use `inferenceEndPoint.inferenceApiKey` (also masked).",
     )
+    # ServiceUpdateRequest.healthStatus is Optional[str] (a PATCH can persist
+    # a bare string), while ServiceCreateRequest's is Optional[ServiceStatus]
+    # — service_to_dict() normalizes a bare string into {status, lastUpdated}
+    # before it ever reaches this schema, so the response always publishes
+    # one shape instead of exposing the write-time asymmetry as anyOf.
     healthStatus: Optional[ServiceStatus] = None
+    # Deliberately looser than ServiceCreateRequest/ServiceUpdateRequest's own
+    # Optional[Dict[str, List[BenchmarkEntry]]]: this reads back whatever was
+    # actually persisted, including rows written before the list-of-entries
+    # shape was enforced on write — narrowing this to match the write-side
+    # schema risks 500ing the whole GET /services page on one old row.
     benchmarks: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     isTryItDefault: bool = False
@@ -858,7 +905,16 @@ class ServiceResponse(BaseSchema):
     unitRate: Optional[float] = None
     tierIds: Optional[List[str]] = None
     tierNames: Optional[List[str]] = None
+    # Genuinely free-form: "a sample of what a correct response looks like"
+    # for this service's own task type (see
+    # validate_expected_response_schema's docstring) — there is no fixed
+    # field set to name here, unlike the fields above.
     expectedResponseSchema: Optional[Dict[str, Any]] = None
+    # service_to_dict() also emits these two — added here to match; without
+    # them FastAPI would silently strip both from every response (createdAt
+    # is read by the frontend's Services table, ServicesManagement.tsx).
+    deletedAt: Optional[str] = None
+    createdAt: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -866,7 +922,7 @@ class ServiceResponse(BaseSchema):
 class ServiceListItem(ServiceResponse):
     """List response item — augmented with the inline model snippet."""
 
-    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
 
 
@@ -881,3 +937,96 @@ class ServiceDetailResponse(ServiceResponse):
     """Full service view — includes embedded model card."""
 
     model: Optional[ModelResponse] = None
+
+
+# ── Route-specific ``data`` / ``meta`` shapes ──
+
+
+class ServicesData(BaseSchema):
+    """``data`` shape shared by the two service-list routes: ``{"services": [...]}``."""
+
+    services: List[ServiceListItem]
+
+
+class ServiceListMeta(BaseSchema):
+    """``meta`` shape for ``GET /services`` — pagination info alongside the page of items."""
+
+    total: int
+    offset: int
+    limit: Optional[int] = None
+
+
+class CreateServiceData(BaseSchema):
+    """``data`` shape for ``POST /services``."""
+
+    serviceId: str
+    name: str
+
+
+class UpdateServiceData(BaseSchema):
+    """``data`` shape for ``PATCH /services`` — single-service update branch."""
+
+    serviceId: str
+
+
+class UpdateServiceEndpointsData(BaseSchema):
+    """``data`` shape for ``PATCH /services`` — bulk endpoint-update branch."""
+
+    serviceIds: List[str]
+
+
+class DeleteServiceData(BaseSchema):
+    """``data`` shape for ``DELETE /services/{service_id}``."""
+
+    serviceId: str
+
+
+# ── Route response envelopes — ``{"success": true, "data": ..., "meta": ...}`` ──
+
+
+class ListTryItServicesResponse(SuccessResponseWithMeta):
+    """GET /services/try-it-service-list"""
+
+    data: ServicesData
+    meta: TotalMeta
+
+
+class ListServicesResponse(SuccessResponseWithMeta):
+    """GET /services"""
+
+    data: ServicesData
+    meta: ServiceListMeta
+
+
+class GetServiceResponse(SuccessResponse):
+    """GET /services/{service_id}"""
+
+    data: ServiceDetailResponse
+
+
+class CreateServiceResponse(SuccessResponseWithMeta):
+    """POST /services"""
+
+    data: CreateServiceData
+    meta: MessageMeta
+
+
+class UpdateServiceResponse(SuccessResponseWithMeta):
+    """PATCH /services — single-service update branch"""
+
+    data: UpdateServiceData
+    meta: MessageMeta
+
+
+class UpdateServiceEndpointsResponse(SuccessResponseWithMeta):
+    """PATCH /services — bulk endpoint-update branch"""
+
+    data: UpdateServiceEndpointsData
+    meta: MessageMeta
+
+
+class DeleteServiceResponse(SuccessResponseWithMeta):
+    """DELETE /services/{service_id}"""
+
+    data: DeleteServiceData
+    meta: MessageMeta

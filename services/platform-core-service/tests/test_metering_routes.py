@@ -8,6 +8,7 @@ to turn (X-Tenant-Id / X-Tenant-Name / tenant_id query param) into the
     platform-wide fallback
   - a transient auth-DB failure surfaces as 503, distinct from "not found"
 """
+import asyncio
 import importlib.util
 import sys
 from types import SimpleNamespace
@@ -33,8 +34,10 @@ _partition_results = _metering_route_mod._partition_results
 _resolve_org = _metering_route_mod._resolve_org
 _resolve_tenant_scope = _metering_route_mod._resolve_tenant_scope
 _parse_task_types = _metering_route_mod._parse_task_types
+get_tenant_consumption = _metering_route_mod.get_tenant_consumption
 
 from app.services.metering_service import MeteringService
+from app.utils.metering_promql_builder import PROMETHEUS_API_PATH_LABEL
 
 
 def _svc(auth_db=None) -> MeteringService:
@@ -215,3 +218,117 @@ class TestParseTaskTypes:
             _parse_task_types("llm,a1c")
         assert exc_info.value.status_code == 422
         assert "a1c" in exc_info.value.detail
+
+
+class _ConcurrencyEnforcingAuthDB:
+    """Mimics AsyncSession's real constraint: a second execute() must not
+    start while a previous one on this same session is still in flight —
+    matching sqlalchemy.exc.InvalidRequestError's actual trigger. `id_to_name`
+    is the CURRENT (post-rename) name; used to prove a serialized caller gets
+    the fresh name while a racing one would silently fall back to stale
+    Prometheus data instead of raising."""
+
+    def __init__(self, id_to_name: dict):
+        self._id_to_name = id_to_name
+        self._in_flight = False
+        self.concurrent_violations = 0
+
+    async def execute(self, _query, _params=None):
+        if self._in_flight:
+            self.concurrent_violations += 1
+            raise SQLAlchemyError(
+                "This session is provisioning a new connection; "
+                "concurrent operations are not permitted"
+            )
+        self._in_flight = True
+        await asyncio.sleep(0)  # yield — lets a badly-serialized caller collide here
+        result = MagicMock()
+        result.all.return_value = list(self._id_to_name.items())
+        self._in_flight = False
+        return result
+
+
+def _admin_request() -> SimpleNamespace:
+    return SimpleNamespace(headers={"X-Permission-IDS": "1"})  # platform admin
+
+
+@pytest.mark.asyncio
+class TestTenantConsumptionRouteConcurrency:
+    """AI4IDS-2798 regression: tenant_ranking and usage_by_tenant_service both
+    now resolve tenant names via self._auth_db — a single AsyncSession, not
+    safe for concurrent use. Gathering them concurrently (as this route did)
+    risks a silent fallback to the stale, pre-rename Prometheus tenant label
+    on whichever call loses the race — the exact bug this PR exists to fix,
+    reintroduced by the fix itself."""
+
+    def _prom_rows(self, stale_name: str):
+        ranking_row = {"metric": {"tenant_id": "7", "tenant": stale_name}, "value": [0, "10"]}
+        heatmap_row = {
+            "metric": {"tenant_id": "7", "tenant": stale_name, PROMETHEUS_API_PATH_LABEL: "/api/v1/nmt/inference"},
+            "value": [0, "10"],
+        }
+
+        async def fake_query(promql):
+            if PROMETHEUS_API_PATH_LABEL in promql:
+                return [heatmap_row]
+            return [ranking_row]
+
+        return fake_query
+
+    async def test_ranking_and_heatmap_both_get_the_current_name_not_stale(self):
+        """Exact scenario: Prometheus still carries the pre-rename label
+        ("OLD NAME Inc"), the DB has the current name ("NEW NAME Ltd"). Both
+        tenant_ranking and usage_by_tenant_service must report the CURRENT
+        name — not race each other into one showing the stale one."""
+        auth_db = _ConcurrencyEnforcingAuthDB({7: "NEW NAME Ltd"})
+        client = MagicMock()
+        client.query = AsyncMock(side_effect=self._prom_rows("OLD NAME Inc"))
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client, auth_db=auth_db)
+
+        redis = AsyncMock()
+        redis.get = AsyncMock(return_value=None)
+
+        response = await get_tenant_consumption(
+            request=_admin_request(), window="24h", limit=10, tenant_id=None,
+            task_types=None, svc=svc, redis=redis,
+        )
+
+        assert auth_db.concurrent_violations == 0
+        assert response.tenant_ranking[0].tenant == "NEW NAME Ltd"
+        assert response.usage_by_service[0].tenant == "NEW NAME Ltd"
+
+    async def test_one_side_failing_does_not_take_the_other_down(self):
+        """The two DB-touching calls must still degrade independently — a
+        failure in tenant_ranking's name resolution must not also blank out
+        usage_by_tenant_service, which succeeded on its own."""
+        calls = {"n": 0}
+
+        class _FlakyAuthDB:
+            async def execute(self, _query, _params=None):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise SQLAlchemyError("boom")
+                result = MagicMock()
+                result.all.return_value = [(7, "NEW NAME Ltd")]
+                return result
+
+        client = MagicMock()
+        client.query = AsyncMock(side_effect=self._prom_rows("OLD NAME Inc"))
+        client.scalar = AsyncMock(return_value=0.0)
+        svc = MeteringService(client=client, auth_db=_FlakyAuthDB())
+
+        redis = AsyncMock()
+        redis.get = AsyncMock(return_value=None)
+
+        response = await get_tenant_consumption(
+            request=_admin_request(), window="24h", limit=10, tenant_id=None,
+            task_types=None, svc=svc, redis=redis,
+        )
+
+        # Ranking's own resolve failed -> falls back to the raw label (still
+        # a valid, non-empty response, not a 500 and not blanked to []).
+        assert response.tenant_ranking[0].tenant == "OLD NAME Inc"
+        # Heatmap's resolve ran second and succeeded independently.
+        assert response.usage_by_service[0].tenant == "NEW NAME Ltd"
+        assert response.degraded is False

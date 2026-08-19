@@ -14,6 +14,7 @@ import {
   Container,
   VStack,
 } from "@chakra-ui/react";
+import AdopterLogo from "../components/common/AdopterLogo";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
@@ -136,6 +137,7 @@ const AuthPage: React.FC = () => {
       >
         <Container maxW="md">
           <VStack spacing={8}>
+            <AdopterLogo maxH="72px" maxW="280px" mx="auto" />
             <Heading size="xl" color="gray.800" textAlign="center" userSelect="none" cursor="default" tabIndex={-1}>
               {getPlatformName()}
             </Heading>
