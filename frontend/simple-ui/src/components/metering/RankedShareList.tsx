@@ -81,7 +81,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
                 whiteSpace="nowrap"
                 flexShrink={0}
               >
-                {row.percentage.toFixed(2)}%
+                {row.percentage.toFixed(2)}
               </Text>
             </HStack>
           </HStack>

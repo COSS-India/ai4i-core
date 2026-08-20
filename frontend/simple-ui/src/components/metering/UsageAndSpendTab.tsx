@@ -54,6 +54,9 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
   const detailRequestIdRef = useRef(0);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { taskTypeNames } = useInferenceTypes();
+  // Same allowlist as list/summary (`ENABLED_TASK_TYPES`); omit ⇒ backend returns all.
+  const enabledTaskTypesParam =
+    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
 
   const data = useUsageAndSpendData({
     scopeTenantId,
@@ -88,7 +91,11 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
       setLoadedPeriodKey(periodKey);
       setIsDetailLoading(true);
       try {
-        const detail = await fetchTenantUsageById(row.tenantId, data.billingPeriod);
+        const detail = await fetchTenantUsageById(
+          row.tenantId,
+          data.billingPeriod,
+          enabledTaskTypesParam,
+        );
         if (requestId !== detailRequestIdRef.current) return;
         setSelectedTenant(detail);
       } catch {
@@ -98,7 +105,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
       }
     },
-    [onDetailOpen, data.billingPeriod, periodKey],
+    [onDetailOpen, data.billingPeriod, periodKey, enabledTaskTypesParam],
   );
 
   /**
@@ -120,6 +127,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         const detail = await fetchTenantUsageById(
           tenantId,
           billingPeriodValue(nextPeriodKey),
+          enabledTaskTypesParam,
         );
         if (requestId !== detailRequestIdRef.current) return;
         setSelectedTenant(detail);
@@ -136,7 +144,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         if (requestId === detailRequestIdRef.current) setIsDetailLoading(false);
       }
     },
-    [drawerPeriodKey, loadedPeriodKey, selectedTenant?.tenantId],
+    [drawerPeriodKey, loadedPeriodKey, selectedTenant?.tenantId, enabledTaskTypesParam],
   );
 
   const handleDetailClose = useCallback(() => {

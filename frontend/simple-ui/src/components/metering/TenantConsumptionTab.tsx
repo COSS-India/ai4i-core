@@ -132,7 +132,7 @@ const TenantConsumptionTab: React.FC<TenantConsumptionTabProps> = ({
                       />
                     </Td>
                     <Td isNumeric fontSize="sm" color="gray.600">
-                      {row.percentage.toFixed(2)}%
+                      {row.percentage.toFixed(2)}
                     </Td>
                   </Tr>
                 ))}
