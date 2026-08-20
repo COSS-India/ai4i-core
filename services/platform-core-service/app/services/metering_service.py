@@ -740,18 +740,34 @@ class MeteringService:
         model_registry_checked = False
         if self._model_repo is not None and model_ids:
             try:
-                model_names = await self._model_repo.get_model_names(list(model_ids))
+                model_names = await self._model_repo.get_model_names(
+                    list(model_ids), task_types=["llm"]
+                )
                 model_registry_checked = True
             except Exception:
                 logger.warning("model_breakdown: model registry lookup failed", exc_info=True)
 
-        # model_id with no current Registry row at all — a DEPRECATED model
-        # still has a row (see get_model_names) so it's not a ghost, only a
-        # hard-deleted or stale/never-existent id is. An empty-model_id row
-        # (e.g. a pre-upgrade series with no label at all) was already
-        # excluded by the `!= ""` filter above and never reaches here.
+        # model_id with no current Registry row UNDER task_types=["llm"] — a
+        # DEPRECATED model still has a row (see get_model_names) so it's not
+        # a ghost on that basis, only a hard-deleted/stale/never-existent id,
+        # OR one registered under a different task type, is. That second
+        # case matters here specifically: without the llm filter, a model_id
+        # tagged e.g. "asr" in the Registry but actually serving /chat
+        # traffic (a Registry data error, not a deletion) would land in
+        # active_models without ever counting toward registry_model_count's
+        # total_models — this filter keeps both KPIs scoped to the same
+        # population. An empty-model_id row (e.g. a pre-upgrade series with
+        # no label at all) was already excluded by the `!= ""` filter above
+        # and never reaches here.
+        #
         # Skipped (nothing dropped) only when the registry lookup itself is
-        # unavailable.
+        # unavailable — same graceful-degradation choice `services` above
+        # makes for service_id ghosts. This is the one remaining way
+        # `active_models` can exceed `total_models` post-fix: a transient
+        # DB error here doesn't also fail registry_model_count's separate
+        # query, so the two can momentarily disagree. Accepted, not fixed —
+        # matches the existing "can't tell deleted from DB down" policy
+        # applied everywhere else in this method.
         model_ghosts = (model_ids - model_names.keys()) if model_registry_checked else set()
         if model_ghosts:
             logger.info(
@@ -790,13 +806,23 @@ class MeteringService:
         model_breakdown's LLM_CHAT_ENDPOINT_REGEX), and identity is model_id
         (one row per version) to match model_totals' own grain, NOT distinct
         model name — a model with 3 concurrently-registered versions counts
-        as 3 here, same as it does in `/api/v1/models?task_types=llm`'s
-        `meta.total` (see ModelRepository.count_models). This keeps
-        `total_models` and `model_consumption_kpis`'s `active_models` (also
-        model_id-grained — see that method's docstring) counting the exact
-        same population, so `active_models` stays a guaranteed subset of
-        this count and both match the Registry API's own count for the same
-        filter.
+        as 3 here, same as it does in the DEFAULT (no `include_deprecated`
+        override) `/api/v1/models?task_types=llm` call's `meta.total` (see
+        ModelRepository.count_models). NOT guaranteed to match every call to
+        that endpoint: ModelService.list_models never forwards its own
+        `include_deprecated` param to `count_models`, so `?task_types=llm&
+        include_deprecated=false` already returns an `items` list narrower
+        than its own `meta.total` — a pre-existing, separate bug this
+        method's parity claim inherits rather than causes.
+
+        This keeps `total_models` and `model_consumption_kpis`'s
+        `active_models` (also model_id-grained and llm-scoped — see
+        get_model_names' `task_types` param and that KPI method's
+        docstring) counting the same population MOST of the time — not
+        guaranteed: a registry-lookup failure inside model_breakdown leaves
+        model_totals' ghosts unfiltered (see model_breakdown's comment on
+        `model_ghosts`), which is the one path where `active_models` can
+        still exceed this count even after the llm-scoping here.
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -882,9 +908,13 @@ class MeteringService:
           `top_models`' own grain (one row per `model_id` — see
           `model_breakdown`) AND `registry_model_count`'s grain (also
           model_id-based, see its docstring), so `active_models` stays a
-          guaranteed subset of `total_models` and agrees with the row count
-          in the visible `top_models` breakdown (when that list isn't
-          truncated by the caller's `limit`). Two concurrently-ACTIVE
+          subset of `total_models` in the common case, and agrees with the
+          row count in the visible `top_models` breakdown when that list
+          isn't truncated by the caller's `limit`. NOT an absolute
+          guarantee — see registry_model_count's docstring and
+          model_breakdown's `model_ghosts` comment for the one remaining
+          path (a registry-lookup failure inside model_breakdown) where
+          `active_models` can still exceed `total_models`. Two concurrently-ACTIVE
           versions of the same model name both receiving traffic count as
           TWO active models here, matching the two separate rows they
           produce in `model_totals`/`top_models` — deliberately not

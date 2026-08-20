@@ -103,27 +103,44 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
-    async def get_model_names(self, model_ids: List[str]) -> Dict[str, str]:
+    async def get_model_names(
+        self, model_ids: List[str], *, task_types: Optional[List[str]] = None
+    ) -> Dict[str, str]:
         """Return {model_id: name} for the given ids — UNFILTERED on
         version_status: a DEPRECATED version is still live and can still be
         serving traffic (deprecating is the normal step before activating a
         replacement version — see get_names_and_models_by_service_ids for
         the identical reasoning), so it must not be treated as a ghost.
         mm_models has no soft-delete column, so a hard-deleted model_id is
-        simply absent from this dict — that's the only case excluded here
-        (see ModelService.delete_model).
+        simply absent from this dict — that's the only case excluded on
+        version_status grounds (see ModelService.delete_model).
+
+        `task_types`, when given, additionally excludes any model_id whose
+        registry row's task type isn't in the list — so a model_id serving
+        LLM-chat traffic while registered under a different task type (a
+        registry data error, not a deleted model) is ALSO absent from the
+        returned dict, same as a genuinely deleted id. This matters for the
+        model-consumption KPI pair: `registry_model_count` counts model
+        VERSIONS filtered to task_types=["llm"] for `total_models`, and this
+        method backs `active_models` (see model_breakdown) — without the
+        same filter here, a non-llm-tagged model actively serving /chat
+        traffic would count toward `active_models` but never toward
+        `total_models`, breaking the "active is a subset of total"
+        invariant those two KPIs are meant to hold.
 
         Used by the model-consumption metering endpoint to validate the
         Prometheus-native `model_id` label (see MetricsCollector, ai4i-core
         1.0.18+) against the current Registry state — a model_id with no
-        entry here is a genuine ghost (deleted, or a stale/never-existent
-        id) and its traffic is excluded from the model-level rollup.
+        entry here is a genuine ghost (deleted, stale/never-existent, or —
+        with `task_types` given — registered under a different task type)
+        and its traffic is excluded from the model-level rollup.
         """
         if not model_ids:
             return {}
-        result = await self._db.execute(
-            select(Model.model_id, Model.name).where(Model.model_id.in_(model_ids))
-        )
+        stmt = select(Model.model_id, Model.name).where(Model.model_id.in_(model_ids))
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+        result = await self._db.execute(stmt)
         return {row.model_id: row.name for row in result.all()}
 
     async def list_models(

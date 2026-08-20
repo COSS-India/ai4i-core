@@ -875,6 +875,49 @@ class TestModelBreakdown:
         assert result["model_totals"][0]["model_name"] == "test-llm-aug6-3"
         assert result["model_totals"][0]["requests"] == 14
 
+    async def test_model_registry_lookup_scoped_to_llm_task_type(self):
+        """AI4IDS-2854 follow-up: get_model_names must be called with
+        task_types=["llm"] so a model_id registered under a DIFFERENT task
+        type (e.g. mistakenly tagged "asr" while actually serving /chat
+        traffic — a Registry data error, not a deletion) is excluded here
+        the same way a hard-deleted id is, keeping this method's output in
+        the same population as registry_model_count's total_models. Without
+        this filter, such a model would count toward active_models but
+        never toward total_models, breaking their subset relationship."""
+        client = MagicMock()
+        client.query = AsyncMock(return_value=self._row("svc-1", 10, model_id="hash-gemma-v1"))
+        model_repo = self._model_repo({"hash-gemma-v1": "Gemma 3 27B"})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        await svc.model_breakdown(tenant=None, time_range="24h")
+
+        model_repo.get_model_names.assert_awaited_once_with(
+            ["hash-gemma-v1"], task_types=["llm"]
+        )
+
+    async def test_model_totals_excludes_model_registered_under_different_task_type(self):
+        """The exact failure scenario the task_types filter closes: a
+        model_id actively serving LLM-chat traffic whose Registry row is
+        tagged with a non-llm task type. `get_model_names(task_types=
+        ["llm"])` won't return it (simulated here the same way a deleted
+        model is — the repo call itself is mocked, so the real SQL filter
+        is exercised by ModelRepository, not this test; this test pins the
+        CONSEQUENCE of that filter matching nothing), so it must be dropped
+        as a ghost — same as a hard-deleted model_id — rather than
+        inflating active_models beyond total_models."""
+        client = MagicMock()
+        client.query = AsyncMock(
+            return_value=self._row("svc-1", 10, model_id="hash-mistagged-asr-model")
+        )
+        # Simulates the llm-scoped query finding no row: registered, but
+        # not under task_types=["llm"].
+        model_repo = self._model_repo({})
+        svc = MeteringService(client=client, model_repo=model_repo)
+
+        result = await svc.model_breakdown(tenant=None, time_range="24h")
+
+        assert result["model_totals"] == []
+
     async def test_effective_model_id_resolved_per_service_not_per_row(self):
         """A single service_id whose rows are inconsistently labeled across
         the 3 queries (e.g. the success-count row was scraped before the
@@ -1197,6 +1240,85 @@ class TestModelConsumptionKpis:
         _, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=25)
 
         assert kpis["active_models"] == len(ranked) == 3
+
+    def test_active_models_can_exceed_visible_rows_at_default_limit(self):
+        """Known, accepted gap (flagged in review, not fixed by this PR):
+        the frontend never overrides `limit`, so production always uses the
+        /model-consumption default of 10. `active_models` counts every
+        active model_id window-wide; `top_models` (what the table actually
+        renders) is that same list truncated to `limit`. Past 10 active
+        model-versions, the KPI legitimately reads HIGHER than the number
+        of rows the user can see — this test pins that this is real and
+        still happens today at the default, so it isn't silently assumed
+        fixed by the model_id-grain change."""
+        model_totals = [
+            self._model_row(f"id-{i}", f"model-{i}", 10 * (i + 1)) for i in range(12)
+        ]
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
+        _, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=10)
+
+        assert kpis["active_models"] == 12
+        assert len(ranked) == 10
+        assert kpis["active_models"] > len(ranked)
+
+
+class TestActiveModelsTotalModelsSubsetInvariant:
+    """AI4IDS-2854 follow-up (review comment): total_models and
+    active_models are computed by two independent code paths —
+    ModelRepository.count_models (registry_model_count) and
+    MeteringService.model_consumption_kpis (traffic-side) — and nothing in
+    the suite related them directly. These tests lock down the common case
+    (subset holds) and document the one known path where it doesn't."""
+
+    def _model_row(self, model_id, model_name, requests, success_pct=100.0):
+        return {
+            "model_id": model_id,
+            "model_name": model_name,
+            "requests": requests,
+            "native_units": 0.0,
+            "success_pct": success_pct,
+        }
+
+    def test_active_models_stays_subset_when_all_traffic_ids_are_registered_llm(self):
+        """The common case: every model_id seen in traffic is a real,
+        currently-registered llm model (get_model_names' llm filter finds
+        all of them) — active_models must never exceed total_models."""
+        registry_llm_model_ids = {"id-a", "id-b", "id-c", "id-d", "id-e"}
+        total_models = len(registry_llm_model_ids)  # what count_models(task_types=["llm"]) would return
+
+        model_totals = [
+            self._model_row("id-a", "A", 10),
+            self._model_row("id-b", "B", 5),
+            self._model_row("id-c", "C", 0),  # no traffic -> not active
+        ]
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
+
+        assert kpis["active_models"] <= total_models
+
+    def test_active_models_can_exceed_total_models_when_registry_lookup_fails(self):
+        """Known, accepted gap (flagged in review): if model_breakdown's
+        registry lookup (get_model_names) raises, model_ghosts stays empty
+        (see model_breakdown's comment) and an unregistered/mistagged
+        model_id is kept in model_totals — it then counts toward
+        active_models here even though it was never counted toward
+        total_models by the separate, still-successful registry_model_count
+        query. This test documents that the inversion is real, not fixed by
+        this PR, and matches the existing "can't tell deleted from DB down"
+        degrade-open policy used everywhere else in model_breakdown."""
+        registry_llm_model_ids = {"id-a", "id-b"}
+        total_models = len(registry_llm_model_ids)
+
+        # id-ghost slipped through because the registry lookup failed for
+        # this window (model_registry_checked=False in model_breakdown), not
+        # because it's a real, currently-registered llm model.
+        model_totals = [
+            self._model_row("id-a", "A", 10),
+            self._model_row("id-b", "B", 5),
+            self._model_row("id-ghost", "unregistered", 3),
+        ]
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
+
+        assert kpis["active_models"] > total_models
 
 
 @pytest.mark.asyncio
