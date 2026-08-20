@@ -1262,13 +1262,22 @@ class TestModelConsumptionKpis:
         assert kpis["active_models"] > len(ranked)
 
 
+@pytest.mark.asyncio
 class TestActiveModelsTotalModelsSubsetInvariant:
     """AI4IDS-2854 follow-up (review comment): total_models and
     active_models are computed by two independent code paths —
-    ModelRepository.count_models (registry_model_count) and
-    MeteringService.model_consumption_kpis (traffic-side) — and nothing in
-    the suite related them directly. These tests lock down the common case
-    (subset holds) and document the one known path where it doesn't."""
+    ModelRepository.count_models (via MeteringService.registry_model_count)
+    and MeteringService.model_consumption_kpis (traffic-side) — and nothing
+    in the suite related them directly.
+
+    Both real methods are called here (not hand-computed numbers standing
+    in for them) — a test that fabricates `total_models` as a plain
+    `len(...)` would still pass even if registry_model_count regressed
+    (e.g. dropped its task_types=["llm"] filter, or model_consumption_kpis
+    regressed back to name-based dedup) — it wouldn't exercise the actual
+    call path either regression would break. These tests lock down the
+    common case (subset holds) and document the one known path where it
+    doesn't."""
 
     def _model_row(self, model_id, model_name, requests, success_pct=100.0):
         return {
@@ -1279,34 +1288,50 @@ class TestActiveModelsTotalModelsSubsetInvariant:
             "success_pct": success_pct,
         }
 
-    def test_active_models_stays_subset_when_all_traffic_ids_are_registered_llm(self):
+    async def test_active_models_stays_subset_when_all_traffic_ids_are_registered_llm(self):
         """The common case: every model_id seen in traffic is a real,
         currently-registered llm model (get_model_names' llm filter finds
-        all of them) — active_models must never exceed total_models."""
-        registry_llm_model_ids = {"id-a", "id-b", "id-c", "id-d", "id-e"}
-        total_models = len(registry_llm_model_ids)  # what count_models(task_types=["llm"]) would return
+        all of them) — active_models must never exceed the REAL
+        registry_model_count() result. Includes two concurrently-ACTIVE
+        versions of the SAME model name (id-a1/id-a2, both "Gemma") — if
+        model_consumption_kpis regressed back to name-based dedup (the
+        exact bug this PR fixed), active_models would read 3 here instead
+        of 4, which the subset assertion alone wouldn't catch, so this also
+        pins the count directly.
+        """
+        repo = MagicMock()
+        repo.count_models = AsyncMock(return_value=5)  # 5 registered llm versions
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+        total_models = await svc.registry_model_count()
+        assert total_models == 5
+        repo.count_models.assert_awaited_once_with(task_types=["llm"])
 
         model_totals = [
-            self._model_row("id-a", "A", 10),
-            self._model_row("id-b", "B", 5),
-            self._model_row("id-c", "C", 0),  # no traffic -> not active
+            self._model_row("id-a1", "Gemma", 10),
+            self._model_row("id-a2", "gemma", 8),  # 2nd ACTIVE version, same name
+            self._model_row("id-b", "Llama", 5),
+            self._model_row("id-c", "Mixtral", 0),  # no traffic -> not active
         ]
         kpis = MeteringService.model_consumption_kpis([], model_totals)
 
+        assert kpis["active_models"] == 3
         assert kpis["active_models"] <= total_models
 
-    def test_active_models_can_exceed_total_models_when_registry_lookup_fails(self):
+    async def test_active_models_can_exceed_total_models_when_registry_lookup_fails(self):
         """Known, accepted gap (flagged in review): if model_breakdown's
         registry lookup (get_model_names) raises, model_ghosts stays empty
         (see model_breakdown's comment) and an unregistered/mistagged
         model_id is kept in model_totals — it then counts toward
-        active_models here even though it was never counted toward
-        total_models by the separate, still-successful registry_model_count
-        query. This test documents that the inversion is real, not fixed by
-        this PR, and matches the existing "can't tell deleted from DB down"
+        active_models here even though it was never counted toward the
+        REAL, separate, still-successful registry_model_count() query.
+        This test documents that the inversion is real, not fixed by this
+        PR, and matches the existing "can't tell deleted from DB down"
         degrade-open policy used everywhere else in model_breakdown."""
-        registry_llm_model_ids = {"id-a", "id-b"}
-        total_models = len(registry_llm_model_ids)
+        repo = MagicMock()
+        repo.count_models = AsyncMock(return_value=2)  # 2 registered llm versions
+        svc = MeteringService(client=MagicMock(), model_repo=repo)
+        total_models = await svc.registry_model_count()
+        assert total_models == 2
 
         # id-ghost slipped through because the registry lookup failed for
         # this window (model_registry_checked=False in model_breakdown), not
@@ -1318,6 +1343,7 @@ class TestActiveModelsTotalModelsSubsetInvariant:
         ]
         kpis = MeteringService.model_consumption_kpis([], model_totals)
 
+        assert kpis["active_models"] == 3
         assert kpis["active_models"] > total_models
 
 

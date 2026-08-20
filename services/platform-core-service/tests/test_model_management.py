@@ -496,6 +496,29 @@ class TestModelServiceList:
         svc._models.count_models.assert_awaited_once()
         assert total == 10
 
+    @pytest.mark.asyncio
+    async def test_count_does_not_forward_include_deprecated(self):
+        """Known, pre-existing bug (flagged in AI4IDS-2854 review, NOT fixed
+        here — out of that ticket's scope): `include_deprecated` filters the
+        `items` list (via ModelRepository.list_models) but is never
+        forwarded to `count_models`, which builds `meta.total`. So
+        `?task_types=llm&include_deprecated=false` returns an `items` list
+        narrower than its own `meta.total` — MeteringService.
+        registry_model_count's docstring calls this out explicitly rather
+        than silently assuming full parity with every possible call to this
+        endpoint. This test pins the current (buggy) contract so a future
+        change can't silently alter it without this test forcing the
+        question of whether that docstring caveat still applies."""
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[])
+        svc._models.count_models = AsyncMock(return_value=10)
+
+        await svc.list_models(task_types=["llm"], include_deprecated=False, offset=1, limit=5)
+
+        svc._models.count_models.assert_awaited_once_with(
+            task_types=["llm"], version_status=None, model_name=None, created_by=None,
+        )
+
 
 # ===========================================================================
 # Section 6 — ServiceService.create_service
