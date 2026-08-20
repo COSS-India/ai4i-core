@@ -313,9 +313,9 @@ export const METERING = {
       TABLE_FAILURE: "Failure rate %",
       TOOLTIPS: {
         TOTAL_MODELS:
-          "Distinct models in the Registry (active and deprecated versions collapsed by name).",
+          "Registered LLM model versions in the Registry (active and deprecated).",
         ACTIVE_MODELS:
-          "Models with at least one service that had traffic in the selected time window.",
+          "LLM model versions with traffic in the selected time window.",
         OVERALL_SUCCESS:
           "Request-weighted average success rate across all services with traffic.",
         MOST_USED: "Model with the highest total request count in the selected time window.",

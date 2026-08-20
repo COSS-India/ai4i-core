@@ -103,55 +103,44 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
-    async def count_distinct_models(self) -> int:
-        """Count of distinct model NAMES registered in the Registry — ACTIVE
-        and DEPRECATED versions both count (a deprecated model is still "in
-        the Registry", just not the currently-recommended version to use).
-
-        Identity is model NAME (case-insensitive), NOT model_id: model_id is
-        `generate_model_id(name, version)` — a hash of the LOWERCASED
-        (name, version) pair (see app/utils/hashing.py) — unique per
-        VERSION, not per logical model, so counting distinct model_ids would
-        report version count instead of model count (4 models with 3
-        versions each would read as 12, not 4). Lower-casing the name before
-        DISTINCT also collapses "Gemma" and "gemma" into the same model,
-        matching generate_model_id's own case-insensitive identity rule.
-
-        The metering model-consumption summary's `active_models` KPI
-        (MeteringService.model_consumption_kpis) also dedupes by name for
-        this exact reason — it's traffic-side and model_id-keyed at the row
-        level (model_totals can have two rows for two concurrently-ACTIVE
-        versions of the same model — see model_breakdown), but the KPI
-        NUMBER dedupes those back down to one name, matching this count's
-        granularity so active_models stays a true subset of total_models.
-
-        Used by the metering model-consumption summary's `total_models` KPI.
-        """
-        stmt = select(func.count(func.distinct(func.lower(Model.name))))
-        result = await self._db.execute(stmt)
-        return int(result.scalar() or 0)
-
-    async def get_model_names(self, model_ids: List[str]) -> Dict[str, str]:
+    async def get_model_names(
+        self, model_ids: List[str], *, task_types: Optional[List[str]] = None
+    ) -> Dict[str, str]:
         """Return {model_id: name} for the given ids — UNFILTERED on
         version_status: a DEPRECATED version is still live and can still be
         serving traffic (deprecating is the normal step before activating a
         replacement version — see get_names_and_models_by_service_ids for
         the identical reasoning), so it must not be treated as a ghost.
         mm_models has no soft-delete column, so a hard-deleted model_id is
-        simply absent from this dict — that's the only case excluded here
-        (see ModelService.delete_model).
+        simply absent from this dict — that's the only case excluded on
+        version_status grounds (see ModelService.delete_model).
+
+        `task_types`, when given, additionally excludes any model_id whose
+        registry row's task type isn't in the list — so a model_id serving
+        LLM-chat traffic while registered under a different task type (a
+        registry data error, not a deleted model) is ALSO absent from the
+        returned dict, same as a genuinely deleted id. This matters for the
+        model-consumption KPI pair: `registry_model_count` counts model
+        VERSIONS filtered to task_types=["llm"] for `total_models`, and this
+        method backs `active_models` (see model_breakdown) — without the
+        same filter here, a non-llm-tagged model actively serving /chat
+        traffic would count toward `active_models` but never toward
+        `total_models`, breaking the "active is a subset of total"
+        invariant those two KPIs are meant to hold.
 
         Used by the model-consumption metering endpoint to validate the
         Prometheus-native `model_id` label (see MetricsCollector, ai4i-core
         1.0.18+) against the current Registry state — a model_id with no
-        entry here is a genuine ghost (deleted, or a stale/never-existent
-        id) and its traffic is excluded from the model-level rollup.
+        entry here is a genuine ghost (deleted, stale/never-existent, or —
+        with `task_types` given — registered under a different task type)
+        and its traffic is excluded from the model-level rollup.
         """
         if not model_ids:
             return {}
-        result = await self._db.execute(
-            select(Model.model_id, Model.name).where(Model.model_id.in_(model_ids))
-        )
+        stmt = select(Model.model_id, Model.name).where(Model.model_id.in_(model_ids))
+        if task_types:
+            stmt = stmt.where(Model.task["type"].astext.in_(task_types))
+        result = await self._db.execute(stmt)
         return {row.model_id: row.name for row in result.all()}
 
     async def list_models(
