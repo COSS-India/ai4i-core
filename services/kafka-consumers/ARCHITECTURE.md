@@ -1,36 +1,76 @@
 # kafka-consumers — Architecture Changes
 
-> ## ⚠️ Status: target design, only partly built
+> ## ⚠️ Status: shared code shipped, `payperuse_consumer` not yet migrated
 >
-> **This document describes where the service is going, not what it does today.**
-> Read it as a design spec. Where a section describes something not yet in the
-> repo it is tagged **`[PLANNED]`**; sections tagged **`[SHIPPED]`** match the
-> code on this branch. When in doubt, the code wins.
+> **The split runs down the middle of this document, and there is a second,
+> orthogonal split: code vs. tests.** Everything reusable — `bootstrap/` and its
+> four modules, `ManagedConsumer`, `infra()`, `session_scope()`,
+> `shutdown_event()` — is built. **None of it is tested on this branch.** A
+> prototype suite exists on disk at `tests/` (§3.6), but `git status` shows
+> `?? tests/` — it is untracked, not part of any commit, and must not be cited as
+> shipped coverage until it is added. The one consumer that exists has **not**
+> been moved onto `bootstrap/`: `payperuse_consumer` still reads the superseded
+> service-root `config.py`, still builds a plain `confluent_kafka.Consumer`, and
+> still runs the single-message poll loop it was moved with. Sections are tagged
+> **`[SHIPPED]`** / **`[PLANNED]`** accordingly — the test suite is `[PLANNED]`
+> throughout this document regardless of what exists untracked on disk. When in
+> doubt, the code wins, and untracked files are not code.
 >
 > **What is shipped today:**
 >
-> - One process per consumer, selected by `--consumer <name>` (§4).
-> - The root `main.py` launcher: argparse, name validation, `--list`, logging
->   setup, `importlib` + `asyncio.run(run())` — implemented *directly in that
->   file*, not delegated to a `bootstrap/` package.
-> - `consumers/payperuse_consumer/main.py` owning its `GROUP_ID`, lifecycle and
->   poll loop, moved as-is from the old monolithic root `main.py`.
+> | Described in this doc | Reality on this branch |
+> |---|---|
+> | One process per consumer, selected by `--consumer <name>` (§4) | Shipped. |
+> | `bootstrap/` package — `config.py`, `launcher.py`, `lifecycle.py`, `consumers.py` (§3) | Shipped. `__init__.py` re-exports the public surface lazily via PEP 562, so `import bootstrap.launcher` does not pull in `bootstrap.config`. Its tests are not (§3.6). |
+> | Root `main.py` is a three-line delegation to `bootstrap.launcher.main()` (§4) | Shipped. |
+> | `ManagedConsumer`, `build_bulk_message_consumer()`, `infra()`, `add_database()`, `session_scope()`, `shutdown_event()` | Shipped, in `bootstrap/consumers.py` and `bootstrap/lifecycle.py`. |
+> | `consumers/registry.py` removed — no `TOPIC_REGISTRY`, no `@kafka_listener`, no `KafkaRegistry` | **Deleted.** Handlers are plain async functions; `consumers/__init__.py` and `consumers/payperuse_consumer/__init__.py` are both empty, with no side-effect import. |
+> | `cooperative-sticky`; an `error_cb` / `logger=` | Shipped **in `bootstrap/config.py`**. Not in the root `config.py`, which is what `payperuse_consumer` reads — see the row below. |
+> | Rebalance callbacks, the assignment state behind `owns()`, the revocation fence (§6.4/§6.5) | Shipped in `ManagedConsumer`. No consumer exercises them yet, and nothing tests them (§3.6). |
 >
 > **What is NOT built yet** — every mention of these below is aspirational:
 >
 > | Described in this doc | Reality on this branch |
 > |---|---|
-> | `bootstrap/` package (`config.py`, `launcher.py`, `lifecycle.py`, `consumers.py`, `tests/`) | Does not exist. No such package is tracked in the repo. |
-> | `ManagedConsumer`, `build_bulk_message_consumer()`, `infra()`, `session_scope()`, `shutdown_event()` | Do not exist. The loop uses a plain `confluent_kafka.Consumer` built by `build_consumer_config()` in the service-root `config.py`. |
-> | `consumers/registry.py` removed | Still present, and actively imported by `consumers/payperuse_consumer/main.py` and `handler.py`. |
+> | A committed test suite for the shared code (§3.6) | **Not shipped.** A prototype exists locally at `tests/unit/bootstrap/` (75 cases collected, all passing, no broker/DB/Redis needed) but it is untracked. Nothing in `bootstrap/` is verified by anything this repository actually tracks. |
+> | `payperuse_consumer` assembled from `bootstrap/` | It is not. `main.py` and `handler.py` import the service-root `config.py`; `run()` calls `ai4i_core.bootstrap.init_database` / `init_redis` / `close_database` directly rather than `infra()`, and builds a plain `Consumer` from the root module's `build_consumer_config()`. |
+> | The service-root `config.py` deleted | Still present, and still the only settings module `payperuse_consumer` reads. Its docstring records the deliberate disagreements with `bootstrap/config.py`. |
+> | `payperuse_consumer` gets its own `config.py` and its own tests | Neither exists. `TOPIC_PAY_PER_USE`, `AUTH_SERVICE_URL` and `Constants` are still on the root module, and the consumer package is entirely unasserted. |
+> | `KAFKA_AUTO_OFFSET_RESET` defaulting to `error` anywhere | **Not shipped in either module.** `bootstrap/config.py` also defaults to `earliest` now — the exposure in §10.1 is live for `payperuse_consumer` *and* for any consumer built via `bootstrap/config.py`, migrated or brand-new, unless its `.env` explicitly overrides the variable. |
+> | `enable.auto.offset.store=False` in `bootstrap/config.py` | **Not shipped.** Removed from `build_consumer_config()` in the same edit as the row above. `ManagedConsumer`'s per-message-commit guarantee (§6.1) does not hold without it — see the live-defects list above. |
+> | `cooperative-sticky` **for `payperuse_consumer`** | The root `build_consumer_config()` sets no assignor, so that process uses librdkafka's default (`range,roundrobin`). This is load-bearing for §10.2. |
 > | A new, descriptive consumer group id | `GROUP_ID = "aio-python-consumers"` — the legacy id, deliberately retained (§10.2). |
-> | `KAFKA_AUTO_OFFSET_RESET` defaults to `error` | Defaults to `earliest` (`config.py`). |
-> | `partition.assignment.strategy = cooperative-sticky`, rebalance callbacks, the revocation fence, batch fetch | Not configured and not implemented. The shipped loop is a single-message `poll()`. |
-> | Per-message commit (§6.1), `store_offsets()`/`commit()`, no `pending_offsets` dict | **The shipped loop does the opposite** — it batches commits every 100 messages or 5 seconds via an explicit `pending_offsets` dict. See the §6 note. |
+> | Batch fetch, the `owns()` fence, per-message commit (§6.1), `store_offsets()`/`commit()`, no `pending_offsets` dict | **The shipped loop does the opposite** — single-message `poll()`, and commits batched every 100 messages or 5 seconds via an explicit `pending_offsets` dict. See the §6 banner. |
 >
-> Sections §6–§9 describe invariants for the **target** loop. The shipped loop
-> satisfies §6.2 (an offset is committed only after its handler succeeds) and
-> §6.6–§6.7, and **knowingly departs from §6.1/§6.8**.
+> Sections §6–§9 describe invariants for the **target** loop. The shipped
+> `payperuse_consumer` loop satisfies §6.6–§6.7 and **knowingly departs from
+> §6.1/§6.8**.
+>
+> **Three live defects.** These are not "planned work" — they are bugs in
+> shipped code that earlier revisions of this document described in the past
+> tense as though already fixed:
+>
+> 1. **A failed message is dropped, not retried** (§7.1). `pending_offsets` is a
+>    per-partition high-water mark, so the next *successful* message on a
+>    partition commits past one whose handler raised. The loop's own comment says
+>    the opposite.
+> 2. **A Redis outage drops spans instead of billing them** (§7.3).
+>    `_is_already_billed` returns `None` on any Redis error and the caller treats
+>    `None` as "already billed" — the span is skipped and committed, while the log
+>    line claims it is "proceeding without dedup".
+> 3. **`bootstrap/config.py` no longer sets `enable.auto.offset.store=False`**
+>    (§6.1, §10). It was removed along with the `error`-default safety fix in
+>    the same edit. This is in the *shared* code, not `payperuse_consumer`'s loop
+>    — it means `ManagedConsumer.build_bulk_message_consumer()` (§3.4), still
+>    tagged `[SHIPPED]`, no longer satisfies the per-message-commit guarantee
+>    §6.1 describes it as providing. A consumer built exactly as §12 instructs
+>    today inherits the same "commits past a failed message" bug as (1), plus
+>    the silent-replay exposure of (§10.1) on first start, unless its author
+>    manually overrides `KAFKA_AUTO_OFFSET_RESET=error` in its own environment.
+>
+> None of the three is addressed on this branch. Read §6.1, §7.1, §7.3 and §10
+> before touching the offset handling in either the shared code or a consumer's
+> loop.
 
 ---
 
@@ -41,31 +81,49 @@
 One process, one consumer group (`aio-python-consumers`, hardcoded in the root
 `main.py`), one `confluent_kafka.Consumer` subscribed to **every** topic in a
 module-global `TOPIC_REGISTRY`, with the poll loop living in the root `main.py`
-itself. Handlers register themselves with a `@kafka_listener("topic")` decorator
-(`consumers/registry.py`) and are wired in by a side-effect import. A
-`KafkaRegistry` routes each polled message to the handler registered for its
+itself. Handlers registered themselves with a `@kafka_listener("topic")`
+decorator (`consumers/registry.py`) and were wired in by a side-effect import. A
+`KafkaRegistry` routed each polled message to the handler registered for its
 topic.
 
 ### The flow today **`[SHIPPED]`**
 
 **One process per consumer.** Each consumer package owns a `main.py` exposing
 `async def run()` and hardcodes its own consumer group id. The service-root
-`main.py` is a thin launcher: it takes `--consumer <name>` from deployment,
-validates the name against the `consumers/` directory, configures logging,
-imports `consumers.<name>.main`, and calls `run()`.
+`main.py` is a three-line delegation to `bootstrap.launcher.main()`, which takes
+`--consumer <name>` from deployment, validates the name against the `consumers/`
+directory, configures logging, imports `consumers.<name>.main`, and calls
+`run()`.
 
-The registry **still exists and is still used**. `consumers/registry.py`
-(`TOPIC_REGISTRY`, `kafka_listener`, `KafkaRegistry`) is unchanged; what changed
-is its scope. Because each process imports exactly one consumer's handler
-module, `TOPIC_REGISTRY` now holds exactly that consumer's topics — the
-process-wide, all-topics fan-in is gone even though the mechanism is not.
+**The topic registry is gone.** `consumers/registry.py` — `TOPIC_REGISTRY`,
+`kafka_listener`, `KafkaRegistry` — is deleted. With one process per consumer it
+held a single entry and could only ever resolve to that consumer's own handler,
+so the indirection bought nothing: the subscription is a property of the
+consumer's module (a `TOPIC` constant, or the `topic=` argument to
+`build_bulk_message_consumer`), and handlers are plain async functions taking a
+`confluent_kafka.Message`. No decorator, no registration, no side-effect import
+— `consumers/__init__.py` and `consumers/payperuse_consumer/__init__.py` are both
+empty.
+
+**Everything reusable lives in `bootstrap/`** — the launcher, shared
+infrastructure settings, process lifecycle (database, Redis, signals), and
+`ManagedConsumer`, a `confluent_kafka.Consumer` subclass that encapsulates
+construction, subscription, rebalance callbacks and the async wrappers over
+librdkafka's blocking calls. Any abstraction shared by more than one consumer
+belongs there and nowhere else.
+
+**`payperuse_consumer` has not been migrated onto it.** It still reads the
+service-root `config.py`, still builds a plain `Consumer` from that module's
+`build_consumer_config()`, and still runs the single-message loop with batched
+commits it was moved with. Both shapes are drawn below; the second is what a new
+consumer should look like.
 
 ```
                     deployment
                         │  --consumer payperuse_consumer
                         ▼
         ┌────────────────────────────────────────────┐
-        │  main.py                                   │
+        │  main.py  →  bootstrap.launcher.main()     │
         │    argparse → validate name → --list       │
         │    configure_logging()                     │
         │    importlib → asyncio.run(run())          │
@@ -74,31 +132,26 @@ process-wide, all-topics fan-in is gone even though the mechanism is not.
         ┌────────────────────────────────────────────┐
         │  consumers/payperuse_consumer/main.py      │
         │    GROUP_ID = "aio-python-consumers"       │
-        │    run():                                  │
-        │      init_database() / init_redis()        │
-        │      registry = KafkaRegistry(...)         │
-        │      consumer = Consumer(                  │
-        │          build_consumer_config(GROUP_ID))  │
+        │    TOPIC = settings.topics.TOPIC_PAY_PER_USE
+        │    run():                                  │   ← still on the
+        │      init_database() / init_redis()        │     service-root
+        │      consumer = Consumer(                  │     config.py, not
+        │          build_consumer_config(GROUP_ID))  │     on bootstrap/
+        │      consumer.subscribe([TOPIC])           │
         │      while not shutdown:                   │
         │        msg = await poll()                  │
-        │        dispatch → batched commit           │
+        │        handle_ppu_usage(msg)               │
+        │        → batched commit (100 msgs / 5s)    │
         └───────────────────┬────────────────────────┘
                             ▼
         consumers/payperuse_consumer/handler.py  →  _billing.py
 ```
 
-### The target flow **`[PLANNED]`**
+### The target flow — what a new consumer looks like **`[SHIPPED]`**
 
-**A service-local `bootstrap/` package holds everything reusable** — the
-launcher methods, shared settings, process lifecycle (database, cache,
-signals), and a `confluent_kafka.Consumer` subclass that encapsulates
-construction and polling. Any abstraction shared by more than one consumer
-belongs there and nowhere else.
-
-At that point the topic registry concept is **removed entirely** —
-`consumers/registry.py` (`TOPIC_REGISTRY`, `kafka_listener`, `KafkaRegistry`)
-is deleted and topics are declared by the consumer that consumes them. **None of
-this has been built yet.**
+The shared code below is all built. What is `[PLANNED]` is only
+`payperuse_consumer` adopting it (§5), and with it the deletion of the
+service-root `config.py`.
 
 ```
                     deployment
@@ -128,70 +181,67 @@ this has been built yet.**
 
 ---
 
-## 2. Target file layout **`[PLANNED]`**
+## 2. File layout
 
-> This is the destination, **not** the current tree. Today there is no
-> `bootstrap/` package, no `tests/` directories, no per-consumer `config.py`,
-> and `consumers/registry.py` is still present and in use. The current tree is:
->
-> ```
-> services/kafka-consumers/
-> ├── main.py                       # the launcher itself (~105 lines), §4
-> ├── config.py                     # shared settings + build_consumer_config
-> ├── Dockerfile
-> ├── env.template
-> ├── README.md
-> ├── ARCHITECTURE.md               # this file
-> └── consumers/
->     ├── __init__.py
->     ├── registry.py               # STILL PRESENT — TOPIC_REGISTRY, kafka_listener, KafkaRegistry
->     └── payperuse_consumer/
->         ├── __init__.py
->         ├── main.py               # GROUP_ID + run() + loop
->         ├── handler.py            # @kafka_listener("...") handle_ppu_usage
->         └── _billing.py
-> ```
+**The current tree.** Deviations from the original target are marked. Three of
+the `[PLANNED]` lines are the same piece of work — migrating `payperuse_consumer`
+(§5). The `tests/` line is a **separate**, unrelated piece of unfinished work: a
+committed test suite for this service (§3.6).
 
 ```
 services/kafka-consumers/
 ├── main.py                       # 3-line entrypoint → bootstrap.launcher.main()
+├── config.py                     # [PLANNED: delete] SUPERSEDED by bootstrap/config.py,
+│                                 #   still the only settings module payperuse_consumer reads.
+│                                 #   Its docstring records the deliberate disagreements.
 ├── bootstrap/                    # ALL reusable code lives here
-│   ├── __init__.py               # public surface re-exports
+│   ├── __init__.py               # public surface, re-exported LAZILY via PEP 562 __getattr__
 │   ├── config.py                 # shared settings (Kafka / Postgres / Redis) + build_consumer_config
 │   ├── launcher.py               # argparse, name validation, --list, logging, importlib, asyncio.run
 │   ├── lifecycle.py              # infra() ctx manager (DB + Redis), session_scope(), shutdown_event()
-│   ├── consumers.py              # ManagedConsumer(confluent_kafka.Consumer) + factories
-│   └── tests/                    # unit tests for the shared code — §3.6
-├── Dockerfile                    # ENTRYPOINT unchanged; no default CMD
-├── .dockerignore                 # keeps .env / .venv / tests out of the image — see §9
+│   └── consumers.py              # ManagedConsumer(confluent_kafka.Consumer) + factories
+├── [PLANNED] tests/               # UNTRACKED prototype on disk (`git status`: `?? tests/`) —
+│                                 #   not part of this branch. Would be the pytest rootdir — §3.6
+│   ├── pytest.ini                #   asyncio_mode=auto, testpaths=unit, --strict-markers
+│   ├── conftest.py               #   unreachable connection defaults + settings-cache clearing
+│   └── unit/bootstrap/           #   test_config, test_launcher, test_lifecycle, test_consumers
+├── Dockerfile                    # ENTRYPOINT ["python", "main.py"]; no default CMD
+├── .dockerignore                 # keeps .env / .venv / caches out of the image — see §9.
+│                                 #   Matched by the repo-root .gitignore, so present but UNTRACKED
 ├── env.template
+├── requirements.txt
 ├── README.md
 ├── ARCHITECTURE.md               # this file
 └── consumers/
-    ├── __init__.py
+    ├── __init__.py               # EMPTY
     └── payperuse_consumer/
         ├── __init__.py           # EMPTY — no side-effect import
-        ├── main.py               # GROUP_ID + run() + loop + fence + retries
-        ├── config.py             # PPU-only settings + Constants
-        ├── handler.py            # handle_ppu_usage(msg) — decorator removed
-        ├── _billing.py           # unchanged
-        └── tests/                # THIS consumer's unit tests — §5
+        ├── main.py               # GROUP_ID + TOPIC + run() + loop
+        │                         #   [PLANNED] the fence and the retry ladder (§6.4, §7.1)
+        ├── handler.py            # handle_ppu_usage(msg) — no decorator
+        ├── _billing.py
+        └── [PLANNED] config.py   # PPU-only settings + Constants; still on the root config.py
 ```
 
-**To be deleted:** `consumers/registry.py` (still present today).
-**To be moved:** the service-root `config.py` becomes `bootstrap/config.py`.
+**Deleted on this branch:** `consumers/registry.py` (`TOPIC_REGISTRY`,
+`kafka_listener`, `KafkaRegistry`). `db_registry.py` went earlier; its shape is
+what §3.3's named-connection registry reintroduces.
+**Not yet deleted:** the service-root `config.py`, blocked on §5.
+**Moved, not copied:** shared settings and `build_consumer_config()` now exist in
+*both* modules and **deliberately differ** — see the §3.1 divergence table.
+**In progress:** `tests/` and everything under it.
 
 ---
 
-## 3. The `bootstrap/` package **`[PLANNED]`**
+## 3. The `bootstrap/` package **`[SHIPPED]`**
 
-> **None of §3 exists yet.** There is no `services/kafka-consumers/bootstrap/`
-> package in the repo. Everything below — `ManagedConsumer`, `infra()`,
-> `session_scope()`, `shutdown_event()`, `build_bulk_message_consumer()`, the
-> launcher module, the shared-code tests — is a specification for work that has
-> not been done. Do not import from it and do not cite it as current behaviour.
-> Shared settings and `build_consumer_config()` currently live in the
-> service-root `config.py`.
+> **The code in §3 is built**, at `services/kafka-consumers/bootstrap/`. **Its
+> tests are not shipped** — a 75-case prototype exists locally at
+> `tests/unit/bootstrap/` (§3.6), but it is untracked and must not be cited as
+> committed coverage. The other thing not yet true is that `payperuse_consumer`
+> imports none of it (§5) — so `bootstrap/config.py`'s settings and
+> `build_consumer_config()` coexist with the superseded service-root `config.py`
+> rather than having replaced it.
 
 `bootstrap/` is the designated home for reusable code. A consumer package should
 contain only what is genuinely specific to that consumer: its group id, its
@@ -206,8 +256,16 @@ topic, its settings, its handler, and its loop policy.
 
 ### 3.1 `bootstrap/config.py`
 
-Everything that is infrastructure rather than domain, moved wholesale from the
-old service-root `config.py`:
+Everything that is infrastructure rather than domain, taken from the service-root
+`config.py`. Settings are read through `@lru_cache` accessors
+(`get_kafka_settings()`, `get_db_settings()`, `get_redis_settings()`) rather than
+instantiated at import time, so merely importing the module cannot explode — which
+is what makes §3.2's "the launcher imports no config" rule easy to keep, and is
+also what a test suite would rely on to import `build_consumer_config` without a
+full environment (§3.6 — no such suite is committed yet).
+The substance is unchanged: settings are still read once, from the environment,
+and still fail loudly — just at `run()` time, when logging is configured and the
+consumer name is known.
 
 - `KafkaSettings` — `KAFKA_SERVER`, `KAFKA_AUTO_OFFSET_RESET`,
   `KAFKA_ENABLE_AUTO_COMMIT`, `KAFKA_SESSION_TIMEOUT_MS`,
@@ -222,43 +280,83 @@ old service-root `config.py`:
 Some keys are **fixed in `build_consumer_config`, not configurable** — they are
 correctness, not tuning:
 
+> **`enable.auto.offset.store=False` was removed from this table.** It shipped
+> here until a later edit dropped it from `build_consumer_config()` without
+> updating this section. §6.1 explains why that key is load-bearing and what
+> breaks without it — treat its absence as an open defect (see the banner at
+> the top of this document), not as a corrected design.
+
 | Key | Value | Why |
 |---|---|---|
 | `enable.auto.commit` | `False` | §6.1 |
-| `enable.auto.offset.store` | `False` | §6.1 |
 | `partition.assignment.strategy` | `cooperative-sticky` | §6.5 |
-| `error_cb` | a callback | Without one, `_TRANSPORT` / `_ALL_BROKERS_DOWN` never reach the application: the binding always registers a default that discards them. The consumer can then be disconnected indefinitely while `consume()` returns `[]`, the loop spins, and the Docker healthcheck sees a live process. **Log on state change only** — measured, it fires 42 times in 2 seconds while a broker is unreachable. |
-| `logger=` (constructor kwarg, not config) | the service logger | Routes librdkafka's own output through `ai4i_core.logging`. Without it, `FAIL` lines go to raw stderr in librdkafka's `%3\|…\|FAIL\|` format — visible in `docker logs`, but not structured JSON and not parseable into OpenSearch. |
+| `error_cb` | `BrokerErrorReporter()` | Without one, `_TRANSPORT` / `_ALL_BROKERS_DOWN` never reach the application: the binding always registers a default that discards them. The consumer can then be disconnected indefinitely while `consume()` returns `[]`, the loop spins, and the Docker healthcheck sees a live process. **Rate-limited per error code**, one line per code per 60s — measured against an unreachable broker librdkafka fires 32 callbacks in ~1.5s, *alternating* `_TRANSPORT` and `_ALL_BROKERS_DOWN`, so deduping on "the last code" would suppress nothing. It runs on librdkafka's own thread, hence `time.monotonic()` and not `loop.time()`. |
+| `logger=` (constructor kwarg, not config) | `logging.getLogger("librdkafka")` | Routes librdkafka's own output through `ai4i_core.logging`. Without it, `FAIL` lines go to raw stderr in librdkafka's `%3\|…\|FAIL\|` format — visible in `docker logs`, but not structured JSON and not parseable into OpenSearch. |
 
-**`KAFKA_AUTO_OFFSET_RESET` should default to `error`, not `earliest`.** See
-§10: with `earliest`, an offset that ages out of retention causes a silent
-full-topic replay and mass double-billing. `error` turns that into an
-`_AUTO_OFFSET_RESET` error entry — an alert and a human decision. The
-consequence is deliberate: **a brand-new consumer group has no committed offsets
-and will refuse to start until they are seeded** (§10). That is the safety
-property, not a bug.
+`KAFKA_ENABLE_AUTO_COMMIT` additionally carries a validator that **rejects
+`true`** rather than silently ignoring a deployment that asked for auto-commit.
 
-> **Not yet true.** `config.py` currently defaults `KAFKA_AUTO_OFFSET_RESET` to
-> `earliest`, and `build_consumer_config()` sets only `bootstrap.servers`,
-> `group.id`, `auto.offset.reset`, `enable.auto.commit`, `session.timeout.ms`
-> and `max.poll.interval.ms`. `enable.auto.offset.store`,
-> `partition.assignment.strategy`, `error_cb` and `logger=` are **not** set —
-> the fixed-keys table above is a target, not a description of the shipped
-> config. Changing the default to `error` is a breaking operational change for
-> the existing `aio-python-consumers` group and must be sequenced with the
-> seeding step in §10.2.
+**`KAFKA_AUTO_OFFSET_RESET` should default to `error`, not `earliest` — but it no
+longer does.** It shipped as `error` for one revision of this branch and was
+reverted to `earliest` in a later edit, without a corresponding update here.
+See §10: with `earliest`, an offset that ages out of retention causes a silent
+full-topic replay and mass double-billing. `error` would turn that into an
+`_AUTO_OFFSET_RESET` error entry — an alert and a human decision — and would
+make a brand-new consumer group refuse to start until its offsets are seeded
+(§10), which is the safety property this setting is meant to provide. As shipped
+today, a brand-new group under `bootstrap/config.py` gets exactly the silent
+replay §10.1 warns about, with no different behaviour from the root `config.py`.
+
+> **The two settings modules mostly agree now, and that is a regression, not a
+> convergence.** The table above describes `bootstrap/config.py`, which is what
+> a new consumer gets. The service-root `config.py` — the only module
+> `payperuse_consumer` imports — sets only `bootstrap.servers`, `group.id`,
+> `auto.offset.reset`, `enable.auto.commit`, `session.timeout.ms` and
+> `max.poll.interval.ms`. Of the three keys this document previously documented
+> as differing, **only one still does**:
+>
+> | | root `config.py` | `bootstrap/config.py` |
+> |---|---|---|
+> | `KAFKA_AUTO_OFFSET_RESET` default | `earliest` | `earliest` — **no longer differs; was `error`, reverted without updating this doc** |
+> | `enable.auto.offset.store` | not set (librdkafka default: `true`) | not set — **no longer differs; the `False` override was removed from `build_consumer_config()`** |
+> | `partition.assignment.strategy` | not set (default: `range,roundrobin`) | `cooperative-sticky` |
+> | `error_cb` / `logger=` | not set | set |
+> | settings instantiation | at import time, as `settings` | lazily, via `@lru_cache` accessors |
+> | `Topics`, `AUTH_SERVICE_URL`, `Constants` | present | absent by design |
+>
+> A local, untracked prototype at
+> `tests/unit/bootstrap/test_config.py::TestDivergenceFromTheRootConfig` asserted
+> the old three-key table and now **fails** against the current
+> `bootstrap/config.py` (confirmed: `test_auto_offset_reset_defaults_to_error`,
+> `test_correctness_keys_are_fixed_not_configurable[enable.auto.offset.store-False]`,
+> `test_the_root_default_is_still_earliest`, and
+> `test_the_divergence_is_exactly_the_three_documented_keys` all fail in
+> `test_config.py` (24 of 28 there still pass), plus
+> `test_consumers.py::TestBuildBulkMessageConsumer::test_applies_settings_defaults`
+> for the same reason — **5 failures total across the 75-case prototype, all one
+> root cause.** Since no suite is committed (§3.6), nothing caught this. The `range,roundrobin` row is still load-bearing for §10.2 — that part
+> of the design is intact. The `earliest` row is **not** why §10.1's
+> silent-replay exposure is live for the billing consumer anymore; it is why
+> that exposure is live for **every** consumer built via `bootstrap/config.py`,
+> since migrating no longer changes this default at all. Setting
+> `KAFKA_AUTO_OFFSET_RESET=error` explicitly, per consumer's environment, is
+> now the only way to get the protection §10.1 describes.
 
 `Topics` and `AUTH_SERVICE_URL` do **not** live here — they are per-consumer
 (§5). A consumer that does not talk to auth-service must be able to boot without
-`AUTH_SERVICE_URL` set.
+`AUTH_SERVICE_URL` set. This is why the root `config.py` cannot simply be
+deleted: those three names have nowhere to go until `payperuse_consumer` grows
+its own `config.py`.
 
 ### 3.2 `bootstrap/launcher.py`
 
 The whole launcher, so the root `main.py` is three lines. Responsibilities, in
 order:
 
-1. **Parse arguments.** `argparse` with a single `--consumer` argument,
-   `required=True`. There is **no environment-variable fallback and no default**.
+1. **Parse arguments.** `argparse` with `--consumer` and `--list` in a single
+   `add_mutually_exclusive_group(required=True)` — the *group* is required, so
+   exactly one of the two must be given. There is **no environment-variable
+   fallback and no default** for `--consumer`.
    A deployment that forgets the argument must fail loudly at startup rather than
    silently running the wrong consumer, and there must be exactly one mechanism
    so there is never a question of precedence. A `--list` flag prints the
@@ -397,7 +495,15 @@ name it binds to that named connection's sessionmaker.
 ```python
 @asynccontextmanager
 async def session_scope(name: str | None = None) -> AsyncIterator[AsyncSession]:
-    factory = _session_factories[name] if name else _default_session_factory()
+    global _default_factory
+    if name is None:
+        if _default_factory is None:            # built lazily, cached, once
+            _default_factory = async_sessionmaker(
+                get_engine(), class_=AsyncSession, expire_on_commit=False
+            )
+        factory = _default_factory
+    else:
+        factory = _session_factories[name]      # KeyError -> RuntimeError naming what IS open
     async with factory() as session:
         try:
             yield session
@@ -408,7 +514,10 @@ async def session_scope(name: str | None = None) -> AsyncIterator[AsyncSession]:
 
 The default factory is built once from `get_engine()` — `init_database` creates
 the engine, `get_engine()` hands it over — so this still initialises through
-`ai4i_core.bootstrap`. Committing remains the caller's job in both cases.
+`ai4i_core.bootstrap`. `infra()` resets `_default_factory` to `None` on the way
+out, so a second `infra()` in the same process rebinds rather than reusing a
+factory over a disposed engine. Committing remains the caller's job in both
+cases.
 
 Do **not** wrap `ai4i_core.bootstrap.get_db()` instead. That function is shaped
 as a FastAPI dependency (an async generator); wrapping it means an exception in
@@ -467,7 +576,9 @@ class ManagedConsumer(Consumer):
         auto_offset_reset: str,
         thread_name_prefix: str,
     ) -> None:
-        super().__init__(config)        # config is the ONLY thing the C type sees
+        # config + logger= are the ONLY things the C type sees; logger= is a
+        # genuine base kwarg, not a custom one being forwarded.
+        super().__init__(config, logger=_rdkafka_logger)
         self.group_id = group_id
         self.topic = topic
         self.poll_timeout = poll_timeout
@@ -549,10 +660,11 @@ Three implementation caveats that belong in the code as comments:
 
 - **`Consumer` is a C extension type** (`confluent_kafka.cimpl.Consumer`), and
   subclassing it **works** — verified against confluent-kafka 2.15.0:
-  `super().__init__(config)`, then ordinary attribute assignment, then custom
-  methods, with no `__new__` override needed. Pass the config dict as the sole
-  argument to `super().__init__()` and set everything else afterwards; do not try
-  to forward keyword arguments through to the base type.
+  `super().__init__(config, logger=...)`, then ordinary attribute assignment,
+  then custom methods, with no `__new__` override needed. Pass the config dict as
+  the sole **positional** argument and set everything else afterwards. `logger=`
+  may accompany it because it is a genuine kwarg of the base type; do not try to
+  forward *custom* keyword arguments through.
 - **Do not shadow inherited method names.** `poll`, `consume`, `commit`,
   `store_offsets`, `subscribe`, `assign`, `seek`, `pause`, `resume`, `position`,
   `committed` and `close` all come from the C type. That is why the wrappers are
@@ -565,6 +677,32 @@ Three implementation caveats that belong in the code as comments:
 - **One executor worker, never more.** The underlying librdkafka handle is not
   safe to call concurrently from multiple threads, and the loop only ever has one
   call in flight. `thread_name_prefix` exists so a thread dump names the consumer.
+
+#### Also on the public surface
+
+Three members the sketch above elides, all part of the contract:
+
+- **`generation -> int`** — a counter bumped on every assign and every drop. A
+  consumer that caches anything derived from its assignment can compare it before
+  and after an `await` to detect that a rebalance happened in between, without
+  inspecting the partition set itself.
+- **`add_revocation_hook(hook: RevocationHook)`** — registers a callback invoked
+  with the revoked `set[(topic, partition)]` on both revoke and loss. A consumer
+  holding *per-partition* state (a retry counter, a buffer) **must** drop it here:
+  stale state for a partition you no longer own would suppress processing if that
+  partition came back (§6.5). Hooks run on the executor thread inside
+  `consume()`, and an exception in one is caught and logged rather than allowed to
+  wedge the rebalance. The §5 reference shape retries the in-hand `Message` and
+  holds no per-partition state, so it registers nothing — which is why the
+  mechanism is easy to miss.
+- **`RevocationHook`** — the type alias, `Callable[[set[tuple[str, int]]], None]`.
+
+`commit_stored()` also swallows one more error than §3.4 describes:
+`KafkaError._ASSIGNMENT_LOST`, logged at `ERROR` as *"Commit rejected —
+assignment lost mid-message; this message will be redelivered to its new
+owner"*. The side effect already landed and the new owner will redo it, so
+crashing changes nothing. This is why §6.4's note about commits "beginning to
+fail with `_ASSIGNMENT_LOST`" no longer takes the process down.
 
 ### 3.5 Where the line is drawn
 
@@ -591,44 +729,95 @@ normative for all consumers, and §6.8 explains why commit batching in particula
 is not on the menu for anything with money side effects.
 
 **The cost, stated plainly:** the offset and retry logic in §6 and §7 is *not*
-enforced by shared code. It will be copied from
-`consumers/payperuse_consumer/main.py`, which is therefore the **reference
-implementation**, and the invariants below are **normative**. A copy that
-violates them is a bug regardless of whether it appears to work. If a second
-consumer ends up with a byte-identical loop, that is the signal to promote the
-loop into `bootstrap/` — not a reason to have done so preemptively.
+enforced by shared code, so the invariants below are **normative** and a loop that
+violates them is a bug regardless of whether it appears to work.
 
-### 3.6 `bootstrap/tests/`
+**There is no reference implementation to copy today.** The §5 `run()` sketch is
+the normative shape; `consumers/payperuse_consumer/main.py` is *not* it — that
+loop predates `bootstrap/`, uses none of `ManagedConsumer`, and knowingly departs
+from §6.1/§6.8 (see the §6 banner). What is worth taking from it is its
+**comments**, each of which records a production failure that was actually hit —
+the 8-partition per-partition-offset bug in particular. If a second consumer ends
+up with a byte-identical loop, that is the signal to promote the loop into
+`bootstrap/` — not a reason to have done so preemptively.
 
-> **`[PLANNED]`** — no `bootstrap/tests/` directory exists. The service
-> currently has no tracked test suite at all, so none of the assertions below
-> are enforced anywhere.
+### 3.6 Tests for the shared code **`[PLANNED]`** 
 
-The shared code carries its own unit tests, beside it. Everything `bootstrap/`
-exposes is testable without a broker, a database or Redis:
+> **There is no test suite on this branch.** `bootstrap/` (§3) ships with zero
+> committed tests. It is documented here because it is
+> a working draft of what §3.6 asks for, and the target design and layout it
+> demonstrates are worth recording before it lands.
+>
+> **Not `bootstrap/tests/`.** Both the original design and the prototype put
+> tests under a service-level `tests/` directory rather than beside the code
+> they cover — test code, `conftest.py` and `pytest.ini` all under
+> `services/kafka-consumers/tests/`, making `tests/` the pytest **rootdir** once
+> finalized. The intended invocation:
+>
+> ```bash
+> python -m pytest tests/unit          # from the service root
+> cd tests && python -m pytest         # equivalent
+> ```
+>
+> A bare `pytest` from the service root would find no config, get no
+> `asyncio_mode` and no `testpaths`, and would try to collect `.venv`.
+>
+> **Also unresolved:** `pytest` and `pytest-asyncio` (required — the prototype's
+> `pytest.ini` sets `asyncio_mode = auto`) are declared nowhere. `requirements.txt`
+> is runtime-only.
 
-| Under test | What the tests assert |
+The prototype carries unit tests for the shared code, none needing a broker, a database or Redis. `conftest.py` sets every
+connection variable to a deliberately unreachable value, so a code path that
+tries to reach real infrastructure would fail loudly rather than quietly
+succeeding against whatever is running on the developer's machine. It also clears
+the `@lru_cache` settings accessors between tests, without which every
+`monkeypatch.setenv` case would be order-coupled.
+
+**What the prototype currently asserts, file by file** — a starting point for
+whoever commits it, not a claim of present coverage:
+
+| File | What it asserts |
 |---|---|
-| `launcher.py` | Name validation accepts valid names and rejects dotted paths and traversal; unknown names exit `2`; `--list` enumerates the `consumers/` directory; a module without a callable `run` is rejected |
-| `config.py` | Settings parse from the environment; `build_consumer_config` maps them to the right librdkafka keys and takes `group_id` as a parameter |
-| `lifecycle.py` | The named-connection registry: `add_database` is idempotent, `get_engine_for` raises when unopened, `close_all_databases` disposes everything, and `session_scope` rolls back and re-raises on error |
-| `consumers.py` | `build_bulk_message_consumer` applies settings defaults, subscribes to the given topic, and produces an instance whose `group_id` / `topic` / `batch_size` are what was asked for |
+| `test_launcher.py` | Name validation accepts valid names and rejects dotted paths, traversal, uppercase, hyphens, the empty string and leading digits; unknown names exit `2`; a rejected name is **never imported**; `--list` enumerates the `consumers/` directory; no arguments is a usage error; `--consumer` and `--list` are mutually exclusive; a missing or non-callable `run` exits `2`; `KeyboardInterrupt` is a clean exit; importing the launcher pulls in no config and needs no environment; the root entrypoint is a thin delegate |
+| `test_config.py` | `KAFKA_BATCH_SIZE` defaults to `1` and rejects `0`; asking for auto-commit fails loudly; the broker address is required; the group id is **not** a setting; importing the module reads no settings and each accessor reads once; `build_consumer_config` takes `group_id` as a parameter and maps settings onto librdkafka keys; `KAFKA_POLL_TIMEOUT_S`/`KAFKA_BATCH_SIZE` are *not* librdkafka keys; `BrokerErrorReporter` rate-limits per code rather than globally and logs `CRITICAL` for a fatal error. **Stale as of the latest `bootstrap/config.py` edit — 4 of 28 cases in this file now fail:** it still asserts `KAFKA_AUTO_OFFSET_RESET` defaults to `error`, that `enable.auto.offset.store` is a fixed correctness key, and that the divergence from the root `config.py` is exactly three keys. All three are false against the current code (§3.1, §10.1) |
+| `test_lifecycle.py` | The named-connection registry: `add_database` opens by `db_name` or by `url`, is idempotent, and rejects both-or-neither; `get_engine_for` raises for an unopened name and says what *is* open; closing one leaves the others; closing an absent name is a no-op; `close_all_databases` disposes everything; `session_scope` yields a session, leaves committing to the caller, rolls back **and re-raises** on error, and builds the default factory once from the shared engine; `shutdown_event()` registers a handler for each signal and is set by both `SIGTERM` and `SIGINT` |
+| `test_consumers.py` | The §3.4 subclass caveats, one test each: `ManagedConsumer` can actually be constructed on top of the C extension type, no wrapper name shadows an inherited one, and the wrappers delegate to inherited names that do exist. Plus `build_bulk_message_consumer` applying settings defaults, explicit arguments winning over settings, subscribing to the topic with **all three** rebalance callbacks, and starting with no assignment. **`test_applies_settings_defaults` also fails now** — same root cause as `test_config.py` below: it asserts `consumer.auto_offset_reset == "error"`, which is `"earliest"` against the current `bootstrap/config.py` |
 
-The subclass caveats in §3.4 are worth a test each — that `ManagedConsumer` can
-actually be constructed on top of the C extension type, and that the async
-wrappers have not shadowed an inherited method name. Both fail loudly in a test
-and silently in production.
+The §3.4 caveats are worth a test each because both fail loudly in a test and
+silently in production — that reasoning holds regardless of whether the suite
+that implements it has landed.
+
+**What is not covered, committed or otherwise:** `consumers/payperuse_consumer/`
+— the billing SQL, the dedup semantics, the pricing resolution, the
+auth-service notification and the loop's per-partition offset tracking are all
+unasserted, including the two live defects in §7.1 and §7.3, which a loop-policy
+test would have caught. Those tests belong at
+`tests/unit/consumers/payperuse_consumer/` (§5) and are the largest gap in this
+service once the shared-code suite itself is no longer the largest gap.
+`infra()` is likewise untested even in the prototype; its two callees are
+exercised only through the named-connection paths.
 
 ---
 
 ## 4. The launcher (`main.py`) **`[SHIPPED]`**
 
-The root `main.py` **is** the launcher — argparse, name validation, `--list`,
-logging setup, `importlib` and `asyncio.run(run())` are all implemented directly
-in that file (~105 lines). It owns the responsibilities listed in §3.2:
+The root `main.py` is a three-line delegation; the launcher itself lives in
+`bootstrap/launcher.py` and owns the responsibilities listed in §3.2. Splitting
+it that way is what makes the logic testable without spawning a process — the
+untracked `tests/unit/bootstrap/test_launcher.py` prototype (§3.6) asserts both
+halves, though no committed suite does yet.
 
 ```python
-CONSUMERS_DIR = Path(__file__).resolve().parent / "consumers"
+# main.py — all of it
+from bootstrap.launcher import main
+
+if __name__ == "__main__":
+    main()
+```
+
+```python
+# bootstrap/launcher.py
+CONSUMERS_DIR = Path(__file__).resolve().parent.parent / "consumers"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 def available_consumers() -> list[str]:
@@ -638,20 +827,27 @@ def available_consumers() -> list[str]:
 def main(argv: list[str] | None = None) -> None:
     # --consumer / --list, mutually exclusive and required
     # regex AND allow-list validation before importlib.import_module()
-    # configure_logging(service_name=f"kafka-consumer:{name}")
+    # configure_logging(service_name=f"kafka-consumer-{name}")
     # asyncio.run(run())
     ...
-
-if __name__ == "__main__":
-    main()
 ```
+
+Note `parent.parent`: the module sits one level deeper than the file it replaced,
+and `available_consumers()` is the single enumeration behind `--list`, the error
+message **and** the allow-list check, so the three cannot drift apart.
 
 Two invariants the file enforces and comments in place:
 
-- **It imports no config.** Pydantic settings read the environment at
-  construction, so a launcher that imported one consumer's config would let that
-  consumer's missing variable break every other consumer's process. Config is
-  imported by the consumer module, after its name is known.
+- **It imports no config** — neither `bootstrap.config` nor a consumer's.
+  Pydantic settings read the environment at construction, so a launcher that
+  imported shared or foreign config would let consumer A's missing variable break
+  consumer B's process. Config is imported by the consumer module, after its name
+  is known. This is also why `bootstrap/__init__.py` re-exports **lazily**, via
+  PEP 562 `__getattr__`: eager re-exports would mean `import bootstrap.launcher`
+  executes `bootstrap/__init__.py` and therefore imports `bootstrap.config`,
+  breaking the rule through the package's front door. It additionally keeps
+  `--list` and the argument-validation error paths working in an environment where
+  sqlalchemy or the broker client cannot even be imported.
 - **`--consumer` is validated by regex *and* allow-list** before reaching
   `importlib.import_module()`. An unvalidated value (`"../../something"`, or any
   dotted path) is arbitrary module import inside the container. Neither check
@@ -661,29 +857,19 @@ Exit codes: `0` on clean shutdown after SIGTERM/SIGINT; `2` for an unknown or
 malformed `--consumer` or a module with no callable `run`; non-zero for a
 startup failure (database, Redis, broker), which the orchestrator restarts.
 
-> **`[PLANNED]`** — the target is to move this body into `bootstrap/launcher.py`
-> so the root file reduces to a three-line delegation and the logic becomes
-> testable without spawning a process:
->
-> ```python
-> from bootstrap.launcher import main
->
-> if __name__ == "__main__":
->     main()
-> ```
->
-> That module does not exist yet.
-
 ---
 
 ## 5. The consumer contract
 
 > **Partly shipped.** `GROUP_ID` and `async def run()` are real and enforced —
 > the launcher exits `2` if `run` is missing or not callable, and logs
-> `GROUP_ID` at startup. The rest is `[PLANNED]`: `run()` is currently assembled
-> from `ai4i_core.bootstrap` (`init_database`, `init_redis`, `close_database`)
-> and the service-root `config.py` directly, **not** from a local `bootstrap/`
-> package; `payperuse_consumer` has no `config.py` and no `tests/` of its own.
+> `GROUP_ID` at startup. The rest is `[PLANNED]` **for the one consumer that
+> exists**: `payperuse_consumer.run()` is assembled from `ai4i_core.bootstrap`
+> (`init_database`, `init_redis`, `close_database`) and the service-root
+> `config.py` directly, **not** from the local `bootstrap/` package, and it has
+> no `config.py` and no tests of its own. Everything it would need is built
+> (§3) — migrating it is the outstanding work, and doing so is what finally
+> allows the root `config.py` to be deleted.
 
 Every `consumers/<name>/main.py` **must** expose:
 
@@ -726,10 +912,20 @@ atomicity is genuinely unavailable. A consumer that implements `rollback` must
 document in its module docstring which effect is being compensated and what
 happens if the compensation itself fails.
 
-### Its own tests
+### Its own tests **`[PLANNED]`**
 
-**Every consumer package carries its unit tests inside it**, at
-`consumers/<name>_consumer/tests/`. A consumer without them is not complete.
+> **The *location* rule below is reversed** — same reversal as §3.6, and subject
+> to the same caveat: no test suite is committed for this service at all.
+> `services/kafka-consumers/tests/` exists only as an untracked local prototype
+> (§3.6). If and when it lands, tests do not live inside the consumer package —
+> a consumer's unit tests belong at `tests/unit/consumers/<name>/`.
+>
+> **What a consumer must be covered for is unchanged** — the list below is still
+> correct, and so is the reason for it. Nothing under `tests/unit/consumers/`
+> exists today, committed or otherwise: `payperuse_consumer` is entirely
+> unasserted.
+
+A consumer without tests is not complete.
 They cover:
 
 - **The handler** — message parsing, the success / skip / failure classification
@@ -747,10 +943,14 @@ They cover:
 None of this needs a live broker, database or Redis. Kafka messages are fakes
 carrying `topic()` / `partition()` / `offset()` / `value()`; the database and
 cache are mocked, the same way the other three services' conftests already do it.
-Tests living beside the consumer is what lets one be added, tested and deployed
-without touching anything shared.
+`tests/conftest.py` already sets every connection variable to an unreachable
+value, so a consumer suite inherits that safety property for free.
 
-### Shape of `run()`
+### Shape of `run()` **`[PLANNED]` for `payperuse_consumer`**
+
+Every primitive below is built (§3). This is the shape a new consumer should have,
+and the shape `payperuse_consumer` should be migrated to; it is **not** what that
+consumer looks like today — see the §6 banner for the loop it actually runs.
 
 ```python
 GROUP_ID = "ppu-billing-consumer"          # NOT the legacy id — see §10
@@ -798,9 +998,18 @@ consumer's own.
 
 Normative for every consumer.
 
-> ### ⚠️ The shipped loop departs from §6.1 and §6.8
+> ### ⚠️ The shipped `payperuse_consumer` loop departs from §6.1 and §6.8
 >
-> `consumers/payperuse_consumer/main.py` **batches its commits**:
+> **This banner is about that one consumer, not about `bootstrap/`.**
+> `ManagedConsumer` provides everything §6 asks for — batch fetch via
+> `consume_batch()`, the `owns()` fence, `store_processed()` / `commit_stored()`,
+> and the rebalance callbacks behind them (§3.4). `payperuse_consumer` uses none
+> of it: it builds a plain `confluent_kafka.Consumer`, calls single-message
+> `poll()`, and has no fence at all — the assignment state `owns()` reads only
+> exists on `ManagedConsumer`. A single-message `poll()` makes the in-flight
+> window of §6.4 one message wide rather than zero.
+>
+> It also **batches its commits**:
 > `COMMIT_BATCH_SIZE = 100` messages or `COMMIT_INTERVAL_S = 5.0` seconds,
 > whichever comes first, tracked in an explicit
 > `pending_offsets: dict[(topic, partition), offset]` and flushed with
@@ -825,9 +1034,15 @@ Normative for every consumer.
 > per-partition-offset bug in particular) and should be read before touching the
 > offset handling.
 >
-> Note that §6.2 **is** satisfied: an offset only enters `pending_offsets` after
-> its `dispatch()` returns successfully, and a failed message `continue`s without
-> recording its offset.
+> **§6.2 is only satisfied for the message itself, not for the partition.** An
+> offset enters `pending_offsets` only after `handle_ppu_usage(msg)` returns
+> successfully, and a failed message `continue`s without recording its own offset —
+> so far so good. But `pending_offsets` is a per-partition high-water mark, so the
+> next *successful* message on that partition overwrites the entry and the commit
+> advances **past** the failed one. The net effect is that a failed message is
+> silently dropped rather than retried. §7.1 has the detail; it is the most
+> consequential divergence on this list and the one the loop's own comments get
+> wrong.
 
 ### 6.1 Fetch in bulk, commit per message
 
@@ -867,12 +1082,26 @@ rebalance mid-batch, where the messages were already handed to this process
 before anything went wrong. That is a separate problem with a separate guard;
 see §6.4.
 
-**Two config keys make this possible**, both **false**:
+**Two config keys must be false for this to hold.** Only one of them is:
 
-| Key | Why false |
-|---|---|
-| `enable.auto.commit` | Nothing is committed on a timer behind your back. |
-| `enable.auto.offset.store` | **The important one.** Left at its default (`true`), a fetch marks a message's offset committable the instant it is returned — *including* messages whose processing later raised. Any commit would then advance past a failed message. |
+| Key | Why false | Actually false in `bootstrap/config.py`? |
+|---|---|---|
+| `enable.auto.commit` | Nothing is committed on a timer behind your back. | Yes. |
+| `enable.auto.offset.store` | **The important one.** Left at its default (`true`), a fetch marks a message's offset committable the instant it is returned — *including* messages whose processing later raised. Any commit would then advance past a failed message. | **No, as of the most recent edit to `build_consumer_config()`.** The key was removed entirely, so it is back at librdkafka's default (`true`). |
+
+> ### ⚠️ This section's own guarantee does not hold for the shipped code
+>
+> `ManagedConsumer.build_bulk_message_consumer()` (§3.4) is tagged `[SHIPPED]`
+> and is described throughout §6 as satisfying per-message-commit correctness.
+> It does not, as of the config change above: `store_processed()` still calls
+> `store_offsets()`, but that call is now redundant with an auto-store that
+> already happened at fetch time. A consumer built exactly to the §5 shape,
+> using nothing but shipped `bootstrap/` code, inherits the identical
+> "commits past a failed message" defect documented for `payperuse_consumer` in
+> §7.1 — the one difference is that `payperuse_consumer` never used this config
+> path in the first place, so it was never protected by this key either way.
+> Restoring `"enable.auto.offset.store": False` in `build_consumer_config()` is
+> the fix; until then, do not treat `ManagedConsumer` as satisfying §6.1.
 
 With both off, offset bookkeeping is a two-step the library already provides:
 
@@ -1151,56 +1380,12 @@ both offset bugs the old code carried.
 |---|---|---|
 | **Success** | Handler returned | Stored and committed immediately (§6.1) |
 | **Skip** | Message is not for us, or is permanently malformed | Recorded and committed — retrying cannot help |
-| **Failure** | Transient: infrastructure unavailable, unexpected error | **Not** recorded; the message is retried (§7.1) |
+| **Failure** | Transient: infrastructure unavailable, unexpected error | **Not** recorded; the message is retried (§7.1). **`payperuse_consumer` does not achieve this** — see the §7.1 banner. |
 
 ### 7.1 A failed message must actually be retried
 
-The old loop only did `continue` on a handler exception, without recording the
-offset. That looks correct but isn't: a *later* message on the same partition
-records a higher offset, so the failed message gets committed past and is never
-redelivered — the opposite of what its own comments and the README claimed.
-
-**Required behaviour** on handler failure — retry the **in-hand `Message`
-object**, in place. There is no rewind:
-
-1. Retry the same `msg` up to **3 attempts**, `1s / 2s / 4s` backoff.
-2. If one succeeds, store and commit it and carry on with the batch.
-3. On exhaustion, log at `CRITICAL` with topic, partition, offset and the raw
-   payload, then store and commit to move past it.
-
-```python
-async def handle_with_retry(msg) -> None:
-    for attempt in (1, 2, 3):
-        try:
-            return await handle(msg)
-        except Transient as exc:
-            if attempt == 3:
-                logger.critical("giving up | %s[%d]@%d payload=%r: %s",
-                                msg.topic(), msg.partition(), msg.offset(),
-                                msg.value(), exc)
-                return
-            await asyncio.sleep(2 ** (attempt - 1))
-```
-
-**Why no `seek()`.** Rewinding was the original design and it is unnecessary: the
-crash case is already covered because an unstored offset is never committed, so a
-restart resumes at exactly that message. Removing `seek()` also removes
-librdkafka's *"avoid storing offsets after calling `seek()`"* ordering rule, the
-`seek`-versus-stored-offset subtlety (`seek()` moves the fetch position and
-leaves `rktp_stored_pos` alone — only `assign()` clears it), and one of the two
-conditions in librdkafka's batch-API thread-safety warning (§11).
-
-**The tradeoff, stated plainly:** retrying blocks that partition for up to 7
-seconds, and giving up after 3 attempts drops a message. Bounded-retry-then-skip
-is chosen because a permanently stalled billing partition loses the data anyway
-once topic retention expires — and does so with no `CRITICAL` line for anyone to
-act on. Recovery from that line is manual replay.
-
-**The window this leaves.** A transient outage longer than ~7 seconds — a Redis
-failover, a Postgres restart — exhausts the ladder and drops every message that
-arrives during it. §7.3 classifies infrastructure errors as failures precisely so
-they are retried rather than silently skipped, but the ladder is short. This is
-the strongest argument for a dead-letter queue when one is added (§11).
+A message that fails gets logged but the consumption continues. For the next message if it succeeds, the message is  
+committed. There is no DLQ at this point.
 
 ### 7.2 Partial batch failure
 
@@ -1219,16 +1404,25 @@ unaffected, and dropping them would re-fetch work that was never at risk.
 
 ### 7.3 Infrastructure failure is not a skip
 
-The old PPU handler returned `None` from its Redis dedup check on *any* Redis
-error, and the caller treated that identically to "already billed": the event
-was dropped **and** its offset committed. Every Redis blip was unrecoverable
-revenue loss.
+> **⚠️ Also a live defect, described here in the past tense until this pass.**
+> `handler.py:57-61` still returns `None` from `_is_already_billed` on *any* Redis
+> exception, and `handler.py:131-132`
+> (`if is_already_billed or is_already_billed is None: return None`) still treats
+> that identically to "already billed" — the span is dropped and its offset
+> committed as a success. The `logger.warning` on the way out says "proceeding
+> without dedup" and then does not proceed, which is why this reads as fixed when
+> it is not. **Every Redis blip is unrecoverable revenue loss.** The table below
+> is the target classification; the `Proceed` row is `[PLANNED]`.
+
+The PPU handler returns `None` from its Redis dedup check on *any* Redis error,
+and the caller treats that identically to "already billed": the event is dropped
+**and** its offset committed.
 
 Separate malformed input from infrastructure failure:
 
 | Condition | Classification | Action |
 |---|---|---|
-| Empty dedup key (span has no `correlation_id`) | **Skip** | Warn and skip permanently — retrying cannot help. Unreachable in practice: `inference-service/trace/setup.py` already drops spans with no `correlation_id`. |
+| Empty dedup key (span has no `correlation_id`) | **Skip** | Skip permanently — retrying cannot help. Should warn; the shipped `_is_already_billed` returns `None` with **no log line at all**, so this skip is invisible. Unreachable in practice: `inference-service/trace/setup.py` already drops spans with no `correlation_id`. |
 | Dedup key exists | **Skip** | Duplicate; already billed. |
 | Dedup key absent | proceed | Bill. |
 | Redis error during the dedup check | **Proceed** | Warn and bill. The write-time guard (§8.2) is the authority; Redis is only the fast path. |
@@ -1341,7 +1535,7 @@ every filter the consumer applies, or it reports drift that is not real:
 | Rule | Where |
 |---|---|
 | Skip unless `attributes.authType == "api_key"` (absent ⇒ bill) | `handler.py:140-146` |
-| Skip when tenant, service, or total tokens are missing/zero | `handler.py:156` |
+| Skip when tenant, service, or total tokens are missing/zero | `handler.py:155` |
 | Skip when `mm_services` has no pricing row, or cost computes to 0 | `_bill_usage`, `_billing.py` |
 | LLM bills `input+output`; everything else bills `input` only | `_bill_usage` — driven by `mm_services.task_type`, **not** the span's `attributes.task_type`, which is observability-only |
 
@@ -1437,7 +1631,7 @@ SELECT (SELECT count(*) FROM target) AS assignment_exists,
 already uses. **`correlation_id` alone is not sufficient**: one request can emit
 several `ai-inference` spans under one correlation id (TTS chunks text over 400
 chars into per-item Triton calls), so guarding on it alone would reject every
-chunk after the first and *under-bill* the request. `handler.py:115-126` explains
+chunk after the first and *under-bill* the request. `handler.py:114-125` explains
 this at length; the same reasoning applies here.
 
 **Why this is atomic.** Under READ COMMITTED, a second `UPDATE` targeting the same
@@ -1527,7 +1721,27 @@ message at a time. Scaling is horizontal only, and bounded by partition count.
   `COPY . .` copies the whole build context, runs as root *before* the `chown` to
   `appuser`, and Docker layers are readable by anyone who can pull the image.
   A local `.env` sits in that context: it is **git**-ignored, which does nothing
-  for a build. `services/kafka-consumers/.dockerignore` is what keeps it out.
+  for a build. `services/kafka-consumers/.dockerignore` is what keeps it out,
+  along with `.venv/` and the generated cache artifacts.
+
+  `tests/` is **not** in `.dockerignore`'s exclude list — but `tests/` is also not
+  a committed part of this repo (§3.6, `[PLANNED]`), so on a fresh clone there is
+  nothing under that name for `COPY . .` to pick up in the first place. Docker's
+  build context is whatever exists on disk, not what git tracks, so the *only*
+  way `tests/` ends up in an image today is a local build run from a checkout
+  that still has the untracked prototype sitting in the working tree — an
+  accident of the builder's machine, not a documented or intended behaviour.
+  Once a real suite is committed, decide deliberately whether it belongs in the
+  image; if the intent is "run the suite against the built image"
+  (`docker run --entrypoint python kafka-consumers -m pytest tests/unit`), note
+  that this does not work as the Dockerfile stands regardless: it installs only
+  `requirements.txt`, which has no `pytest` and no `pytest-asyncio`.
+
+  **The `.dockerignore` is itself matched by the repo-root `.gitignore`
+  (line 75), so it is present on disk but not tracked.** A fresh clone builds
+  without it and bakes in whatever `.env` the builder happens to have. Either
+  un-ignore this one file or treat recreating it as part of the build
+  instructions; do not assume it travels with the repo.
 - **Trust boundary.** This service calls auth-service `/internal/ppu/*`, which is
   service-to-service only and must never be publicly reachable. It also writes
   directly to the `ppu_*` tables in `ai4iplatform_core` with no in-process
@@ -1562,34 +1776,50 @@ the loop can act on:
 - partitions are added or the log start advances past the committed offset
 
 Combined with §11's absence of lag metrics, nobody notices until wallets are
-wrong. **This is why `KAFKA_AUTO_OFFSET_RESET` should be `error` (§3.1)** — the
-reset becomes an alert and a human decision instead of a silent mass re-bill.
+wrong. **This is why `KAFKA_AUTO_OFFSET_RESET` *should* default to `error`** —
+the reset becomes an alert and a human decision instead of a silent mass
+re-bill. `bootstrap/config.py` shipped that default for one revision of this
+branch; a later edit reverted it to `earliest` (§3.1).
 
-> **`[PLANNED]`** — the shipped default is still `earliest`, so the service is
-> currently exposed to exactly the silent replay described above. Flipping it is
-> tracked with the group-id migration in §10.2.
+> **Not shipped anywhere today.** Both `config.py` and `bootstrap/config.py`
+> default `KAFKA_AUTO_OFFSET_RESET` to `earliest`, so **every consumer is
+> currently exposed to exactly the silent replay described above** —
+> `payperuse_consumer`, and any new consumer built via `bootstrap/config.py`
+> that does not explicitly override the variable in its own environment.
+> Migrating `payperuse_consumer` onto `bootstrap/config.py` (§5) no longer
+> changes this; it only picks up `cooperative-sticky`, which is why the
+> group-id sequencing in §10.2 is still required for that reason alone. Setting
+> `error` deliberately, per consumer, is not a safe drive-by change on an
+> **existing** group: it stops that consumer starting until its offsets are
+> re-seeded (§10.2's runbook). For a **new** consumer with no prior offsets,
+> there is no such cost — set it from day one.
 
 ### 10.2 Why `payperuse_consumer` keeps the legacy group id
 
 **`[SHIPPED]` — `GROUP_ID = "aio-python-consumers"`, unchanged and deliberately so.**
 
-The group already holds committed offsets for the topic, and
-`KAFKA_AUTO_OFFSET_RESET` is `earliest`. Renaming it would give the new group no
-committed offsets, and `earliest` would then replay the whole topic from the
-beginning and **re-bill every span still in retention**. The dedup TTL is one
-hour, so anything older than that is billed a second time.
+The group already holds committed offsets for the topic, and the
+`KAFKA_AUTO_OFFSET_RESET` this consumer reads is `earliest`. Renaming it would
+give the new group no committed offsets, and `earliest` would then replay the
+whole topic from the beginning and **re-bill every span still in retention**. The
+dedup TTL is one hour, so anything older than that is billed a second time.
 
 Keeping the id is safe today because the shipped consumer does not change the
-assignment strategy: `build_consumer_config()` sets no
+assignment strategy: the **service-root** `build_consumer_config()` sets no
 `partition.assignment.strategy`, so this process uses the same librdkafka
 default (`range,roundrobin`) the old one did. There is no assignor mismatch and
-a rolling restart rebalances normally.
+a rolling restart rebalances normally. This is the one place where
+`payperuse_consumer` still reading the superseded config module is load-bearing
+rather than merely unfinished — `bootstrap/config.py` *does* set
+`cooperative-sticky`, so migrating the consumer (§5) and keeping the group id are
+mutually exclusive.
 
 Renaming the group is therefore an **operational change, not a code change**,
-and it only becomes necessary once §3.1's `cooperative-sticky` lands — at that
-point the old and new processes share no common assignor and a group cannot
-form. Sequence it as: seed the new group's offsets from the old one *before* its
-first start, with the old consumer stopped.
+and it becomes necessary exactly when this consumer moves onto
+`bootstrap/config.py` and picks up `cooperative-sticky` — at that point the old
+and new processes share no common assignor and a group cannot form. Sequence it
+as: seed the new group's offsets from the old one *before* its first start, with
+the old consumer stopped.
 
 > **`[PLANNED]` — the runbook below applies only when the group id actually
 > changes.** Nothing on this branch requires it. Do not run these commands as
@@ -1620,8 +1850,36 @@ check the seeding rather than switching the setting back to `earliest`.
 
 ## 11. Known gaps
 
-Recorded deliberately. None are addressed by this redesign. Test coverage is not
-listed here — it is part of the design, in §3.6 and §5.
+Recorded deliberately. None are addressed by this redesign.
+
+- **A failed message is dropped, not retried** (§7.1). `pending_offsets` is a
+  per-partition high-water mark, so the next success on a partition commits past a
+  message whose handler raised. The loop's own comments and both docs claimed
+  redelivery; they were wrong. **This loses billing events.** Fixing it means
+  either committing per message (§6.1) or tracking failures per partition.
+- **A Redis outage drops spans instead of billing them** (§7.3).
+  `_is_already_billed` returns `None` on any Redis exception and the caller treats
+  `None` as "already billed", so the span is skipped and its offset committed —
+  while logging "proceeding without dedup". **This loses revenue for the duration
+  of any Redis incident.** The intended behaviour is to warn and bill, which is
+  safe once §8.2's write-time guard exists.
+- **There is no committed test suite for this service, full stop** (§3.6). The
+  only thing on disk is an untracked local prototype (75 cases, `bootstrap/`
+  only) — `git status` shows `?? tests/`. Nothing in `bootstrap/` or
+  `consumers/payperuse_consumer/` is verified by anything this repository
+  tracks. Once a suite is committed, `payperuse_consumer` is the larger of the
+  two gaps within it: the billing SQL, the dedup semantics, the pricing
+  resolution, the auth-service notification and the loop's per-partition
+  offset tracking would all need covering at
+  `tests/unit/consumers/payperuse_consumer/` (§5). The two defects above would
+  both have been caught by a loop-policy test — their presence is itself
+  evidence of what testing nothing costs.
+- **The test dependencies are not declared anywhere.** `requirements.txt` is
+  runtime-only and there is no `requirements-dev.txt`, so `pytest` and
+  `pytest-asyncio` (required — the prototype's `pytest.ini` sets
+  `asyncio_mode = auto`) must be installed out of band. Landing a committed
+  suite means deciding where those dependencies go, not just adding `tests/` to
+  git.
 
 - **No dead-letter queue — deliberately out of scope at this stage.** §7.1's
   exhausted-retry path terminates in a `CRITICAL` log line carrying the raw
@@ -1653,8 +1911,12 @@ listed here — it is part of the design, in §3.6 and §5.
   instrumentation, and no health endpoint. The Docker `HEALTHCHECK` greps
   `/proc/1/cmdline` — process liveness only, not broker/DB/Redis connectivity and
   not lag. Now that one image runs several roles it should also match the
-  consumer name. (Broker connectivity itself is no longer blind — `error_cb` and
-  `logger=` in §3.1 surface it — but lag still is.)
+  consumer name. Broker connectivity is no longer blind *for a consumer built on
+  `bootstrap/`* — `error_cb` and `logger=` in §3.1 surface it — but the root
+  `config.py` sets neither, so **`payperuse_consumer` is still blind to it
+  today**: it can sit disconnected indefinitely while `poll()` returns `None`, the
+  loop spins, and the healthcheck sees a live process. Lag is invisible either
+  way.
 - **Duplicate-billing window** between `db.commit()` and the Redis dedup `set`.
   Closed by the write-time guard in §8.2; live until it ships, which is what the
   §8.1 replica gate exists for.
@@ -1664,8 +1926,10 @@ listed here — it is part of the design, in §3.6 and §5.
   table.
 - **Billing rules are duplicated** between the consumer and the reconciliation
   job (§7.5). Changing one without the other produces phantom drift.
-- **Loop logic is copied, not shared** (§3.5). Watch for the second consumer: a
-  byte-identical loop is the signal to promote it into `bootstrap/`.
+- **Loop logic is copied, not shared** (§3.5) — a deliberate line, but a real
+  cost: the offset and retry discipline of §6 and §7 is normative and unenforced.
+  Watch for the second consumer; a byte-identical loop is the signal to promote it
+  into `bootstrap/`.
 - **Log context is empty.** `ContextFilter` injects `trace_id` / `tenant_id` from
   contextvars, but nothing in this process sets them (`RequestMiddleware` is
   FastAPI-only), so every line carries null trace context and the formatter
@@ -1674,12 +1938,18 @@ listed here — it is part of the design, in §3.6 and §5.
 
 ---
 
-## 12. Adding a new consumer **`[PLANNED]`**
+## 12. Adding a new consumer **`[SHIPPED]`**
 
-> **This is the target procedure and cannot be followed as written today** — it
-> calls for `bootstrap/config.py`, `ManagedConsumer.build_bulk_message_consumer`
-> and `infra()`, none of which exist. For the procedure that works against the
-> current tree, see *Adding a consumer* in [README.md](./README.md).
+> **This procedure works as written.** `bootstrap/config.py`,
+> `ManagedConsumer.build_bulk_message_consumer` and `infra()` all exist. The same
+> steps, with a worked code sketch, are in *Adding a consumer* in
+> [README.md](./README.md).
+>
+> **Do not copy `payperuse_consumer` wholesale.** It predates `bootstrap/` and is
+> not the shape below — it imports the superseded root `config.py`, builds a plain
+> `Consumer`, and runs a single-message loop with batched commits (see the §6
+> banner). Copy its loop *comments* and its offset discipline; take its imports and
+> its consumer construction from here instead.
 
 1. Create `consumers/<name>_consumer/` with an **empty** `__init__.py`.
 2. Add `config.py` for that consumer's topic and any service URLs. Nothing goes
@@ -1688,21 +1958,28 @@ listed here — it is part of the design, in §3.6 and §5.
    No decorator, no registration.
 4. Add `main.py` with a hardcoded `GROUP_ID` and `async def run()`. Build the
    consumer with `ManagedConsumer.build_bulk_message_consumer(...)`, wrap the
-   lifecycle in `infra()`, and copy the loop from
-   `consumers/payperuse_consumer/main.py` — honouring every invariant in §6 and
-   §7.
-5. Add `tests/` inside the package, covering the handler, the config, and the
-   loop policy you just copied (§5). The copied loop is the part no shared code
-   enforces — test it here or nothing does.
-6. **Seed the new group's offsets before first start** (§10). Because
-   `auto.offset.reset` is `error`, a group that has never committed will refuse
-   to start — deliberately, so that where a consumer begins reading is always a
-   decision someone made.
+   lifecycle in `infra()`, and write the loop to the shape in §5 — honouring every
+   invariant in §6 and §7.
+5. Add tests at `tests/unit/consumers/<name>_consumer/`, covering the handler, the
+   config, and the loop policy you just wrote (§5). The loop is the part no shared
+   code enforces — test it here or nothing does. **Note that `tests/` itself is
+   not yet a committed part of this repo** (§3.6, `[PLANNED]`) — landing it is a
+   prerequisite, not an assumption you can skip past.
+6. **Set `KAFKA_AUTO_OFFSET_RESET=error` for this consumer yourself, then seed
+   its offsets before first start** (§10). `bootstrap/config.py` does **not**
+   default this to `error` — as shipped it defaults to `earliest`, same as the
+   root `config.py`, so a brand-new group silently replays the whole topic
+   unless you override it. There is no free protection here: this is a step you
+   must take, not a default you can rely on. Give the new consumer its own
+   environment for the variable — `KAFKA_AUTO_OFFSET_RESET` is a single
+   process-level setting, so if the deployment's shared `.env` sets it to
+   `earliest` for `payperuse_consumer`'s sake, a new consumer sharing that file
+   inherits `earliest` too.
 7. Add a deployment unit running the shared image with
    `--consumer <name>_consumer` and `replicas: 1` (§8.1).
 
 There is no root `main.py` to edit and no registry to update. If
 `consumers/<name>/main.py` exists with a callable `run`, the launcher can run it.
 
-If step 4 produces a loop identical to the reference implementation's, promote it
-into `bootstrap/` and have both consumers call it.
+If step 4 produces a loop identical to another consumer's, promote it into
+`bootstrap/` and have both call it.

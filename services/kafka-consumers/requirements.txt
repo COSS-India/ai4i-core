@@ -2,7 +2,10 @@
 # ── Shared platform library (consolidated) ──
 ai4i-core==1.0.2
 
-confluent-kafka
+# Pinned: the consumer design depends on version-specific behaviour —
+# cooperative-sticky, the batch API, store_offsets, incremental_assign and
+# commit()'s _NO_OFFSET semantics (ARCHITECTURE.md §6).
+confluent-kafka==2.15.0
 sqlalchemy[asyncio]>=2.0.0
 asyncpg>=0.29.0
 httpx>=0.25.0

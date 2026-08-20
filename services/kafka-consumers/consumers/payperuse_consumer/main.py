@@ -20,8 +20,7 @@ from ai4i_core.logging import get_logger
 from confluent_kafka import Consumer, KafkaException, TopicPartition
 
 from config import settings, build_consumer_config
-from consumers.payperuse_consumer import handler  # noqa: F401 — side-effect import: populates TOPIC_REGISTRY
-from consumers.registry import KafkaRegistry, TOPIC_REGISTRY
+from consumers.payperuse_consumer.handler import handle_ppu_usage
 
 logger = get_logger(__name__)
 
@@ -36,6 +35,11 @@ logger = get_logger(__name__)
 # change.
 GROUP_ID = "aio-python-consumers"
 # ===============
+
+# The topic this consumer consumes, declared here rather than discovered from a
+# registry: one process per consumer means the subscription is a property of this
+# module, not of a lookup table shared with unrelated consumers.
+TOPIC = settings.topics.TOPIC_PAY_PER_USE
 
 # Commit offsets every N successful messages, or every T seconds since the
 # last commit — whichever comes first — instead of after every message. A
@@ -105,15 +109,11 @@ async def run() -> None:
         raise
 
     # ── Kafka ──
-    # One process per consumer, so this registry holds exactly this consumer's
-    # handler: only consumers.payperuse_consumer.handler is imported above, and
-    # @kafka_listener registers it under settings.topics.TOPIC_PAY_PER_USE.
-    registry = KafkaRegistry(TOPIC_REGISTRY)
     logger.info(
-        "Kafka registry ready | broker=%s group_id=%s topics=%s",
+        "Kafka consumer configured | broker=%s group_id=%s topic=%s",
         settings.KAFKA_SERVER,
         GROUP_ID,
-        registry.topics(),
+        TOPIC,
     )
 
     # Plain sync Consumer, not confluent_kafka.aio.AIOConsumer: AIOConsumer
@@ -131,14 +131,14 @@ async def run() -> None:
     _kafka_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kafka-consumer")
 
     try:
-        consumer.subscribe(registry.topics())
+        consumer.subscribe([TOPIC])
     except KafkaException as exc:
-        logger.critical("Failed to subscribe to Kafka topics: %s", exc)
+        logger.critical("Failed to subscribe to Kafka topic %s: %s", TOPIC, exc)
         raise
 
     logger.info(
-        "Consumer started | topics=%s poll_timeout=%.1fs auto_offset_reset=%s",
-        registry.topics(),
+        "Consumer started | topic=%s poll_timeout=%.1fs auto_offset_reset=%s",
+        TOPIC,
         settings.KAFKA_POLL_TIMEOUT_S,
         settings.KAFKA_AUTO_OFFSET_RESET,
     )
@@ -199,10 +199,10 @@ async def run() -> None:
                 continue
 
             try:
-                await registry.dispatch(msg.topic(), msg)
+                await handle_ppu_usage(msg)
             except Exception as exc:
                 logger.exception(
-                    "Unhandled error dispatching message from topic %s: %s",
+                    "Unhandled error handling message from topic %s: %s",
                     msg.topic(),
                     exc,
                 )
