@@ -401,12 +401,9 @@ async def list_tenant_tiers(
     db: AsyncSession,
     tier_id: Optional[str] = None,
 ) -> list[TierAssignResponse]:
-    now = datetime.now(timezone.utc)
-
     query = (
         select(PPUTenantTierAssignment, PPUTier)
         .join(PPUTier, PPUTenantTierAssignment.tier_id == PPUTier.id)
-        .where(PPUTenantTierAssignment.effective_to > now)
     )
 
     if tier_id is not None:
