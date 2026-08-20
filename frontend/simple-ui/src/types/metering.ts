@@ -154,9 +154,9 @@ export interface TopModelRow {
 export type ModelTopN = 5 | 10;
 
 export interface ModelConsumptionSummary {
-  /** Distinct Registry models (platform-wide; not tenant-scoped). */
+  /** Registered LLM model VERSIONS in the Registry (task_types=llm; platform-wide, not tenant-scoped). */
   total_models?: number | null;
-  /** Distinct models with ≥1 service that had traffic in-window (scoped). */
+  /** Distinct model_ids among model_totals with traffic in-window — same version grain as total_models. */
   active_models?: number | null;
   most_used?: {
     service_id?: string | null;
