@@ -1001,17 +1001,17 @@ class TestRegistryModelCount:
         svc = MeteringService(client=MagicMock())
         assert await svc.registry_model_count() is None
 
-    async def test_delegates_to_model_repo_count_distinct_models(self):
+    async def test_delegates_to_model_repo_count_models_scoped_to_llm(self):
         repo = MagicMock()
-        repo.count_distinct_models = AsyncMock(return_value=42)
+        repo.count_models = AsyncMock(return_value=42)
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() == 42
-        repo.count_distinct_models.assert_awaited_once_with()
+        repo.count_models.assert_awaited_once_with(task_types=["llm"])
 
     async def test_db_failure_returns_none_not_raises(self):
         repo = MagicMock()
-        repo.count_distinct_models = AsyncMock(side_effect=RuntimeError("db down"))
+        repo.count_models = AsyncMock(side_effect=RuntimeError("db down"))
         svc = MeteringService(client=MagicMock(), model_repo=repo)
 
         assert await svc.registry_model_count() is None
@@ -1152,18 +1152,21 @@ class TestModelConsumptionKpis:
         kpis = MeteringService.model_consumption_kpis([], model_totals)
         assert kpis["active_models"] == 2
 
-    def test_active_models_dedupes_multiple_active_versions_of_same_name(self):
-        """Two concurrently-ACTIVE versions of the same model (distinct
+    def test_active_models_counts_concurrent_versions_of_same_name_separately(self):
+        """Two concurrently-ACTIVE versions of the same model name (distinct
         model_ids, e.g. a canary rollout) both receiving traffic must count
-        as ONE active model, matching registry_model_count's name-based
-        identity — otherwise active_models could exceed total_models."""
+        as TWO active models — matching model_totals'/top_models' own
+        model_id grain (AI4IDS-2854). registry_model_count is now ALSO
+        model_id-grained (see its docstring), so this stays a subset of
+        total_models rather than exceeding it, and it agrees with the
+        number of rows an un-truncated top_models breakdown would show."""
         model_totals = [
             self._model_row("id-gemma-v1", "Gemma", 15),
             self._model_row("id-gemma-v2", "gemma", 5),  # same name, different casing
             self._model_row("id-llama", "llama", 20),
         ]
         kpis = MeteringService.model_consumption_kpis([], model_totals)
-        assert kpis["active_models"] == 2
+        assert kpis["active_models"] == 3
 
     def test_worst_picks_highest_failure_rate_among_active_services(self):
         services = [
@@ -1173,6 +1176,27 @@ class TestModelConsumptionKpis:
         ]
         kpis = MeteringService.model_consumption_kpis(services, [])
         assert kpis["worst"]["service_id"] == "s2"
+
+    def test_active_models_matches_row_count_of_untruncated_top_models(self):
+        """Regression for the reported bug (AI4IDS-2854): `active_models`
+        must agree with the number of rows the SAME `model_totals` produce
+        in `top_models` (via model_consumption_ranking) when the ranking
+        isn't truncated by `limit` — previously `active_models` was
+        name-deduped while `top_models` was always model_id-keyed, so a
+        model with multiple concurrently-ACTIVE versions receiving traffic
+        made `active_models` read LOWER than the number of rows actually
+        visible in the Model Consumption breakdown table on the same page.
+        """
+        model_totals = [
+            self._model_row("id-gemma-v1", "Gemma", 15),
+            self._model_row("id-gemma-v2", "gemma", 5),
+            self._model_row("id-llama", "llama", 20),
+            self._model_row("id-idle", "idle-model", 0),  # no traffic -> excluded from both
+        ]
+        kpis = MeteringService.model_consumption_kpis([], model_totals)
+        _, ranked, _ = MeteringService.model_consumption_ranking(model_totals, limit=25)
+
+        assert kpis["active_models"] == len(ranked) == 3
 
 
 @pytest.mark.asyncio

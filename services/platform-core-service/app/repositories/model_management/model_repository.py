@@ -103,34 +103,6 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
-    async def count_distinct_models(self) -> int:
-        """Count of distinct model NAMES registered in the Registry — ACTIVE
-        and DEPRECATED versions both count (a deprecated model is still "in
-        the Registry", just not the currently-recommended version to use).
-
-        Identity is model NAME (case-insensitive), NOT model_id: model_id is
-        `generate_model_id(name, version)` — a hash of the LOWERCASED
-        (name, version) pair (see app/utils/hashing.py) — unique per
-        VERSION, not per logical model, so counting distinct model_ids would
-        report version count instead of model count (4 models with 3
-        versions each would read as 12, not 4). Lower-casing the name before
-        DISTINCT also collapses "Gemma" and "gemma" into the same model,
-        matching generate_model_id's own case-insensitive identity rule.
-
-        The metering model-consumption summary's `active_models` KPI
-        (MeteringService.model_consumption_kpis) also dedupes by name for
-        this exact reason — it's traffic-side and model_id-keyed at the row
-        level (model_totals can have two rows for two concurrently-ACTIVE
-        versions of the same model — see model_breakdown), but the KPI
-        NUMBER dedupes those back down to one name, matching this count's
-        granularity so active_models stays a true subset of total_models.
-
-        Used by the metering model-consumption summary's `total_models` KPI.
-        """
-        stmt = select(func.count(func.distinct(func.lower(Model.name))))
-        result = await self._db.execute(stmt)
-        return int(result.scalar() or 0)
-
     async def get_model_names(self, model_ids: List[str]) -> Dict[str, str]:
         """Return {model_id: name} for the given ids — UNFILTERED on
         version_status: a DEPRECATED version is still live and can still be

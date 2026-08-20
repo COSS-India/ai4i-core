@@ -780,11 +780,23 @@ class MeteringService:
         }
 
     async def registry_model_count(self) -> Optional[int]:
-        """Distinct model NAMES currently registered — see ModelRepository.
-        count_distinct_models for why this is name-keyed (spanning both
-        ACTIVE and DEPRECATED), not model_id-keyed, and why
-        `model_consumption_kpis`'s `active_models` dedupes down to the same
-        name-level granularity so it stays a guaranteed subset of this count.
+        """Count of registered LLM model VERSIONS (`mm_models` rows with
+        task.type == "llm") — ACTIVE and DEPRECATED both count (a deprecated
+        version is still "in the Registry", just not the currently-
+        recommended one to use).
+
+        Scoped to task_types=["llm"] to match model_breakdown's own universe
+        (model_totals/model_consumption only ever cover LLM traffic — see
+        model_breakdown's LLM_CHAT_ENDPOINT_REGEX), and identity is model_id
+        (one row per version) to match model_totals' own grain, NOT distinct
+        model name — a model with 3 concurrently-registered versions counts
+        as 3 here, same as it does in `/api/v1/models?task_types=llm`'s
+        `meta.total` (see ModelRepository.count_models). This keeps
+        `total_models` and `model_consumption_kpis`'s `active_models` (also
+        model_id-grained — see that method's docstring) counting the exact
+        same population, so `active_models` stays a guaranteed subset of
+        this count and both match the Registry API's own count for the same
+        filter.
 
         Not tenant-scoped: ``mm_models`` has no tenant column — the Registry is
         a shared catalog, not partitioned per institution — so this value is
@@ -796,7 +808,7 @@ class MeteringService:
         if self._model_repo is None:
             return None
         try:
-            return await self._model_repo.count_distinct_models()
+            return await self._model_repo.count_models(task_types=["llm"])
         except Exception:
             logger.warning("registry_model_count: DB query failed", exc_info=True)
             return None
@@ -865,20 +877,22 @@ class MeteringService:
     def model_consumption_kpis(services: list[dict], model_totals: list[dict]) -> dict:
         """Scalar KPIs for the Model Consumption summary (AI4IDS-2790):
 
-        - `active_models`: count of DISTINCT model NAMES (case-insensitive)
-          among `model_totals` entries with traffic (`requests > 0`) —
-          matches `registry_model_count`/`ModelRepository.
-          count_distinct_models`'s identity (also name-based), so
-          `active_models` stays a guaranteed subset of `total_models`.
-          `model_totals`/`top_models` themselves stay `model_id`-keyed (a
-          model with two concurrently-ACTIVE versions both receiving
-          traffic is two separate rows there — see `model_breakdown`); this
-          KPI NUMBER is the one place identity drops to name-level, so two
-          such versions count once here, not twice. Always an int; 0 (not
-          None) when there's no traffic at all — 0 is itself a real,
-          meaningful answer ("no models were active"), unlike
-          `overall_success_rate_pct`, which is genuinely undefined with no
-          data to average.
+        - `active_models`: count of DISTINCT `model_id`s among `model_totals`
+          entries with traffic (`requests > 0`) — matches `model_totals`/
+          `top_models`' own grain (one row per `model_id` — see
+          `model_breakdown`) AND `registry_model_count`'s grain (also
+          model_id-based, see its docstring), so `active_models` stays a
+          guaranteed subset of `total_models` and agrees with the row count
+          in the visible `top_models` breakdown (when that list isn't
+          truncated by the caller's `limit`). Two concurrently-ACTIVE
+          versions of the same model name both receiving traffic count as
+          TWO active models here, matching the two separate rows they
+          produce in `model_totals`/`top_models` — deliberately not
+          collapsed to one, unlike the old name-based identity this
+          replaced. Always an int; 0 (not None) when there's no traffic at
+          all — 0 is itself a real, meaningful answer ("no models were
+          active"), unlike `overall_success_rate_pct`, which is genuinely
+          undefined with no data to average.
         - `overall_success_rate_pct`: REQUEST-WEIGHTED success rate — sum(
           requests * success_pct) / sum(requests) over `services` (not
           `model_totals`) — matching the FE's existing (previously dormant)
@@ -894,7 +908,7 @@ class MeteringService:
           when there's no traffic.
         """
         active_models = len({
-            m["model_name"].casefold() for m in model_totals if m["requests"] > 0
+            m["model_id"] for m in model_totals if m["requests"] > 0
         })
 
         active_services = [s for s in services if s["requests"] > 0]

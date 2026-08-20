@@ -157,8 +157,8 @@ class TopModelRow(BaseModel):
 
 class ModelConsumptionSummary(BaseModel):
     """Model Consumption KPI cards (computed over services with traffic)."""
-    total_models: Optional[int] = None      # total models in the Registry (mm_models); platform-wide — see note in metering_service.registry_model_count
-    active_models: Optional[int] = None     # distinct Registry models with >=1 service that had traffic in the window
+    total_models: Optional[int] = None      # count of registered LLM model VERSIONS (mm_models, task_types=llm); see note in metering_service.registry_model_count
+    active_models: Optional[int] = None     # distinct model_ids among model_totals with traffic in the window — matches top_models' own grain
     overall_success_rate_pct: Optional[float] = None  # plain average of success_pct across services with traffic — unweighted by request volume
     most_used: Optional[MostUsedModel] = None
     highest_failure_rate: Optional[HighestFailureModel] = None
