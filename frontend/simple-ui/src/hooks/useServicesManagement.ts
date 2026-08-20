@@ -345,10 +345,11 @@ export function useServicesManagement() {
 
   // Fetch tiers for the Create Service form dropdown
   useEffect(() => {
-    fetchTiers()
+    if (isLoadingTaskTypes) return;
+    fetchTiers(enabledTaskTypesParam)
       .then((res) => setAvailableTiers(res.data))
       .catch(() => {});
-  }, []);
+  }, [isLoadingTaskTypes, enabledTaskTypesParam]);
 
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
