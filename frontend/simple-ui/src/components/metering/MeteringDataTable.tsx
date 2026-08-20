@@ -42,7 +42,8 @@ const MeteringDataTable: React.FC<MeteringDataTableProps> = ({
         size={size}
         variant={variant}
         sx={{
-          "th, td": {
+          th: { verticalAlign: "middle" },
+          td: {
             verticalAlign: "middle",
             maxW: "280px",
             overflow: "hidden",

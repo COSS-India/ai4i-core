@@ -10,10 +10,10 @@ import {
 describe("canSeeOnboardingGuide", () => {
   it.each([
     { roles: ["ADMIN"] },
-    { roles: ["MODERATOR"] },
     { roles: ["TENANT ADMIN"] },
     { roles: ["TENANT_ADMIN"] },
     { roles: ["ADMIN", "MODERATOR"] },
+    { roles: ["TENANT ADMIN", "MODERATOR"] },
     { roles: ["TENANT ADMIN", "USER"] },
   ])("is true for $roles", ({ roles }) => {
     expect(canSeeOnboardingGuide(roles)).toBe(true);
@@ -22,6 +22,7 @@ describe("canSeeOnboardingGuide", () => {
   it.each([
     { roles: undefined },
     { roles: [] as string[] },
+    { roles: ["MODERATOR"] },
     { roles: ["USER"] },
     { roles: ["GUEST"] },
     { roles: ["USAGE VIEWER"] },
