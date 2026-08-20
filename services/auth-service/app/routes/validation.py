@@ -174,7 +174,20 @@ async def _validate_api_key(
     except InvalidAPIKeyError:
         return JSONResponse(
             status_code=401,
-            content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.", message="API key not found or has been revoked.").model_dump(),
+            content=ValidateAPIKeyErrorResponse(error="INVALID_API_KEY", message="API key not found or has been revoked.").model_dump(),
+        )
+
+    # validate_api_key() returns {"valid": False, ...} rather than raising
+    # when the token isn't even hex-key shaped (wrong length/charset) — catch
+    # that here so it doesn't fall through the rest of this function as if it
+    # were a valid result (no user_id ⇒ X-User-ID silently never set).
+    if result.get("valid") is False:
+        return JSONResponse(
+            status_code=401,
+            content=ValidateAPIKeyErrorResponse(
+                error="INVALID_API_KEY_FORMAT",
+                message=result.get("message") or "Invalid API key format.",
+            ).model_dump(),
         )
 
     permission_ids = result.get("permissions") or result.get("permission_ids") or []
