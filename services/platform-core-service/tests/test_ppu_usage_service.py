@@ -206,6 +206,29 @@ class TestGetSummary:
         assert result.totalRemainingBudget == 900.0
 
     @pytest.mark.asyncio
+    async def test_remaining_budget_floored_at_zero_when_tenant_over_budget(self):
+        """An over-budget tenant's negative available_balance must not drag the
+        platform-wide totalRemainingBudget negative — each tenant's contribution
+        is floored at 0 before summing, same as the per-tenant remaining field."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2")],
+            get_tenant_tier_usage_breakdown=[
+                _usage_row(tenant_id="t1", total_cost=Decimal("1200")),
+                _usage_row(tenant_id="t2", total_cost=Decimal("30")),
+            ],
+            get_tenant_budgets=_budgets(
+                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("-200")),
+                _budget_row(tenant_id="t2", budget_limit=Decimal("500"), available_balance=Decimal("200")),
+            ),
+            get_total_cost_for_month=0.0,
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_summary("2026-06")
+
+        # t1 contributes 0 (floored), not -200 -- total is t2's 200, not 0.
+        assert result.totalRemainingBudget == 200.0
+
+    @pytest.mark.asyncio
     async def test_tenant_with_no_budget_row_excluded_from_budget_totals(self):
         """Same "unknown limit != 0" treatment as budgetExceededTenants — a tenant
         with no assignment row on file must not contribute a 0 to either total."""
@@ -363,8 +386,10 @@ class TestGetTenantList:
 
     @pytest.mark.asyncio
     async def test_remaining_quota_clamped_at_zero_when_overused(self):
-        """remaining must never go negative, even when consumed exceeds the quota —
-        both on the flat `usage` block and on each tierBreakdown taskType entry."""
+        """remaining must never go negative, and percentage must never exceed 100,
+        even when consumed exceeds the quota — quota tracking is updated by the same
+        post-hoc billing consumer as the wallet, so this can genuinely overshoot
+        exactly like budget spend can (see test_percentage_used_clamped_at_100...)."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[
@@ -378,7 +403,32 @@ class TestGetTenantList:
 
         item = result.data[0]
         assert item.usage.remaining == 0.0
+        assert item.usage.percentage == 100.0
         assert item.tierBreakdown[0].taskTypes[0].remaining == 0.0
+
+    @pytest.mark.asyncio
+    async def test_percentage_used_clamped_at_100_when_spend_exceeds_budget(self):
+        """percentageUsed must never exceed 100, and remaining must never go negative,
+        even when real spend does exceed budget_limit — budget enforcement is post-hoc,
+        so the ledger can genuinely overshoot before it's blocked. Both displayed figures
+        are floored/capped rather than showing the raw over-budget numbers, matching
+        test_remaining_quota_clamped_at_zero's clamp for the analogous per-task-type
+        quota fields."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[_tier_row()],
+            get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("999900.03"))],
+            get_tier_first_seen=[_row(tenant_id="t1", tier_id="1", first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc))],
+            get_tenant_budgets=_budgets(
+                _budget_row(budget_limit=Decimal("900000"), available_balance=Decimal("-99900.03"))
+            ),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_list("2026-06", None, None, auth_db=None)
+
+        item = result.data[0]
+        assert item.spend == 999900.03
+        assert item.budget.percentageUsed == 100.0
+        assert item.budget.remaining == 0.0
 
     @pytest.mark.asyncio
     async def test_quota_populated_when_current_tier_is_deleted(self):
@@ -679,6 +729,24 @@ class TestGetTenantDetail:
 
         assert result.budget.limit == 1000.0
         assert result.budget.remaining == 700.0
+
+    @pytest.mark.asyncio
+    async def test_zero_usage_with_negative_carryover_balance_shows_remaining_floored(self):
+        """A tenant whose wallet is still negative from a prior overspend, but who has
+        no usage yet this period, must show remaining=0 — not the raw negative
+        carryover balance — matching the floor applied everywhere else remaining is
+        computed (see test_percentage_used_clamped_at_100_when_spend_exceeds_budget)."""
+        repo = _make_repo(
+            get_tenants_with_usage_tier=[],
+            get_tenant_budgets=_budgets(
+                _budget_row(tenant_id="t1", budget_limit=Decimal("1000"), available_balance=Decimal("-50"))
+            ),
+        )
+        svc = PPUUsageService(repo)
+        result = await svc.get_tenant_detail("t1", "2026-06", auth_db=None)
+
+        assert result.budget.limit == 1000.0
+        assert result.budget.remaining == 0.0
 
     @pytest.mark.asyncio
     async def test_returns_zero_value_item_when_tenant_exists_but_unassigned(self):

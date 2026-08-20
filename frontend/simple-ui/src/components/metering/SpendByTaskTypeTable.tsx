@@ -12,10 +12,16 @@ import { ThWithTip } from "../common/InfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
-  if ("percentage" in t && typeof t.percentage === "number") return t.percentage;
+  // Quota tracking is post-hoc (AI4IDS-2786) — consumed can genuinely exceed
+  // quotaLimit before enforcement catches up, so both branches below are
+  // capped to [0, 100] rather than trusting either the backend field or the
+  // raw ratio to already be bounded.
+  if ("percentage" in t && typeof t.percentage === "number") {
+    return Math.min(100, Math.max(0, t.percentage));
+  }
   const limit = t.quotaLimit ?? 0;
   if (limit <= 0) return 0;
-  return (t.consumed / limit) * 100;
+  return Math.min(100, Math.max(0, (t.consumed / limit) * 100));
 }
 
 type SpendRow =

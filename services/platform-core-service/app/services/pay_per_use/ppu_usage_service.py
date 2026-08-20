@@ -204,8 +204,17 @@ def _build_hierarchical_item(
         for tg in tier_raw
     ]
     budget_limit = round(_to_decimal(assignment.budget_limit), 2)
-    remaining_budget = round(_to_decimal(assignment.available_balance), 2)
-    percentage_used = round(tenant_spend / budget_limit * 100, 1) if budget_limit > 0 else Decimal("0")
+    # Real spend can exceed budget_limit — budget enforcement is post-hoc (the
+    # async billing pipeline can lag behind a burst of concurrent requests),
+    # so available_balance can genuinely go negative. Both displayed figures
+    # are floored/capped at the point where "over budget" stops being a
+    # meaningful magnitude to show: remaining can't go below 0, percentage
+    # can't go above 100.
+    remaining_budget = max(Decimal("0"), round(_to_decimal(assignment.available_balance), 2))
+    percentage_used = (
+        min(Decimal("100"), round(tenant_spend / budget_limit * 100, 1))
+        if budget_limit > 0 else Decimal("0")
+    )
 
     effective_task_type = model_task_type
     if effective_task_type is None and len(distinct_task_types) == 1:
@@ -234,7 +243,11 @@ def _build_hierarchical_item(
             # exhausted, not 0% used.
             percentage = Decimal("100") if total_consumed > 0 else Decimal("0")
         else:
-            percentage = round(total_consumed / quota * 100, 1)
+            # Quota tracking (ppu_quota_usage.units_used) is updated by the same
+            # post-hoc billing consumer as the wallet, so total_consumed can
+            # genuinely exceed quota — capped at 100 for display, same as
+            # budget's percentage_used above.
+            percentage = min(Decimal("100"), round(total_consumed / quota * 100, 1))
 
         usage_count = TenantUsageCount(
             taskTypeCount=len(distinct_task_types),
@@ -389,7 +402,11 @@ class PPUUsageService:
             budget_limit, available_balance, has_budget = _resolve_budget(a.tenant_id, budgets)
             if has_budget:
                 total_allocated_budget += budget_limit
-                total_remaining_budget += available_balance
+                # Floored per-tenant, like remaining_budget elsewhere in this file —
+                # an over-budget tenant's negative balance must not drag the
+                # platform-wide remaining-budget total negative (or below what any
+                # single still-under-budget tenant actually has left).
+                total_remaining_budget += max(Decimal("0"), available_balance)
                 if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
                     budget_exceeded += 1
 
@@ -589,7 +606,10 @@ class PPUUsageService:
             # (previously it did, even with a real budget_limit/available_balance on file).
             budget_limit, available_balance, _ = _resolve_budget(tenant_id, budgets)
             budget_limit = round(budget_limit, 2)
-            available_balance = round(available_balance, 2)
+            # Floored like _build_hierarchical_item's remaining_budget — a wallet
+            # carried over negative from a prior overspend must not show as
+            # negative just because this period has no usage yet.
+            available_balance = max(Decimal("0"), round(available_balance, 2))
 
             return TenantHierarchicalItem(
                 tenantId=tenant_id,

@@ -111,8 +111,17 @@ function TenantBudgetCard({
 }) {
   const { limit, spent, remaining, percentageUsed } = detail.budget;
   const cur = detail.currency || currency;
-  const pct = percentageUsed || (limit > 0 ? (spent / limit) * 100 : 0);
+  // ?? not ||: a legitimately clamped 0 must not fall through to the raw recompute.
+  const pct = percentageUsed ?? (limit > 0 ? (spent / limit) * 100 : 0);
+  // Budget enforcement is post-hoc (AI4IDS-2786) — pct can arrive >100; cap the
+  // displayed percentage the same way the bar width below is already capped.
+  const displayPct = Math.min(100, Math.max(0, pct));
   const over = spent - limit;
+  // Floor client-side too, same as BudgetCell/UsageCell: budget_limit and
+  // available_balance are two separately-tracked figures (a mid-period tier
+  // change can leave them momentarily inconsistent, see over's spent/limit
+  // basis above), so remaining can arrive negative even when over <= 0.
+  const displayRemaining = Math.max(0, remaining);
 
   return (
     <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="22px 24px">
@@ -133,12 +142,12 @@ function TenantBudgetCard({
             {formatSpendMoney(spent, cur)}
           </Text>
           <Text fontSize="12.5px" color="gray.500" mt={1} mb={3}>
-            of {formatSpendMoney(limit, cur)} · {pct.toFixed(0)}% used
+            of {formatSpendMoney(limit, cur)} · {displayPct.toFixed(0)}% used
           </Text>
           <Box h="6px" borderRadius="3px" bg="blackAlpha.100" overflow="hidden">
             <Box
               h="100%"
-              w={`${Math.min(Math.max(pct, 0), 100)}%`}
+              w={`${displayPct}%`}
               bg={over > 0 ? USAGE_SPEND_DANGER : USAGE_SPEND_ACCENT}
               borderRadius="3px"
             />
@@ -151,7 +160,7 @@ function TenantBudgetCard({
           >
             {over > 0
               ? `${formatSpendMoney(over, cur)} over budget`
-              : `${formatSpendMoney(remaining, cur)} remaining`}
+              : `${formatSpendMoney(displayRemaining, cur)} remaining`}
           </Text>
         </>
       )}

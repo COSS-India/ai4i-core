@@ -110,7 +110,10 @@ export function RatioBar({
 }
 
 export function ratioTooltip(pct: number): string {
-  const used = Math.max(0, Math.round(pct));
+  // Budget/quota tracking is post-hoc (see AI4IDS-2786) — real spend/consumption
+  // can genuinely exceed the limit before enforcement catches up, so pct here
+  // can arrive >100. Never show that as "used" text; 100/0 are the true bounds.
+  const used = Math.min(100, Math.max(0, Math.round(pct)));
   const remaining = Math.max(0, Math.round(100 - pct));
   return `${used}% used · ${remaining}% remaining`;
 }
@@ -130,14 +133,27 @@ export function BudgetCell({
   currency: string;
   layout?: RatioBarLayout;
 }) {
-  const pct = percentageUsed || (limit > 0 ? (spent / limit) * 100 : 0);
+  // ?? not ||: a legitimately clamped 0 must not fall through to the raw recompute.
+  const pct = percentageUsed ?? (limit > 0 ? (spent / limit) * 100 : 0);
+  // Budget enforcement is post-hoc (AI4IDS-2786) — pct can arrive >100 (spend
+  // genuinely exceeded the limit before enforcement caught up). The bar width
+  // (via RatioBar's own fillPct) is already capped; displayPct caps the
+  // percentage TEXT the same way so it never reads above 100/below 0 either.
+  const displayPct = Math.min(100, Math.max(0, pct));
   const over = spent - limit;
+  // Backend floors remaining at 0 (see ppu_usage_service.py), but this caption
+  // must not depend on that alone: budget_limit and available_balance are two
+  // separately-tracked figures (a mid-period tier change can leave them
+  // momentarily inconsistent — see the "over" branch below, which is driven by
+  // spent/limit, not remaining), so remaining can still arrive negative here
+  // even when over <= 0. Floor client-side too, same as UsageCell's `left`.
+  const displayRemaining = Math.max(0, remaining);
 
   if (layout === "topRight") {
     const caption =
       over > 0
         ? `${formatSpendMoney(over, currency)} over budget`
-        : `${formatSpendMoney(remaining, currency)} available`;
+        : `${formatSpendMoney(displayRemaining, currency)} available`;
     let tone: RatioBarCaptionTone = "muted";
     if (over > 0) tone = "over";
     else if (pct >= 90) tone = "warn";
@@ -159,16 +175,16 @@ export function BudgetCell({
     caption = `${formatSpendMoney(over, currency)} over budget`;
     tone = "over";
   } else if (pct >= 90) {
-    caption = `${formatSpendMoney(remaining, currency)} left · ${pct.toFixed(0)}% used`;
+    caption = `${formatSpendMoney(displayRemaining, currency)} left · ${displayPct.toFixed(0)}% used`;
     tone = "warn";
   } else {
-    caption = `${formatSpendMoney(remaining, currency)} left`;
+    caption = `${formatSpendMoney(displayRemaining, currency)} left`;
   }
 
   return (
     <RatioBar
       pct={pct}
-      main={`${pct.toFixed(0)}% used`}
+      main={`${displayPct.toFixed(0)}% used`}
       of={`of ${formatSpendMoney(limit, currency)}`}
       caption={caption}
       captionTone={tone}
@@ -197,6 +213,9 @@ export function UsageCell({
   const used = consumed ?? 0;
   const left = remaining ?? Math.max(0, limit - used);
   const pct = percentage ?? (limit > 0 ? (used / limit) * 100 : 0);
+  // Quota tracking is post-hoc (AI4IDS-2786) — pct can arrive >100. Cap the
+  // displayed percentage text the same way the bar width is already capped.
+  const displayPct = Math.min(100, Math.max(0, pct));
   const fmt = compact ? formatSpendUnitCompact : formatSpendUnit;
   const exactTooltip = `${formatSpendUnitExact(used, unit)} of ${formatSpendUnitExact(limit, unit)} · ${ratioTooltip(pct)}`;
 
@@ -218,7 +237,7 @@ export function UsageCell({
       pct={pct}
       main={fmt(used, unit)}
       of={`of ${fmt(limit, unit)}`}
-      caption={`${fmt(Math.max(left, 0), unit)} left · ${pct.toFixed(0)}%`}
+      caption={`${fmt(Math.max(left, 0), unit)} left · ${displayPct.toFixed(0)}%`}
       tooltip={compact ? exactTooltip : undefined}
     />
   );
