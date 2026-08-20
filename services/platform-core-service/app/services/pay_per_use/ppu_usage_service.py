@@ -206,11 +206,19 @@ def _build_hierarchical_item(
     budget_limit = round(_to_decimal(assignment.budget_limit), 2)
     # Real spend can exceed budget_limit — budget enforcement is post-hoc (the
     # async billing pipeline can lag behind a burst of concurrent requests),
-    # so available_balance can genuinely go negative. Both displayed figures
-    # are floored/capped at the point where "over budget" stops being a
-    # meaningful magnitude to show: remaining can't go below 0, percentage
-    # can't go above 100.
-    remaining_budget = max(Decimal("0"), round(_to_decimal(assignment.available_balance), 2))
+    # so available_balance can genuinely go negative and percentage_used can
+    # genuinely exceed 100. Both are floored/capped for display — a negative
+    # "remaining" or a >100% "used" isn't a meaningful magnitude to show. The
+    # true overage is never discarded, just relocated: this period's overshoot
+    # is visible via spend/limit directly (see budgetExceededTenants in
+    # usageSpendHelpers.ts / useUsageAndSpendData.ts, which compares those
+    # rather than remaining < 0), and any deficit carried over from a PRIOR
+    # period — which spend/limit can't reveal, since spend is this period's
+    # only — is carried explicitly via `deficit` below instead of leaking
+    # through as a negative `remaining`.
+    raw_balance = round(_to_decimal(assignment.available_balance), 2)
+    remaining_budget = max(Decimal("0"), raw_balance)
+    deficit = max(Decimal("0"), -raw_balance)
     percentage_used = (
         min(Decimal("100"), round(tenant_spend / budget_limit * 100, 1))
         if budget_limit > 0 else Decimal("0")
@@ -270,6 +278,7 @@ def _build_hierarchical_item(
             spent=tenant_spend,
             remaining=remaining_budget,
             percentageUsed=percentage_used,
+            deficit=deficit,
         ),
         usage=usage_count,
         tierBreakdown=tier_breakdown,
@@ -405,7 +414,9 @@ class PPUUsageService:
                 # Floored per-tenant, like remaining_budget elsewhere in this file —
                 # an over-budget tenant's negative balance must not drag the
                 # platform-wide remaining-budget total negative (or below what any
-                # single still-under-budget tenant actually has left).
+                # single still-under-budget tenant actually has left). The true
+                # deficit isn't summed at this aggregate level (no totalDeficit
+                # field yet) — only the per-tenant TenantBudget.deficit exposes it.
                 total_remaining_budget += max(Decimal("0"), available_balance)
                 if cost_by_tenant.get(a.tenant_id, Decimal("0")) > budget_limit:
                     budget_exceeded += 1
@@ -606,10 +617,14 @@ class PPUUsageService:
             # (previously it did, even with a real budget_limit/available_balance on file).
             budget_limit, available_balance, _ = _resolve_budget(tenant_id, budgets)
             budget_limit = round(budget_limit, 2)
-            # Floored like _build_hierarchical_item's remaining_budget — a wallet
-            # carried over negative from a prior overspend must not show as
-            # negative just because this period has no usage yet.
-            available_balance = max(Decimal("0"), round(available_balance, 2))
+            # Floored like _build_hierarchical_item's remaining_budget — spend for
+            # THIS period is 0 here by construction (that's why we're in this
+            # branch), so a negative available_balance is entirely a prior
+            # period's carried-over deficit. Surfaced explicitly via `deficit`
+            # instead of a negative remaining, same as the main branch.
+            available_balance = round(available_balance, 2)
+            deficit = max(Decimal("0"), -available_balance)
+            available_balance = max(Decimal("0"), available_balance)
 
             return TenantHierarchicalItem(
                 tenantId=tenant_id,
@@ -623,6 +638,7 @@ class PPUUsageService:
                     spent=Decimal("0"),
                     remaining=available_balance,
                     percentageUsed=Decimal("0"),
+                    deficit=deficit,
                 ),
                 usage=TenantUsageCount(taskTypeCount=0),
                 tierBreakdown=[],

@@ -232,8 +232,10 @@ export function summaryFromDetail(detail: TenantUsageDetail): UsageSummaryRespon
     totalSpend: total,
     currency: detail.currency,
     activeTenants: 1,
-    budgetExceededTenants:
-      detail.budget.remaining < 0 || detail.budget.percentageUsed > 100 ? 1 : 0,
+    // remaining/percentageUsed are floored/capped for display (AI4IDS-2786),
+    // so they can never signal an overshoot — spent/limit are the untouched
+    // raw figures and are what actually detect it.
+    budgetExceededTenants: detail.budget.spent > detail.budget.limit ? 1 : 0,
     spendChangePercent: 0,
     spendByModelTaskType: items.map((i) => ({
       ...i,

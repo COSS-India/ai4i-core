@@ -33,8 +33,11 @@ export interface UsageSummaryResponse {
 export interface TenantBudget {
   limit: number;
   spent: number;
+  /** Floored at 0 — never negative. See `deficit` for a prior-period carryover. */
   remaining: number;
   percentageUsed: number;
+  /** Prior-period wallet deficit still owed, as a positive magnitude (0 if none). */
+  deficit?: number;
 }
 
 /**

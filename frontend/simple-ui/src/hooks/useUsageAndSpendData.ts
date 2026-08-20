@@ -155,9 +155,12 @@ export function useUsageAndSpendData({
       next = {
         ...next,
         activeTenants: next.activeTenants ?? (tenantsQuery.data?.total ?? rows.length),
+        // remaining/percentageUsed are floored/capped for display (AI4IDS-2786),
+        // so they can never signal an overshoot — spent/limit are the untouched
+        // raw figures and are what actually detect it (see usageSpendHelpers.ts's
+        // summaryFromDetail, which hits this same bug on the scoped path).
         budgetExceededTenants:
-          next.budgetExceededTenants ??
-          rows.filter((r) => r.budget.percentageUsed > 100 || r.budget.remaining < 0).length,
+          next.budgetExceededTenants ?? rows.filter((r) => r.budget.spent > r.budget.limit).length,
       };
     }
 

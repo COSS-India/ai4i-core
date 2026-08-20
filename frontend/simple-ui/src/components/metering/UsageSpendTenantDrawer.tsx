@@ -98,6 +98,7 @@ const UsageSpendTenantDrawer: React.FC<UsageSpendTenantDrawerProps> = ({
               spent={detail.budget.spent}
               remaining={detail.budget.remaining}
               percentageUsed={detail.budget.percentageUsed}
+              deficit={detail.budget.deficit}
               currency={detail.currency}
             />
           </Box>

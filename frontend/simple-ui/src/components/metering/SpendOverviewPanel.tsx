@@ -109,7 +109,7 @@ function TenantBudgetCard({
   currency: string;
   isLoading: boolean;
 }) {
-  const { limit, spent, remaining, percentageUsed } = detail.budget;
+  const { limit, spent, remaining, percentageUsed, deficit = 0 } = detail.budget;
   const cur = detail.currency || currency;
   // ?? not ||: a legitimately clamped 0 must not fall through to the raw recompute.
   const pct = percentageUsed ?? (limit > 0 ? (spent / limit) * 100 : 0);
@@ -117,11 +117,9 @@ function TenantBudgetCard({
   // displayed percentage the same way the bar width below is already capped.
   const displayPct = Math.min(100, Math.max(0, pct));
   const over = spent - limit;
-  // Floor client-side too, same as BudgetCell/UsageCell: budget_limit and
-  // available_balance are two separately-tracked figures (a mid-period tier
-  // change can leave them momentarily inconsistent, see over's spent/limit
-  // basis above), so remaining can arrive negative even when over <= 0.
-  const displayRemaining = Math.max(0, remaining);
+  // spent <= limit this period, but the wallet still owes from a PRIOR period
+  // (remaining is floored, so it can't signal this itself — see deficit).
+  const hasDeficit = deficit > 0;
 
   return (
     <Box bg={SPEND_CARD_BG} borderRadius="12px" borderWidth="1px" borderColor="gray.200" p="22px 24px">
@@ -148,7 +146,7 @@ function TenantBudgetCard({
             <Box
               h="100%"
               w={`${displayPct}%`}
-              bg={over > 0 ? USAGE_SPEND_DANGER : USAGE_SPEND_ACCENT}
+              bg={over > 0 || hasDeficit ? USAGE_SPEND_DANGER : USAGE_SPEND_ACCENT}
               borderRadius="3px"
             />
           </Box>
@@ -156,11 +154,13 @@ function TenantBudgetCard({
             fontSize="12px"
             mt={2}
             fontWeight="semibold"
-            color={over > 0 ? USAGE_SPEND_DANGER : "gray.600"}
+            color={over > 0 || hasDeficit ? USAGE_SPEND_DANGER : "gray.600"}
           >
-            {over > 0
-              ? `${formatSpendMoney(over, cur)} over budget`
-              : `${formatSpendMoney(displayRemaining, cur)} remaining`}
+            {(() => {
+              if (over > 0) return `${formatSpendMoney(over, cur)} over budget`;
+              if (hasDeficit) return `${formatSpendMoney(deficit, cur)} owed from last period`;
+              return `${formatSpendMoney(remaining, cur)} remaining`;
+            })()}
           </Text>
         </>
       )}

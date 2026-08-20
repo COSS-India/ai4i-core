@@ -53,8 +53,17 @@ class TierUsageBreakdown(BaseModel):
 class TenantBudget(BaseModel):
     limit: float
     spent: float
+    # Floored at 0 — never negative. A tenant's wallet (available_balance) can
+    # go negative from a prior period's carryover even when spent <= limit this
+    # period; that deficit is NOT lost, it's surfaced separately via `deficit`
+    # below rather than by letting this field go negative (AI4IDS-2786).
     remaining: float
     percentageUsed: float
+    # Prior-period wallet deficit still owed, as a positive magnitude (0 when
+    # the wallet isn't in deficit). Lets the UI show a distinct "X owed from
+    # last period" caption instead of a confusing negative "remaining"/
+    # "available" — see BudgetCell/TenantBudgetCard on the frontend.
+    deficit: float = 0
 
 
 class TenantUsageCount(BaseModel):

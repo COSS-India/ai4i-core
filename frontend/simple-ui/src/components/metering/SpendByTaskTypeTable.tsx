@@ -12,16 +12,17 @@ import { ThWithTip } from "../common/InfoTip";
 import { TaskTypeLabel, TierBadge, UsageCell } from "./UsageSpendCells";
 
 function quotaUsagePercentage(t: TierTaskTypeUsage | AggregatedTaskUsage): number {
-  // Quota tracking is post-hoc (AI4IDS-2786) — consumed can genuinely exceed
-  // quotaLimit before enforcement catches up, so both branches below are
-  // capped to [0, 100] rather than trusting either the backend field or the
-  // raw ratio to already be bounded.
-  if ("percentage" in t && typeof t.percentage === "number") {
-    return Math.min(100, Math.max(0, t.percentage));
-  }
+  // Deliberately NOT clamped: this feeds UsageCell's `percentage` prop, which
+  // passes it straight through to RatioBar's `pct` for bar-colour severity
+  // (spendBarColor treats >100 as danger — see usageSpendHelpers.ts). UsageCell
+  // already clamps its own `displayPct` for the rendered text, so clamping here
+  // too would just destroy the >100 signal the colour needs, same class of bug
+  // as the ??-vs-|| fix elsewhere in this PR — don't throw away information a
+  // downstream consumer still needs.
+  if ("percentage" in t && typeof t.percentage === "number") return t.percentage;
   const limit = t.quotaLimit ?? 0;
   if (limit <= 0) return 0;
-  return Math.min(100, Math.max(0, (t.consumed / limit) * 100));
+  return (t.consumed / limit) * 100;
 }
 
 type SpendRow =

@@ -123,13 +123,17 @@ export function BudgetCell({
   spent,
   remaining,
   percentageUsed,
+  deficit = 0,
   currency,
   layout = "standard",
 }: {
   limit: number;
   spent: number;
+  /** Already floored at 0 by the backend — never negative. */
   remaining: number;
   percentageUsed: number;
+  /** Prior-period wallet deficit still owed, as a positive magnitude (0 if none). */
+  deficit?: number;
   currency: string;
   layout?: RatioBarLayout;
 }) {
@@ -141,22 +145,25 @@ export function BudgetCell({
   // percentage TEXT the same way so it never reads above 100/below 0 either.
   const displayPct = Math.min(100, Math.max(0, pct));
   const over = spent - limit;
-  // Backend floors remaining at 0 (see ppu_usage_service.py), but this caption
-  // must not depend on that alone: budget_limit and available_balance are two
-  // separately-tracked figures (a mid-period tier change can leave them
-  // momentarily inconsistent — see the "over" branch below, which is driven by
-  // spent/limit, not remaining), so remaining can still arrive negative here
-  // even when over <= 0. Floor client-side too, same as UsageCell's `left`.
-  const displayRemaining = Math.max(0, remaining);
+  // spent <= limit this period, but the wallet still owes from a PRIOR period
+  // (remaining is floored, so it can't signal this itself — that's what
+  // deficit is for). Distinct from `over`, which is this period's own
+  // overshoot; a tenant can be fine this period and still carry a deficit.
+  const hasDeficit = deficit > 0;
 
   if (layout === "topRight") {
-    const caption =
-      over > 0
-        ? `${formatSpendMoney(over, currency)} over budget`
-        : `${formatSpendMoney(displayRemaining, currency)} available`;
+    let caption: string;
     let tone: RatioBarCaptionTone = "muted";
-    if (over > 0) tone = "over";
-    else if (pct >= 90) tone = "warn";
+    if (over > 0) {
+      caption = `${formatSpendMoney(over, currency)} over budget`;
+      tone = "over";
+    } else if (hasDeficit) {
+      caption = `${formatSpendMoney(deficit, currency)} owed from last period`;
+      tone = "over";
+    } else {
+      caption = `${formatSpendMoney(remaining, currency)} available`;
+      if (pct >= 90) tone = "warn";
+    }
     return (
       <RatioBar
         pct={pct}
@@ -174,11 +181,14 @@ export function BudgetCell({
   if (over > 0) {
     caption = `${formatSpendMoney(over, currency)} over budget`;
     tone = "over";
+  } else if (hasDeficit) {
+    caption = `${formatSpendMoney(deficit, currency)} owed from last period`;
+    tone = "over";
   } else if (pct >= 90) {
-    caption = `${formatSpendMoney(displayRemaining, currency)} left · ${displayPct.toFixed(0)}% used`;
+    caption = `${formatSpendMoney(remaining, currency)} left · ${displayPct.toFixed(0)}% used`;
     tone = "warn";
   } else {
-    caption = `${formatSpendMoney(displayRemaining, currency)} left`;
+    caption = `${formatSpendMoney(remaining, currency)} left`;
   }
 
   return (

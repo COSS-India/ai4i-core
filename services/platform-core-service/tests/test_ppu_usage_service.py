@@ -209,7 +209,9 @@ class TestGetSummary:
     async def test_remaining_budget_floored_at_zero_when_tenant_over_budget(self):
         """An over-budget tenant's negative available_balance must not drag the
         platform-wide totalRemainingBudget negative — each tenant's contribution
-        is floored at 0 before summing, same as the per-tenant remaining field."""
+        is floored at 0 before summing, same as the per-tenant remaining field.
+        The true deficit isn't lost — it's exposed per-tenant via
+        TenantBudget.deficit, just not summed into this platform-wide total."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row(tenant_id="t1"), _tier_row(tenant_id="t2")],
             get_tenant_tier_usage_breakdown=[
@@ -410,10 +412,10 @@ class TestGetTenantList:
     async def test_percentage_used_clamped_at_100_when_spend_exceeds_budget(self):
         """percentageUsed must never exceed 100, and remaining must never go negative,
         even when real spend does exceed budget_limit — budget enforcement is post-hoc,
-        so the ledger can genuinely overshoot before it's blocked. Both displayed figures
-        are floored/capped rather than showing the raw over-budget numbers, matching
-        test_remaining_quota_clamped_at_zero's clamp for the analogous per-task-type
-        quota fields."""
+        so the ledger can genuinely overshoot before it's blocked. The true overage
+        isn't lost: it's visible via spend/limit directly (this period's overshoot)
+        and via budget.deficit (the wallet's true negative magnitude), matching
+        test_remaining_quota_clamped_at_zero's analogous per-task-type clamp."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[_tier_row()],
             get_tenant_tier_usage_breakdown=[_usage_row(total_cost=Decimal("999900.03"))],
@@ -429,6 +431,13 @@ class TestGetTenantList:
         assert item.spend == 999900.03
         assert item.budget.percentageUsed == 100.0
         assert item.budget.remaining == 0.0
+        assert item.budget.deficit == 99900.03
+        # spent/limit are what actually signal "over budget this period" — the
+        # frontend's budgetExceededTenants detector reads these instead of
+        # remaining/percentageUsed precisely because those are floored/capped
+        # and can no longer signal an overshoot (see usageSpendHelpers.ts's
+        # summaryFromDetail and useUsageAndSpendData.ts).
+        assert item.budget.spent > item.budget.limit
 
     @pytest.mark.asyncio
     async def test_quota_populated_when_current_tier_is_deleted(self):
@@ -735,7 +744,10 @@ class TestGetTenantDetail:
         """A tenant whose wallet is still negative from a prior overspend, but who has
         no usage yet this period, must show remaining=0 — not the raw negative
         carryover balance — matching the floor applied everywhere else remaining is
-        computed (see test_percentage_used_clamped_at_100_when_spend_exceeds_budget)."""
+        computed. spend for this period is 0 by construction on this path, so there's
+        no spent > limit (or any other) signal that could otherwise flag the carryover
+        deficit — that's why it's surfaced explicitly via budget.deficit instead of
+        letting it leak through as a negative remaining."""
         repo = _make_repo(
             get_tenants_with_usage_tier=[],
             get_tenant_budgets=_budgets(
@@ -747,6 +759,7 @@ class TestGetTenantDetail:
 
         assert result.budget.limit == 1000.0
         assert result.budget.remaining == 0.0
+        assert result.budget.deficit == 50.0
 
     @pytest.mark.asyncio
     async def test_returns_zero_value_item_when_tenant_exists_but_unassigned(self):
