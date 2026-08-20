@@ -88,12 +88,8 @@ class KafkaSettings(BaseSettings):
 
     KAFKA_SERVER: str = Field(description="Bootstrap broker address (host:port)")
     KAFKA_AUTO_OFFSET_RESET: str = Field(
-        "error",
-        description=(
-            "Offset reset policy when there is no valid committed offset. "
-            "'error' surfaces the reset as an _AUTO_OFFSET_RESET entry instead of "
-            "silently replaying the topic and mass double-billing — §10."
-        ),
+        "earliest",
+        description="Offset reset policy when no committed offset exists: 'earliest' or 'latest'",
     )
     KAFKA_ENABLE_AUTO_COMMIT: bool = Field(
         False,
@@ -198,10 +194,6 @@ def build_consumer_config(group_id: str, settings: KafkaSettings | None = None) 
         # ── Fixed below: correctness, not tuning (§3.1).  Do not promote to settings. ──
         # Nothing is committed on a timer behind our back.
         "enable.auto.commit": False,
-        # THE important one: left at its default (true) a fetch marks a message
-        # committable the instant it is returned — including ones whose handler
-        # later raised — so any commit would advance past a failed message (§6.1).
-        "enable.auto.offset.store": False,
         # Incremental rebalancing: only the partitions that must move are revoked,
         # instead of stop-the-world for the whole group (§6.5).
         "partition.assignment.strategy": "cooperative-sticky",
