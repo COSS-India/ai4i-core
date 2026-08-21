@@ -212,6 +212,17 @@ class OpenAIProxyService:
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
+            # A rejection here (404/403/503) means resolution never reached
+            # the point of opening a "model" span below — but the telemetry
+            # dashboard's task_type comes exclusively from that span, so
+            # without one this trace would show task_type=null and never
+            # match a task_types=llm filter. Emit a minimal model span so
+            # the failure is still classifiable as an LLM request.
+            with traced_span("model") as model_attrs:
+                model_attrs["task_type"] = "LLM"
+                model_attrs.update(get_context_attributes())
+                if isinstance(payload, dict):
+                    model_attrs["service_id"] = payload.get("model", "") or ""
             return exc.status_code, exc.body
 
         with traced_span("model") as model_attrs:
@@ -404,12 +415,29 @@ class OpenAIProxyService:
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
+            # Same reasoning as proxy_traced(): no "model" span means no
+            # task_type on this trace, so it silently drops out of the logs
+            # dashboard's task_types=llm filter.
+            with traced_span("model") as model_attrs:
+                model_attrs["task_type"] = "LLM"
+                model_attrs.update(get_context_attributes())
+                if isinstance(payload, dict):
+                    model_attrs["service_id"] = payload.get("model", "") or ""
             return "error", exc.status_code, exc.body
 
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload)
         if kind == "error":
+            # proxy_stream() failed before gen() (and its own "model" span)
+            # was ever created — same gap as above, for a genuine upstream
+            # 4xx/5xx or transport error instead of an MMS-level rejection.
+            with traced_span("model") as model_attrs:
+                model_attrs["task_type"] = "LLM"
+                model_attrs["model_name"] = model_name or "unknown"
+                model_attrs["model_version"] = "unknown"
+                model_attrs.update(get_context_attributes())
+                model_attrs["service_id"] = service_id
             return "error", status_code, result
 
         async def gen() -> AsyncIterator[str]:
@@ -494,9 +522,17 @@ class OpenAIProxyService:
             url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
         except LookupError:
             logger.error("LLM audio service not found: %s", service_id)
+            with traced_span("model") as model_attrs:
+                model_attrs["task_type"] = "LLM"
+                model_attrs["service_id"] = service_id
+                model_attrs.update(get_context_attributes())
             return 404, {"error": {"message": f"Service '{service_id}' not found", "type": "not_found"}}
         except (ConnectionError, ValueError):
             logger.error("LLM audio proxy unavailable for service: %s", service_id)
+            with traced_span("model") as model_attrs:
+                model_attrs["task_type"] = "LLM"
+                model_attrs["service_id"] = service_id
+                model_attrs.update(get_context_attributes())
             return 503, {"error": {"message": "Service unavailable", "type": "api_error"}}
 
         # Tier entitlement check. Only enforced when service has explicit tier assignments.
@@ -505,6 +541,10 @@ class OpenAIProxyService:
             if tier_id:
                 allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
                 if allowed_tiers and tier_id not in allowed_tiers:
+                    with traced_span("model") as model_attrs:
+                        model_attrs["task_type"] = "LLM"
+                        model_attrs["service_id"] = service_id
+                        model_attrs.update(get_context_attributes())
                     return 403, {"error": {
                         "message": f"Service '{service_id}' is not available for your quota",
                         "type": "permission_error",
