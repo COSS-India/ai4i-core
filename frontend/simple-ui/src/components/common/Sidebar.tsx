@@ -44,7 +44,7 @@ import { useGuestServices } from "../../hooks/useGuestServices";
 import { useInferenceTypes } from "../../hooks/useInferenceTypes";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
-import { getUsageDashboardOverviewPath } from "../../utils/navigation";
+import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
 import {
   canAccessServicesManagement,
   canAccessUsageDashboard,
@@ -577,9 +577,10 @@ const Sidebar: React.FC = () => {
     setIsServicesExpanded(false);
   }, []);
 
+  // Role-aware: the Usage-Dashboard-only role has no access to "/".
   const goHome = useCallback(() => {
-    router.push("/");
-  }, [router]);
+    router.push(getHomePath(user?.roles));
+  }, [router, user?.roles]);
 
   const onTopNavClick = useCallback(
     (e: React.MouseEvent, path: string, requiresAuth: boolean, itemId: string) => {

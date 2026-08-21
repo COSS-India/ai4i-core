@@ -25,6 +25,7 @@ import {
   canSeeOnboardingGuide,
   getOnboardingGuideHref,
 } from "../../config/onboardingGuide";
+import { getHomePath, isHomePathname } from "../../utils/navigation";
 import AuthModal from "../auth/AuthModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
@@ -144,7 +145,9 @@ const Header: React.FC = () => {
 
   const bgColor = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
-  const showBackButton = router.pathname !== "/";
+  // Home is role-aware: restricted roles (Usage Dashboard only) cannot reach "/",
+  const homePath = getHomePath(user?.roles);
+  const showBackButton = !isHomePathname(router.pathname, user?.roles);
 
   const handleBack = () => {
     if (router.pathname === "/services-management" && router.query.tab === "2") {
@@ -167,7 +170,7 @@ const Header: React.FC = () => {
        router.push("/logs");
        return;
     }
-    router.push("/");
+    router.push(homePath);
   };
 
   const handleAuthClick = () => {
