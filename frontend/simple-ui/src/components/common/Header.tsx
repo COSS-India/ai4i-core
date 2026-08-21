@@ -158,10 +158,6 @@ const Header: React.FC = () => {
       router.push("/profile");
       return;
     }
-    if (router.pathname === "/institution-management") {
-      router.push("/");
-      return;
-    }
     if (router.pathname === "/model-management" && router.query.tab === "2") {
       router.push("/model-management");
       return;
