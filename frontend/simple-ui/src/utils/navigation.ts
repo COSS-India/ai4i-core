@@ -44,19 +44,16 @@ export function getDefaultLandingPath(roles?: string[]): string {
   return getUsageDashboardPath(tab);
 }
 
-/**
- * Route the signed-in role treats as home. Restricted roles (Usage Dashboard only)
- * have no access to APP_HOME_PATH, so their home is the Usage Dashboard itself.
- */
+/** Resolves where "home" is for this user — not every role can open "/". */
 export function getHomePath(roles?: string[]): string {
   const effectiveRoles = resolveRoles(roles);
   if (isUsageDashboardOnlyUser(effectiveRoles)) {
-    return getUsageDashboardOverviewPath();
+    return getDefaultLandingPath(effectiveRoles);
   }
   return APP_HOME_PATH;
 }
 
-/** True when the route is already the role's home (query-string agnostic). */
+/** True when this route is the user's home page. Anything after "?" is ignored. */
 export function isHomePathname(pathname: string, roles?: string[]): boolean {
   return pathname === getHomePath(roles).split("?")[0];
 }
