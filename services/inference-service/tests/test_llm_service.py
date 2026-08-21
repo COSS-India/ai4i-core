@@ -192,6 +192,108 @@ async def test_proxy_traced_returns_502_on_connect_error(llm_service):
     assert body["detail"] == "Upstream LLM request failed"
 
 
+def _capture_ai_inference_attrs(finalize_calls):
+    """Pick out the ai-inference span's finalized attrs from every
+    finalize_span() call recorded during a proxy_traced() run.
+
+    The ai-inference span is the only one seeded with input_type/output_type
+    (see traced_inference()), which distinguishes it from the sibling "model"
+    span finalized in the same call.
+    """
+    for attrs, kwargs in finalize_calls:
+        if "input_type" in attrs:
+            return attrs, kwargs
+    raise AssertionError("no ai-inference span finalize() call was captured")
+
+
+@pytest.fixture
+def capture_finalize_span():
+    """Patch trace.request_span.finalize_span to record every (attrs, kwargs)
+    it's called with, so tests can assert on the real span attrs a
+    traced_span/traced_inference block finalizes with — this is the exact
+    seam that regressed: proxy_traced()'s failure branches must set
+    status/status_code on infer_attrs before returning, or this capture
+    (and the real Kafka exporter downstream) sees a false "success"."""
+    from trace import request_span
+    calls = []
+
+    def _capture(span, attributes, **kwargs):
+        calls.append((dict(attributes), kwargs))
+
+    with patch.object(request_span, "finalize_span", side_effect=_capture):
+        yield calls
+
+
+# ── proxy_traced — ai-inference span must reflect real failures ──────────────
+
+@pytest.mark.asyncio
+async def test_proxy_traced_marks_ai_inference_span_failed_on_connect_error(
+    llm_service, capture_finalize_span,
+):
+    """Regression test: a transport failure returned (not raised) from
+    proxy_traced() must not leave the ai-inference span looking successful —
+    this is the span the PPU/metering pipeline reads, so a mismarked span
+    means the failed request never shows up as a failure in the logs UI."""
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "forward",
+                      side_effect=httpx.ConnectError("unreachable")):
+        status, body = await llm_service.proxy_traced(
+            "/v1/chat/completions", {"model": "svc-1", "messages": []}
+        )
+
+    assert status == 502
+    infer_attrs, finalize_kwargs = _capture_ai_inference_attrs(capture_finalize_span)
+    assert infer_attrs["status"] == "failure"
+    assert infer_attrs["status_code"] == 502
+    # Confirms the failure path really did exit through traced_span's
+    # "normal" branch (ok=False, no exception) rather than raising — i.e.
+    # this asserts the exact mechanism of the bug, not just its symptom.
+    assert finalize_kwargs.get("error") is None
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_marks_ai_inference_span_failed_on_upstream_4xx(
+    llm_service, capture_finalize_span,
+):
+    """Same regression, for a real (non-transport) upstream error status —
+    e.g. the model server itself returns 400/500 with a JSON error body."""
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "forward",
+                      new=AsyncMock(return_value=(500, {"detail": "model server error"}))):
+        status, body = await llm_service.proxy_traced(
+            "/v1/chat/completions", {"model": "svc-1", "messages": []}
+        )
+
+    assert status == 500
+    assert body == {"detail": "model server error"}
+    infer_attrs, finalize_kwargs = _capture_ai_inference_attrs(capture_finalize_span)
+    assert infer_attrs["status"] == "failure"
+    assert infer_attrs["status_code"] == 500
+    assert finalize_kwargs.get("error") is None
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_marks_ai_inference_span_success_on_200(
+    llm_service, capture_finalize_span,
+):
+    """Sanity check the fix doesn't regress the success path."""
+    expected = {"choices": [], "model": "gemma", "usage": {}}
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "forward",
+                      new=AsyncMock(return_value=(200, expected))):
+        status, body = await llm_service.proxy_traced(
+            "/v1/chat/completions", {"model": "svc-1", "messages": []}
+        )
+
+    assert status == 200
+    infer_attrs, _ = _capture_ai_inference_attrs(capture_finalize_span)
+    assert infer_attrs["status"] == "success"
+    assert infer_attrs["status_code"] == 200
+
+
 # ── streaming — include_usage injection ──────────────────────────────────────
 
 def test_with_include_usage_injects_when_absent(llm_service):

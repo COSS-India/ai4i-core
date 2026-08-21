@@ -232,16 +232,29 @@ class OpenAIProxyService:
                     status_code, body = await self.forward(url, payload)
                 except httpx.RequestError as exc:
                     logger.warning(_UPSTREAM_FAILED_LOG, path, exc)
+                    # traced_span only marks the span "failure" when an
+                    # exception propagates out of the `with` block; returning
+                    # here instead of raising would otherwise exit through the
+                    # success branch and mismark this span 200/success even
+                    # though the request never reached upstream.
+                    infer_attrs["status"] = "failure"
+                    infer_attrs["status_code"] = 502
                     return 502, {"detail": "Upstream LLM request failed"}
 
-                if status_code >= 400 and isinstance(body, dict):
-                    message = (
-                        body.get("detail")
-                        or (body.get("error") or {}).get("message")
-                        or body.get("message")
-                        or "Upstream LLM error"
-                    )
-                    body = {"detail": message}
+                if status_code >= 400:
+                    # Same reasoning as above: a real upstream 4xx/5xx doesn't
+                    # raise, so the span must be marked failed explicitly or
+                    # it silently reports success to the metering/logs pipeline.
+                    infer_attrs["status"] = "failure"
+                    infer_attrs["status_code"] = status_code
+                    if isinstance(body, dict):
+                        message = (
+                            body.get("detail")
+                            or (body.get("error") or {}).get("message")
+                            or body.get("message")
+                            or "Upstream LLM error"
+                        )
+                        body = {"detail": message}
 
                 if isinstance(body, dict):
                     input_tokens, output_tokens = get_llm_usage(body)
