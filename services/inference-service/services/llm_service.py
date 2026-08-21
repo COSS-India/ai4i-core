@@ -28,6 +28,14 @@ _resolver = InferenceServerResolver()
 # failures read identically in the logs whichever entry point hit them.
 _UPSTREAM_FAILED_LOG = "LLM upstream request failed (path=%s): %s"
 
+# This service only ever proxies OpenAI-compatible LLM calls — task_type is
+# never derived per-request (unlike Orchestrator's task services, which read
+# it from the client's payload), so it's a fixed fact about which code is
+# running rather than a value to compute. _seed_model_attrs() below is the
+# single place that stamps it, so success and every rejection path get it
+# the same way instead of repeating the literal at each call site.
+_TASK_TYPE_LLM = "LLM"
+
 
 class LLMProxyError(Exception):
     """
@@ -194,6 +202,26 @@ class OpenAIProxyService:
 
         return url, service_id, model_name, payload
 
+    @staticmethod
+    def _seed_model_attrs(
+        model_attrs: Dict[str, Any],
+        service_id: str,
+        model_name: Optional[str] = None,
+    ) -> None:
+        """
+        Stamp the attrs every "model" span carries, regardless of outcome.
+
+        task_type is fixed for this proxy (see _TASK_TYPE_LLM) — every
+        caller, success or rejected, funnels through this one place instead
+        of repeating the literal, so there's exactly one spot that decides
+        how an LLM request's model span is classified.
+        """
+        model_attrs["task_type"] = _TASK_TYPE_LLM
+        model_attrs["model_name"] = model_name or "unknown"
+        model_attrs["model_version"] = "unknown"
+        model_attrs.update(get_context_attributes())
+        model_attrs["service_id"] = service_id
+
     async def proxy_traced(
         self,
         path: str,
@@ -212,16 +240,22 @@ class OpenAIProxyService:
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
+            # A rejection here (404/403/503) means resolution never reached
+            # the point of opening a "model" span below — but the telemetry
+            # dashboard's task_type comes exclusively from that span, so
+            # without one this trace would show task_type=null and never
+            # match a task_types=llm filter. Emit a minimal model span, seeded
+            # the same way as the success span below, so the failure is still
+            # classifiable as an LLM request.
+            rejected_service_id = payload.get("model", "") or "" if isinstance(payload, dict) else ""
+            with traced_span("model") as model_attrs:
+                self._seed_model_attrs(model_attrs, rejected_service_id)
             return exc.status_code, exc.body
 
         with traced_span("model") as model_attrs:
-            model_attrs["task_type"] = "LLM"
-            model_attrs["model_name"] = model_name or "unknown"
-            model_attrs["model_version"] = "unknown"
-            model_attrs.update(get_context_attributes())
-            model_attrs["service_id"] = service_id
+            self._seed_model_attrs(model_attrs, service_id, model_name)
 
-            async with traced_inference(payload, "LLM", logger) as infer_attrs:
+            async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
                 # service_id and tenantId must be set explicitly: the PPU Kafka
                 # consumer reads only the ai-inference span for billing.
                 infer_attrs["service_id"] = service_id
@@ -404,24 +438,31 @@ class OpenAIProxyService:
                 path=path, payload=payload, request=request,
             )
         except LLMProxyError as exc:
+            # Same reasoning as proxy_traced(): no "model" span means no
+            # task_type on this trace, so it silently drops out of the logs
+            # dashboard's task_types=llm filter.
+            rejected_service_id = payload.get("model", "") or "" if isinstance(payload, dict) else ""
+            with traced_span("model") as model_attrs:
+                self._seed_model_attrs(model_attrs, rejected_service_id)
             return "error", exc.status_code, exc.body
 
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload)
         if kind == "error":
+            # proxy_stream() failed before gen() (and its own "model" span)
+            # was ever created — same gap as above, for a genuine upstream
+            # 4xx/5xx or transport error instead of an MMS-level rejection.
+            with traced_span("model") as model_attrs:
+                self._seed_model_attrs(model_attrs, service_id, model_name)
             return "error", status_code, result
 
         async def gen() -> AsyncIterator[str]:
             with traced_span("model") as model_attrs:
-                model_attrs["task_type"] = "LLM"
-                model_attrs["model_name"] = model_name or "unknown"
-                model_attrs["model_version"] = "unknown"
-                model_attrs.update(get_context_attributes())
-                model_attrs["service_id"] = service_id
+                self._seed_model_attrs(model_attrs, service_id, model_name)
                 set_llm_usage_model_name(model_attrs["model_name"])
 
-                async with traced_inference(payload, "LLM", logger) as infer_attrs:
+                async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
                     # service_id and tenantId must be set explicitly: the PPU
                     # Kafka consumer reads only the ai-inference span for billing.
                     infer_attrs["service_id"] = service_id
@@ -494,9 +535,13 @@ class OpenAIProxyService:
             url, service_info = await self.resolve_upstream_url(service_id=service_id, path=path)
         except LookupError:
             logger.error("LLM audio service not found: %s", service_id)
+            with traced_span("model") as model_attrs:
+                self._seed_model_attrs(model_attrs, service_id)
             return 404, {"error": {"message": f"Service '{service_id}' not found", "type": "not_found"}}
         except (ConnectionError, ValueError):
             logger.error("LLM audio proxy unavailable for service: %s", service_id)
+            with traced_span("model") as model_attrs:
+                self._seed_model_attrs(model_attrs, service_id)
             return 503, {"error": {"message": "Service unavailable", "type": "api_error"}}
 
         # Tier entitlement check. Only enforced when service has explicit tier assignments.
@@ -505,6 +550,8 @@ class OpenAIProxyService:
             if tier_id:
                 allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
                 if allowed_tiers and tier_id not in allowed_tiers:
+                    with traced_span("model") as model_attrs:
+                        self._seed_model_attrs(model_attrs, service_id)
                     return 403, {"error": {
                         "message": f"Service '{service_id}' is not available for your quota",
                         "type": "permission_error",
@@ -517,11 +564,7 @@ class OpenAIProxyService:
         model = data.get("model", "")
 
         with traced_span("model") as model_attrs:
-            model_attrs["task_type"] = "LLM"
-            model_attrs["model_name"] = model or "unknown"
-            model_attrs["model_version"] = "unknown"
-            model_attrs.update(get_context_attributes())
-            model_attrs["service_id"] = service_id
+            self._seed_model_attrs(model_attrs, service_id, model)
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
         try:

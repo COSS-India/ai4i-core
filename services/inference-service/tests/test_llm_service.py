@@ -224,6 +224,102 @@ def capture_finalize_span():
         yield calls
 
 
+def _capture_model_attrs(finalize_calls):
+    """Pick out the "model" span's finalized attrs — the only span in these
+    early-rejection tests, since resolution fails before ai-inference (which
+    always carries input_type) is ever opened."""
+    for attrs, kwargs in finalize_calls:
+        if "input_type" not in attrs:
+            return attrs, kwargs
+    raise AssertionError("no model span finalize() call was captured")
+
+
+# ── proxy_traced — a "model" span (task_type) must exist even when MMS
+#    resolution/tier-gate rejects the request before reaching the actual
+#    forward() call ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_proxy_traced_emits_model_span_task_type_on_service_not_found(
+    llm_service, capture_finalize_span,
+):
+    """Regression test: a 404 from _prepare_request() used to return before
+    any "model" span was opened, so telemetry's task_type stayed null and the
+    trace silently dropped out of the ?task_types=llm filter."""
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(side_effect=LookupError("not found"))):
+        status, body = await llm_service.proxy_traced(
+            "/v1/chat/completions", {"model": "missing-svc", "messages": []}
+        )
+
+    assert status == 404
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["service_id"] == "missing-svc"
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_emits_model_span_task_type_on_tier_rejected(
+    llm_service, capture_finalize_span,
+):
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))):
+        status, body = await llm_service.proxy_traced(
+            "/v1/chat/completions",
+            {"model": "svc-1", "messages": []},
+            request=mock_request,
+        )
+
+    assert status == 403
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_emits_model_span_task_type_on_service_not_found(
+    llm_service, capture_finalize_span,
+):
+    """Same regression, for the streaming entry point's LLMProxyError path."""
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(side_effect=LookupError("not found"))):
+        kind, status, _ = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "missing-svc", "stream": True}
+        )
+
+    assert kind == "error"
+    assert status == 404
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["service_id"] == "missing-svc"
+
+
+@pytest.mark.asyncio
+async def test_proxy_traced_stream_emits_model_span_task_type_on_upstream_error(
+    llm_service, capture_finalize_span,
+):
+    """proxy_stream() failing (real upstream 4xx/5xx or transport error) also
+    used to skip gen()'s "model" span entirely, since gen() is only created on
+    the success path — a genuinely different gap from the LLMProxyError case
+    above, both are fixed the same way."""
+    from services.llm_service import UpstreamStreamError
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/v1/chat/completions", _STUB_SERVICE_INFO))), \
+         patch.object(llm_service, "open_stream",
+                      new=AsyncMock(side_effect=UpstreamStreamError(500, {"detail": "model server error"}))):
+        kind, status, body = await llm_service.proxy_traced_stream(
+            "/v1/chat/completions", {"model": "svc-1", "stream": True}
+        )
+
+    assert kind == "error"
+    assert status == 500
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["model_name"] == "google/gemma-4-E4B-it"
+
+
 # ── proxy_traced — ai-inference span must reflect real failures ──────────────
 
 @pytest.mark.asyncio
@@ -603,3 +699,45 @@ async def test_proxy_multipart_returns_502_on_connect_error(llm_service):
         )
     assert status == 502
     assert body["error"]["type"] == "upstream_error"
+
+
+@pytest.mark.asyncio
+async def test_proxy_multipart_emits_model_span_task_type_on_service_not_found(
+    llm_service, capture_finalize_span,
+):
+    """Same task_type-null regression as proxy_traced(): resolve_upstream_url()
+    failing here used to return before the "model" span (further down in
+    proxy_multipart) was ever opened."""
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(side_effect=LookupError("not found"))):
+        status, body = await llm_service.proxy_multipart(
+            "/audio/transcriptions",
+            files={"file": ("clip.wav", b"RIFF", "audio/wav")},
+            data={"model": "missing-svc"},
+        )
+
+    assert status == 404
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
+    assert model_attrs["service_id"] == "missing-svc"
+
+
+@pytest.mark.asyncio
+async def test_proxy_multipart_emits_model_span_task_type_on_tier_rejected(
+    llm_service, capture_finalize_span,
+):
+    mock_request = MagicMock()
+    mock_request.headers.get.return_value = "tier-2"  # not in allowed_tiers
+
+    with patch.object(llm_service, "resolve_upstream_url",
+                      new=AsyncMock(return_value=("http://vllm:8000/audio/transcriptions", _STUB_SERVICE_INFO))):
+        status, body = await llm_service.proxy_multipart(
+            "/audio/transcriptions",
+            files={"file": ("clip.wav", b"RIFF", "audio/wav")},
+            data={"model": "svc-1"},
+            request=mock_request,
+        )
+
+    assert status == 403
+    model_attrs, _ = _capture_model_attrs(capture_finalize_span)
+    assert model_attrs["task_type"] == "LLM"
