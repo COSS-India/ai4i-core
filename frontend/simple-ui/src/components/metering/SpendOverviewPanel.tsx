@@ -93,6 +93,8 @@ interface SpendOverviewPanelProps {
   emptyStateMessage?: string;
   /** When set, show tenant Budget / Quota summary cards instead of platform totals. */
   tenantDetail?: TenantUsageItem | null;
+  /** Program-wide metrics (Active institutions, Budget exceeded). Hidden for Institution Admin / scoped views. */
+  showProgramMetrics?: boolean;
 }
 
 const cardFlex = {
@@ -239,6 +241,7 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
   spendChangePercent,
   emptyStateMessage = "No spend data for this period.",
   tenantDetail = null,
+  showProgramMetrics = true,
 }) => {
   const [hlKey, setHlKey] = useState<string | null>(null);
   const sorted = useMemo(
@@ -318,19 +321,23 @@ const SpendOverviewPanel: React.FC<SpendOverviewPanelProps> = ({
           fontSize="12.5px"
           flexWrap="wrap"
         >
-          <HStack spacing={1.5}>
-            <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
-            <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
-          </HStack>
-          <HStack spacing={1.5}>
-            <Text color="gray.500">Budget exceeded:</Text>
-            <Text
-              fontWeight="semibold"
-              color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
-            >
-              {budgetExceededLabel(summary?.budgetExceededTenants)}
-            </Text>
-          </HStack>
+          {showProgramMetrics ? (
+            <>
+              <HStack spacing={1.5}>
+                <Text color="gray.500">Active {INSTITUTIONS.toLowerCase()}:</Text>
+                <Text fontWeight="semibold" color="gray.800">{summary?.activeTenants ?? "—"}</Text>
+              </HStack>
+              <HStack spacing={1.5}>
+                <Text color="gray.500">Budget exceeded:</Text>
+                <Text
+                  fontWeight="semibold"
+                  color={(summary?.budgetExceededTenants ?? 0) > 0 ? USAGE_SPEND_DANGER : "gray.800"}
+                >
+                  {budgetExceededLabel(summary?.budgetExceededTenants)}
+                </Text>
+              </HStack>
+            </>
+          ) : null}
           <HStack spacing={1.5}>
             <Text color="gray.500">vs last month:</Text>
             <Text fontWeight="semibold" color={spendChangeColor(spendChangePercent) ?? "gray.800"}>

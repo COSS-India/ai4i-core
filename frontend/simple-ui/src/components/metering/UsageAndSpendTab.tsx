@@ -208,6 +208,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
         currency={data.currency}
         spendChangePercent={data.spendChangePercent}
         tenantDetail={null}
+        showProgramMetrics={!isTenantView && !data.isScoped}
         emptyStateMessage={
           data.hasNoTierAssigned
             ? "No tier or budget assigned. Contact your administrator."
