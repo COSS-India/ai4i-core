@@ -48,10 +48,6 @@ async def run() -> None:
             # about this consumer's durability (§6.1/§6.8).
             commit_mode=CommitMode.PER_MESSAGE,
         )
-        # Before the first fetch: subscribe() already happened inside the factory,
-        # so an assignment can arrive on the very first consume_batch().
-        # consumer.add_assignment_hook(_on_assign)
-        # consumer.add_revocation_hook(_on_revoke)
 
         shutdown = shutdown_event()
         logger.info(
@@ -157,7 +153,7 @@ def _usable(msg: Message) -> bool:
         logger.critical(
             "No valid committed offset for %s[%d] — the group is unseeded or its "
             "offset aged out of retention.  Seed the group's offsets deliberately "
-            "(ARCHITECTURE.md §10.2); do NOT switch auto.offset.reset to earliest, "
+            "; do NOT switch auto.offset.reset to earliest, "
             "which would replay the topic and re-bill every span older than the "
             "1h dedup TTL. | %s",
             msg.topic(), msg.partition(), err.str(),

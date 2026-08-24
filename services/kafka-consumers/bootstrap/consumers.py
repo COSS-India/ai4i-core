@@ -123,8 +123,8 @@ class ManagedConsumer(Consumer):
         Built on consume(num_messages=…, timeout=…), which returns a LIST per
         call.  batch_size defaults to 1: the batch API is what the consumer is
         built on, and 1 is the safe setting for it today (§3.4/§6.4).  Raising
-        it is a config change rather than a rewrite, once §8.2's write-time
-        guard and §7.5's reconciliation are live.
+        it is a config change rather than a rewrite, once the write-time guard
+        and reconciliation job are live (§11).
 
         commit_mode is explicit, never defaulted from settings (§3.1/§5) — see
         CommitMode's docstring.
